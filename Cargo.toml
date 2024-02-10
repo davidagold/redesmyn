@@ -1,0 +1,14 @@
+[package]
+name = "rs-model-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4"
+arrow = "6.0.0"
+futures = "0.3"
+memmap = "0.7.0"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = { verison = "0.3.18", features = ["json", "env-filter"]}
