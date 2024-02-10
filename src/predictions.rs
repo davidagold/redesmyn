@@ -1,12 +1,7 @@
 use actix_web::{post, web, HttpResponse, Responder};
 use futures::channel::oneshot;
-use serde::Deserialize;
-use std::{
-    collections::VecDeque,
-    fmt,
-    iter::{repeat, zip},
-    time::Duration,
-};
+use serde::{Deserialize, Serialize};
+use std::{collections::VecDeque, fmt, iter::repeat, time::Duration};
 use tokio::{
     sync::{mpsc, Mutex},
     time::Instant,
@@ -24,7 +19,7 @@ impl PredictionRequest {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ModelInput {
     a: f64,
     b: f64,
@@ -42,6 +37,7 @@ impl fmt::Display for ModelSpec {
     }
 }
 
+#[derive(Serialize)]
 pub struct PredictionResponse {
     model_inputs: Vec<ModelInput>,
     predictions: Vec<f64>,
@@ -52,7 +48,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(sender: mpsc::Sender<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)>) -> AppState {
+    pub fn new(
+        sender: mpsc::Sender<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)>,
+    ) -> AppState {
         return AppState {
             job_sender: sender.into(),
         };
@@ -76,36 +74,35 @@ pub async fn batch_predict_loop(
         let jobs_by_sender: Vec<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)> =
             queue.into_iter().collect();
 
-        let model_responses = predict(
-            jobs_by_sender
-                .iter()
-                .map(|job_by_sender| &job_by_sender.0)
-                .collect(),
-        );
-
-        zip(jobs_by_sender, model_responses)
-            .for_each(|((_, tx), responses)| {
-                match tx.send(responses) {
-                    Ok(()) => (),
-                    Err(_) => event!(Level::ERROR, "Prediction failed."),
-                }
-        });
+        predict(jobs_by_sender.into_iter().collect())
+            .into_iter()
+            .for_each(|(response, tx)| match tx.send(response) {
+                Ok(()) => (),
+                Err(_) => event!(Level::ERROR, "Prediction failed."),
+            });
     }
 }
 
 #[instrument]
-fn predict(model_inputs: Vec<&Vec<ModelInput>>) -> Vec<PredictionResponse> {
-    let responses = Vec::from_iter(
-        model_inputs
-            .iter()
-            .map(|model_input| Vec::from_iter(model_input.iter().map(|_| 1.0)))
-            .zip(model_inputs)
-            .map(|(predictions, model_inputs)| PredictionResponse {
-                model_inputs: *model_inputs,
-                predictions,
-            }),
-    );
-    responses
+fn predict(
+    jobs_by_sender: Vec<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)>,
+) -> Vec<(PredictionResponse, oneshot::Sender<PredictionResponse>)> {
+    jobs_by_sender
+        .into_iter()
+        .map(|(model_inputs, tx)| {
+            let n_predictions = &model_inputs.len();
+            (model_inputs, repeat(1.0).take(*n_predictions).collect(), tx)
+        })
+        .map(|(model_inputs, predictions, tx)| {
+            (
+                PredictionResponse {
+                    model_inputs,
+                    predictions,
+                },
+                tx,
+            )
+        })
+        .collect()
 }
 
 #[instrument(skip_all)]
@@ -137,7 +134,7 @@ pub async fn submit_prediction_request(
     .await;
 
     match result {
-        Ok(response) => HttpResponse::Ok().body(serde:: response),
+        Ok(response) => HttpResponse::Ok().body(serde_json::to_string(&response).unwrap()),
         Err(e) => HttpResponse::InternalServerError().body(e),
     }
 }
