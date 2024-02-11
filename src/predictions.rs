@@ -51,9 +51,7 @@ impl AppState {
     pub fn new(
         sender: mpsc::Sender<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)>,
     ) -> AppState {
-        return AppState {
-            job_sender: sender.into(),
-        };
+        return AppState { job_sender: sender.into() };
     }
 }
 
@@ -74,12 +72,12 @@ pub async fn batch_predict_loop(
         let jobs_by_sender: Vec<(Vec<ModelInput>, oneshot::Sender<PredictionResponse>)> =
             queue.into_iter().collect();
 
-        predict(jobs_by_sender.into_iter().collect())
-            .into_iter()
-            .for_each(|(response, tx)| match tx.send(response) {
+        predict(jobs_by_sender.into_iter().collect()).into_iter().for_each(
+            |(response, tx)| match tx.send(response) {
                 Ok(()) => (),
                 Err(_) => event!(Level::ERROR, "Prediction failed."),
-            });
+            },
+        );
     }
 }
 
@@ -91,16 +89,8 @@ fn predict(
         .into_iter()
         .map(|(model_inputs, tx)| {
             let n_predictions = &model_inputs.len();
-            (model_inputs, repeat(1.0).take(*n_predictions).collect(), tx)
-        })
-        .map(|(model_inputs, predictions, tx)| {
-            (
-                PredictionResponse {
-                    model_inputs,
-                    predictions,
-                },
-                tx,
-            )
+            let predictions = repeat(1.0).take(*n_predictions).collect();
+            return (PredictionResponse { model_inputs, predictions }, tx);
         })
         .collect()
 }
@@ -112,10 +102,7 @@ pub async fn submit_prediction_request(
     mut model_input: web::Json<PredictionRequest>,
     app_state: web::Data<AppState>,
 ) -> impl Responder {
-    let ModelSpec {
-        model_name,
-        model_version,
-    } = &*model_spec;
+    let ModelSpec { model_name, model_version } = &*model_spec;
     event!(Level::INFO, %model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
@@ -133,8 +120,11 @@ pub async fn submit_prediction_request(
     }
     .await;
 
-    match result {
-        Ok(response) => HttpResponse::Ok().body(serde_json::to_string(&response).unwrap()),
-        Err(e) => HttpResponse::InternalServerError().body(e),
-    }
+    return match result {
+        Ok(response) => match serde_json::to_string(&response) {
+            Ok(serialized_response) => HttpResponse::Ok().body(serialized_response),
+            Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        },
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    };
 }
