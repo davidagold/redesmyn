@@ -4,6 +4,7 @@ use polars::{frame::DataFrame, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
+    error::Error,
     fmt,
     iter::repeat,
     time::Duration,
@@ -36,7 +37,7 @@ impl fmt::Display for PredictionError {
 impl std::error::Error for PredictionError {}
 
 impl PredictionRequest {
-    fn take_records_into_dataframe(&mut self, job_id: &Uuid) -> Result<DataFrame, PolarsError> {
+    fn take_records_into_dataframe(&mut self, job_id: &String) -> Result<DataFrame, PolarsError> {
         let mut columns = HashMap::<String, Vec<f64>>::new();
 
         (*self.records).into_iter().for_each(|record| {
@@ -56,7 +57,7 @@ impl PredictionRequest {
             .collect();
 
         let mut df = DataFrame::new(series).expect("Failed to create DataFrame");
-        let mut column_job_id = Series::from_iter(repeat(job_id.to_string()).take(df.shape().0));
+        let mut column_job_id = Series::from_iter(repeat(job_id.clone()).take(df.shape().0));
         column_job_id.rename("job_id");
         match df.with_column(column_job_id) {
             Ok(_) => Ok(df),
@@ -91,7 +92,7 @@ impl fmt::Display for ModelSpec {
 
 #[derive(Serialize)]
 pub struct PredictionResponse {
-    model_inputs: Vec<Record>,
+    // model_inputs: Vec<Record>,
     predictions: Vec<f64>,
 }
 
@@ -123,38 +124,67 @@ pub async fn batch_predict_loop(mut receiver: mpsc::Receiver<PredictionJob>) {
 }
 
 #[instrument(skip_all)]
-fn predict_and_send(jobs: VecDeque<PredictionJob>) -> () {
+fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), Box<dyn Error>> {
     let mut senders_by_id =
-        HashMap::<Uuid, oneshot::Sender<Result<PredictionResponse, PredictionError>>>::new();
+        HashMap::<String, oneshot::Sender<Result<PredictionResponse, PredictionError>>>::new();
     let dfs = jobs
         .into_iter()
         .fold(Vec::<LazyFrame>::new(), |mut dfs, mut job| {
-            match job.request.take_records_into_dataframe(&job.id) {
-                Ok(df) => dfs.push(df.lazy()),
-                Err(e) => {
-                    match job.sender.send(Err(PredictionError::Error(format!(
-                        "Failed to get DataFrame: {}",
-                        e
-                    )))) {
-                        Ok(_) => (),
-                        Err(_) => {
-                            event!(
-                                Level::WARN,
-                                "Failed to send result for job with ID {}",
-                                job.id
-                            )
-                        }
-                    }
-                    return dfs;
+            match job.request.take_records_into_dataframe(&job.id.to_string()) {
+                Ok(df) => {
+                    dfs.push(df.lazy());
+                    senders_by_id.insert(job.id.to_string(), job.sender);
                 }
-            };
-            senders_by_id.insert(job.id, job.sender);
-            dfs
-            // let n_predictions = &model_inputs.len();
-            // let predictions = repeat(1.0).take(*n_predictions).collect();
-            // return (PredictionResponse { model_inputs, predictions }, tx);
+                Err(e) => {
+                    let msg = format!("Failed to get DataFrame: {}", e);
+                    if let Err(_) = job.sender.send(Err(PredictionError::Error(msg))) {
+                        event!(
+                            Level::WARN,
+                            "Failed to send result for job with ID {}",
+                            job.id
+                        );
+                    }
+                }
+            }
+            return dfs;
         });
-    let df = concat(dfs, UnionArgs::default());
+
+    match concat(dfs, UnionArgs::default()).map(|df| df.collect()) {
+        Ok(Ok(df)) => {
+            if let Ok(df) = include_predictions(&mut df) {
+                
+            }
+        },
+        Ok(Err(_)) => event!(Level::WARN, "Error"),
+        Err(_) => event!(Level::WARN, "Error"),
+    };
+    Ok(())
+}
+
+fn send_responses(df: DataFrame, senders_by_id: &mut HashMap<String, oneshot::Sender<Result<PredictionResponse, PredictionError>>>) {
+    match df.partition_by(["job_id"], true) {
+        Ok(dfs) => {
+            dfs.iter()
+            .for_each(|df| {
+                df.get_column_index("job_id")
+                    .map(|idx| {
+                        let job_id = df[idx].str().unwrap().get(0).unwrap().to_string();
+                        if let Some(sender) = senders_by_id.remove(&job_id) {
+                            let predictions = df.column("prediction").map(|df| df.to_float());
+                            let _ = sender.send(Ok(PredictionResponse {
+                                predictions: 
+                            }));
+                        }
+                    });
+            });
+        },
+        Err(_) => event!(Level::WARN, "Error")
+    }
+}
+
+fn include_predictions(df: &DataFrame) -> PolarsResult<&mut DataFrame>{
+    let predictions = Series::from_iter(repeat(1.0).take(df.shape().0));
+    return df.with_column(predictions.with_name("prediction"))
 }
 
 #[instrument(skip_all)]
