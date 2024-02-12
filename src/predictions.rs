@@ -24,12 +24,20 @@ pub struct PredictionRequest {
 #[derive(Debug)]
 pub enum PredictionError {
     Error(String),
+    PolarsError(polars::prelude::PolarsError),
+}
+
+impl From<PolarsError> for PredictionError {
+    fn from(err: PolarsError) -> Self {
+        PredictionError::PolarsError(err)
+    }
 }
 
 impl fmt::Display for PredictionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PredictionError::Error(e) => write!(f, "Prediction failed: {}", e),
+            PredictionError::Error(e) => write!(f, "General failure: {}", e),
+            PredictionError::PolarsError(e) => write!(f, "Polars failure: {}", e),
         }
     }
 }
@@ -167,25 +175,30 @@ fn send_responses(
         String,
         oneshot::Sender<Result<PredictionResponse, PredictionError>>,
     >,
-) {
-    match df.partition_by(["job_id"], true) {
-        Ok(dfs) => {
-            dfs.iter().for_each(|df| {
-                df.get_column_index("job_id").map(|idx| {
-                    let job_id = df[idx].str().unwrap().get(0).unwrap().to_string();
-                    if let Some(sender) = senders_by_id.remove(&job_id) {
-                        let predictions = df
-                            .column("prediction")
-                            .map(|s| s.f64().unwrap())
-                            .unwrap()
-                            .to_vec();
-                        let _ = sender.send(Ok(PredictionResponse { predictions }));
-                    }
-                });
-            });
+) -> Result<(), PredictionError> {
+    for df in df.partition_by(["job_id"], true)? {
+        let job_id = df
+            .column("job_id")?
+            .str()?
+            .get(0)
+            .ok_or_else(|| PredictionError::Error("Failed to get job ID.".to_string()))?;
+
+        if let Some(sender) = senders_by_id.remove(&job_id.to_string()) {
+            let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
+
+            match sender.send(Ok(PredictionResponse { predictions })) {
+                Ok(_) => (),
+                Err(_) => event!(Level::ERROR, "Failed to send response"),
+            }
+        } else {
+            event!(
+                Level::ERROR,
+                "Failed to get sender for job with ID {}",
+                &job_id.to_string()
+            )
         }
-        Err(_) => event!(Level::WARN, "Error"),
     }
+    return Ok(());
 }
 
 fn include_predictions(df: &mut DataFrame) -> PolarsResult<&mut DataFrame> {
