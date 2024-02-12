@@ -93,7 +93,7 @@ impl fmt::Display for ModelSpec {
 #[derive(Serialize)]
 pub struct PredictionResponse {
     // model_inputs: Vec<Record>,
-    predictions: Vec<f64>,
+    predictions: Vec<Option<f64>>,
 }
 
 pub struct AppState {
@@ -150,41 +150,47 @@ fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), Box<dyn Error>>
         });
 
     match concat(dfs, UnionArgs::default()).map(|df| df.collect()) {
-        Ok(Ok(df)) => {
+        Ok(Ok(mut df)) => {
             if let Ok(df) = include_predictions(&mut df) {
-                
+                send_responses(df, &mut senders_by_id);
             }
-        },
+        }
         Ok(Err(_)) => event!(Level::WARN, "Error"),
         Err(_) => event!(Level::WARN, "Error"),
     };
     Ok(())
 }
 
-fn send_responses(df: DataFrame, senders_by_id: &mut HashMap<String, oneshot::Sender<Result<PredictionResponse, PredictionError>>>) {
+fn send_responses(
+    df: &DataFrame,
+    senders_by_id: &mut HashMap<
+        String,
+        oneshot::Sender<Result<PredictionResponse, PredictionError>>,
+    >,
+) {
     match df.partition_by(["job_id"], true) {
         Ok(dfs) => {
-            dfs.iter()
-            .for_each(|df| {
-                df.get_column_index("job_id")
-                    .map(|idx| {
-                        let job_id = df[idx].str().unwrap().get(0).unwrap().to_string();
-                        if let Some(sender) = senders_by_id.remove(&job_id) {
-                            let predictions = df.column("prediction").map(|df| df.to_float());
-                            let _ = sender.send(Ok(PredictionResponse {
-                                predictions: 
-                            }));
-                        }
-                    });
+            dfs.iter().for_each(|df| {
+                df.get_column_index("job_id").map(|idx| {
+                    let job_id = df[idx].str().unwrap().get(0).unwrap().to_string();
+                    if let Some(sender) = senders_by_id.remove(&job_id) {
+                        let predictions = df
+                            .column("prediction")
+                            .map(|s| s.f64().unwrap())
+                            .unwrap()
+                            .to_vec();
+                        let _ = sender.send(Ok(PredictionResponse { predictions }));
+                    }
+                });
             });
-        },
-        Err(_) => event!(Level::WARN, "Error")
+        }
+        Err(_) => event!(Level::WARN, "Error"),
     }
 }
 
-fn include_predictions(df: &DataFrame) -> PolarsResult<&mut DataFrame>{
+fn include_predictions(df: &mut DataFrame) -> PolarsResult<&mut DataFrame> {
     let predictions = Series::from_iter(repeat(1.0).take(df.shape().0));
-    return df.with_column(predictions.with_name("prediction"))
+    return df.with_column(predictions.with_name("prediction"));
 }
 
 #[instrument(skip_all)]
