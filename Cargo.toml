@@ -8,8 +8,10 @@ actix-web = "4"
 arrow = "6.0.0"
 futures = "0.3"
 memmap = "0.7.0"
+polars = { version = "0.37.0", features = ["lazy", "dtype-struct"]}
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { verison = "0.3.18", features = ["json", "env-filter"]}
+uuid = { version = "*", features = ["v4"]}
