@@ -6,13 +6,13 @@ use tracing_subscriber::{self, EnvFilter, fmt::format::FmtSpan, layer::Subscribe
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let tracing_subscriber = tracing_subscriber::fmt::layer()
+    let subscribe_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_span_events(FmtSpan::CLOSE);
     
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
-        .with(tracing_subscriber)
+        .with(subscribe_layer)
         .init();
 
     let (tx, rx) = mpsc::channel(512);
