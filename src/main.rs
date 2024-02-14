@@ -1,19 +1,56 @@
-use tokio::sync::mpsc;
-use rs_model_server::predictions;
-use actix_web::{web, App, HttpServer};
-use tracing_subscriber::{self, EnvFilter, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*};
+use std::env::{self, current_dir};
 
+use actix_web::{web, App, HttpServer};
+use pyo3::Python;
+use rs_model_server::predictions;
+use tokio::sync::mpsc;
+use tracing::{event, instrument, Level};
+use tracing_subscriber::{self, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[tokio::main]
+#[instrument]
 async fn main() -> std::io::Result<()> {
+    // let path_venv = "/Users/davidgold/.local/share/virtualenvs/notebooks-C37d9m95";
+    // env::set_var("", format!("{}/bin/python3", path_venv));
+    // env::set_var("PYTHONHOME", format!("{}/lib/", path_venv));
+    // event!(Level::INFO, "Found Python virtual environment {}", path_python_venv);
+
+    // env::set_var("PYTHONPATH", format!("{}/lib/python3.11/site-packages", path_venv));
+
     let subscribe_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_span_events(FmtSpan::CLOSE);
-    
+
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
         .with(subscribe_layer)
         .init();
+
+    pyo3::prepare_freethreaded_python();
+    match Python::with_gil(|py| {
+        let sys = py.import("sys")?;
+        let version = sys.getattr("version")?.extract::<String>()?;
+        let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
+        event!(Level::INFO, "Found Python version: {}", version);
+        event!(Level::INFO, "Found Python path: {:#?}", python_path);
+        sys.getattr("path")?
+            .getattr("insert")
+            .and_then(move |insert| insert.call((0, current_dir()?), None))?;
+
+        Ok::<(), std::io::Error>(())
+    }) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to initialize Python process: {}", err),
+        )),
+    }?;
+
+    event!(
+        Level::INFO,
+        "Starting `main` in working directory {:#?}",
+        env::current_dir()?
+    );
 
     let (tx, rx) = mpsc::channel(512);
 

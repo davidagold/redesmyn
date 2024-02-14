@@ -1,6 +1,8 @@
 use actix_web::{post, web, HttpResponse, Responder};
 use futures::channel::oneshot;
 use polars::{frame::DataFrame, prelude::*};
+use pyo3::prelude::*;
+use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -24,6 +26,7 @@ pub struct PredictionRequest {
 pub enum PredictionError {
     Error(String),
     PolarsError(polars::prelude::PolarsError),
+    PyError(pyo3::prelude::PyErr),
 }
 
 impl From<PolarsError> for PredictionError {
@@ -38,11 +41,18 @@ impl From<serde_json::Error> for PredictionError {
     }
 }
 
+impl From<pyo3::prelude::PyErr> for PredictionError {
+    fn from(err: pyo3::prelude::PyErr) -> Self {
+        PredictionError::PyError(err)
+    }
+}
+
 impl fmt::Display for PredictionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PredictionError::Error(e) => write!(f, "General failure: {}", e),
             PredictionError::PolarsError(e) => write!(f, "Polars failure: {}", e),
+            PredictionError::PyError(e) => write!(f, "Python failure: {}", e),
         }
     }
 }
@@ -167,11 +177,32 @@ fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError
         });
 
     concat(dfs, UnionArgs::default())
-        .map(|df| df.collect())?
-        .map(|mut df| {
-            include_predictions(&mut df)?;
-            send_responses(&df, &mut jobs_by_id)
-        })?
+        .and_then(LazyFrame::collect)
+        .map_err(PolarsError::into)
+        .and_then(include_predictions)
+        .and_then(|results_df| {
+            event!(Level::INFO, "Sending results");
+            send_responses(&results_df, &mut jobs_by_id)
+        })
+        .map_err(|err| {
+            let message_err = err.to_string();
+            jobs_by_id.into_values().for_each(|job| {
+                job.send(Err(PredictionError::Error(message_err.clone())));
+            });
+            PredictionError::Error(message_err)
+        })
+}
+
+#[instrument(skip_all)]
+fn include_predictions(df: DataFrame) -> Result<DataFrame, PredictionError> {
+    Python::with_gil(|py| {
+        py.import("handlers.model")?
+            .getattr("handle")?
+            .call((PyDataFrame(df),), None)?
+            .extract::<PyDataFrame>()
+    })
+    .map(|py_df| py_df.into())
+    .map_err(|err| err.into())
 }
 
 fn send_responses(
@@ -193,13 +224,6 @@ fn send_responses(
         }
     }
     Ok(())
-}
-
-fn include_predictions(df: &mut DataFrame) -> Result<(), PredictionError> {
-    let predictions = Series::from_iter(repeat(1.0).take(df.shape().0));
-    df.with_column(predictions.with_name("prediction"))
-        .map(|_| Ok(()))?
-        .map_err(|err: PolarsError| err.into())
 }
 
 #[instrument(skip_all)]
@@ -226,9 +250,9 @@ pub async fn submit_prediction_request(
             })
             .await
         {
-            Ok(_) => rx
-                .await
-                .map_err(|_| PredictionError::Error("Failed to receive".to_string()))?,
+            Ok(_) => rx.await.map_err(|err| {
+                PredictionError::Error(format!("Failed to receive result: {}", err))
+            })?,
             Err(_) => Err(PredictionError::Error("Failed to send job".to_string())),
         }
     }
