@@ -3,20 +3,16 @@ use std::env;
 use actix_web::{web, App, HttpServer};
 use pyo3::Python;
 use rs_model_server::predictions::{self, ServiceError};
-use tokio::sync::mpsc;
+use tokio::{
+    signal,
+    sync::{mpsc, oneshot},
+};
 use tracing::{event, instrument, Level};
 use tracing_subscriber::{self, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[tokio::main]
 #[instrument]
 async fn main() -> Result<(), ServiceError> {
-    // let path_venv = "/Users/davidgold/.local/share/virtualenvs/notebooks-C37d9m95";
-    // env::set_var("", format!("{}/bin/python3", path_venv));
-    // env::set_var("PYTHONHOME", format!("{}/lib/", path_venv));
-    // event!(Level::INFO, "Found Python virtual environment {}", path_python_venv);
-
-    // env::set_var("PYTHONPATH", format!("{}/lib/python3.11/site-packages", path_venv));
-
     let subscribe_layer = tracing_subscriber::fmt::layer()
         .json()
         .with_span_events(FmtSpan::CLOSE);
@@ -25,11 +21,6 @@ async fn main() -> Result<(), ServiceError> {
         .with(EnvFilter::from_default_env())
         .with(subscribe_layer)
         .init();
-
-    // let mlflow_tracking_dir = env::var("MLFLOW_TRACKING_DIR")?;
-    // let mlflow_registry_dir = env::var("MLFLOW_REGISTRY_DIR")?;
-    // event!(Level::INFO, "Found MLFLOW_TRACKING_DIR={}", mlflow_tracking_dir);
-    // event!(Level::INFO, "Found MLFLOW_REGISTRY_DIR={}", mlflow_registry_dir);
 
     pyo3::prepare_freethreaded_python();
     match Python::with_gil(|py| {
@@ -57,18 +48,34 @@ async fn main() -> Result<(), ServiceError> {
         env::current_dir()?
     );
 
-    let (tx, rx) = mpsc::channel(512);
-
-    tokio::spawn(predictions::batch_predict_loop(rx));
-
-    HttpServer::new(move || {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let server = HttpServer::new(move || {
         let app_state = predictions::AppState::new(tx.clone());
         App::new()
             .app_data(web::Data::new(app_state))
             .service(predictions::submit_prediction_request)
     })
+    .disable_signals()
     .bind("127.0.0.1:8080")?
-    .run()
-    .await
-    .map_err(std::io::Error::into)
+    .run();
+
+    let (tx_abort, rx_abort) = oneshot::channel::<()>();
+    let predict_loop_handle = tokio::spawn(predictions::batch_predict_loop(rx, rx_abort));
+    let server_handle = server.handle();
+    tokio::spawn(async move {
+        let _ = signal::ctrl_c().await;
+        event!(Level::INFO, "Received shutdown signal.");
+        if let Err(_) = tx_abort.send(()) {
+            event!(Level::ERROR, "Failed to send cancel signal.");
+        }
+        match predict_loop_handle.await {
+            Ok(_) => {
+                event!(Level::INFO, "Predict loop cancelled.")
+            },
+            Err(err) => event!(Level::ERROR, "Failed to cancel predict loop: {err}"),
+        }
+        server_handle.stop(true).await;
+    });
+
+    server.await.map_err(std::io::Error::into)
 }

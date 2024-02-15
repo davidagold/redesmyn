@@ -1,11 +1,10 @@
 use actix_web::{post, web, HttpResponse, Responder};
-use futures::channel::oneshot;
 use futures::FutureExt;
 use futures::TryFutureExt;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -15,7 +14,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{mpsc, oneshot, Mutex},
     time::Instant,
 };
 use tracing::{self, event, instrument, Level};
@@ -182,42 +181,43 @@ pub struct PredictionResponse {
 }
 
 pub struct AppState {
-    job_sender: Mutex<mpsc::Sender<PredictionJob>>,
+    job_sender: Mutex<mpsc::UnboundedSender<PredictionJob>>,
 }
 
 impl AppState {
-    pub fn new(sender: mpsc::Sender<PredictionJob>) -> AppState {
+    pub fn new(sender: mpsc::UnboundedSender<PredictionJob>) -> AppState {
         AppState { job_sender: sender.into() }
     }
 }
 
 #[instrument(skip_all)]
-pub async fn batch_predict_loop(mut rx: mpsc::Receiver<PredictionJob>) {
+pub async fn batch_predict_loop(mut rx: mpsc::UnboundedReceiver<PredictionJob>, mut rx_abort: oneshot::Receiver<()>) {
     let mut handles_by_batch_id =
         HashMap::<Uuid, tokio::task::JoinHandle<Result<(), PredictionError>>>::new();
     loop {
-        // let batch_ids: Vec<_> = handles_by_batch_id.keys().collect();
-        let batch_ids_finished: Vec<_> = handles_by_batch_id
-            .iter()
-            .filter(|(_, handle)| handle.is_finished())
-            .map(|(batch_id, _)| batch_id.clone())
-            .collect();
-        batch_ids_finished.iter().for_each(|batch_id| {
-            handles_by_batch_id.remove(batch_id).map(|handle| {
-                handle.map(|result| match result {
-                    Ok(_) => (),
-                    Err(err) => {
-                        event!(
-                            Level::ERROR,
-                            "Prediction batch with ID {} failed: {}",
-                            batch_id,
-                            err
-                        );
-                    }
-                })
-            });
-        });
-
+        // let batch_ids_finished: Vec<_> = handles_by_batch_id
+        //     .iter()
+        //     .filter(|(_, handle)| handle.is_finished())
+        //     .map(|(batch_id, _)| batch_id.clone())
+        //     .collect();
+        // batch_ids_finished.iter().for_each(|batch_id| {
+        //     handles_by_batch_id.remove(batch_id).map(|handle| {
+        //         handle.map(|result| match result {
+        //             Ok(_) => (),
+        //             Err(err) => {
+        //                 event!(
+        //                     Level::ERROR,
+        //                     "Prediction batch with ID {} failed: {}",
+        //                     batch_id,
+        //                     err
+        //                 );
+        //             }
+        //         })
+        //     });
+        // });
+        if let Ok(_) = rx_abort.try_recv() {
+            return
+        }
         let batch_id = Uuid::new_v4();
         let mut jobs = VecDeque::<PredictionJob>::new();
         let start = Instant::now();
@@ -231,10 +231,9 @@ pub async fn batch_predict_loop(mut rx: mpsc::Receiver<PredictionJob>) {
         if jobs.len() == 0 {
             continue;
         }
-        // TODO: Handle cases.
-        match predict_and_send(jobs) {
-            Err(_) => (),
+        match predict_and_send(jobs).await {
             Ok(_) => (),
+            Err(_) => (),
         };
         // let handle = tokio::spawn(predict_and_send(jobs));
         // handles_by_batch_id.insert(batch_id, handle);
@@ -242,7 +241,7 @@ pub async fn batch_predict_loop(mut rx: mpsc::Receiver<PredictionJob>) {
 }
 
 #[instrument(skip_all)]
-fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError> {
+async fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError> {
     let mut jobs_by_id = HashMap::<String, PredictionJob>::new();
     let mut dfs = Vec::<LazyFrame>::new();
 
@@ -286,7 +285,7 @@ fn send_responses(
     df: DataFrame,
     mut jobs_by_id: HashMap<String, PredictionJob>,
 ) -> Result<(), PredictionError> {
-    df.partition_by(["job_id"], true)?
+    let _ = df.partition_by(["job_id"], true)?
         .iter()
         .map(|df| {
             let job_id = df
@@ -303,7 +302,7 @@ fn send_responses(
             }
         })
         .collect::<Vec<_>>()
-        .into_par_iter()
+        .into_iter()
         .map(|result| {
             match result {
                 Ok((job, df)) => {
@@ -340,7 +339,6 @@ pub async fn submit_prediction_request(
                 request: request.into_inner(),
                 sender: tx,
             })
-            .await
         {
             Ok(_) => rx.await.map_err(|err| {
                 PredictionError::Error(format!("Failed to receive result: {}", err))
