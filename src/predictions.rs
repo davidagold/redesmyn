@@ -1,6 +1,4 @@
 use actix_web::{post, web, HttpResponse, Responder};
-use futures::FutureExt;
-use futures::TryFutureExt;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
@@ -176,7 +174,6 @@ impl fmt::Display for ModelSpec {
 
 #[derive(Serialize)]
 pub struct PredictionResponse {
-    // model_inputs: Vec<Record>,
     predictions: Vec<Option<f64>>,
 }
 
@@ -231,11 +228,11 @@ pub async fn batch_predict_loop(mut rx: mpsc::UnboundedReceiver<PredictionJob>, 
         if jobs.len() == 0 {
             continue;
         }
-        match predict_and_send(jobs).await {
-            Ok(_) => (),
-            Err(_) => (),
-        };
-        // let handle = tokio::spawn(predict_and_send(jobs));
+        // match predict_and_send(jobs).await {
+        //     Ok(_) => (),
+        //     Err(_) => (),
+        // };
+        let handle = tokio::spawn(predict_and_send(jobs));
         // handles_by_batch_id.insert(batch_id, handle);
     }
 }
