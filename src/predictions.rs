@@ -2,7 +2,7 @@ use actix_web::{post, web, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-// use rayon::prelude::*;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -12,7 +12,12 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, oneshot, Mutex},
+    sync::{
+        mpsc,
+        oneshot::{self, error::RecvError},
+        Mutex,
+    },
+    task::{JoinError, JoinHandle},
     time::Instant,
 };
 use tracing::{self, event, instrument, Level};
@@ -28,7 +33,12 @@ pub enum ServiceError {
     PredictionError(PredictionError),
     VarError(VarError),
     IoError(io::Error),
+    JoinError(JoinError),
+    Error(String),
+    ReceiveError(RecvError),
 }
+
+impl std::error::Error for ServiceError {}
 
 impl From<PredictionError> for ServiceError {
     fn from(err: PredictionError) -> Self {
@@ -48,12 +58,45 @@ impl From<io::Error> for ServiceError {
     }
 }
 
+impl From<JoinError> for ServiceError {
+    fn from(err: JoinError) -> Self {
+        ServiceError::JoinError(err)
+    }
+}
+
+impl From<String> for ServiceError {
+    fn from(message: String) -> Self {
+        ServiceError::Error(message)
+    }
+}
+
+impl From<RecvError> for ServiceError {
+    fn from(err: RecvError) -> Self {
+        ServiceError::ReceiveError(err)
+    }
+}
+
+impl From<PolarsError> for ServiceError {
+    fn from(err: PolarsError) -> Self {
+        ServiceError::PredictionError(PredictionError::PolarsError(err))
+    }
+}
+
+impl From<serde_json::Error> for ServiceError {
+    fn from(err: serde_json::Error) -> Self {
+        ServiceError::Error(err.to_string())
+    }
+}
+
 impl fmt::Display for ServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ServiceError::PredictionError(err) => write!(f, "{}", err),
             ServiceError::VarError(err) => write!(f, "{}", err),
             ServiceError::IoError(err) => write!(f, "{}", err),
+            ServiceError::JoinError(err) => write!(f, "{}", err),
+            ServiceError::Error(err) => write!(f, "{}", err),
+            ServiceError::ReceiveError(err) => write!(f, "Failed to receive results: {}", err),
         }
     }
 }
@@ -69,12 +112,6 @@ pub enum PredictionError {
 impl From<PolarsError> for PredictionError {
     fn from(err: PolarsError) -> Self {
         PredictionError::PolarsError(err)
-    }
-}
-
-impl From<serde_json::Error> for PredictionError {
-    fn from(err: serde_json::Error) -> Self {
-        PredictionError::Error(err.to_string())
     }
 }
 
@@ -106,7 +143,7 @@ impl std::error::Error for PredictionError {}
 pub struct PredictionJob {
     id: Uuid,
     request: PredictionRequest,
-    sender: oneshot::Sender<Result<PredictionResponse, PredictionError>>,
+    sender: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
 }
 
 impl PredictionJob {
@@ -142,7 +179,7 @@ impl PredictionJob {
         }
     }
 
-    fn send(self, result: Result<PredictionResponse, PredictionError>) {
+    fn send(self, result: Result<PredictionResponse, ServiceError>) {
         match self.sender.send(result) {
             Err(_) => {
                 // TODO: Structure logging
@@ -188,37 +225,18 @@ impl AppState {
 }
 
 #[instrument(skip_all)]
-pub async fn batch_predict_loop(mut rx: mpsc::UnboundedReceiver<PredictionJob>, mut rx_abort: oneshot::Receiver<()>) {
-    let mut handles_by_batch_id =
-        HashMap::<Uuid, tokio::task::JoinHandle<Result<(), PredictionError>>>::new();
+pub async fn batch_predict_loop<'a>(
+    mut rx: mpsc::UnboundedReceiver<PredictionJob>,
+    mut rx_abort: oneshot::Receiver<()>,
+) {
     loop {
-        // let batch_ids_finished: Vec<_> = handles_by_batch_id
-        //     .iter()
-        //     .filter(|(_, handle)| handle.is_finished())
-        //     .map(|(batch_id, _)| batch_id.clone())
-        //     .collect();
-        // batch_ids_finished.iter().for_each(|batch_id| {
-        //     handles_by_batch_id.remove(batch_id).map(|handle| {
-        //         handle.map(|result| match result {
-        //             Ok(_) => (),
-        //             Err(err) => {
-        //                 event!(
-        //                     Level::ERROR,
-        //                     "Prediction batch with ID {} failed: {}",
-        //                     batch_id,
-        //                     err
-        //                 );
-        //             }
-        //         })
-        //     });
-        // });
         if let Ok(_) = rx_abort.try_recv() {
-            return
+            // TODO: Ensure that outstanding requests are handled gracefully.
+            return;
         }
-        let batch_id = Uuid::new_v4();
         let mut jobs = VecDeque::<PredictionJob>::new();
         let start = Instant::now();
-        let duration_wait = Duration::new(0, 10 * 1000);
+        let duration_wait = Duration::new(0, 10 * 1_000_000);
         while Instant::now() < start + duration_wait {
             if let Ok(job) = rx.try_recv() {
                 jobs.push_back(job);
@@ -228,17 +246,21 @@ pub async fn batch_predict_loop(mut rx: mpsc::UnboundedReceiver<PredictionJob>, 
         if jobs.len() == 0 {
             continue;
         }
-        // match predict_and_send(jobs).await {
-        //     Ok(_) => (),
-        //     Err(_) => (),
-        // };
-        let handle = tokio::spawn(predict_and_send(jobs));
-        // handles_by_batch_id.insert(batch_id, handle);
+        let handle_send = tokio::spawn(async move { predict_and_send(jobs).await });
+        tokio::spawn(await_send(handle_send));
     }
 }
 
+async fn await_send(handle_send: JoinHandle<Result<(), ServiceError>>) -> Result<(), ServiceError> {
+    match handle_send.await {
+        Ok(_) => (),
+        Err(err) => event!(Level::ERROR, "{}", err),
+    };
+    Ok(())
+}
+
 #[instrument(skip_all)]
-async fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError> {
+async fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), ServiceError> {
     let mut jobs_by_id = HashMap::<String, PredictionJob>::new();
     let mut dfs = Vec::<LazyFrame>::new();
 
@@ -260,10 +282,8 @@ async fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), Predictio
         .and_then(LazyFrame::collect)
         .map_err(PolarsError::into)
         .and_then(include_predictions)
-        .and_then(|results_df| {
-            event!(Level::INFO, "Sending results");
-            send_responses(results_df, jobs_by_id)
-        })
+        .map_err(PredictionError::into)
+        .and_then(|results_df| send_responses(results_df, jobs_by_id))
 }
 
 #[instrument(skip_all)]
@@ -275,14 +295,14 @@ fn include_predictions(df: DataFrame) -> Result<DataFrame, PredictionError> {
             .extract::<PyDataFrame>()
     })
     .map(|py_df| py_df.into())
-    .map_err(|err| err.into())
+    .map_err(PyErr::into)
 }
 
 fn send_responses(
     df: DataFrame,
     mut jobs_by_id: HashMap<String, PredictionJob>,
-) -> Result<(), PredictionError> {
-    let _ = df.partition_by(["job_id"], true)?
+) -> Result<(), ServiceError> {
+    df.partition_by(["job_id"], true)?
         .iter()
         .map(|df| {
             let job_id = df
@@ -299,16 +319,17 @@ fn send_responses(
             }
         })
         .collect::<Vec<_>>()
-        .into_iter()
-        .map(|result| {
-            match result {
-                Ok((job, df)) => {
-                    let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
-                    job.send(Ok(PredictionResponse { predictions }))
-                }
-                Err(err) => event!(Level::ERROR, "{}", err.to_string()),
-            }
-            Result::<(), PredictionError>::Ok(())
+        .into_par_iter()
+        .map(|result| match result {
+            Ok((job, df)) => {
+                let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
+                Ok(job.send(Ok(PredictionResponse { predictions })))
+            },
+            Err(err) => {
+                let message_err = err.to_string();
+                event!(Level::ERROR, "{}", message_err);
+                Err(ServiceError::Error(message_err))
+            },
         })
         .collect::<Vec<_>>();
     Ok(())
@@ -327,20 +348,13 @@ pub async fn submit_prediction_request(
     let (tx, rx) = oneshot::channel();
 
     let result = async {
-        match app_state
-            .job_sender
-            .lock()
-            .await
-            .send(PredictionJob {
-                id: Uuid::new_v4(),
-                request: request.into_inner(),
-                sender: tx,
-            })
-        {
-            Ok(_) => rx.await.map_err(|err| {
-                PredictionError::Error(format!("Failed to receive result: {}", err))
-            })?,
-            Err(_) => Err(PredictionError::Error("Failed to send job".to_string())),
+        match app_state.job_sender.lock().await.send(PredictionJob {
+            id: Uuid::new_v4(),
+            request: request.into_inner(),
+            sender: tx,
+        }) {
+            Ok(_) => rx.await?,
+            Err(_) => Err(ServiceError::Error("Failed to send job".to_string())),
         }
     }
     .await;

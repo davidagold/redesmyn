@@ -33,7 +33,7 @@ async def send_post_request(
 
 
 async def main():
-    n_tasks = 1
+    n_tasks = 512
     timings_ms_by_task_id: Dict[int, float] = {}
     async with aiohttp.ClientSession() as session:
         async with asyncio.TaskGroup() as tg:

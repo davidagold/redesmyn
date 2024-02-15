@@ -6,11 +6,12 @@ use rs_model_server::predictions::{self, ServiceError};
 use tokio::{
     signal,
     sync::{mpsc, oneshot},
+    task::JoinError,
 };
 use tracing::{event, instrument, Level};
 use tracing_subscriber::{self, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*, EnvFilter};
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 #[instrument]
 async fn main() -> Result<(), ServiceError> {
     let subscribe_layer = tracing_subscriber::fmt::layer()
@@ -56,26 +57,21 @@ async fn main() -> Result<(), ServiceError> {
             .service(predictions::submit_prediction_request)
     })
     .disable_signals()
+    .workers(512)
     .bind("127.0.0.1:8080")?
     .run();
+    let server_handle = server.handle();
+    tokio::spawn(async { server.await });
 
     let (tx_abort, rx_abort) = oneshot::channel::<()>();
     let predict_loop_handle = tokio::spawn(predictions::batch_predict_loop(rx, rx_abort));
-    let server_handle = server.handle();
     tokio::spawn(async move {
         let _ = signal::ctrl_c().await;
         event!(Level::INFO, "Received shutdown signal.");
         if let Err(_) = tx_abort.send(()) {
             event!(Level::ERROR, "Failed to send cancel signal.");
         }
-        match predict_loop_handle.await {
-            Ok(_) => {
-                event!(Level::INFO, "Predict loop cancelled.")
-            },
-            Err(err) => event!(Level::ERROR, "Failed to cancel predict loop: {err}"),
-        }
         server_handle.stop(true).await;
     });
-
-    server.await.map_err(std::io::Error::into)
+    predict_loop_handle.await.map_err(JoinError::into)
 }
