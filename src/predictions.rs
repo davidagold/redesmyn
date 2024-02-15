@@ -240,7 +240,6 @@ pub async fn batch_predict_loop<'a>(
         while Instant::now() < start + duration_wait {
             if let Ok(job) = rx.try_recv() {
                 jobs.push_back(job);
-                event!(Level::INFO, message = "Added one job to queue.");
             }
         }
         if jobs.len() == 0 {
@@ -261,22 +260,41 @@ async fn await_send(handle_send: JoinHandle<Result<(), ServiceError>>) -> Result
 
 #[instrument(skip_all)]
 async fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), ServiceError> {
-    let mut jobs_by_id = HashMap::<String, PredictionJob>::new();
-    let mut dfs = Vec::<LazyFrame>::new();
+    // let mut jobs_by_id = HashMap::<String, PredictionJob>::new();
+    // let mut dfs = Vec::<LazyFrame>::new();
 
     event!(
         Level::INFO,
         "Running batch predict for {} jobs.",
         jobs.len()
     );
-    jobs.into_iter()
-        .for_each(|mut job| match job.take_records_as_dataframe() {
-            Ok(df) => {
-                dfs.push(df.lazy());
+    let identity = || {
+        (
+            Vec::<LazyFrame>::new(),
+            HashMap::<String, PredictionJob>::new(),
+        )
+    };
+    let (dfs, jobs_by_id) = jobs
+        .into_par_iter()
+        .map(|mut job| match job.take_records_as_dataframe() {
+            Ok(df) => Ok((job, df.lazy())),
+            Err(err) => Err(job.send(Err(err.into()))),
+        })
+        .fold(identity, |(mut dfs, mut jobs_by_id), result| {
+            if let Ok((job, df)) = result {
                 jobs_by_id.insert(job.id.into(), job);
-            }
-            Err(err) => job.send(Err(err.into())),
-        });
+                dfs.push(df)
+            };
+            (dfs, jobs_by_id)
+        })
+        .reduce(
+            identity,
+            |(mut dfs, mut jobs_by_id), (_dfs, _jobs_by_id)| {
+                jobs_by_id.extend(_jobs_by_id);
+                dfs.extend(_dfs);
+                (dfs, jobs_by_id)
+            },
+        );
 
     concat(dfs, UnionArgs::default())
         .and_then(LazyFrame::collect)
@@ -324,12 +342,12 @@ fn send_responses(
             Ok((job, df)) => {
                 let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
                 Ok(job.send(Ok(PredictionResponse { predictions })))
-            },
+            }
             Err(err) => {
                 let message_err = err.to_string();
                 event!(Level::ERROR, "{}", message_err);
                 Err(ServiceError::Error(message_err))
-            },
+            }
         })
         .collect::<Vec<_>>();
     Ok(())
