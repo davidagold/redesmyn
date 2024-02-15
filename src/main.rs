@@ -1,15 +1,15 @@
-use std::env::{self, current_dir};
+use std::env;
 
 use actix_web::{web, App, HttpServer};
 use pyo3::Python;
-use rs_model_server::predictions;
+use rs_model_server::predictions::{self, ServiceError};
 use tokio::sync::mpsc;
 use tracing::{event, instrument, Level};
 use tracing_subscriber::{self, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[tokio::main]
 #[instrument]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), ServiceError> {
     // let path_venv = "/Users/davidgold/.local/share/virtualenvs/notebooks-C37d9m95";
     // env::set_var("", format!("{}/bin/python3", path_venv));
     // env::set_var("PYTHONHOME", format!("{}/lib/", path_venv));
@@ -26,16 +26,21 @@ async fn main() -> std::io::Result<()> {
         .with(subscribe_layer)
         .init();
 
+    // let mlflow_tracking_dir = env::var("MLFLOW_TRACKING_DIR")?;
+    // let mlflow_registry_dir = env::var("MLFLOW_REGISTRY_DIR")?;
+    // event!(Level::INFO, "Found MLFLOW_TRACKING_DIR={}", mlflow_tracking_dir);
+    // event!(Level::INFO, "Found MLFLOW_REGISTRY_DIR={}", mlflow_registry_dir);
+
     pyo3::prepare_freethreaded_python();
     match Python::with_gil(|py| {
         let sys = py.import("sys")?;
         let version = sys.getattr("version")?.extract::<String>()?;
         let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
         event!(Level::INFO, "Found Python version: {}", version);
-        event!(Level::INFO, "Found Python path: {:#?}", python_path);
+        event!(Level::INFO, "Found Python path: {:?}", python_path);
         sys.getattr("path")?
             .getattr("insert")
-            .and_then(move |insert| insert.call((0, current_dir()?), None))?;
+            .and_then(move |insert| insert.call((0, env::current_dir()?), None))?;
 
         Ok::<(), std::io::Error>(())
     }) {
@@ -48,7 +53,7 @@ async fn main() -> std::io::Result<()> {
 
     event!(
         Level::INFO,
-        "Starting `main` in working directory {:#?}",
+        "Starting `main` in working directory {:?}",
         env::current_dir()?
     );
 
@@ -65,4 +70,5 @@ async fn main() -> std::io::Result<()> {
     .bind("127.0.0.1:8080")?
     .run()
     .await
+    .map_err(std::io::Error::into)
 }

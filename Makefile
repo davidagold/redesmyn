@@ -10,6 +10,6 @@ build:
 run: build
 	RUST_LOG=INFO \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
-	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlfow \
-	MLFLOW_REGISTRY_DIR=$(shell pwd)/data/models/mlfow \
+	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
+	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run

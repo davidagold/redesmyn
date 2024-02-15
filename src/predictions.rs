@@ -5,10 +5,7 @@ use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
-    fmt,
-    iter::repeat,
-    time::Duration,
+    collections::{HashMap, VecDeque}, env::VarError, fmt, iter::repeat, time::Duration, io
 };
 use tokio::{
     sync::{mpsc, Mutex},
@@ -23,10 +20,46 @@ pub struct PredictionRequest {
 }
 
 #[derive(Debug)]
+pub enum ServiceError {
+    PredictionError(PredictionError),
+    VarError(VarError),
+    IoError(io::Error),
+}
+
+impl From<PredictionError> for ServiceError {
+    fn from(err: PredictionError) -> Self {
+        ServiceError::PredictionError(err)
+    }
+}
+
+impl From<VarError> for ServiceError {
+    fn from(err: VarError) -> Self {
+        ServiceError::VarError(err)
+    }
+}
+
+impl From<io::Error> for ServiceError {
+    fn from(err: io::Error) -> Self {
+        ServiceError::IoError(err)
+    }
+}
+
+impl fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServiceError::PredictionError(err) => write!(f, "{}", err),
+            ServiceError::VarError(err) => write!(f, "{}", err),
+            ServiceError::IoError(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum PredictionError {
     Error(String),
     PolarsError(polars::prelude::PolarsError),
     PyError(pyo3::prelude::PyErr),
+    IoError(io::Error),
 }
 
 impl From<PolarsError> for PredictionError {
@@ -47,12 +80,19 @@ impl From<pyo3::prelude::PyErr> for PredictionError {
     }
 }
 
+impl From<io::Error> for PredictionError {
+    fn from(err: io::Error) -> Self {
+        PredictionError::IoError(err)
+    }
+}
+
 impl fmt::Display for PredictionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PredictionError::Error(e) => write!(f, "General failure: {}", e),
-            PredictionError::PolarsError(e) => write!(f, "Polars failure: {}", e),
-            PredictionError::PyError(e) => write!(f, "Python failure: {}", e),
+            PredictionError::Error(err) => write!(f, "{}", err),
+            PredictionError::PolarsError(err) => write!(f, "Polars failure: {}", err),
+            PredictionError::PyError(err) => write!(f, "Python failure: {}", err),
+            PredictionError::IoError(err) => write!(f, "IO error: {}", err)
         }
     }
 }
