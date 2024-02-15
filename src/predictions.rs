@@ -1,11 +1,18 @@
 use actix_web::{post, web, HttpResponse, Responder};
 use futures::channel::oneshot;
+use futures::FutureExt;
+use futures::TryFutureExt;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque}, env::VarError, fmt, iter::repeat, time::Duration, io
+    collections::{HashMap, VecDeque},
+    env::VarError,
+    fmt, io,
+    iter::repeat,
+    time::Duration,
 };
 use tokio::{
     sync::{mpsc, Mutex},
@@ -92,7 +99,7 @@ impl fmt::Display for PredictionError {
             PredictionError::Error(err) => write!(f, "{}", err),
             PredictionError::PolarsError(err) => write!(f, "Polars failure: {}", err),
             PredictionError::PyError(err) => write!(f, "Python failure: {}", err),
-            PredictionError::IoError(err) => write!(f, "IO error: {}", err)
+            PredictionError::IoError(err) => write!(f, "IO error: {}", err),
         }
     }
 }
@@ -139,10 +146,13 @@ impl PredictionJob {
     }
 
     fn send(self, result: Result<PredictionResponse, PredictionError>) {
-        if let Err(_) = self.sender.send(Err(result.err().unwrap().into())) {
-            // TODO: Structure logging
-            let message = format!("Failed to send result for job with ID {}", self.id);
-            event!(Level::WARN, message)
+        match self.sender.send(result) {
+            Err(_) => {
+                // TODO: Structure logging
+                let message = format!("Failed to send result for job with ID {}", self.id);
+                event!(Level::WARN, message)
+            }
+            Ok(_) => (),
         }
     }
 }
@@ -182,23 +192,52 @@ impl AppState {
 }
 
 #[instrument(skip_all)]
-pub async fn batch_predict_loop(mut receiver: mpsc::Receiver<PredictionJob>) {
+pub async fn batch_predict_loop(mut rx: mpsc::Receiver<PredictionJob>) {
+    let mut handles_by_batch_id =
+        HashMap::<Uuid, tokio::task::JoinHandle<Result<(), PredictionError>>>::new();
     loop {
+        // let batch_ids: Vec<_> = handles_by_batch_id.keys().collect();
+        let batch_ids_finished: Vec<_> = handles_by_batch_id
+            .iter()
+            .filter(|(_, handle)| handle.is_finished())
+            .map(|(batch_id, _)| batch_id.clone())
+            .collect();
+        batch_ids_finished.iter().for_each(|batch_id| {
+            handles_by_batch_id.remove(batch_id).map(|handle| {
+                handle.map(|result| match result {
+                    Ok(_) => (),
+                    Err(err) => {
+                        event!(
+                            Level::ERROR,
+                            "Prediction batch with ID {} failed: {}",
+                            batch_id,
+                            err
+                        );
+                    }
+                })
+            });
+        });
+
+        let batch_id = Uuid::new_v4();
         let mut jobs = VecDeque::<PredictionJob>::new();
         let start = Instant::now();
-        let duration_wait = Duration::new(0, 1000);
+        let duration_wait = Duration::new(0, 10 * 1000);
         while Instant::now() < start + duration_wait {
-            if let Some(job) = receiver.recv().await {
+            if let Ok(job) = rx.try_recv() {
                 jobs.push_back(job);
                 event!(Level::INFO, message = "Added one job to queue.");
             }
         }
-
+        if jobs.len() == 0 {
+            continue;
+        }
         // TODO: Handle cases.
         match predict_and_send(jobs) {
-            Ok(_) => (),
             Err(_) => (),
+            Ok(_) => (),
         };
+        // let handle = tokio::spawn(predict_and_send(jobs));
+        // handles_by_batch_id.insert(batch_id, handle);
     }
 }
 
@@ -207,6 +246,11 @@ fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError
     let mut jobs_by_id = HashMap::<String, PredictionJob>::new();
     let mut dfs = Vec::<LazyFrame>::new();
 
+    event!(
+        Level::INFO,
+        "Running batch predict for {} jobs.",
+        jobs.len()
+    );
     jobs.into_iter()
         .for_each(|mut job| match job.take_records_as_dataframe() {
             Ok(df) => {
@@ -222,14 +266,7 @@ fn predict_and_send(jobs: VecDeque<PredictionJob>) -> Result<(), PredictionError
         .and_then(include_predictions)
         .and_then(|results_df| {
             event!(Level::INFO, "Sending results");
-            send_responses(&results_df, &mut jobs_by_id)
-        })
-        .map_err(|err| {
-            let message_err = err.to_string();
-            jobs_by_id.into_values().for_each(|job| {
-                job.send(Err(PredictionError::Error(message_err.clone())));
-            });
-            PredictionError::Error(message_err)
+            send_responses(results_df, jobs_by_id)
         })
 }
 
@@ -246,23 +283,38 @@ fn include_predictions(df: DataFrame) -> Result<DataFrame, PredictionError> {
 }
 
 fn send_responses(
-    df: &DataFrame,
-    jobs_by_id: &mut HashMap<String, PredictionJob>,
+    df: DataFrame,
+    mut jobs_by_id: HashMap<String, PredictionJob>,
 ) -> Result<(), PredictionError> {
-    for df in df.partition_by(["job_id"], true)? {
-        let job_id = df
-            .column("job_id")?
-            .str()?
-            .get(0)
-            .ok_or_else(|| PredictionError::Error("Failed to get job ID.".to_string()))?;
+    df.partition_by(["job_id"], true)?
+        .iter()
+        .map(|df| {
+            let job_id = df
+                .column("job_id")?
+                .str()?
+                .get(0)
+                .ok_or_else(|| PredictionError::Error("Failed to get job ID.".to_string()))?;
 
-        if let Some(job) = jobs_by_id.remove(&job_id.to_string()) {
-            let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
-            job.send(Ok(PredictionResponse { predictions }));
-        } else {
-            event!(Level::ERROR, "Failed to get job with ID {}", job_id)
-        }
-    }
+            match jobs_by_id.remove(&job_id.to_string()).ok_or_else(|| {
+                PredictionError::Error(format!("Failed to retrieve job with ID {}", job_id))
+            }) {
+                Ok(job) => Ok((job, df)).into(),
+                Err(err) => Err(err),
+            }
+        })
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(|result| {
+            match result {
+                Ok((job, df)) => {
+                    let predictions = df.column("prediction").map(|s| s.f64())??.to_vec();
+                    job.send(Ok(PredictionResponse { predictions }))
+                }
+                Err(err) => event!(Level::ERROR, "{}", err.to_string()),
+            }
+            Result::<(), PredictionError>::Ok(())
+        })
+        .collect::<Vec<_>>();
     Ok(())
 }
 

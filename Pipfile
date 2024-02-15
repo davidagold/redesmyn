@@ -9,8 +9,10 @@ polars = "*"
 scikit-learn = "*"
 numpy = "*"
 mlflow = "*"
+aiohttp = "*"
 
 [dev-packages]
+ipykernel = "*"
 
 [requires]
 python_version = "3.11"
