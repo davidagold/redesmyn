@@ -57,7 +57,7 @@ async fn main() -> Result<(), ServiceError> {
             .service(predictions::submit_prediction_request)
     })
     .disable_signals()
-    .workers(512)
+    .workers(256)
     .bind("127.0.0.1:8080")?
     .run();
     let server_handle = server.handle();
