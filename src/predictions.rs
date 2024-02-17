@@ -24,11 +24,6 @@ use tokio::{
 use tracing::{self, event, instrument, Level};
 use uuid::Uuid;
 
-#[derive(Deserialize)]
-pub struct PredictionRequest {
-    records: Vec<Record>,
-}
-
 #[derive(Error, Debug)]
 pub enum ServiceError {
     #[error("{0}")]
@@ -61,6 +56,47 @@ pub enum PredictionError {
     IoError(#[from] io::Error),
 }
 
+trait Push {
+    fn push(&self, columns: &mut HashMap<String, Vec<f64>>);
+}
+
+#[derive(Debug, Deserialize)]
+enum Record {
+    ToyRecord(ToyRecord),
+}
+
+impl Record {
+    fn push(&self, columns: &mut HashMap<String, Vec<f64>>) {
+        match self {
+            Record::ToyRecord(r) => r.push(columns),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToyRecord {
+    a: f64,
+    b: f64,
+}
+
+impl Push for ToyRecord {
+    fn push(&self, columns: &mut HashMap<String, Vec<f64>>) {
+        columns
+            .entry("a".to_string())
+            .or_insert_with(Vec::new)
+            .push(self.a);
+        columns
+            .entry("b".to_string())
+            .or_insert_with(Vec::new)
+            .push(self.b);
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PredictionRequest {
+    records: Vec<Record>,
+}
+
 pub struct PredictionJob {
     id: Uuid,
     request: PredictionRequest,
@@ -80,16 +116,9 @@ impl PredictionJob {
         let mut columns = HashMap::<String, Vec<f64>>::new();
         let n_records = self.request.records.len();
 
-        (*self.request.records).into_iter().for_each(|record| {
-            columns
-                .entry("a".to_string())
-                .or_insert_with(Vec::new)
-                .push(record.a);
-            columns
-                .entry("b".to_string())
-                .or_insert_with(Vec::new)
-                .push(record.b);
-        });
+        (*self.request.records)
+            .into_iter()
+            .for_each(|record| record.push(&mut columns));
 
         let series: Vec<Series> = columns
             .into_iter()
@@ -114,24 +143,6 @@ impl PredictionJob {
             }
             Ok(_) => (),
         }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Record {
-    a: f64,
-    b: f64,
-}
-
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
-}
-
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
     }
 }
 
@@ -171,6 +182,7 @@ pub async fn batch_predict_loop<'a>(
         if jobs.len() == 0 {
             continue;
         };
+        // tokio::spawn(predict_and_send(jobs));
         let handle_send = tokio::spawn(async move { predict_and_send(jobs).await });
         tokio::spawn(await_send(handle_send));
     }
@@ -287,6 +299,18 @@ fn send_responses(mut batch: BatchJob) -> Result<(), ServiceError> {
         })
         .collect::<Vec<_>>();
     Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct ModelSpec {
+    model_name: String,
+    model_version: String,
+}
+
+impl fmt::Display for ModelSpec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.model_name, self.model_version)
+    }
 }
 
 #[instrument(skip_all)]
