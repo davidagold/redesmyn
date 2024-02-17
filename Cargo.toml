@@ -14,6 +14,7 @@ pyo3-polars = "0.11.3"
 rayon = "1.8.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+thiserror = "1.0.57"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { verison = "0.3.18", features = ["json", "env-filter"]}

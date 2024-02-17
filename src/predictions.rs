@@ -11,6 +11,7 @@ use std::{
     iter::repeat,
     time::Duration,
 };
+use thiserror::Error;
 use tokio::{
     sync::{
         mpsc,
@@ -28,121 +29,37 @@ pub struct PredictionRequest {
     records: Vec<Record>,
 }
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum ServiceError {
-    PredictionError(PredictionError),
-    VarError(VarError),
-    IoError(io::Error),
-    JoinError(JoinError),
+    #[error("{0}")]
+    PredictionError(#[from] PredictionError),
+    #[error("Environment variable not found: {0}.")]
+    VarError(#[from] VarError),
+    #[error("{0}")]
+    IoError(#[from] io::Error),
+    #[error("{0}")]
+    JoinError(#[from] JoinError),
+    #[error("{0}")]
     Error(String),
-    ReceiveError(RecvError),
-    PolarsError(PolarsError),
+    #[error("Failed to received result: {0}")]
+    ReceiveError(#[from] RecvError),
+    #[error("Polars operation failed: {0}")]
+    ParseError(#[from] PolarsError),
+    #[error("Failed to serialize result: {0}")]
+    JsonError(#[from] serde_json::Error),
 }
 
-impl std::error::Error for ServiceError {}
-
-impl From<PredictionError> for ServiceError {
-    fn from(err: PredictionError) -> Self {
-        ServiceError::PredictionError(err)
-    }
-}
-
-impl From<VarError> for ServiceError {
-    fn from(err: VarError) -> Self {
-        ServiceError::VarError(err)
-    }
-}
-
-impl From<io::Error> for ServiceError {
-    fn from(err: io::Error) -> Self {
-        ServiceError::IoError(err)
-    }
-}
-
-impl From<JoinError> for ServiceError {
-    fn from(err: JoinError) -> Self {
-        ServiceError::JoinError(err)
-    }
-}
-
-impl From<String> for ServiceError {
-    fn from(message: String) -> Self {
-        ServiceError::Error(message)
-    }
-}
-
-impl From<RecvError> for ServiceError {
-    fn from(err: RecvError) -> Self {
-        ServiceError::ReceiveError(err)
-    }
-}
-
-impl From<PolarsError> for ServiceError {
-    fn from(err: PolarsError) -> Self {
-        ServiceError::PredictionError(PredictionError::PolarsError(err))
-    }
-}
-
-impl From<serde_json::Error> for ServiceError {
-    fn from(err: serde_json::Error) -> Self {
-        ServiceError::Error(err.to_string())
-    }
-}
-
-impl fmt::Display for ServiceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ServiceError::PredictionError(err) => write!(f, "{}", err),
-            ServiceError::VarError(err) => write!(f, "{}", err),
-            ServiceError::IoError(err) => write!(f, "{}", err),
-            ServiceError::JoinError(err) => write!(f, "{}", err),
-            ServiceError::Error(err) => write!(f, "{}", err),
-            ServiceError::ReceiveError(err) => write!(f, "Failed to receive results: {}", err),
-            ServiceError::PolarsError(err) => {
-                write!(f, "Failed to parse records into DataFrame: {}", err)
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum PredictionError {
+    #[error("Prediction failed: {0}.")]
     Error(String),
-    PolarsError(polars::prelude::PolarsError),
-    PyError(pyo3::prelude::PyErr),
-    IoError(io::Error),
+    #[error("Prediction failed from Polars operation: {0}.")]
+    PolarsError(#[from] polars::prelude::PolarsError),
+    #[error("Prediction failed from PyO3 operation: {0}.")]
+    PyError(#[from] pyo3::prelude::PyErr),
+    #[error("Prediction failed during IO: {0}.")]
+    IoError(#[from] io::Error),
 }
-
-impl From<PolarsError> for PredictionError {
-    fn from(err: PolarsError) -> Self {
-        PredictionError::PolarsError(err)
-    }
-}
-
-impl From<pyo3::prelude::PyErr> for PredictionError {
-    fn from(err: pyo3::prelude::PyErr) -> Self {
-        PredictionError::PyError(err)
-    }
-}
-
-impl From<io::Error> for PredictionError {
-    fn from(err: io::Error) -> Self {
-        PredictionError::IoError(err)
-    }
-}
-
-impl fmt::Display for PredictionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PredictionError::Error(err) => write!(f, "{}", err),
-            PredictionError::PolarsError(err) => write!(f, "Polars failure: {}", err),
-            PredictionError::PyError(err) => write!(f, "Python failure: {}", err),
-            PredictionError::IoError(err) => write!(f, "IO error: {}", err),
-        }
-    }
-}
-
-impl std::error::Error for PredictionError {}
 
 pub struct PredictionJob {
     id: Uuid,
@@ -279,7 +196,7 @@ impl BatchJob {
                 HashMap::<String, PredictionJob>::new(),
                 Vec::<DataFrame>::new(),
             ),
-            move |(mut jobs_by_id, mut dfs), mut job| {
+            |(mut jobs_by_id, mut dfs), mut job| {
                 match job.take_records_as_df() {
                     Ok(df) => {
                         dfs.push(df);
