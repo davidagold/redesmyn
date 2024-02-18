@@ -1,11 +1,11 @@
 [package]
-name = "rs-model-server"
+name = "redesmyn"
 version = { workspace = true }
 authors = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-readme = "../../README.md"
+readme = { workspace = true }
 repository = { workspace = true }
 
 [dependencies]
@@ -25,4 +25,4 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"] }
 uuid = { version = "*", features = ["v4"]}
 
-macros = { path = "../macros" }
+redesmyn-macros = { workspace = "true", path = "../redesmyn-macros" }

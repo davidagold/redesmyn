@@ -7,10 +7,9 @@ default-members = ["crates/*"]
 authors = ["David Gold <david.gold.a@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
-homepage = "https://github.com/davidagold/rs-model-server"
-repository = "https://github.com/davidagold/rs-model-server"
-# TODO: Include README
-readme = "https://github.com/davidagold/rs-model-server/README.md"
+homepage = "https://github.com/davidagold/redesmyn"
+repository = "https://github.com/davidagold/redesmyn"
+readme = "https://github.com/davidagold/redesmyn/README.md"
 license = "MIT"
 
 [workspace.dependencies]
@@ -30,5 +29,5 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"]}
 uuid = { version = "*", features = ["v4"]}
 
-rs-model-server = { version = "0.1.0", path = "crates/rs-model-server" }
-macros = { workspace = "true", path = "crates/macros"}
+redesmyn = { workspace = "true", path = "crates/redesmyn" }
+redesmyn-macros = { workspace = "true", path = "crates/redesmyn-macros"}

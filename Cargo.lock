@@ -1184,16 +1184,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.49",
- "thiserror",
-]
-
-[[package]]
 name = "matchers"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2037,6 +2027,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "redesmyn"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "arrow",
+ "futures",
+ "memmap",
+ "polars",
+ "pyo3",
+ "pyo3-polars",
+ "rayon",
+ "redesmyn-macros",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "redesmyn-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.49",
+ "thiserror",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2088,28 +2110,6 @@ name = "regex-syntax"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08c74e62047bb2de4ff487b251e4a92e24f48745648451635cec7d591162d9f"
-
-[[package]]
-name = "rs-model-server"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "arrow",
- "futures",
- "macros",
- "memmap",
- "polars",
- "pyo3",
- "pyo3-polars",
- "rayon",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
 
 [[package]]
 name = "rustc-demangle"

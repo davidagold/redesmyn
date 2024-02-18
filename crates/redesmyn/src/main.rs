@@ -2,7 +2,7 @@ use std::env;
 
 use actix_web::{dev::ServerHandle, web, App, HttpServer};
 use pyo3::{PyResult, Python};
-use rs_model_server::predictions::{self, ServiceError, ToyRecord};
+use redesmyn::predictions::{self, ServiceError, ToyRecord};
 use tokio::{
     signal,
     sync::{mpsc, oneshot},

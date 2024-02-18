@@ -1,5 +1,5 @@
 use actix_web::{post, web, HttpResponse, Responder};
-use macros;
+use redesmyn_macros;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
@@ -74,7 +74,7 @@ pub trait Record<R> {
     fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>;
 }
 
-#[derive(Debug, Deserialize, macros::Record)]
+#[derive(Debug, Deserialize, redesmyn_macros::Record)]
 pub struct ToyRecord {
     a: f64,
     b: f64,
