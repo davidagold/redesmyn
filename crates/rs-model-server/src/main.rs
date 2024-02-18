@@ -1,6 +1,6 @@
 use std::env;
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{dev::ServerHandle, web, App, HttpServer};
 use pyo3::Python;
 use rs_model_server::predictions::{self, ServiceError, ToyRecord};
 use tokio::{
@@ -10,6 +10,7 @@ use tokio::{
 };
 use tracing::{event, instrument, Level};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
+
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 #[instrument]
@@ -41,15 +42,11 @@ async fn main() -> Result<(), ServiceError> {
         )),
     }?;
 
-    event!(
-        Level::INFO,
-        "Starting `main` in working directory {:?}",
-        env::current_dir()?
-    );
+    tracing::info!("Starting `main` from directory {:?}", env::current_dir()?);
 
     let (tx, rx) = mpsc::unbounded_channel();
     let server = HttpServer::new(move || {
-        let app_state = predictions::AppState::<ToyRecord>::new(tx.clone());
+        let app_state = predictions::PredictionService::<ToyRecord>::new(tx.clone());
         App::new()
             .app_data(web::Data::new(app_state))
             .service(predictions::submit_prediction_request)
@@ -63,13 +60,15 @@ async fn main() -> Result<(), ServiceError> {
 
     let (tx_abort, rx_abort) = oneshot::channel::<()>();
     let predict_loop_handle = tokio::spawn(predictions::batch_predict_loop(rx, rx_abort));
-    tokio::spawn(async move {
-        let _ = signal::ctrl_c().await;
-        event!(Level::INFO, "Received shutdown signal.");
-        if let Err(_) = tx_abort.send(()) {
-            event!(Level::ERROR, "Failed to send cancel signal.");
-        }
-        server_handle.stop(true).await;
-    });
+    tokio::spawn(await_shutdown(server_handle, tx_abort));
     predict_loop_handle.await.map_err(JoinError::into)
+}
+
+async fn await_shutdown(server_handle: ServerHandle, tx_abort: oneshot::Sender<()>) {
+    let _ = signal::ctrl_c().await;
+    event!(Level::INFO, "Received shutdown signal.");
+    if let Err(_) = tx_abort.send(()) {
+        event!(Level::ERROR, "Failed to send cancel signal.");
+    }
+    server_handle.stop(true).await;
 }

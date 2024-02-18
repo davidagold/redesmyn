@@ -36,7 +36,7 @@ async def send_post_request(
 
 
 async def main():
-    n_tasks = 10000
+    n_tasks = 100
     records_by_task_id: Dict[int, Dict] = {}
     async with aiohttp.ClientSession() as session:
         async with asyncio.TaskGroup() as tg:

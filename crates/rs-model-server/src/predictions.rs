@@ -82,7 +82,6 @@ impl Record<ToyRecord> for ToyRecord {
         }
 
         let columns: Vec<Series> = vec![Series::new("a", a), Series::new("b", b)];
-
         DataFrame::new(columns)
     }
 }
@@ -127,7 +126,7 @@ where
         }
     }
 
-    fn send(self, result: Result<PredictionResponse, ServiceError>) {
+    fn send_result(self, result: Result<PredictionResponse, ServiceError>) {
         match self.tx.send(result) {
             Err(_) => {
                 // TODO: Structure logging
@@ -208,7 +207,7 @@ where
                         dfs.push(df);
                         jobs_by_id.insert(job.id.into(), job);
                     }
-                    Err(err) => job.send(Err(err)),
+                    Err(err) => job.send_result(Err(err)),
                 }
                 (jobs_by_id, dfs)
             },
@@ -271,7 +270,7 @@ where
                 .and_then(|s| s.f64())
                 .map(|a| a.to_vec())
             {
-                Ok(predictions) => job.send(Ok(PredictionResponse { predictions })),
+                Ok(predictions) => job.send_result(Ok(PredictionResponse { predictions })),
                 Err(err) => tracing::error!("{}", err),
             }
         }
@@ -307,19 +306,19 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub struct AppState<R>
+pub struct PredictionService<R>
 where
     R: Record<R>,
 {
-    job_sender: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
+    tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
 }
 
-impl<R> AppState<R>
+impl<R> PredictionService<R>
 where
     R: Record<R>,
 {
-    pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> AppState<R> {
-        AppState { job_sender: tx.into() }
+    pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> PredictionService<R> {
+        PredictionService { tx: tx.into() }
     }
 }
 
@@ -328,7 +327,7 @@ where
 pub async fn submit_prediction_request(
     model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<ToyRecord>>,
-    app_state: web::Data<AppState<ToyRecord>>,
+    app_state: web::Data<PredictionService<ToyRecord>>,
 ) -> impl Responder {
     let ModelSpec { model_name, model_version } = &*model_spec;
     event!(Level::INFO, %model_name, %model_version);
@@ -337,7 +336,7 @@ pub async fn submit_prediction_request(
     let job = PredictionJob::new(records.into_inner(), tx);
 
     let result = async {
-        match app_state.job_sender.lock().await.send(job) {
+        match app_state.tx.lock().await.send(job) {
             Ok(_) => rx.await?,
             Err(err) => Err(err.into()),
         }
