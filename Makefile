@@ -4,9 +4,10 @@ SHELL := /bin/bash
 
 PYO3_PRINT_CONFIG = 0
 RUST_LOG ?= INFO
+FLAGS ?= ""
 
 build:
-	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh
+	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS)
 
 run: build
 	RUST_LOG=$(RUST_LOG) \

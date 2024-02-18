@@ -24,7 +24,6 @@ async def send_post_request(
     start = time.perf_counter_ns()
     async with session.post(url, json=data) as response:
         response_data = await response.text()
-        print(response_data)
         if isinstance(response_data, str):
             message = response_data
         else: 
@@ -37,7 +36,7 @@ async def send_post_request(
 
 
 async def main():
-    n_tasks = 512
+    n_tasks = 10000
     records_by_task_id: Dict[int, Dict] = {}
     async with aiohttp.ClientSession() as session:
         async with asyncio.TaskGroup() as tg:
@@ -54,8 +53,6 @@ async def main():
     df = pl.DataFrame(list(records_by_task_id.values())).cast({"status_code": pl.Categorical})
     print(df.select("timing").describe())
     print(df.group_by("status_code", "message").len())
-    # print(f"{len(records_by_task_id)=}")
-    # print(records_by_task_id)
 
 
 if __name__ == '__main__':
