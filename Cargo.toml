@@ -4,7 +4,6 @@ members = ["crates/*"]
 default-members = ["crates/*"]
 
 [workspace.package]
-name = "rs-model-server"
 authors = ["David Gold <david.gold.a@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
@@ -28,7 +27,8 @@ serde_json = "1.0"
 thiserror = "1.0.57"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.40"
-tracing-subscriber = { verison = "0.3.18", features = ["json", "env-filter"]}
+tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"]}
 uuid = { version = "*", features = ["v4"]}
 
 rs-model-server = { version = "0.1.0", path = "crates/rs-model-server" }
+macros = { workspace = "true", path = "crates/macros"}

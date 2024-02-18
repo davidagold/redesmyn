@@ -1186,6 +1186,12 @@ dependencies = [
 [[package]]
 name = "macros"
 version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.49",
+ "thiserror",
+]
 
 [[package]]
 name = "matchers"
@@ -2090,6 +2096,7 @@ dependencies = [
  "actix-web",
  "arrow",
  "futures",
+ "macros",
  "memmap",
  "polars",
  "pyo3",

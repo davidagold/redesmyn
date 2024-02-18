@@ -22,6 +22,7 @@ use tokio::{
 };
 use tracing::{self, event, instrument, Level};
 use uuid::Uuid;
+use macros;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -67,23 +68,10 @@ pub trait Record<R> {
     fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>;
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, macros::Record)]
 pub struct ToyRecord {
     a: f64,
     b: f64,
-}
-
-impl Record<ToyRecord> for ToyRecord {
-    fn to_dataframe(records: Vec<ToyRecord>) -> PolarsResult<DataFrame> {
-        let (mut a, mut b) = (Vec::<f64>::new(), Vec::<f64>::new());
-        for record in records {
-            a.push(record.a);
-            b.push(record.b);
-        }
-
-        let columns: Vec<Series> = vec![Series::new("a", a), Series::new("b", b)];
-        DataFrame::new(columns)
-    }
 }
 
 pub struct PredictionJob<R>
@@ -166,20 +154,16 @@ pub async fn batch_predict_loop<R>(
         if jobs.len() == 0 {
             continue;
         };
-        let handle_send = tokio::spawn(async move {
-            match predict_and_send(jobs).await {
-                Ok(()) => (),
-                Err(err) => tracing::error!("{}", err),
-            }
-        });
-        tokio::spawn(await_send(handle_send));
+        let handle_send_results = tokio::spawn(predict_and_send(jobs));
+        tokio::spawn(await_send(handle_send_results));
     }
 }
 
-async fn await_send(handle_send: JoinHandle<()>) {
-    match handle_send.await {
-        Ok(_) => (),
-        Err(err) => event!(Level::ERROR, "{}", err),
+async fn await_send(handle_send_results: JoinHandle<Result<(), ServiceError>>) -> () {
+    match handle_send_results.await {
+        Ok(Ok(_)) => (),
+        Ok(Err(err)) => tracing::error!("{}", err),
+        Err(err) => tracing::error!("{}", err),
     };
 }
 
