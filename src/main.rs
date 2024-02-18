@@ -2,21 +2,19 @@ use std::env;
 
 use actix_web::{web, App, HttpServer};
 use pyo3::Python;
-use rs_model_server::predictions::{self, ServiceError};
+use rs_model_server::predictions::{self, ServiceError, ToyRecord};
 use tokio::{
     signal,
     sync::{mpsc, oneshot},
     task::JoinError,
 };
 use tracing::{event, instrument, Level};
-use tracing_subscriber::{self, fmt::format::FmtSpan, layer::SubscriberExt, prelude::*, EnvFilter};
+use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 #[instrument]
 async fn main() -> Result<(), ServiceError> {
-    let subscribe_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .with_span_events(FmtSpan::CLOSE);
+    let subscribe_layer = tracing_subscriber::fmt::layer().json();
 
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
@@ -51,7 +49,7 @@ async fn main() -> Result<(), ServiceError> {
 
     let (tx, rx) = mpsc::unbounded_channel();
     let server = HttpServer::new(move || {
-        let app_state = predictions::AppState::new(tx.clone());
+        let app_state = predictions::AppState::<ToyRecord>::new(tx.clone());
         App::new()
             .app_data(web::Data::new(app_state))
             .service(predictions::submit_prediction_request)
