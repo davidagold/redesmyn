@@ -6,7 +6,7 @@ name = "pypi"
 [packages]
 lightgbm = "*"
 polars = "*"
-scikit-learn = "*"
+scikit-learn = "1.4.0"
 numpy = "*"
 mlflow = "*"
 aiohttp = "*"
