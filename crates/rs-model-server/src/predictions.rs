@@ -1,4 +1,5 @@
 use actix_web::{post, web, HttpResponse, Responder};
+use macros;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
@@ -20,9 +21,8 @@ use tokio::{
     task::{JoinError, JoinHandle},
     time::Instant,
 };
-use tracing::{self, event, instrument, Level};
+use tracing::instrument;
 use uuid::Uuid;
-use macros;
 
 #[derive(Error, Debug)]
 pub enum ServiceError {
@@ -49,6 +49,12 @@ pub enum ServiceError {
 impl<T> From<SendError<T>> for ServiceError {
     fn from(err: SendError<T>) -> Self {
         Self::SendError(err.to_string())
+    }
+}
+
+impl<T> From<ServiceError> for Result<T, ServiceError> {
+    fn from(err: ServiceError) -> Self {
+        Err(err)
     }
 }
 
@@ -118,8 +124,7 @@ where
         match self.tx.send(result) {
             Err(_) => {
                 // TODO: Structure logging
-                let message = format!("Failed to send result for job with ID {}", self.id);
-                event!(Level::ERROR, message)
+                tracing::error!("Failed to send result for job with ID {}", self.id);
             }
             Ok(_) => (),
         }
@@ -267,12 +272,7 @@ async fn predict_and_send<R>(jobs: VecDeque<PredictionJob<R>>) -> Result<(), Ser
 where
     R: Record<R>,
 {
-    event!(
-        Level::INFO,
-        "Running batch predict for {} jobs.",
-        jobs.len()
-    );
-
+    tracing::info!("Running batch predict for {} jobs.", jobs.len());
     let mut batch = BatchJob::from_jobs(jobs)?;
     batch.include_predictions()?;
     batch.send_responses()
@@ -314,7 +314,7 @@ pub async fn submit_prediction_request(
     app_state: web::Data<PredictionService<ToyRecord>>,
 ) -> impl Responder {
     let ModelSpec { model_name, model_version } = &*model_spec;
-    event!(Level::INFO, %model_name, %model_version);
+    tracing::info!(%model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::new(records.into_inner(), tx);
