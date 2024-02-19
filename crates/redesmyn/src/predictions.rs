@@ -21,7 +21,7 @@ use tokio::{
     task::{JoinError, JoinHandle},
     time::Instant,
 };
-use tracing::instrument;
+use tracing::{error, info, instrument};
 use uuid::Uuid;
 
 #[derive(Error, Debug)]
@@ -119,7 +119,7 @@ where
     fn send_result(self, result: Result<PredictionResponse, ServiceError>) {
         if self.tx.send(result).is_err() {
             // TODO: Structure logging
-            tracing::error!("Failed to send result for job with ID {}", self.id);
+            error!("Failed to send result for job with ID {}", self.id);
         }
     }
 }
@@ -160,8 +160,8 @@ pub async fn batch_predict_loop<R>(
 async fn await_results(handle: JoinHandle<Result<(), ServiceError>>) {
     match handle.await {
         Ok(Ok(_)) => (),
-        Ok(Err(err)) => tracing::error!("{}", err),
-        Err(err) => tracing::error!("{}", err),
+        Ok(Err(err)) => error!("{}", err),
+        Err(err) => error!("{}", err),
     };
 }
 
@@ -207,7 +207,7 @@ where
     }
 
     #[instrument(skip_all)]
-    fn include_predictions(&mut self) -> Result<(), ServiceError> {
+    fn include_predictions(&mut self) -> Result<DataFrame, ServiceError> {
         let df = self.swap_df(None)?.unwrap();
         match Python::with_gil(|py| {
             py.import("handlers.model")?
@@ -215,23 +215,22 @@ where
                 .call((PyDataFrame(df),), None)?
                 .extract::<PyDataFrame>()
         }) {
-            Ok(py_df) => self.swap_df(Some(py_df.into())).map(|_| ()),
+            Ok(py_df_results) => Ok(py_df_results.into()),
             Err(err) => Err(ServiceError::PredictionError(err.into())),
         }
     }
 
     #[instrument(skip_all)]
-    fn send_responses(mut self) -> Result<(), ServiceError> {
-        let df = self.swap_df(None)?.unwrap();
-        let results = df.partition_by(["job_id"], true)?;
+    fn send_responses(mut self, df_results: DataFrame) -> Result<(), ServiceError> {
+        let results = df_results.partition_by(["job_id"], true)?;
         for df in results {
             let Ok(Some(job_id)) = df.column("job_id").and_then(|s| s.str()).map(|s| s.get(0))
             else {
-                tracing::error!("Failed to retrieve job ID from results DataFrame.");
+                error!("Failed to retrieve job ID from results DataFrame.");
                 continue;
             };
             let Some(job) = self.jobs_by_id.remove(job_id) else {
-                tracing::error!("Failed to retrieve job with ID {}", &job_id);
+                error!("Failed to retrieve job with ID {}", &job_id);
                 continue;
             };
             let result = match df
@@ -253,10 +252,10 @@ async fn predict_and_send<R>(jobs: VecDeque<PredictionJob<R>>) -> Result<(), Ser
 where
     R: Record<R> + Send + 'static,
 {
-    tracing::info!("Running batch predict for {} jobs.", jobs.len());
+    info!("Running batch predict for {} jobs.", jobs.len());
     let mut batch = BatchJob::from_jobs(jobs)?;
-    batch.include_predictions()?;
-    batch.send_responses()
+    let results_df = batch.include_predictions()?;
+    batch.send_responses(results_df)
 }
 
 #[derive(Deserialize)]
@@ -295,7 +294,7 @@ pub async fn submit_prediction_request(
     app_state: web::Data<PredictionService<ToyRecord>>,
 ) -> impl Responder {
     let ModelSpec { model_name, model_version } = &*model_spec;
-    tracing::info!(%model_name, %model_version);
+    info!(%model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::new(records.into_inner(), tx);
