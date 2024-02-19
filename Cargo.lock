@@ -2049,6 +2049,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "redesmyn-cascade"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "arrow",
+ "futures",
+ "memmap",
+ "polars",
+ "pyo3",
+ "pyo3-polars",
+ "rayon",
+ "redesmyn",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "redesmyn-macros"
 version = "0.1.0"
 dependencies = [

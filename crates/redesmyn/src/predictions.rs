@@ -98,7 +98,7 @@ where
         tx: Sender<Result<PredictionResponse, ServiceError>>,
     ) -> PredictionJob<R> {
         let id = Uuid::new_v4();
-        return PredictionJob { id, records: Some(records), tx };
+        PredictionJob { id, records: Some(records), tx }
     }
 
     fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
@@ -121,12 +121,9 @@ where
     }
 
     fn send_result(self, result: Result<PredictionResponse, ServiceError>) {
-        match self.tx.send(result) {
-            Err(_) => {
-                // TODO: Structure logging
-                tracing::error!("Failed to send result for job with ID {}", self.id);
-            }
-            Ok(_) => (),
+        if self.tx.send(result).is_err() {
+            // TODO: Structure logging
+            tracing::error!("Failed to send result for job with ID {}", self.id);
         }
     }
 }
@@ -144,7 +141,7 @@ pub async fn batch_predict_loop<R>(
     R: Record<R> + Send + 'static,
 {
     loop {
-        if let Ok(_) = rx_abort.try_recv() {
+        if rx_abort.try_recv().is_ok() {
             // TODO: Ensure that outstanding requests are handled gracefully.
             return;
         }
@@ -156,7 +153,7 @@ pub async fn batch_predict_loop<R>(
                 jobs.push_back(job);
             }
         }
-        if jobs.len() == 0 {
+        if jobs.is_empty() {
             continue;
         };
         let handle_send_results = tokio::spawn(predict_and_send(jobs));
@@ -164,7 +161,7 @@ pub async fn batch_predict_loop<R>(
     }
 }
 
-async fn await_send(handle_send_results: JoinHandle<Result<(), ServiceError>>) -> () {
+async fn await_send(handle_send_results: JoinHandle<Result<(), ServiceError>>) {
     match handle_send_results.await {
         Ok(Ok(_)) => (),
         Ok(Err(err)) => tracing::error!("{}", err),

@@ -50,7 +50,7 @@ async fn main() -> Result<(), ServiceError> {
     .bind("127.0.0.1:8080")?
     .run();
     let server_handle = server.handle();
-    tokio::spawn(async { server.await });
+    tokio::spawn(server);
 
     let (tx_abort, rx_abort) = oneshot::channel::<()>();
     let predict_loop_handle = tokio::spawn(predictions::batch_predict_loop(rx, rx_abort));
@@ -61,7 +61,7 @@ async fn main() -> Result<(), ServiceError> {
 async fn await_shutdown(server_handle: ServerHandle, tx_abort: oneshot::Sender<()>) {
     let _ = signal::ctrl_c().await;
     tracing::info!("Received shutdown signal.");
-    if let Err(_) = tx_abort.send(()) {
+    if tx_abort.send(()).is_err() {
         tracing::error!("Failed to send cancel signal.");
     }
     server_handle.stop(true).await;

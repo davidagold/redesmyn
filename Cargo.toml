@@ -29,5 +29,6 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"]}
 uuid = { version = "*", features = ["v4"]}
 
-redesmyn = { workspace = "true", path = "crates/redesmyn" }
-redesmyn-macros = { workspace = "true", path = "crates/redesmyn-macros"}
+redesmyn = { workspace = true, path = "crates/redesmyn" }
+redesmyn-macros = { workspace = true, path = "crates/redesmyn-macros"}
+redesmyn-cascade = { workspace = true, path = "crates/redesmyn-cascade"}

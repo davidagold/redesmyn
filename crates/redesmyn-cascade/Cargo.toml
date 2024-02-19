@@ -1,12 +1,13 @@
 [package]
-name = "redesmyn"
+name = "redesmyn-cascade"
 version = { workspace = true }
 authors = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
-readme = { workspace = true }
 repository = { workspace = true }
+
+[lib]
 
 [dependencies]
 actix-web = {version = "4", workspace = true}
@@ -23,7 +24,5 @@ thiserror = {version = "1.0.57", workspace = true}
 tokio = { version = "1", features = ["full"], workspace = true}
 tracing = { version = "0.1.40", workspace = true}
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"], workspace = true}
-uuid = { version = "*", workspace = true, features = ["v4"]}
 
-
-redesmyn-macros = { workspace = true, path = "../redesmyn-macros" }
+redesmyn = {workspace = true, path = "../redesmyn" }
