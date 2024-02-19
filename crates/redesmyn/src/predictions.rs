@@ -1,8 +1,8 @@
 use actix_web::{post, web, HttpResponse, Responder};
-use redesmyn_macros;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
+use redesmyn_macros;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -102,13 +102,10 @@ where
     }
 
     fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
-        let records = match self.records.take() {
-            Some(records) => records,
-            None => {
-                return Err(ServiceError::Error(
-                    "Tried to take missing records".to_string(),
-                ))
-            }
+        let Some(records) = self.records.take() else {
+            return Err(ServiceError::Error(
+                "Tried to take missing records".to_string(),
+            ));
         };
         let n_records = records.len();
         let mut df = R::to_dataframe(records)?;
@@ -130,6 +127,7 @@ where
 
 #[derive(Serialize)]
 pub struct PredictionResponse {
+    id: String,
     predictions: Vec<Option<f64>>,
 }
 
@@ -138,7 +136,7 @@ pub async fn batch_predict_loop<R>(
     mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
     mut rx_abort: oneshot::Receiver<()>,
 ) where
-    R: Record<R> + Send + 'static,
+    R: Record<R> + std::marker::Sync + Send + 'static,
 {
     loop {
         if rx_abort.try_recv().is_ok() {
@@ -147,7 +145,7 @@ pub async fn batch_predict_loop<R>(
         }
         let mut jobs = VecDeque::<PredictionJob<R>>::new();
         let start = Instant::now();
-        let duration_wait = Duration::new(0, 10 * 1_000_000);
+        let duration_wait = Duration::new(0, 5 * 1_000_000);
         while Instant::now() < start + duration_wait {
             if let Ok(job) = rx.try_recv() {
                 jobs.push_back(job);
@@ -174,91 +172,79 @@ where
     R: Record<R>,
 {
     jobs_by_id: HashMap<String, PredictionJob<R>>,
-    df: DataFrame,
+    df: Option<DataFrame>,
 }
 
 impl<R> BatchJob<R>
 where
-    R: Record<R>,
+    R: Record<R> + Send + 'static,
 {
     fn from_jobs(jobs: VecDeque<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
-        let (jobs_by_id, dfs) = jobs.into_iter().fold(
-            (
-                HashMap::<String, PredictionJob<R>>::new(),
-                Vec::<DataFrame>::new(),
-            ),
-            |(mut jobs_by_id, mut dfs), mut job| {
-                match job.take_records_as_df() {
-                    Ok(df) => {
-                        dfs.push(df);
-                        jobs_by_id.insert(job.id.into(), job);
-                    }
-                    Err(err) => job.send_result(Err(err)),
+        let mut jobs_by_id = HashMap::<String, PredictionJob<R>>::new();
+        let mut dfs = Vec::<LazyFrame>::new();
+        for mut job in jobs.into_iter() {
+            match job.take_records_as_df() {
+                Ok(df) => {
+                    jobs_by_id.insert(job.id.into(), job);
+                    dfs.push(df.lazy());
                 }
-                (jobs_by_id, dfs)
-            },
-        );
-        match concat::<Vec<_>>(
-            dfs.into_iter().map(DataFrame::lazy).collect(),
-            UnionArgs::default(),
-        )
-        .and_then(LazyFrame::collect)
-        {
-            Ok(df) => Ok(BatchJob { jobs_by_id, df }),
+                Err(err) => job.send_result(Err(err)),
+            }
+        }
+        let df_concatenated = concat::<Vec<_>>(dfs, UnionArgs::default())?;
+        match df_concatenated.collect() {
+            Ok(df) => Ok(BatchJob { jobs_by_id, df: Some(df) }),
             Err(err) => Err(err),
         }
     }
 
-    fn take_df(&mut self) -> DataFrame {
-        std::mem::replace(&mut self.df, DataFrame::empty())
+    fn swap_df(&mut self, df: Option<DataFrame>) -> Result<Option<DataFrame>, ServiceError> {
+        match (&df, &self.df) {
+            (Some(_), None) => Ok(std::mem::replace(&mut self.df, df)),
+            (None, Some(_)) => Ok(std::mem::replace(&mut self.df, df)),
+            _ => Err(ServiceError::Error(
+                "Cannot swap DataFrame when both `None` or both `Some`.".into(),
+            )),
+        }
     }
 
     #[instrument(skip_all)]
-    fn include_predictions(&mut self) -> Result<(), PredictionError> {
-        Python::with_gil(|py| {
+    fn include_predictions(&mut self) -> Result<(), ServiceError> {
+        let df = self.swap_df(None)?.unwrap();
+        match Python::with_gil(|py| {
             py.import("handlers.model")?
                 .getattr("handle")?
-                .call((PyDataFrame(self.take_df()),), None)?
+                .call((PyDataFrame(df),), None)?
                 .extract::<PyDataFrame>()
-                .map(|py_df| {
-                    self.df = py_df.into();
-                })
-                .map_err(PyErr::into)
-        })
+        }) {
+            Ok(py_df) => self.swap_df(Some(py_df.into())).map(|_| ()),
+            Err(err) => Err(ServiceError::PredictionError(err.into())),
+        }
     }
 
     #[instrument(skip_all)]
     fn send_responses(mut self) -> Result<(), ServiceError> {
-        let dfs = self.df.partition_by(["job_id"], true)?;
-        let results = dfs
-            .into_iter()
-            .filter_map(|df| {
-                if let Ok(Some(job_id)) =
-                    df.column("job_id").and_then(|s| s.str()).map(|s| s.get(0))
-                {
-                    match self.jobs_by_id.remove(&job_id.to_string()) {
-                        Some(job) => Some((job, df)),
-                        None => {
-                            tracing::error!("Failed to retrieve job with ID {}", job_id);
-                            None
-                        }
-                    }
-                } else {
-                    tracing::error!("Failed to retrieve job ID from results DataFrame.");
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        for (job, df) in results {
-            match df
+        let df = self.swap_df(None)?.unwrap();
+        let results = df.partition_by(["job_id"], true)?;
+        for df in results {
+            let Ok(Some(job_id)) = df.column("job_id").and_then(|s| s.str()).map(|s| s.get(0))
+            else {
+                tracing::error!("Failed to retrieve job ID from results DataFrame.");
+                continue;
+            };
+            let Some(job) = self.jobs_by_id.remove(job_id) else {
+                tracing::error!("Failed to retrieve job with ID {}", &job_id);
+                continue;
+            };
+            let result = match df
                 .column("prediction")
                 .and_then(|s| s.f64())
                 .map(|a| a.to_vec())
             {
-                Ok(predictions) => job.send_result(Ok(PredictionResponse { predictions })),
-                Err(err) => tracing::error!("{}", err),
-            }
+                Ok(predictions) => Ok(PredictionResponse { id: job.id.to_string(), predictions }),
+                Err(err) => Err(err.into()),
+            };
+            job.send_result(result);
         }
         Ok(())
     }
@@ -267,7 +253,7 @@ where
 #[instrument(skip_all)]
 async fn predict_and_send<R>(jobs: VecDeque<PredictionJob<R>>) -> Result<(), ServiceError>
 where
-    R: Record<R>,
+    R: Record<R> + Send + 'static,
 {
     tracing::info!("Running batch predict for {} jobs.", jobs.len());
     let mut batch = BatchJob::from_jobs(jobs)?;
@@ -316,16 +302,12 @@ pub async fn submit_prediction_request(
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::new(records.into_inner(), tx);
 
-    let result = async {
-        match app_state.tx.lock().await.send(job) {
-            Ok(_) => rx.await?,
-            Err(err) => Err(err.into()),
-        }
+    if let Err(err) = app_state.tx.lock().await.send(job) {
+        return HttpResponse::InternalServerError().body(err.to_string())
     }
-    .await;
-
-    match result {
-        Ok(response) => HttpResponse::Ok().json(response),
+    match rx.await {
+        Ok(Ok(response)) => HttpResponse::Ok().json(response),
+        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
         Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }

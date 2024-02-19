@@ -6,12 +6,11 @@ use redesmyn::predictions::{self, ServiceError, ToyRecord};
 use tokio::{
     signal,
     sync::{mpsc, oneshot},
-    task::JoinError,
 };
 use tracing::instrument;
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 #[instrument]
 async fn main() -> Result<(), ServiceError> {
     let subscribe_layer = tracing_subscriber::fmt::layer().json();
@@ -24,7 +23,7 @@ async fn main() -> Result<(), ServiceError> {
     tracing::info!("Starting `main` from directory {:?}", pwd);
 
     pyo3::prepare_freethreaded_python();
-    Python::with_gil(|py| {
+    if let Err(err) = Python::with_gil(|py| {
         let sys = py.import("sys")?;
         let version = sys.getattr("version")?.extract::<String>()?;
         let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
@@ -35,27 +34,35 @@ async fn main() -> Result<(), ServiceError> {
             .and_then(move |insert| insert.call((0, pwd), None))?;
 
         PyResult::<()>::Ok(())
-    })
-    .map_err(|err| ServiceError::Error(format!("Failed to initialize Python process: {}", err)))?;
+    }) {
+        let msg = format!("Failed to initialize Python process: {}", err);
+        tracing::error!("{}", msg);
+        return Err(ServiceError::Error(msg))
+    };
 
     let (tx, rx) = mpsc::unbounded_channel();
-    let server = HttpServer::new(move || {
+    let server = match HttpServer::new(move || {
         let app_state = predictions::PredictionService::<ToyRecord>::new(tx.clone());
         App::new()
             .app_data(web::Data::new(app_state))
             .service(predictions::submit_prediction_request)
     })
     .disable_signals()
-    .workers(256)
-    .bind("127.0.0.1:8080")?
-    .run();
+    .bind("127.0.0.1:8080") {
+        Ok(server) => server.run(),
+        Err(err) => {
+            tracing::error!("Failed to start server: {}", err);
+            return Err(err.into())
+        }
+    };
+
     let server_handle = server.handle();
     tokio::spawn(server);
 
     let (tx_abort, rx_abort) = oneshot::channel::<()>();
     let predict_loop_handle = tokio::spawn(predictions::batch_predict_loop(rx, rx_abort));
     tokio::spawn(await_shutdown(server_handle, tx_abort));
-    predict_loop_handle.await.map_err(JoinError::into)
+    predict_loop_handle.await.map_err(|err| err.into())
 }
 
 async fn await_shutdown(server_handle: ServerHandle, tx_abort: oneshot::Sender<()>) {

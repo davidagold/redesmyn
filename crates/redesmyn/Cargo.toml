@@ -9,21 +9,24 @@ readme = { workspace = true }
 repository = { workspace = true }
 
 [dependencies]
-actix-web = {version = "4", workspace = true}
-arrow = {version = "6.0.0", workspace = true }
-futures = {version = "0.3", workspace = true }
-memmap = {version = "0.7.0", workspace = true }
-polars = { version = "0.37.0", features = ["lazy", "dtype-struct", "partition_by"], workspaces = true}
-pyo3 = {version = "0.20.2", workspace = true }
-pyo3-polars = {version = "0.11.3", workspace = true }
-rayon = {version = "1.8.1", workspace = true }
-serde = { version = "1.0", features = ["derive"], workspace = true }
-serde_json = {version = "1.0", workspace = true }
-thiserror = {version = "1.0.57", workspace = true}
-tokio = { version = "1", features = ["full"], workspace = true}
-tracing = { version = "0.1.40", workspace = true}
-tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"], workspace = true}
-uuid = { version = "*", workspace = true, features = ["v4"]}
+actix-web = { workspace = true }
+arrow = { workspace = true }
+futures = { workspace = true }
+memmap = { workspace = true }
+polars = { features = [
+    "lazy",
+    "dtype-struct",
+    "partition_by",
+], workspace = true }
+pyo3 = { workspace = true }
+pyo3-polars = { workspace = true }
+rayon = { workspace = true }
+serde = { features = ["derive"], workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { features = ["full"], workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 
-
-redesmyn-macros = { workspace = true, path = "../redesmyn-macros" }
+redesmyn-macros = { workspace = true }
