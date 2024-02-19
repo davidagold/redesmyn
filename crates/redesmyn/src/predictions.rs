@@ -103,9 +103,8 @@ where
 
     fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
         let Some(records) = self.records.take() else {
-            return Err(ServiceError::Error(
-                "Tried to take missing records".to_string(),
-            ));
+            let msg = "Tried to take missing records".to_string();
+            return Err(ServiceError::Error(msg));
         };
         let n_records = records.len();
         let mut df = R::to_dataframe(records)?;
@@ -154,13 +153,12 @@ pub async fn batch_predict_loop<R>(
         if jobs.is_empty() {
             continue;
         };
-        let handle_send_results = tokio::spawn(predict_and_send(jobs));
-        tokio::spawn(await_send(handle_send_results));
+        tokio::spawn(await_results(tokio::spawn(predict_and_send(jobs))));
     }
 }
 
-async fn await_send(handle_send_results: JoinHandle<Result<(), ServiceError>>) {
-    match handle_send_results.await {
+async fn await_results(handle: JoinHandle<Result<(), ServiceError>>) {
+    match handle.await {
         Ok(Ok(_)) => (),
         Ok(Err(err)) => tracing::error!("{}", err),
         Err(err) => tracing::error!("{}", err),
@@ -303,7 +301,7 @@ pub async fn submit_prediction_request(
     let job = PredictionJob::new(records.into_inner(), tx);
 
     if let Err(err) = app_state.tx.lock().await.send(job) {
-        return HttpResponse::InternalServerError().body(err.to_string())
+        return HttpResponse::InternalServerError().body(err.to_string());
     }
     match rx.await {
         Ok(Ok(response)) => HttpResponse::Ok().json(response),

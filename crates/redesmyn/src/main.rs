@@ -44,21 +44,20 @@ async fn main() -> () {
     };
 
     let (tx, rx) = mpsc::unbounded_channel();
-    let server = match HttpServer::new(move || {
+    let http_server = HttpServer::new(move || {
         let app_state = predictions::PredictionService::<ToyRecord>::new(tx.clone());
         App::new()
             .app_data(web::Data::new(app_state))
             .service(predictions::submit_prediction_request)
     })
-    .disable_signals()
-    .bind("127.0.0.1:8080")
-    {
-        Ok(server) => server.run(),
+    .disable_signals();
+
+    let server = match http_server.bind("127.0.0.1:8080") {
+        Ok(http_server) => http_server.run(),
         Err(err) => {
             return tracing::error!("Failed to start server: {}", err);
         }
     };
-
     let server_handle = server.handle();
     tokio::spawn(server);
 
