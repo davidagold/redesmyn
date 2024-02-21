@@ -5,7 +5,7 @@ use pyo3_polars::PyDataFrame;
 use redesmyn_macros;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     env::VarError,
     fmt, io,
     iter::repeat,
@@ -142,12 +142,16 @@ pub async fn batch_predict_loop<R>(
             // TODO: Ensure that outstanding requests are handled gracefully.
             return;
         }
-        let mut jobs = VecDeque::<PredictionJob<R>>::new();
         let start = Instant::now();
         let duration_wait = Duration::new(0, 5 * 1_000_000);
+        let capacity = 1024;
+        let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
         while Instant::now() < start + duration_wait {
+            if jobs.len() == capacity {
+                break;
+            };
             if let Ok(job) = rx.try_recv() {
-                jobs.push_back(job);
+                jobs.push(job);
             }
         }
         if jobs.is_empty() {
@@ -177,18 +181,21 @@ impl<R> BatchJob<R>
 where
     R: Record<R> + Send + 'static,
 {
-    fn from_jobs(jobs: VecDeque<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
+    fn from_jobs(jobs: Vec<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
         let mut jobs_by_id = HashMap::<String, PredictionJob<R>>::new();
-        let mut dfs = Vec::<LazyFrame>::new();
-        for mut job in jobs.into_iter() {
-            match job.take_records_as_df() {
+        let dfs = jobs
+            .into_iter()
+            .filter_map(|mut job| match job.take_records_as_df() {
                 Ok(df) => {
                     jobs_by_id.insert(job.id.into(), job);
-                    dfs.push(df.lazy());
+                    Some(df.lazy())
                 }
-                Err(err) => job.send_result(Err(err)),
-            }
-        }
+                Err(err) => {
+                    job.send_result(Err(err));
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         let df_concatenated = concat::<Vec<_>>(dfs, UnionArgs::default())?;
         match df_concatenated.collect() {
             Ok(df) => Ok(BatchJob { jobs_by_id, df: Some(df) }),
@@ -248,7 +255,7 @@ where
 }
 
 #[instrument(skip_all)]
-async fn predict_and_send<R>(jobs: VecDeque<PredictionJob<R>>) -> Result<(), ServiceError>
+async fn predict_and_send<R>(jobs: Vec<PredictionJob<R>>) -> Result<(), ServiceError>
 where
     R: Record<R> + Send + 'static,
 {
