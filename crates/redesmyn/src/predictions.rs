@@ -1,80 +1,27 @@
+use super::error::ServiceError;
 use actix_web::{post, web, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use redesmyn_macros;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env::VarError, fmt, io, iter::repeat, time::Duration};
-use thiserror::Error;
+use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
 use tokio::{
     sync::{
-        mpsc::{self, error::SendError},
-        oneshot::{self, error::RecvError, Sender},
+        mpsc,
+        oneshot::{self, Sender},
         Mutex,
     },
-    task::JoinError,
     time::Instant,
 };
 use tracing::{error, info, instrument};
 use uuid::Uuid;
 
-#[derive(Error, Debug)]
-pub enum ServiceError {
-    #[error(transparent)]
-    PredictionError(#[from] PredictionError),
-    #[error("Environment variable not found: {0}.")]
-    VarError(#[from] VarError),
-    #[error(transparent)]
-    IoError(#[from] io::Error),
-    #[error(transparent)]
-    JoinError(#[from] JoinError),
-    #[error("{0}")]
-    Error(String),
-    #[error("Failed to forward request to prediction service: {0}")]
-    SendError(String),
-    #[error("Failed to received result: {0}")]
-    ReceiveError(#[from] RecvError),
-    #[error("Polars operation failed: {0}")]
-    ParseError(#[from] PolarsError),
-    #[error("Failed to serialize result: {0}")]
-    JsonError(#[from] serde_json::Error),
-}
-
-impl<T> From<SendError<T>> for ServiceError {
-    fn from(err: SendError<T>) -> Self {
-        Self::SendError(err.to_string())
-    }
-}
-
-impl<T> From<ServiceError> for Result<T, ServiceError> {
-    fn from(err: ServiceError) -> Self {
-        Err(err)
-    }
-}
-
-impl From<PyErr> for ServiceError {
-    fn from(err: PyErr) -> Self {
-        Self::PredictionError(err.into()).into()
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum PredictionError {
-    #[error("Prediction failed: {0}.")]
-    Error(String),
-    #[error("Prediction failed from Polars operation: {0}.")]
-    PolarsError(#[from] polars::prelude::PolarsError),
-    #[error("Prediction failed from PyO3 operation: {0}.")]
-    PyError(#[from] pyo3::prelude::PyErr),
-    #[error("Prediction failed during IO: {0}.")]
-    IoError(#[from] io::Error),
-}
-
-pub trait Record<R> {
+pub trait Schema<R> {
     fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>;
 }
 
-#[derive(Debug, Deserialize, redesmyn_macros::Record)]
+#[derive(Debug, Deserialize, redesmyn_macros::Schema)]
 pub struct ToyRecord {
     a: f64,
     b: f64,
@@ -82,7 +29,7 @@ pub struct ToyRecord {
 
 pub struct PredictionJob<R>
 where
-    R: Record<R>,
+    R: Schema<R>,
 {
     id: Uuid,
     records: Option<Vec<R>>,
@@ -91,7 +38,7 @@ where
 
 impl<R> PredictionJob<R>
 where
-    R: Record<R>,
+    R: Schema<R>,
 {
     fn new(
         records: Vec<R>,
@@ -144,14 +91,14 @@ impl fmt::Display for ModelSpec {
 
 pub struct PredictionService<R>
 where
-    R: Record<R>,
+    R: Schema<R>,
 {
     tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
 }
 
 impl<R> PredictionService<R>
 where
-    R: Record<R>,
+    R: Schema<R>,
 {
     pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> PredictionService<R> {
         PredictionService { tx: tx.into() }
@@ -163,7 +110,7 @@ pub async fn batch_predict_loop<R>(
     mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
     mut rx_abort: oneshot::Receiver<()>,
 ) where
-    R: Record<R> + std::marker::Sync + Send + 'static,
+    R: Schema<R> + std::marker::Sync + Send + 'static,
 {
     loop {
         if rx_abort.try_recv().is_ok() {
@@ -239,7 +186,7 @@ pub async fn submit_prediction_request(
 
 struct BatchJob<R>
 where
-    R: Record<R>,
+    R: Schema<R>,
 {
     jobs_by_id: HashMap<String, PredictionJob<R>>,
     df: Option<DataFrame>,
@@ -247,7 +194,7 @@ where
 
 impl<R> BatchJob<R>
 where
-    R: Record<R> + Send + 'static,
+    R: Schema<R> + Send + 'static,
 {
     fn from_jobs(jobs: Vec<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
         let mut jobs_by_id = HashMap::<String, PredictionJob<R>>::new();
