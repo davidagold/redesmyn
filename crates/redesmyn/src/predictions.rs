@@ -4,13 +4,7 @@ use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use redesmyn_macros;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    env::VarError,
-    fmt, io,
-    iter::repeat,
-    time::Duration,
-};
+use std::{collections::HashMap, env::VarError, fmt, io, iter::repeat, time::Duration};
 use thiserror::Error;
 use tokio::{
     sync::{
@@ -18,7 +12,7 @@ use tokio::{
         oneshot::{self, error::RecvError, Sender},
         Mutex,
     },
-    task::{JoinError, JoinHandle},
+    task::JoinError,
     time::Instant,
 };
 use tracing::{error, info, instrument};
@@ -55,6 +49,12 @@ impl<T> From<SendError<T>> for ServiceError {
 impl<T> From<ServiceError> for Result<T, ServiceError> {
     fn from(err: ServiceError) -> Self {
         Err(err)
+    }
+}
+
+impl From<PyErr> for ServiceError {
+    fn from(err: PyErr) -> Self {
+        Self::PredictionError(err.into()).into()
     }
 }
 
@@ -130,6 +130,34 @@ pub struct PredictionResponse {
     predictions: Vec<Option<f64>>,
 }
 
+#[derive(Deserialize)]
+pub struct ModelSpec {
+    model_name: String,
+    model_version: String,
+}
+
+impl fmt::Display for ModelSpec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.model_name, self.model_version)
+    }
+}
+
+pub struct PredictionService<R>
+where
+    R: Record<R>,
+{
+    tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
+}
+
+impl<R> PredictionService<R>
+where
+    R: Record<R>,
+{
+    pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> PredictionService<R> {
+        PredictionService { tx: tx.into() }
+    }
+}
+
 #[instrument(skip_all)]
 pub async fn batch_predict_loop<R>(
     mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
@@ -157,16 +185,56 @@ pub async fn batch_predict_loop<R>(
         if jobs.is_empty() {
             continue;
         };
-        tokio::spawn(await_results(tokio::spawn(predict_and_send(jobs))));
+
+        // Process batch in separate blocking thread.
+        tokio::task::spawn_blocking(move || {
+            info!("Running batch predict for {} jobs.", jobs.len());
+            let mut batch = BatchJob::from_jobs(jobs)?;
+            let df_batch = (&mut batch).swap_df(None)?.unwrap();
+            let df_results = match Python::with_gil(|py| {
+                py.import("handlers.model")?
+                    .getattr("handle")?
+                    .call((PyDataFrame(df_batch),), None)?
+                    .extract::<PyDataFrame>()
+                    .map(|pydf| -> DataFrame { pydf.into() })
+            }) {
+                Ok(df_results) => df_results,
+                Err(err) => {
+                    // TODO: Handle errors
+                    error!("{err}");
+                    return Err(err.into());
+                }
+            };
+            match batch.send_responses(df_results) {
+                Ok(_) => (),
+                Err(err) => error!("{}", err),
+            };
+            Result::<(), ServiceError>::Ok(())
+        });
     }
 }
 
-async fn await_results(handle: JoinHandle<Result<(), ServiceError>>) {
-    match handle.await {
-        Ok(Ok(_)) => (),
-        Ok(Err(err)) => error!("{}", err),
-        Err(err) => error!("{}", err),
-    };
+#[instrument(skip_all)]
+#[post("/predictions/{model_name}/{model_version}")]
+pub async fn submit_prediction_request(
+    model_spec: web::Path<ModelSpec>,
+    records: web::Json<Vec<ToyRecord>>,
+    app_state: web::Data<PredictionService<ToyRecord>>,
+) -> impl Responder {
+    let ModelSpec { model_name, model_version } = &*model_spec;
+    info!(%model_name, %model_version);
+
+    let (tx, rx) = oneshot::channel();
+    let job = PredictionJob::new(records.into_inner(), tx);
+
+    if let Err(err) = app_state.tx.lock().await.send(job) {
+        return HttpResponse::InternalServerError().body(err.to_string());
+    }
+    match rx.await {
+        Ok(Ok(response)) => HttpResponse::Ok().json(response),
+        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
+        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+    }
 }
 
 struct BatchJob<R>
@@ -214,21 +282,7 @@ where
     }
 
     #[instrument(skip_all)]
-    fn include_predictions(&mut self) -> Result<DataFrame, ServiceError> {
-        let df = self.swap_df(None)?.unwrap();
-        match Python::with_gil(|py| {
-            py.import("handlers.model")?
-                .getattr("handle")?
-                .call((PyDataFrame(df),), None)?
-                .extract::<PyDataFrame>()
-        }) {
-            Ok(py_df_results) => Ok(py_df_results.into()),
-            Err(err) => Err(ServiceError::PredictionError(err.into())),
-        }
-    }
-
-    #[instrument(skip_all)]
-    fn send_responses(mut self, df_results: DataFrame) -> Result<(), ServiceError> {
+    fn send_responses(&mut self, df_results: DataFrame) -> Result<(), ServiceError> {
         let results = df_results.partition_by(["job_id"], true)?;
         for df in results {
             let Ok(Some(job_id)) = df.column("job_id").and_then(|s| s.str()).map(|s| s.get(0))
@@ -251,67 +305,5 @@ where
             job.send_result(result);
         }
         Ok(())
-    }
-}
-
-#[instrument(skip_all)]
-async fn predict_and_send<R>(jobs: Vec<PredictionJob<R>>) -> Result<(), ServiceError>
-where
-    R: Record<R> + Send + 'static,
-{
-    info!("Running batch predict for {} jobs.", jobs.len());
-    let mut batch = BatchJob::from_jobs(jobs)?;
-    let results_df = batch.include_predictions()?;
-    batch.send_responses(results_df)
-}
-
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
-}
-
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
-    }
-}
-
-pub struct PredictionService<R>
-where
-    R: Record<R>,
-{
-    tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
-}
-
-impl<R> PredictionService<R>
-where
-    R: Record<R>,
-{
-    pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> PredictionService<R> {
-        PredictionService { tx: tx.into() }
-    }
-}
-
-#[instrument(skip_all)]
-#[post("/predictions/{model_name}/{model_version}")]
-pub async fn submit_prediction_request(
-    model_spec: web::Path<ModelSpec>,
-    records: web::Json<Vec<ToyRecord>>,
-    app_state: web::Data<PredictionService<ToyRecord>>,
-) -> impl Responder {
-    let ModelSpec { model_name, model_version } = &*model_spec;
-    info!(%model_name, %model_version);
-
-    let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::new(records.into_inner(), tx);
-
-    if let Err(err) = app_state.tx.lock().await.send(job) {
-        return HttpResponse::InternalServerError().body(err.to_string());
-    }
-    match rx.await {
-        Ok(Ok(response)) => HttpResponse::Ok().json(response),
-        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
-        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }
