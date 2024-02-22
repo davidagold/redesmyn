@@ -24,7 +24,7 @@ fn get_struct_fields(input: &DeriveInput) -> Result<&FieldsNamed, MacroError> {
     }
 }
 
-#[proc_macro_derive(Record)]
+#[proc_macro_derive(Schema)]
 pub fn to_dataframe_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
@@ -65,7 +65,7 @@ pub fn to_dataframe_derive(input: TokenStream) -> TokenStream {
     }
 
     let gen = quote! {
-        impl Record<#name> for #name {
+        impl Schema<#name> for #name {
             fn to_dataframe(records: Vec<#name>) -> PolarsResult<DataFrame> {
                 #(#exprs_vec_init);*;
 
