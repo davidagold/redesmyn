@@ -10,7 +10,7 @@ repository = { workspace = true }
 
 [dependencies]
 actix-web = { workspace = true }
-arrow = { workspace = true }
+arrow.workspace = true
 futures = { workspace = true }
 memmap = { workspace = true }
 polars = { features = [
@@ -32,6 +32,7 @@ tonic = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
 redesmyn-macros = { workspace = true }
+tower = "0.4.13"
 
 [build-dependencies]
 tonic-build = "0.11"

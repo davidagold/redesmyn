@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
-default-members = ["crates/*"]
+members = ["examples", "crates/*"]
+default-members = ["examples", "crates/*"]
 
 [workspace.package]
 authors = ["David Gold <david.gold.a@gmail.com>"]
@@ -35,6 +35,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"] }
 uuid = { version = "*", features = ["v4"] }
 
+examples = { workspace = true, path = "examples" }
 redesmyn = { workspace = true, path = "crates/redesmyn" }
 redesmyn-macros = { workspace = true, path = "crates/redesmyn-macros" }
 redesmyn-cascade = { workspace = true, path = "crates/redesmyn-cascade" }

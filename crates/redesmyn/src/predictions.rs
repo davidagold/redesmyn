@@ -1,9 +1,8 @@
 use super::error::ServiceError;
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{web, App, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-use redesmyn_macros;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
 use tokio::{
@@ -12,6 +11,7 @@ use tokio::{
         oneshot::{self, Sender},
         Mutex,
     },
+    task::JoinHandle,
     time::Instant,
 };
 use tracing::{error, info, instrument};
@@ -21,15 +21,178 @@ pub trait Schema<R> {
     fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>;
 }
 
-#[derive(Debug, Deserialize, redesmyn_macros::Schema)]
-pub struct ToyRecord {
-    a: f64,
-    b: f64,
+#[derive(Serialize)]
+pub struct PredictionResponse {
+    id: String,
+    predictions: Vec<Option<f64>>,
+}
+
+#[derive(Deserialize)]
+pub struct ModelSpec {
+    model_name: String,
+    model_version: String,
+}
+
+impl fmt::Display for ModelSpec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.model_name, self.model_version)
+    }
+}
+
+pub struct PredictionService<R>
+where
+    R: Schema<R> + Sync + Send + 'static,
+{
+    pub(super) path: String,
+    tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
+    handle: JoinHandle<()>,
+}
+
+impl<R> Clone for PredictionService<R>
+where
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    fn clone(&self) -> Self {
+        PredictionService::new(&self.path)
+    }
+}
+
+pub(super) trait Handle {
+    type R;
+
+    async fn run(
+        rx: mpsc::UnboundedReceiver<PredictionJob<Self::R>>,
+        rx_abort: oneshot::Receiver<()>,
+    ) where
+        Self::R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        Self: Sized;
+
+    async fn invoke<'de, R>(
+        model_spec: web::Path<ModelSpec>,
+        records: web::Json<Vec<Self::R>>,
+        app_state: web::Data<PredictionService<Self::R>>,
+    ) -> impl Responder
+    where
+        Self::R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        Self: Sized;
+
+    fn path(&self) -> String;
+}
+
+impl<R> PredictionService<R>
+where
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    pub fn new(path: &str) -> PredictionService<R> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        let handle = tokio::spawn(<Self as Handle>::run(rx, rx_abort));
+        tokio::spawn(Self::await_shutdown(tx_abort));
+        PredictionService { path: path.into(), tx: tx.into(), handle }
+    }
+    async fn await_shutdown(tx_abort: oneshot::Sender<()>) {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("Received shutdown signal.");
+        if tx_abort.send(()).is_err() {
+            tracing::error!("Failed to send cancel signal.");
+        }
+    }
+}
+
+impl<R> Handle for PredictionService<R>
+where
+    R: Schema<R> + Sync + Send + 'static,
+{
+    type R = R;
+
+    fn path(&self) -> String {
+        self.path.clone()
+    }
+
+    #[instrument(skip_all)]
+    async fn run(
+        mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
+        mut rx_abort: oneshot::Receiver<()>,
+    ) {
+        loop {
+            if rx_abort.try_recv().is_ok() {
+                // TODO: Ensure that outstanding requests are handled gracefully.
+                return;
+            }
+            let start = Instant::now();
+            let duration_wait = Duration::new(0, 5 * 1_000_000);
+            let capacity = 1024;
+            let mut jobs = Vec::<PredictionJob<Self::R>>::with_capacity(capacity);
+            while Instant::now() < start + duration_wait {
+                if jobs.len() == capacity {
+                    break;
+                };
+                if let Ok(job) = rx.try_recv() {
+                    jobs.push(job);
+                }
+            }
+            if jobs.is_empty() {
+                continue;
+            };
+
+            // Process batch in separate blocking thread.
+            tokio::task::spawn_blocking(move || {
+                info!("Running batch predict for {} jobs.", jobs.len());
+                let mut batch = BatchJob::from_jobs(jobs)?;
+                let df_batch = (&mut batch).swap_df(None)?.unwrap();
+                let df_results = match Python::with_gil(|py| {
+                    py.import("handlers.model")?
+                        .getattr("handle")?
+                        .call((PyDataFrame(df_batch),), None)?
+                        .extract::<PyDataFrame>()
+                        .map(|pydf| -> DataFrame { pydf.into() })
+                }) {
+                    Ok(df_results) => df_results,
+                    Err(err) => {
+                        // TODO: Handle errors
+                        error!("{err}");
+                        return Err(err.into());
+                    }
+                };
+                match batch.send_responses(df_results) {
+                    Ok(_) => (),
+                    Err(err) => error!("{}", err),
+                };
+                Result::<(), ServiceError>::Ok(())
+            });
+        }
+    }
+
+    #[instrument(skip_all)]
+    async fn invoke<'de, S>(
+        model_spec: web::Path<ModelSpec>,
+        records: web::Json<Vec<Self::R>>,
+        app_state: web::Data<PredictionService<Self::R>>,
+    ) -> impl Responder
+    where
+        ModelSpec: serde::Deserialize<'de>,
+    {
+        let ModelSpec { model_name, model_version } = &*model_spec;
+        info!(%model_name, %model_version);
+
+        let (tx, rx) = oneshot::channel();
+        let job = PredictionJob::new(records.into_inner(), tx);
+
+        if let Err(err) = app_state.tx.lock().await.send(job) {
+            return HttpResponse::InternalServerError().body(err.to_string());
+        }
+        match rx.await {
+            Ok(Ok(response)) => HttpResponse::Ok().json(response),
+            Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
+            Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+        }
+    }
 }
 
 pub struct PredictionJob<R>
 where
-    R: Schema<R>,
+    R: Sync + Send + 'static,
 {
     id: Uuid,
     records: Option<Vec<R>>,
@@ -38,7 +201,7 @@ where
 
 impl<R> PredictionJob<R>
 where
-    R: Schema<R>,
+    R: Schema<R> + Sync + Send + 'static,
 {
     fn new(
         records: Vec<R>,
@@ -71,122 +234,9 @@ where
     }
 }
 
-#[derive(Serialize)]
-pub struct PredictionResponse {
-    id: String,
-    predictions: Vec<Option<f64>>,
-}
-
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
-}
-
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
-    }
-}
-
-pub struct PredictionService<R>
-where
-    R: Schema<R>,
-{
-    tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
-}
-
-impl<R> PredictionService<R>
-where
-    R: Schema<R>,
-{
-    pub fn new(tx: mpsc::UnboundedSender<PredictionJob<R>>) -> PredictionService<R> {
-        PredictionService { tx: tx.into() }
-    }
-}
-
-#[instrument(skip_all)]
-pub async fn batch_predict_loop<R>(
-    mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
-    mut rx_abort: oneshot::Receiver<()>,
-) where
-    R: Schema<R> + std::marker::Sync + Send + 'static,
-{
-    loop {
-        if rx_abort.try_recv().is_ok() {
-            // TODO: Ensure that outstanding requests are handled gracefully.
-            return;
-        }
-        let start = Instant::now();
-        let duration_wait = Duration::new(0, 5 * 1_000_000);
-        let capacity = 1024;
-        let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
-        while Instant::now() < start + duration_wait {
-            if jobs.len() == capacity {
-                break;
-            };
-            if let Ok(job) = rx.try_recv() {
-                jobs.push(job);
-            }
-        }
-        if jobs.is_empty() {
-            continue;
-        };
-
-        // Process batch in separate blocking thread.
-        tokio::task::spawn_blocking(move || {
-            info!("Running batch predict for {} jobs.", jobs.len());
-            let mut batch = BatchJob::from_jobs(jobs)?;
-            let df_batch = (&mut batch).swap_df(None)?.unwrap();
-            let df_results = match Python::with_gil(|py| {
-                py.import("handlers.model")?
-                    .getattr("handle")?
-                    .call((PyDataFrame(df_batch),), None)?
-                    .extract::<PyDataFrame>()
-                    .map(|pydf| -> DataFrame { pydf.into() })
-            }) {
-                Ok(df_results) => df_results,
-                Err(err) => {
-                    // TODO: Handle errors
-                    error!("{err}");
-                    return Err(err.into());
-                }
-            };
-            match batch.send_responses(df_results) {
-                Ok(_) => (),
-                Err(err) => error!("{}", err),
-            };
-            Result::<(), ServiceError>::Ok(())
-        });
-    }
-}
-
-#[instrument(skip_all)]
-#[post("/predictions/{model_name}/{model_version}")]
-pub async fn submit_prediction_request(
-    model_spec: web::Path<ModelSpec>,
-    records: web::Json<Vec<ToyRecord>>,
-    app_state: web::Data<PredictionService<ToyRecord>>,
-) -> impl Responder {
-    let ModelSpec { model_name, model_version } = &*model_spec;
-    info!(%model_name, %model_version);
-
-    let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::new(records.into_inner(), tx);
-
-    if let Err(err) = app_state.tx.lock().await.send(job) {
-        return HttpResponse::InternalServerError().body(err.to_string());
-    }
-    match rx.await {
-        Ok(Ok(response)) => HttpResponse::Ok().json(response),
-        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
-        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
-    }
-}
-
 struct BatchJob<R>
 where
-    R: Schema<R>,
+    R: Schema<R> + Sync + Send + 'static,
 {
     jobs_by_id: HashMap<String, PredictionJob<R>>,
     df: Option<DataFrame>,
@@ -194,7 +244,7 @@ where
 
 impl<R> BatchJob<R>
 where
-    R: Schema<R> + Send + 'static,
+    R: Schema<R> + Sync + Send + 'static,
 {
     fn from_jobs(jobs: Vec<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
         let mut jobs_by_id = HashMap::<String, PredictionJob<R>>::new();

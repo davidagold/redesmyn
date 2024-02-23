@@ -790,6 +790,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b90ca2580b73ab6a1f724b76ca11ab632df820fd6040c336200d2c1df7b3c82c"
 
 [[package]]
+name = "examples"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "arrow",
+ "futures",
+ "memmap",
+ "polars",
+ "prost",
+ "pyo3",
+ "pyo3-polars",
+ "rayon",
+ "redesmyn",
+ "redesmyn-macros",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tonic-build",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "fast-float"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2320,6 +2346,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tonic-build",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
