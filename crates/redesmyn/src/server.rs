@@ -6,10 +6,11 @@ use actix_web::Resource;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
+use tokio::task::JoinError;
 use std::collections::VecDeque;
 use std::env;
 use tokio::{signal, task::JoinHandle};
-use tracing::error;
+use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 pub trait Serves {
@@ -17,7 +18,7 @@ pub trait Serves {
     where
         S: ResourceFactory + Clone + Send + 'static;
 
-    fn serve(self) -> Result<JoinHandle<()>, ServiceError>;
+        fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
 }
 
 pub struct Server {
@@ -41,8 +42,10 @@ where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     fn new_resource(&self) -> Resource {
+        let mut service = BatchPredictor::<R>::new(&self.path.clone());
+        service.run();
         web::resource(self.path.clone())
-            .app_data(web::Data::new(self.service.clone()))
+            .app_data(web::Data::new(service))
             .route(web::post().to(<BatchPredictor<R> as Service>::invoke))
     }
 
@@ -64,12 +67,13 @@ impl Serves for Server {
     where
         S: ResourceFactory + Clone + Send + 'static,
     {
+        info!("Registering endpoint with path: ...");
         self.resource_factories
             .push_back(BoxedResourceFactory(Box::new(endpoint)));
         self
     }
 
-    fn serve(self) -> Result<JoinHandle<()>, ServiceError> {
+    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> {
         let http_server = HttpServer::new(move || {
             let app = self
                 .resource_factories
@@ -116,12 +120,10 @@ impl Serves for Server {
             return Err(err.into());
         };
 
+        info!("Starting server...");
         let server_handle = server.handle();
         tokio::spawn(async move { await_shutdown(server_handle).await });
-        let handle = tokio::spawn(async move {
-            server.await;
-        });
-        Ok(handle)
+        Ok(tokio::spawn(async move { server.await }))
     }
 }
 

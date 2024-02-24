@@ -12,7 +12,7 @@ pub struct ToyRecord {
     b: f64,
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
     let mut server = Server::default();
 
@@ -20,5 +20,7 @@ async fn main() -> Result<(), ServiceError> {
     let service = BatchPredictor::<ToyRecord>::new(path);
     let endpoint = Endpoint { service, path: path.to_string() };
     server.register(endpoint);
-    Ok(server.serve()?.await?)
+    let handle = server.serve()?;
+    handle.await;
+    Ok(())
 }

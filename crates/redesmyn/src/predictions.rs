@@ -1,10 +1,14 @@
 use super::error::ServiceError;
 use actix_web::{web, HttpResponse, Responder};
+use futures::Future;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
+use tokio::time::sleep;
+use std::pin::Pin;
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
+use tokio::task::spawn_blocking;
 use tokio::{
     sync::{
         mpsc,
@@ -57,13 +61,29 @@ where
     }
 }
 
+pub(crate) trait Service {
+    type R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>;
+    // type F;
+
+    fn run(&mut self) -> JoinHandle<()>;
+
+    async fn invoke<'de>(
+        model_spec: web::Path<ModelSpec>,
+        records: web::Json<Vec<Self::R>>,
+        app_state: web::Data<BatchPredictor<Self::R>>,
+    ) -> impl Responder
+    where
+        Self: Sized;
+}
+
 pub struct BatchPredictor<R>
 where
-    R: Schema<R> + Sync + Send + 'static,
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     pub(super) path: String,
     tx: Mutex<mpsc::UnboundedSender<PredictionJob<R>>>,
-    handle: JoinHandle<()>,
+    task: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    // run_task: Option<Box<dyn FnOnce() -> (dyn Future<Output = ()> + Send + 'static)>>,
 }
 
 impl<R> Clone for BatchPredictor<R>
@@ -75,33 +95,25 @@ where
     }
 }
 
-pub(crate) trait Service {
-    type R;
-
-    async fn invoke<'de>(
-        model_spec: web::Path<ModelSpec>,
-        records: web::Json<Vec<Self::R>>,
-        app_state: web::Data<BatchPredictor<Self::R>>,
-    ) -> impl Responder
-    where
-        Self::R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        Self: Sized;
-}
-
 impl<R> Service for BatchPredictor<R>
 where
-    R: Schema<R> + Sync + Send + 'static,
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     type R = R;
 
-    #[instrument(skip_all)]
+    fn run(&mut self) -> JoinHandle<()> {
+        let task = self.task.take().expect("Tried to take missing task.");
+        // let run_task = self.run_task.take().expect("Tried to take missing task.");
+        tokio::spawn(task)
+    }
+
+    // #[instrument(skip_all)]
     async fn invoke<'de>(
         model_spec: web::Path<ModelSpec>,
         records: web::Json<Vec<Self::R>>,
         app_state: web::Data<BatchPredictor<Self::R>>,
     ) -> impl Responder
     where
-        // R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
         ModelSpec: serde::Deserialize<'de>,
     {
         let ModelSpec { model_name, model_version } = &*model_spec;
@@ -129,18 +141,25 @@ where
         let (tx, rx) = mpsc::unbounded_channel();
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
-        let handle = tokio::spawn(Self::run(rx, rx_abort));
-        tokio::spawn(Self::await_shutdown(tx_abort));
-        BatchPredictor { path: path.into(), tx: tx.into(), handle }
+        // let run_task = ;
+        // let task = Self::task(rx, rx_abort);
+
+        BatchPredictor {
+            path: path.into(),
+            tx: tx.into(),
+            task: Some(Box::pin(async {
+                tokio::spawn(Self::await_shutdown(tx_abort));
+                tokio::spawn(async move { Self::task(rx, rx_abort).await });
+            })), // task: Some(Box::pin(task))
+        }
     }
 
-    #[instrument(skip_all)]
-    async fn run(
+    // #[instrument(skip_all)]
+    async fn task(
         mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
         mut rx_abort: oneshot::Receiver<()>,
-    ) where
-        R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-    {
+    ) {
+        info!("Starting predict task.");
         loop {
             if rx_abort.try_recv().is_ok() {
                 // TODO: Ensure that outstanding requests are handled gracefully.
@@ -150,6 +169,7 @@ where
             let duration_wait = Duration::new(0, 5 * 1_000_000);
             let capacity = 1024;
             let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
+            sleep(Duration::new(0, 1_000_000)).await;
             while Instant::now() < start + duration_wait {
                 if jobs.len() == capacity {
                     break;
