@@ -14,14 +14,14 @@ Use and extend this functionality with Rust, Python, or whichever combination su
     * Start your server from either language.
     
 * **Transparent**: Redesmyn aims to expose as much control over your HTTP server as possible:
-    * Specify your endpoint paths and parameters.
+    * Specify your Service paths and parameters.
     * Apply custom header, request, and response logic.
     * Middleware? Handlers are
     * If you need finer control, you can wrap a Redesmyn service in an HTTP proxy using another Python or Rust library to Redesmyn.
 * **Obervable**: Redesmyn aims to help you monitor the behavior of your models in real-time and post-hoc:
     * Logging is structured by default and surfaces dimensioned metrics for latency, availability, and input distribution summaries.
     * Write input to and output from any request handler to supported data sinks.
-* **Optional integrated model store**: Integrate your endpoints with local or remote filesystem as your model stores: 
+* **Optional integrated model store**: Integrate your Services with local or remote filesystem as your model stores: 
     * Map path and query parameters to model specifications that determine the location of your models.
     * Configure your service to automatically fetch updated models asynchronously without service interruption.
 
@@ -112,7 +112,7 @@ impl<B> Between<B> for service_x {
 
 Suppose we have  services `service_u: impl Service<U, V>` and `service_x: impl Service<X, Y>`, `u`:
 ```
-[#endpoint("{path}/{to}/service_u")]
+[#Service("{path}/{to}/service_u")]
 fn service_u(input_df: TypedDataFrame<U>) -> TypedDataFrame<V> {
     ...
 }

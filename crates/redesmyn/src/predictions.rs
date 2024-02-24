@@ -1,5 +1,5 @@
 use super::error::ServiceError;
-use actix_web::{web, App, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
@@ -39,7 +39,25 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub struct PredictionService<R>
+pub struct Endpoint<S, R>
+where
+    S: Service<R = R>,
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    pub service: S,
+    pub path: String,
+}
+
+impl<R> Clone for Endpoint<BatchPredictor<R>, R>
+where
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    fn clone(&self) -> Self {
+        Endpoint { service: self.service.clone(), path: self.path.clone() }
+    }
+}
+
+pub struct BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static,
 {
@@ -48,73 +66,81 @@ where
     handle: JoinHandle<()>,
 }
 
-impl<R> Clone for PredictionService<R>
+impl<R> Clone for BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     fn clone(&self) -> Self {
-        PredictionService::new(&self.path)
+        BatchPredictor::new(&self.path)
     }
 }
 
-pub(super) trait Handle {
+pub(crate) trait Service {
     type R;
 
-    async fn run(
-        rx: mpsc::UnboundedReceiver<PredictionJob<Self::R>>,
-        rx_abort: oneshot::Receiver<()>,
-    ) where
-        Self::R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        Self: Sized;
-
-    async fn invoke<'de, R>(
+    async fn invoke<'de>(
         model_spec: web::Path<ModelSpec>,
         records: web::Json<Vec<Self::R>>,
-        app_state: web::Data<PredictionService<Self::R>>,
+        app_state: web::Data<BatchPredictor<Self::R>>,
     ) -> impl Responder
     where
         Self::R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
         Self: Sized;
-
-    fn path(&self) -> String;
 }
 
-impl<R> PredictionService<R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    pub fn new(path: &str) -> PredictionService<R> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let (tx_abort, rx_abort) = oneshot::channel::<()>();
-
-        let handle = tokio::spawn(<Self as Handle>::run(rx, rx_abort));
-        tokio::spawn(Self::await_shutdown(tx_abort));
-        PredictionService { path: path.into(), tx: tx.into(), handle }
-    }
-    async fn await_shutdown(tx_abort: oneshot::Sender<()>) {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("Received shutdown signal.");
-        if tx_abort.send(()).is_err() {
-            tracing::error!("Failed to send cancel signal.");
-        }
-    }
-}
-
-impl<R> Handle for PredictionService<R>
+impl<R> Service for BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static,
 {
     type R = R;
 
-    fn path(&self) -> String {
-        self.path.clone()
+    #[instrument(skip_all)]
+    async fn invoke<'de>(
+        model_spec: web::Path<ModelSpec>,
+        records: web::Json<Vec<Self::R>>,
+        app_state: web::Data<BatchPredictor<Self::R>>,
+    ) -> impl Responder
+    where
+        // R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        ModelSpec: serde::Deserialize<'de>,
+    {
+        let ModelSpec { model_name, model_version } = &*model_spec;
+        info!(%model_name, %model_version);
+
+        let (tx, rx) = oneshot::channel();
+        let job = PredictionJob::new(records.into_inner(), tx);
+
+        if let Err(err) = app_state.tx.lock().await.send(job) {
+            return HttpResponse::InternalServerError().body(err.to_string());
+        }
+        match rx.await {
+            Ok(Ok(response)) => HttpResponse::Ok().json(response),
+            Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
+            Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+        }
+    }
+}
+
+impl<R> BatchPredictor<R>
+where
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    pub fn new(path: &str) -> BatchPredictor<R> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        let handle = tokio::spawn(Self::run(rx, rx_abort));
+        tokio::spawn(Self::await_shutdown(tx_abort));
+        BatchPredictor { path: path.into(), tx: tx.into(), handle }
     }
 
     #[instrument(skip_all)]
     async fn run(
         mut rx: mpsc::UnboundedReceiver<PredictionJob<R>>,
         mut rx_abort: oneshot::Receiver<()>,
-    ) {
+    ) where
+        R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    {
         loop {
             if rx_abort.try_recv().is_ok() {
                 // TODO: Ensure that outstanding requests are handled gracefully.
@@ -123,7 +149,7 @@ where
             let start = Instant::now();
             let duration_wait = Duration::new(0, 5 * 1_000_000);
             let capacity = 1024;
-            let mut jobs = Vec::<PredictionJob<Self::R>>::with_capacity(capacity);
+            let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
             while Instant::now() < start + duration_wait {
                 if jobs.len() == capacity {
                     break;
@@ -164,28 +190,11 @@ where
         }
     }
 
-    #[instrument(skip_all)]
-    async fn invoke<'de, S>(
-        model_spec: web::Path<ModelSpec>,
-        records: web::Json<Vec<Self::R>>,
-        app_state: web::Data<PredictionService<Self::R>>,
-    ) -> impl Responder
-    where
-        ModelSpec: serde::Deserialize<'de>,
-    {
-        let ModelSpec { model_name, model_version } = &*model_spec;
-        info!(%model_name, %model_version);
-
-        let (tx, rx) = oneshot::channel();
-        let job = PredictionJob::new(records.into_inner(), tx);
-
-        if let Err(err) = app_state.tx.lock().await.send(job) {
-            return HttpResponse::InternalServerError().body(err.to_string());
-        }
-        match rx.await {
-            Ok(Ok(response)) => HttpResponse::Ok().json(response),
-            Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
-            Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+    async fn await_shutdown(tx_abort: oneshot::Sender<()>) {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("Received shutdown signal.");
+        if tx_abort.send(()).is_err() {
+            tracing::error!("Failed to send cancel signal.");
         }
     }
 }

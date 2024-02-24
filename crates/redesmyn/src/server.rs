@@ -1,61 +1,83 @@
-use crate::predictions::Handle;
+use crate::predictions::{Endpoint, Service};
 
 use super::error::ServiceError;
-use super::predictions::{PredictionService, Schema};
+use super::predictions::{BatchPredictor, Schema};
+use actix_web::Resource;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::env;
-use std::sync::Arc;
 use tokio::{signal, task::JoinHandle};
 use tracing::error;
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-trait Serves {
-    type R: Schema<Self::R> + Sync + Send + 'static + for<'a> Deserialize<'a>;
-
-    fn add_service(self, handler: Arc<dyn Handle<R = Self::R> + Sync + Send>) -> Self;
+pub trait Serves {
+    fn register<S>(&mut self, endpoint: S) -> &Self
+    where
+        S: ResourceFactory + Clone + Send + 'static;
 
     fn serve(self) -> Result<JoinHandle<()>, ServiceError>;
 }
 
-pub struct Server<R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    include_with: VecDeque<Arc<dyn Handle<R = R> + Sync + Send>>,
+pub struct Server {
+    resource_factories: VecDeque<BoxedResourceFactory>,
 }
 
-impl<R> Default for Server<R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
+impl Default for Server {
     fn default() -> Self {
-        Server { include_with: VecDeque::new() }
+        Server { resource_factories: VecDeque::new() }
     }
 }
 
-impl<R> Serves for Server<R>
+pub trait ResourceFactory: Send {
+    fn new_resource(&self) -> Resource;
+
+    fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
+}
+
+impl<R> ResourceFactory for Endpoint<BatchPredictor<R>, R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
-    type R = R;
+    fn new_resource(&self) -> Resource {
+        web::resource(self.path.clone())
+            .app_data(web::Data::new(self.service.clone()))
+            .route(web::post().to(<BatchPredictor<R> as Service>::invoke))
+    }
 
-    fn add_service(mut self, service: Arc<dyn Handle<R = R> + Sync + Send>) -> Self {
-        self.include_with.push_back(service);
+    fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
+        Box::new(self.clone())
+    }
+}
+
+struct BoxedResourceFactory(Box<dyn ResourceFactory>);
+
+impl Clone for BoxedResourceFactory {
+    fn clone(&self) -> Self {
+        BoxedResourceFactory(self.0.clone_boxed())
+    }
+}
+
+impl Serves for Server {
+    fn register<S>(&mut self, endpoint: S) -> &Self
+    where
+        S: ResourceFactory + Clone + Send + 'static,
+    {
+        self.resource_factories
+            .push_back(BoxedResourceFactory(Box::new(endpoint)));
         self
     }
 
     fn serve(self) -> Result<JoinHandle<()>, ServiceError> {
         let http_server = HttpServer::new(move || {
-            let app = self.include_with.iter().fold(actix_web::App::new(), |app, service| {
-                app.service(
-                    web::resource((*service).path())
-                        // .app_data(web::Data::new(self))
-                        .route(web::post().to(<PredictionService<Self::R> as Handle>::invoke::<R>)),
-                )
-            });
+            let app = self
+                .resource_factories
+                .clone()
+                .into_iter()
+                .fold(actix_web::App::new(), |app, resource_factory| {
+                    app.service(resource_factory.0.new_resource())
+                });
             app
         })
         .disable_signals();

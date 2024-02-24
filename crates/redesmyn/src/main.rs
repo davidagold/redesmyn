@@ -2,7 +2,7 @@ use std::env;
 
 use actix_web::{dev::ServerHandle, web, App, HttpServer};
 use pyo3::{PyResult, Python};
-use redesmyn::predictions::{self, PredictionService};
+use redesmyn::predictions::{self, BatchPredictor};
 use tokio::{
     signal,
     sync::{mpsc, oneshot},
@@ -17,11 +17,4 @@ async fn main() -> () {
 
 }
 
-async fn await_shutdown(server_handle: ServerHandle, tx_abort: oneshot::Sender<()>) {
-    let _ = signal::ctrl_c().await;
-    tracing::info!("Received shutdown signal.");
-    if tx_abort.send(()).is_err() {
-        tracing::error!("Failed to send cancel signal.");
-    }
-    server_handle.stop(true).await;
-}
+
