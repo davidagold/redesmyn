@@ -1,12 +1,12 @@
 use super::error::ServiceError;
-use actix_web::{web, Handler, HttpResponse, Resource, Responder};
-use futures::Future;
+use actix_web::{web, Handler, HttpResponse, Responder};
+
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
-use std::pin::Pin;
+
+
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
 use tokio::time::sleep;
 use tokio::{
@@ -208,7 +208,7 @@ where
             tokio::task::spawn_blocking(move || {
                 info!("Running batch predict for {} jobs.", jobs.len());
                 let mut batch = BatchJob::from_jobs(jobs)?;
-                let df_batch = (&mut batch).swap_df(None)?.unwrap();
+                let df_batch = batch.swap_df(None)?.unwrap();
                 let df_results = match Python::with_gil(|py| {
                     py.import("handlers.model")?
                         .getattr("handle")?

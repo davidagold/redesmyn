@@ -44,7 +44,7 @@ impl<T> From<ServiceError> for Result<T, ServiceError> {
 
 impl From<PyErr> for ServiceError {
     fn from(err: PyErr) -> Self {
-        Self::PredictionError(err.into()).into()
+        Self::PredictionError(err.into())
     }
 }
 

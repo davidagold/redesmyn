@@ -42,15 +42,12 @@ impl Clone for BoxedToResource {
     }
 }
 
+#[derive(Default)]
 pub struct Server {
     factories: VecDeque<BoxedToResource>,
 }
 
-impl Default for Server {
-    fn default() -> Self {
-        Server { factories: VecDeque::new() }
-    }
-}
+
 
 use polars::prelude::*;
 #[derive(Debug, Deserialize, Schema)]
@@ -98,7 +95,7 @@ where
 }
 
 impl Serves for Server {
-    fn register<S, O>(&mut self, service: S) -> &Self
+    fn register<S, O>(&mut self, mut service: S) -> &Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
@@ -114,6 +111,7 @@ impl Serves for Server {
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
+        service.run();
         self.factories.push_back(BoxedToResource(Box::new(service)));
         self
     }
@@ -166,7 +164,7 @@ impl Serves for Server {
         info!("Starting server...");
         let server_handle = server.handle();
         tokio::spawn(async move { await_shutdown(server_handle).await });
-        Ok(tokio::spawn(async move { server.await }))
+        Ok(tokio::spawn(server))
     }
 }
 
