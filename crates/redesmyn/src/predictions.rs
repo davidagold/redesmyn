@@ -76,19 +76,18 @@ where
     }
 }
 
+pub(crate) type HandlerArgs<R> = (
+    web::Path<ModelSpec>,
+    web::Json<Vec<R>>,
+    web::Data<BatchPredictor<R>>,
+);
+
 impl<R> Service for BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     type R = R;
-    type H = impl Handler<
-        (
-            web::Path<ModelSpec>,
-            web::Json<Vec<Self::R>>,
-            web::Data<BatchPredictor<Self::R>>,
-        ),
-        Output = impl Responder + 'static,
-    >;
+    type H = impl Handler<HandlerArgs<Self::R>, Output = impl Responder + 'static>;
 
     fn run(&mut self) -> JoinHandle<()> {
         self.handle

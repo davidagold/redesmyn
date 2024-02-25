@@ -1,7 +1,7 @@
-use crate::predictions::{ModelSpec, Service};
+use crate::predictions::{HandlerArgs, Service};
 
 use super::error::ServiceError;
-use super::predictions::{BatchPredictor, Schema};
+use super::predictions::Schema;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
@@ -30,14 +30,7 @@ impl<R, H, O, T> ToResource for T
 where
     Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-    H: Handler<
-        (
-            web::Path<ModelSpec>,
-            web::Json<Vec<R>>,
-            web::Data<BatchPredictor<R>>,
-        ),
-        Output = O,
-    >,
+    H: Handler<HandlerArgs<<Self as Service>::R>, Output = O>,
     O: Responder + 'static,
 {
     fn to_resource(&self) -> Resource {
@@ -57,15 +50,7 @@ pub trait Serves {
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        S::H: Handler<
-                (
-                    web::Path<ModelSpec>,
-                    web::Json<Vec<S::R>>,
-                    web::Data<BatchPredictor<S::R>>,
-                ),
-                Output = O,
-            > + Sync
-            + Send,
+        S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
     fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
@@ -81,15 +66,7 @@ impl Serves for Server {
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        S::H: Handler<
-                (
-                    web::Path<ModelSpec>,
-                    web::Json<Vec<S::R>>,
-                    web::Data<BatchPredictor<S::R>>,
-                ),
-                Output = O,
-            > + Sync
-            + Send,
+        S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
