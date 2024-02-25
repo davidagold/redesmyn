@@ -1,5 +1,5 @@
 fn_single_line = false
 attr_fn_like_width = 80
-struct_lit_width = 60
+struct_lit_width = 40
 use_field_init_shorthand = true
 match_block_trailing_comma = false

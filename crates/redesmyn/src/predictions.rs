@@ -68,7 +68,11 @@ where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     fn clone(&self) -> Self {
-        BatchPredictor { path: self.path.clone(), tx: self.tx.clone(), handle: None }
+        BatchPredictor {
+            path: self.path.clone(),
+            tx: self.tx.clone(),
+            handle: None,
+        }
     }
 }
 
@@ -233,47 +237,6 @@ where
     }
 }
 
-pub struct PredictionJob<R> {
-    id: Uuid,
-    records: Option<Vec<R>>,
-    tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
-}
-
-impl<R> PredictionJob<R>
-where
-    R: Schema<R> + Sync + Send + 'static,
-{
-    fn new(
-        records: Vec<R>,
-        tx: Sender<Result<PredictionResponse, ServiceError>>,
-    ) -> PredictionJob<R> {
-        let id = Uuid::new_v4();
-        PredictionJob { id, records: Some(records), tx }
-    }
-
-    fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
-        let Some(records) = self.records.take() else {
-            let msg = "Tried to take missing records".to_string();
-            return Err(ServiceError::Error(msg));
-        };
-        let n_records = records.len();
-        let mut df = R::to_dataframe(records)?;
-        let col_job_id =
-            Series::from_iter(repeat(self.id.to_string()).take(n_records)).with_name("job_id");
-        match df.with_column(col_job_id) {
-            Ok(_) => Ok(df),
-            Err(err) => Err(err.into()),
-        }
-    }
-
-    fn send_result(self, result: Result<PredictionResponse, ServiceError>) {
-        if self.tx.send(result).is_err() {
-            // TODO: Structure logging
-            error!("Failed to send result for job with ID {}", self.id);
-        }
-    }
-}
-
 struct BatchJob<R>
 where
     R: Schema<R> + Sync + Send + 'static,
@@ -346,5 +309,46 @@ where
 
     fn len(&self) -> usize {
         self.jobs_by_id.len()
+    }
+}
+
+pub struct PredictionJob<R> {
+    id: Uuid,
+    records: Option<Vec<R>>,
+    tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
+}
+
+impl<R> PredictionJob<R>
+where
+    R: Schema<R> + Sync + Send + 'static,
+{
+    fn new(
+        records: Vec<R>,
+        tx: Sender<Result<PredictionResponse, ServiceError>>,
+    ) -> PredictionJob<R> {
+        let id = Uuid::new_v4();
+        PredictionJob { id, records: Some(records), tx }
+    }
+
+    fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
+        let Some(records) = self.records.take() else {
+            let msg = "Tried to take missing records".to_string();
+            return Err(ServiceError::Error(msg));
+        };
+        let n_records = records.len();
+        let mut df = R::to_dataframe(records)?;
+        let col_job_id =
+            Series::from_iter(repeat(self.id.to_string()).take(n_records)).with_name("job_id");
+        match df.with_column(col_job_id) {
+            Ok(_) => Ok(df),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn send_result(self, result: Result<PredictionResponse, ServiceError>) {
+        if self.tx.send(result).is_err() {
+            // TODO: Structure logging
+            error!("Failed to send result for job with ID {}", self.id);
+        }
     }
 }
