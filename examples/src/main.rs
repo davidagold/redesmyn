@@ -1,7 +1,7 @@
 use polars::prelude::*;
 use redesmyn::{
     error::ServiceError,
-    predictions::{BatchPredictor, Endpoint, Schema},
+    predictions::{BatchPredictor, Schema},
     server::{Server, Serves},
 };
 use serde::Deserialize;
@@ -19,7 +19,7 @@ async fn main() -> Result<(), ServiceError> {
     let path = "predictions/{model_name}/{model_version}";
     let service = BatchPredictor::<ToyRecord>::new(path);
     // let endpoint = Endpoint { service, path: path.to_string() };
-    // server.register(endpoint);
+    server.register(service);
     let handle = server.serve()?;
     handle.await;
     Ok(())

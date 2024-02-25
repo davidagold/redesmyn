@@ -1,16 +1,14 @@
-use crate::predictions::{invoke, Endpoint, ModelSpec, Service};
+use crate::predictions::{ModelSpec, Service};
 
 use super::error::ServiceError;
 use super::predictions::{BatchPredictor, Schema};
-use actix_web::{Handler, HttpMessage, HttpResponse, Responder};
 use actix_web::{dev::ServerHandle, web, HttpServer};
+use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
 use redesmyn_macros::Schema;
 use serde::Deserialize;
-use std::any::Any;
 use std::collections::VecDeque;
 use std::env;
-use std::marker::PhantomData;
 use tokio::{signal, task::JoinHandle};
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
@@ -18,49 +16,39 @@ use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 pub trait Serves {
     // type H;
 
-    fn register<S>(&mut self, endpoint: S) -> &Self
+    fn register<S, O>(&mut self, endpoint: S) -> &Self
     where
-        S: ServiceFactory<R = dyn Any> + Clone + Send + 'static;
+        S: Service + Clone + Sync + Send + 'static,
+        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::H: Handler<
+                (
+                    web::Path<ModelSpec>,
+                    web::Json<Vec<S::R>>,
+                    web::Data<BatchPredictor<S::R>>,
+                ),
+                Output = O,
+            > + Sync
+            + Send,
+        O: Responder + 'static;
 
     fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
 }
 
-pub trait ServiceFactory: Send {
-    type R: Sync + Send + 'static;
-    // type H;
+struct BoxedToResource(Box<dyn ToResource>);
 
-    // fn new(&self) -> Box<dyn Service<H = Self::H>>;
-
-    fn clone_boxed(&self) -> Box<dyn ServiceFactory<R = Self::R, H=Self::H>>;
+impl Clone for BoxedToResource {
+    fn clone(&self) -> Self {
+        self.0.clone_boxed()
+    }
 }
 
-// struct BoxedResourceFactory<R: ?Sized>(Box<dyn ServiceFactory<R = R>>);
-
-// impl<R> Clone for BoxedResourceFactory<R> {
-//     fn clone(&self) -> Self {
-//         BoxedResourceFactory(self.0.clone_boxed())
-//     }
-// }
-
-// struct BoxedService<H, R>(Box<dyn Service<H = H>>, PhantomData<R>)
-// where
-//     H: Handler<(
-//         web::Path<ModelSpec>,
-//         web::Json<Vec<R>>,
-//         web::Data<BatchPredictor<R>>,
-//     ), Output = HttpResponse>;
-
-
-
 pub struct Server {
-    // resource_factories: VecDeque<Box<dyn ServiceFactory<R = dyn Any>>>,
-    // resource_factories: VecDeque<BoxedResourceFactory<dyn Any>>,
+    factories: VecDeque<BoxedToResource>,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        // Server { resource_factories: VecDeque::new() }
-        Server { }
+        Server { factories: VecDeque::new() }
     }
 }
 
@@ -70,69 +58,74 @@ pub struct ToyRecord {
     a: f64,
     b: f64,
 }
+#[derive(Debug, Deserialize, Schema)]
+pub struct ToyRecord2 {
+    a: f64,
+    b: f64,
+    c: f64,
+}
+
+trait ToResource: Sync + Send {
+    fn to_resource(&self) -> Resource;
+
+    fn clone_boxed(&self) -> BoxedToResource;
+}
+
+impl<R, H, O, T: Service<R = R, H = H>> ToResource for T
+where
+    Self: Clone + Sync + Send + 'static,
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    H: Handler<
+        (
+            web::Path<ModelSpec>,
+            web::Json<Vec<R>>,
+            web::Data<BatchPredictor<R>>,
+        ),
+        Output = O,
+    >,
+    O: Responder + 'static,
+{
+    fn to_resource(&self) -> Resource {
+        let handler = self.get_handler();
+        web::resource(self.path())
+            .app_data(web::Data::new(self.clone()))
+            .route(web::post().to(handler))
+    }
+
+    fn clone_boxed(&self) -> BoxedToResource {
+        BoxedToResource(Box::new(self.clone()))
+    }
+}
 
 impl Serves for Server {
-
-    fn register<S>(&mut self, endpoint: S) -> &Self
+    fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: ServiceFactory<R = dyn Any> + Clone + Send + 'static,
+        S: Service + Clone + Sync + Send + 'static,
+        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::H: Handler<
+                (
+                    web::Path<ModelSpec>,
+                    web::Json<Vec<S::R>>,
+                    web::Data<BatchPredictor<S::R>>,
+                ),
+                Output = O,
+            > + Sync
+            + Send,
+        O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
-        // self.resource_factories
-        //     .push_back(BoxedResourceFactory(Box::new(endpoint)));
+        self.factories.push_back(BoxedToResource(Box::new(service)));
         self
     }
 
-    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> 
-    {
-        // let services: Vec<Box<dyn Service<R = dyn Any>>> = self
-            // .resource_factories
-            // .into_iter()
-            // .map(|f| f.0.new())
-            // .collect();
-
-        // let services: Vec<Box<dyn Any>> = vec![
-            // Box::new(BatchPredictor::new("predictions/{model_name}/{model_version}"))
-        // ];
-
-        // type BoxedService = Box<
-        //     &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
-        // >;        
-
-        let mut services: Vec<
-            Box<
-                &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
-                // &dyn Service<R = dyn Schema<<BatchPredictor<_> as Service>::R>, H = <BatchPredictor<_> as Service>::H>
-            >
-        > = vec![
-            Box::new(
-                &BatchPredictor::<ToyRecord>::new("predictions/{model_name}/{model_version}")
-            )
-            as Box<
-                &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
-                // &dyn Service<R = dyn Schema<<BatchPredictor<_> as Service>::R>, H = <BatchPredictor<_> as Service>::H>
-            >
-        ];
-
-        for service in services.iter_mut() {
-            // .run();
-        }
-
-        let x = BatchPredictor::<ToyRecord>::new("predictions/{model_name}/{model_version}");
-
+    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> {
         let http_server = HttpServer::new(move || {
-            let app = services.clone()
+            self.factories
+                .clone()
                 .into_iter()
-                .fold(actix_web::App::new(), |app, mut service| {
-                    let handler = Box::new(*service).get_handler();
-                    // service.run();
-                    app.service(
-                        web::resource("predictions/{model_name}/{model_version}")
-                        .app_data(web::Data::new(*service))
-                        .route(web::post().to(handler))
-                    )
-                });
-            app
+                .fold(actix_web::App::new(), |app, factory| {
+                    app.service(factory.0.to_resource())
+                })
         })
         .disable_signals();
 

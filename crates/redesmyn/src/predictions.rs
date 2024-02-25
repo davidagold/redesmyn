@@ -1,5 +1,5 @@
 use super::error::ServiceError;
-use actix_web::{web, Handler, HttpResponse, Responder};
+use actix_web::{web, Handler, HttpResponse, Resource, Responder};
 use futures::Future;
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
@@ -44,30 +44,7 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub struct Endpoint<S, R>
-where
-    S: Service,
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    _phantom: PhantomData<R>,
-    pub service: S,
-    pub path: String,
-}
-
-impl<R> Clone for Endpoint<BatchPredictor<R>, R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    fn clone(&self) -> Self {
-        Endpoint {
-            service: self.service.clone(),
-            path: self.path.clone(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
-pub(crate) trait Service // where
+pub trait Service // where
 {
     type R;
     type H;
@@ -78,20 +55,19 @@ pub(crate) trait Service // where
         &self,
     ) -> Self::H;
 
+    // fn to_resource(&self) -> Resource;
+
     fn path(&self) -> String;
 }
 
-// struct GenericPredictor {
-//     handler: fn
-// }
-
 pub struct BatchPredictor<R>
-// where
-// R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+where
+    Self: Sync
 {
     pub(super) path: String,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<R>>>>,
-    task: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    // task: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    handle: Option<ServiceHandle<R>>
 }
 
 impl<R> Clone for BatchPredictor<R>
@@ -102,7 +78,7 @@ where
         BatchPredictor {
             path: self.path.clone(),
             tx: self.tx.clone(),
-            task: None
+            handle: None
         }
     }
 }
@@ -119,9 +95,10 @@ where
     ), Output = impl Responder + 'static>;
     
     fn run(&mut self) -> JoinHandle<()> {
-        let task = self.task.take().expect("Tried to take missing task.");
+        // let task = self.task.take().expect("Tried to take missing task.");
         // let run_task = self.run_task.take().expect("Tried to take missing task.");
-        tokio::spawn(task)
+        // tokio::spawn(task)
+        self.handle.take().expect("Tried to take missing handle").start()
     }
 
     fn get_handler(&self) -> Self::H {
@@ -132,6 +109,7 @@ where
         self.path.to_string()
     }
 }
+
 
 pub async fn invoke<'de, R>(
     model_spec: web::Path<ModelSpec>,
@@ -158,24 +136,43 @@ where
     }
 }
 
+
+struct ServiceHandle<R> {
+    rx: Option<mpsc::Receiver<PredictionJob<R>>>,
+}
+
+impl<R> ServiceHandle<R> 
+where
+    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+{
+    fn start(&mut self) -> JoinHandle<()> {
+        let rx = self.rx.take().unwrap();
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        tokio::spawn(async move {
+            tokio::spawn(BatchPredictor::<R>::await_shutdown(tx_abort));
+            tokio::spawn(async move { BatchPredictor::<R>::task(rx, rx_abort).await });
+        })
+    }
+}
+
 impl<R> BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     pub fn new(path: &str) -> BatchPredictor<R> {
         let (tx, rx) = mpsc::channel(1024);
-        let (tx_abort, rx_abort) = oneshot::channel::<()>();
-
         // let run_task = ;
         // let task = Self::task(rx, rx_abort);
 
         BatchPredictor {
             path: path.into(),
             tx: Arc::new(tx.into()),
-            task: Some(Box::pin(async {
-                tokio::spawn(Self::await_shutdown(tx_abort));
-                tokio::spawn(async move { Self::task(rx, rx_abort).await });
-            })), // task: Some(Box::pin(task))
+            // task: Some(Box::pin(async {
+            //     tokio::spawn(Self::await_shutdown(tx_abort));
+            //     tokio::spawn(async move { Self::task(rx, rx_abort).await });
+            // })), // task: Some(Box::pin(task))
+            handle: Some(ServiceHandle { rx: Some(rx) })
         }
     }
 
