@@ -168,12 +168,12 @@ where
                 // TODO: Ensure that outstanding requests are handled gracefully.
                 return;
             }
-            
+
             let start = Instant::now();
             let duration_wait = Duration::new(0, 5 * 1_000_000);
             let capacity = 1024;
             let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
-            
+
             // TODO: Find better way to yield
             sleep(Duration::new(0, 1_000_000)).await;
             while Instant::now() < start + duration_wait {
@@ -189,9 +189,7 @@ where
             };
 
             match BatchJob::from_jobs(jobs) {
-                Ok(batch) => {
-                    tokio::task::spawn_blocking(move || Self::predict_batch(batch))
-                },
+                Ok(batch) => tokio::task::spawn_blocking(move || Self::predict_batch(batch)),
                 Err(err) => {
                     error!("Failed to {err}");
                     continue;
@@ -200,6 +198,7 @@ where
         }
     }
 
+    #[instrument(skip_all)]
     fn predict_batch(mut batch: BatchJob<R>) -> Result<(), ServiceError> {
         info!("Running batch predict for {} jobs.", batch.len());
 
