@@ -16,12 +16,12 @@ pub struct ToyRecord {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
-    let mut server = Server::default();
-
     let path = "predictions/{model_name}/{model_version}";
     let service = BatchPredictor::<ToyRecord>::new(path);
+    let mut server = Server::default();
     server.register(service);
     let handle = server.serve()?;
+    
     handle.await?.map_err(|err| {
         error!("{err}");
         err.into()

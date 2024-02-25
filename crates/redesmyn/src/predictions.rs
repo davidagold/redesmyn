@@ -160,7 +160,7 @@ where
         }
     }
 
-    // #[instrument(skip_all)]
+    #[instrument(skip_all)]
     async fn task(mut rx: mpsc::Receiver<PredictionJob<R>>, mut rx_abort: oneshot::Receiver<()>) {
         info!("Starting predict task.");
         loop {
@@ -168,10 +168,13 @@ where
                 // TODO: Ensure that outstanding requests are handled gracefully.
                 return;
             }
+            
             let start = Instant::now();
             let duration_wait = Duration::new(0, 5 * 1_000_000);
             let capacity = 1024;
             let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
+            
+            // TODO: Find better way to yield
             sleep(Duration::new(0, 1_000_000)).await;
             while Instant::now() < start + duration_wait {
                 if jobs.len() == capacity {
@@ -185,32 +188,41 @@ where
                 continue;
             };
 
-            // Process batch in separate blocking thread.
-            tokio::task::spawn_blocking(move || {
-                info!("Running batch predict for {} jobs.", jobs.len());
-                let mut batch = BatchJob::from_jobs(jobs)?;
-                let df_batch = batch.swap_df(None)?.unwrap();
-                let df_results = match Python::with_gil(|py| {
-                    py.import("handlers.model")?
-                        .getattr("handle")?
-                        .call((PyDataFrame(df_batch),), None)?
-                        .extract::<PyDataFrame>()
-                        .map(|pydf| -> DataFrame { pydf.into() })
-                }) {
-                    Ok(df_results) => df_results,
-                    Err(err) => {
-                        // TODO: Handle errors
-                        error!("{err}");
-                        return Err(err.into());
-                    }
-                };
-                match batch.send_responses(df_results) {
-                    Ok(_) => (),
-                    Err(err) => error!("{}", err),
-                };
-                Result::<(), ServiceError>::Ok(())
-            });
+            match BatchJob::from_jobs(jobs) {
+                Ok(batch) => {
+                    tokio::task::spawn_blocking(move || Self::predict_batch(batch))
+                },
+                Err(err) => {
+                    error!("Failed to {err}");
+                    continue;
+                }
+            };
         }
+    }
+
+    fn predict_batch(mut batch: BatchJob<R>) -> Result<(), ServiceError> {
+        info!("Running batch predict for {} jobs.", batch.len());
+
+        let df_batch = batch.swap_df(None)?.unwrap();
+        let df_results = match Python::with_gil(|py| {
+            py.import("handlers.model")?
+                .getattr("handle")?
+                .call((PyDataFrame(df_batch),), None)?
+                .extract::<PyDataFrame>()
+                .map(|pydf| -> DataFrame { pydf.into() })
+        }) {
+            Ok(df_results) => df_results,
+            Err(err) => {
+                // TODO: Handle errors
+                error!("{err}");
+                return Err(err.into());
+            }
+        };
+        match batch.send_responses(df_results) {
+            Ok(_) => (),
+            Err(err) => error!("{}", err),
+        };
+        Result::<(), ServiceError>::Ok(())
     }
 
     async fn await_shutdown(tx_abort: oneshot::Sender<()>) {
@@ -331,5 +343,9 @@ where
             job.send_result(result);
         }
         Ok(())
+    }
+
+    fn len(&self) -> usize {
+        self.jobs_by_id.len()
     }
 }

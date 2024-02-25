@@ -12,23 +12,10 @@ use tokio::{signal, task::JoinHandle};
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-pub trait Serves {
-    fn register<S, O>(&mut self, endpoint: S) -> &Self
-    where
-        S: Service + Clone + Sync + Send + 'static,
-        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        S::H: Handler<
-                (
-                    web::Path<ModelSpec>,
-                    web::Json<Vec<S::R>>,
-                    web::Data<BatchPredictor<S::R>>,
-                ),
-                Output = O,
-            > + Sync
-            + Send,
-        O: Responder + 'static;
+trait ToResource: Sync + Send {
+    fn to_resource(&self) -> Resource;
 
-    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
+    fn clone_boxed(&self) -> BoxedToResource;
 }
 
 struct BoxedToResource(Box<dyn ToResource>);
@@ -39,20 +26,9 @@ impl Clone for BoxedToResource {
     }
 }
 
-#[derive(Default)]
-pub struct Server {
-    factories: VecDeque<BoxedToResource>,
-}
-
-trait ToResource: Sync + Send {
-    fn to_resource(&self) -> Resource;
-
-    fn clone_boxed(&self) -> BoxedToResource;
-}
-
-impl<R, H, O, T: Service<R = R, H = H>> ToResource for T
+impl<R, H, O, T> ToResource for T
 where
-    Self: Clone + Sync + Send + 'static,
+    Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
     H: Handler<
         (
@@ -74,6 +50,30 @@ where
     fn clone_boxed(&self) -> BoxedToResource {
         BoxedToResource(Box::new(self.clone()))
     }
+}
+
+pub trait Serves {
+    fn register<S, O>(&mut self, endpoint: S) -> &Self
+    where
+        S: Service + Clone + Sync + Send + 'static,
+        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::H: Handler<
+                (
+                    web::Path<ModelSpec>,
+                    web::Json<Vec<S::R>>,
+                    web::Data<BatchPredictor<S::R>>,
+                ),
+                Output = O,
+            > + Sync
+            + Send,
+        O: Responder + 'static;
+
+    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
+}
+
+#[derive(Default)]
+pub struct Server {
+    factories: VecDeque<BoxedToResource>,
 }
 
 impl Serves for Server {
