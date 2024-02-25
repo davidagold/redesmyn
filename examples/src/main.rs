@@ -4,9 +4,11 @@ use redesmyn::{
     predictions::{BatchPredictor, Schema},
     server::{Server, Serves},
 };
+use redesmyn_macros::Schema;
 use serde::Deserialize;
+use tracing::error;
 
-#[derive(Debug, Deserialize, redesmyn_macros::Schema)]
+#[derive(Debug, Deserialize, Schema)]
 pub struct ToyRecord {
     a: f64,
     b: f64,
@@ -18,9 +20,10 @@ async fn main() -> Result<(), ServiceError> {
 
     let path = "predictions/{model_name}/{model_version}";
     let service = BatchPredictor::<ToyRecord>::new(path);
-    // let endpoint = Endpoint { service, path: path.to_string() };
     server.register(service);
     let handle = server.serve()?;
-    handle.await;
-    Ok(())
+    handle.await?.map_err(|err| {
+        error!("{err}");
+        err.into()
+    })
 }

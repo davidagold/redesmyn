@@ -5,7 +5,6 @@ use super::predictions::{BatchPredictor, Schema};
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
-use redesmyn_macros::Schema;
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::env;
@@ -14,8 +13,6 @@ use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 pub trait Serves {
-    // type H;
-
     fn register<S, O>(&mut self, endpoint: S) -> &Self
     where
         S: Service + Clone + Sync + Send + 'static,
@@ -45,21 +42,6 @@ impl Clone for BoxedToResource {
 #[derive(Default)]
 pub struct Server {
     factories: VecDeque<BoxedToResource>,
-}
-
-
-
-use polars::prelude::*;
-#[derive(Debug, Deserialize, Schema)]
-pub struct ToyRecord {
-    a: f64,
-    b: f64,
-}
-#[derive(Debug, Deserialize, Schema)]
-pub struct ToyRecord2 {
-    a: f64,
-    b: f64,
-    c: f64,
 }
 
 trait ToResource: Sync + Send {

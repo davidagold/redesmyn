@@ -1,12 +1,10 @@
 use super::error::ServiceError;
-use actix_web::{web, Handler, HttpResponse, Responder};
 
+use actix_web::{web, Handler, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
-
-
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
 use tokio::time::sleep;
 use tokio::{
@@ -23,7 +21,8 @@ use uuid::Uuid;
 
 pub trait Schema<R> {
     fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>
-    where Self: Sized;
+    where
+        Self: Sized;
 }
 
 #[derive(Serialize)]
@@ -44,30 +43,24 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub trait Service // where
-{
+pub trait Service {
     type R;
     type H;
 
     fn run(&mut self) -> JoinHandle<()>;
 
-    fn get_handler(
-        &self,
-    ) -> Self::H;
-
-    // fn to_resource(&self) -> Resource;
+    fn get_handler(&self) -> Self::H;
 
     fn path(&self) -> String;
 }
 
 pub struct BatchPredictor<R>
 where
-    Self: Sync
+    Self: Sync,
 {
     pub(super) path: String,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<R>>>>,
-    // task: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
-    handle: Option<ServiceHandle<R>>
+    handle: Option<ServiceHandle<R>>,
 }
 
 impl<R> Clone for BatchPredictor<R>
@@ -75,11 +68,7 @@ where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     fn clone(&self) -> Self {
-        BatchPredictor {
-            path: self.path.clone(),
-            tx: self.tx.clone(),
-            handle: None
-        }
+        BatchPredictor { path: self.path.clone(), tx: self.tx.clone(), handle: None }
     }
 }
 
@@ -88,17 +77,20 @@ where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     type R = R;
-    type H = impl Handler<(
-        web::Path<ModelSpec>,
-        web::Json<Vec<Self::R>>,
-        web::Data<BatchPredictor<Self::R>>,
-    ), Output = impl Responder + 'static>;
-    
+    type H = impl Handler<
+        (
+            web::Path<ModelSpec>,
+            web::Json<Vec<Self::R>>,
+            web::Data<BatchPredictor<Self::R>>,
+        ),
+        Output = impl Responder + 'static,
+    >;
+
     fn run(&mut self) -> JoinHandle<()> {
-        // let task = self.task.take().expect("Tried to take missing task.");
-        // let run_task = self.run_task.take().expect("Tried to take missing task.");
-        // tokio::spawn(task)
-        self.handle.take().expect("Tried to take missing handle").start()
+        self.handle
+            .take()
+            .expect("Tried to take missing handle")
+            .start()
     }
 
     fn get_handler(&self) -> Self::H {
@@ -109,7 +101,6 @@ where
         self.path.to_string()
     }
 }
-
 
 pub async fn invoke<'de, R>(
     model_spec: web::Path<ModelSpec>,
@@ -136,12 +127,11 @@ where
     }
 }
 
-
 struct ServiceHandle<R> {
     rx: Option<mpsc::Receiver<PredictionJob<R>>>,
 }
 
-impl<R> ServiceHandle<R> 
+impl<R> ServiceHandle<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
@@ -162,25 +152,16 @@ where
 {
     pub fn new(path: &str) -> BatchPredictor<R> {
         let (tx, rx) = mpsc::channel(1024);
-        // let run_task = ;
-        // let task = Self::task(rx, rx_abort);
 
         BatchPredictor {
             path: path.into(),
             tx: Arc::new(tx.into()),
-            // task: Some(Box::pin(async {
-            //     tokio::spawn(Self::await_shutdown(tx_abort));
-            //     tokio::spawn(async move { Self::task(rx, rx_abort).await });
-            // })), // task: Some(Box::pin(task))
-            handle: Some(ServiceHandle { rx: Some(rx) })
+            handle: Some(ServiceHandle { rx: Some(rx) }),
         }
     }
 
     // #[instrument(skip_all)]
-    async fn task(
-        mut rx: mpsc::Receiver<PredictionJob<R>>,
-        mut rx_abort: oneshot::Receiver<()>,
-    ) {
+    async fn task(mut rx: mpsc::Receiver<PredictionJob<R>>, mut rx_abort: oneshot::Receiver<()>) {
         info!("Starting predict task.");
         loop {
             if rx_abort.try_recv().is_ok() {
@@ -241,10 +222,7 @@ where
     }
 }
 
-pub struct PredictionJob<R>
-// where
-// R: Sync + Send + 'static,
-{
+pub struct PredictionJob<R> {
     id: Uuid,
     records: Option<Vec<R>>,
     tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
