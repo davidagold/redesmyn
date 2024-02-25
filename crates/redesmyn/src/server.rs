@@ -1,86 +1,136 @@
-use crate::predictions::{Endpoint, Service};
+use crate::predictions::{invoke, Endpoint, ModelSpec, Service};
 
 use super::error::ServiceError;
 use super::predictions::{BatchPredictor, Schema};
-use actix_web::Resource;
+use actix_web::{Handler, HttpMessage, HttpResponse, Responder};
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use pyo3::{PyResult, Python};
+use redesmyn_macros::Schema;
 use serde::Deserialize;
-use tokio::task::JoinError;
+use std::any::Any;
 use std::collections::VecDeque;
 use std::env;
+use std::marker::PhantomData;
 use tokio::{signal, task::JoinHandle};
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 pub trait Serves {
+    // type H;
+
     fn register<S>(&mut self, endpoint: S) -> &Self
     where
-        S: ResourceFactory + Clone + Send + 'static;
+        S: ServiceFactory<R = dyn Any> + Clone + Send + 'static;
 
-        fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
+    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
 }
 
+pub trait ServiceFactory: Send {
+    type R: Sync + Send + 'static;
+    // type H;
+
+    // fn new(&self) -> Box<dyn Service<H = Self::H>>;
+
+    fn clone_boxed(&self) -> Box<dyn ServiceFactory<R = Self::R, H=Self::H>>;
+}
+
+// struct BoxedResourceFactory<R: ?Sized>(Box<dyn ServiceFactory<R = R>>);
+
+// impl<R> Clone for BoxedResourceFactory<R> {
+//     fn clone(&self) -> Self {
+//         BoxedResourceFactory(self.0.clone_boxed())
+//     }
+// }
+
+// struct BoxedService<H, R>(Box<dyn Service<H = H>>, PhantomData<R>)
+// where
+//     H: Handler<(
+//         web::Path<ModelSpec>,
+//         web::Json<Vec<R>>,
+//         web::Data<BatchPredictor<R>>,
+//     ), Output = HttpResponse>;
+
+
+
 pub struct Server {
-    resource_factories: VecDeque<BoxedResourceFactory>,
+    // resource_factories: VecDeque<Box<dyn ServiceFactory<R = dyn Any>>>,
+    // resource_factories: VecDeque<BoxedResourceFactory<dyn Any>>,
 }
 
 impl Default for Server {
     fn default() -> Self {
-        Server { resource_factories: VecDeque::new() }
+        // Server { resource_factories: VecDeque::new() }
+        Server { }
     }
 }
 
-pub trait ResourceFactory: Send {
-    fn new_resource(&self) -> Resource;
-
-    fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
-}
-
-impl<R> ResourceFactory for Endpoint<BatchPredictor<R>, R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    fn new_resource(&self) -> Resource {
-        let mut service = BatchPredictor::<R>::new(&self.path.clone());
-        service.run();
-        web::resource(self.path.clone())
-            .app_data(web::Data::new(service))
-            .route(web::post().to(<BatchPredictor<R> as Service>::invoke))
-    }
-
-    fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
-        Box::new(self.clone())
-    }
-}
-
-struct BoxedResourceFactory(Box<dyn ResourceFactory>);
-
-impl Clone for BoxedResourceFactory {
-    fn clone(&self) -> Self {
-        BoxedResourceFactory(self.0.clone_boxed())
-    }
+use polars::prelude::*;
+#[derive(Debug, Deserialize, Schema)]
+pub struct ToyRecord {
+    a: f64,
+    b: f64,
 }
 
 impl Serves for Server {
+
     fn register<S>(&mut self, endpoint: S) -> &Self
     where
-        S: ResourceFactory + Clone + Send + 'static,
+        S: ServiceFactory<R = dyn Any> + Clone + Send + 'static,
     {
         info!("Registering endpoint with path: ...");
-        self.resource_factories
-            .push_back(BoxedResourceFactory(Box::new(endpoint)));
+        // self.resource_factories
+        //     .push_back(BoxedResourceFactory(Box::new(endpoint)));
         self
     }
 
-    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> {
+    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> 
+    {
+        // let services: Vec<Box<dyn Service<R = dyn Any>>> = self
+            // .resource_factories
+            // .into_iter()
+            // .map(|f| f.0.new())
+            // .collect();
+
+        // let services: Vec<Box<dyn Any>> = vec![
+            // Box::new(BatchPredictor::new("predictions/{model_name}/{model_version}"))
+        // ];
+
+        // type BoxedService = Box<
+        //     &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
+        // >;        
+
+        let mut services: Vec<
+            Box<
+                &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
+                // &dyn Service<R = dyn Schema<<BatchPredictor<_> as Service>::R>, H = <BatchPredictor<_> as Service>::H>
+            >
+        > = vec![
+            Box::new(
+                &BatchPredictor::<ToyRecord>::new("predictions/{model_name}/{model_version}")
+            )
+            as Box<
+                &dyn Service<R = dyn Any, H = <BatchPredictor<_> as Service>::H>
+                // &dyn Service<R = dyn Schema<<BatchPredictor<_> as Service>::R>, H = <BatchPredictor<_> as Service>::H>
+            >
+        ];
+
+        for service in services.iter_mut() {
+            // .run();
+        }
+
+        let x = BatchPredictor::<ToyRecord>::new("predictions/{model_name}/{model_version}");
+
         let http_server = HttpServer::new(move || {
-            let app = self
-                .resource_factories
-                .clone()
+            let app = services.clone()
                 .into_iter()
-                .fold(actix_web::App::new(), |app, resource_factory| {
-                    app.service(resource_factory.0.new_resource())
+                .fold(actix_web::App::new(), |app, mut service| {
+                    let handler = Box::new(*service).get_handler();
+                    // service.run();
+                    app.service(
+                        web::resource("predictions/{model_name}/{model_version}")
+                        .app_data(web::Data::new(*service))
+                        .route(web::post().to(handler))
+                    )
                 });
             app
         })

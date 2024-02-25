@@ -18,8 +18,8 @@ async fn main() -> Result<(), ServiceError> {
 
     let path = "predictions/{model_name}/{model_version}";
     let service = BatchPredictor::<ToyRecord>::new(path);
-    let endpoint = Endpoint { service, path: path.to_string() };
-    server.register(endpoint);
+    // let endpoint = Endpoint { service, path: path.to_string() };
+    // server.register(endpoint);
     let handle = server.serve()?;
     handle.await;
     Ok(())
