@@ -31,15 +31,29 @@ pub struct PredictionResponse {
     predictions: Vec<Option<f64>>,
 }
 
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
+#[derive(Clone, Copy)]
+struct TaskConfig {
+    batch_max_delay_ms: u32,
+    batch_max_capacity: usize,
+    handler_module: &'static str,
+    handler_fn: &'static str,
 }
 
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
+impl Default for TaskConfig {
+    fn default() -> Self {
+        TaskConfig {
+            batch_max_delay_ms: 5,
+            batch_max_capacity: 1024,
+            handler_module: "handlers.model",
+            handler_fn: "handle",
+        }
+    }
+}
+
+impl TaskConfig {
+    fn batch_max_delay_ms(&mut self, batch_max_delay_ms: u32) -> &Self {
+        self.batch_max_delay_ms = batch_max_delay_ms;
+        self
     }
 }
 
@@ -50,15 +64,12 @@ pub trait Service {
     fn run(&mut self) -> JoinHandle<()>;
 
     fn get_handler(&self) -> Self::H;
-
-    fn path(&self) -> String;
 }
 
 pub struct BatchPredictor<R>
 where
     Self: Sync,
 {
-    pub(super) path: String,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<R>>>>,
     handle: Option<ServiceHandle<R>>,
 }
@@ -68,11 +79,7 @@ where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
     fn clone(&self) -> Self {
-        BatchPredictor {
-            path: self.path.clone(),
-            tx: self.tx.clone(),
-            handle: None,
-        }
+        BatchPredictor { tx: self.tx.clone(), handle: None }
     }
 }
 
@@ -99,9 +106,17 @@ where
     fn get_handler(&self) -> Self::H {
         invoke::<R>
     }
+}
 
-    fn path(&self) -> String {
-        self.path.to_string()
+#[derive(Deserialize)]
+pub struct ModelSpec {
+    model_name: String,
+    model_version: String,
+}
+
+impl fmt::Display for ModelSpec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.model_name, self.model_version)
     }
 }
 
@@ -132,6 +147,7 @@ where
 
 struct ServiceHandle<R> {
     rx: Option<mpsc::Receiver<PredictionJob<R>>>,
+    config_task: TaskConfig,
 }
 
 impl<R> ServiceHandle<R>
@@ -142,9 +158,10 @@ where
         let rx = self.rx.take().unwrap();
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
+        let config_task = self.config_task.clone();
         tokio::spawn(async move {
-            tokio::spawn(BatchPredictor::<R>::await_shutdown(tx_abort));
-            tokio::spawn(async move { BatchPredictor::<R>::task(rx, rx_abort).await });
+            tokio::spawn(async move { BatchPredictor::<R>::task(rx, rx_abort, config_task).await });
+            BatchPredictor::<R>::await_shutdown(tx_abort).await
         })
     }
 }
@@ -153,18 +170,24 @@ impl<R> BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
 {
-    pub fn new(path: &str) -> BatchPredictor<R> {
+    pub fn new() -> BatchPredictor<R> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
-            path: path.into(),
             tx: Arc::new(tx.into()),
-            handle: Some(ServiceHandle { rx: Some(rx) }),
+            handle: Some(ServiceHandle {
+                rx: Some(rx),
+                config_task: TaskConfig::default(),
+            }),
         }
     }
 
     #[instrument(skip_all)]
-    async fn task(mut rx: mpsc::Receiver<PredictionJob<R>>, mut rx_abort: oneshot::Receiver<()>) {
+    async fn task(
+        mut rx: mpsc::Receiver<PredictionJob<R>>,
+        mut rx_abort: oneshot::Receiver<()>,
+        config: TaskConfig,
+    ) {
         info!("Starting predict task.");
         loop {
             if rx_abort.try_recv().is_ok() {
@@ -173,14 +196,13 @@ where
             }
 
             let start = Instant::now();
-            let duration_wait = Duration::new(0, 5 * 1_000_000);
-            let capacity = 1024;
-            let mut jobs = Vec::<PredictionJob<R>>::with_capacity(capacity);
+            let duration_wait = Duration::new(0, config.batch_max_delay_ms * 1_000_000);
+            let mut jobs = Vec::<PredictionJob<R>>::with_capacity(config.batch_max_capacity);
 
             // TODO: Find better way to yield
             sleep(Duration::new(0, 1_000_000)).await;
-            while Instant::now() < start + duration_wait {
-                if jobs.len() == capacity {
+            while start.elapsed() <= duration_wait {
+                if jobs.len() == config.batch_max_capacity {
                     break;
                 };
                 if let Ok(job) = rx.try_recv() {
@@ -192,7 +214,9 @@ where
             };
 
             match BatchJob::from_jobs(jobs) {
-                Ok(batch) => tokio::task::spawn_blocking(move || Self::predict_batch(batch)),
+                Ok(batch) => {
+                    tokio::task::spawn_blocking(move || Self::predict_batch(batch, &config.clone()))
+                }
                 Err(err) => {
                     error!("Failed to {err}");
                     continue;
@@ -202,13 +226,13 @@ where
     }
 
     #[instrument(skip_all)]
-    fn predict_batch(mut batch: BatchJob<R>) -> Result<(), ServiceError> {
+    fn predict_batch(mut batch: BatchJob<R>, config: &TaskConfig) -> Result<(), ServiceError> {
         info!("Running batch predict for {} jobs.", batch.len());
 
         let df_batch = batch.swap_df(None)?.unwrap();
         let df_results = match Python::with_gil(|py| {
-            py.import("handlers.model")?
-                .getattr("handle")?
+            py.import(config.handler_module)?
+                .getattr(config.handler_fn)?
                 .call((PyDataFrame(df_batch),), None)?
                 .extract::<PyDataFrame>()
                 .map(|pydf| -> DataFrame { pydf.into() })

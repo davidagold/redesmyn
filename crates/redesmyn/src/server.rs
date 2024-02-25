@@ -12,41 +12,41 @@ use tokio::{signal, task::JoinHandle};
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-trait ToResource: Sync + Send {
-    fn to_resource(&self) -> Resource;
+trait ResourceFactory: Sync + Send {
+    fn new_resource(&self, path: &str) -> Resource;
 
-    fn clone_boxed(&self) -> BoxedToResource;
+    fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
 }
 
-struct BoxedToResource(Box<dyn ToResource>);
+struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
 
-impl Clone for BoxedToResource {
+impl Clone for BoxedResourceFactory {
     fn clone(&self) -> Self {
-        self.0.clone_boxed()
+        BoxedResourceFactory(self.0.clone_boxed(), self.1.clone())
     }
 }
 
-impl<R, H, O, T> ToResource for T
+impl<R, H, O, T> ResourceFactory for T
 where
     Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
     H: Handler<HandlerArgs<<Self as Service>::R>, Output = O>,
     O: Responder + 'static,
 {
-    fn to_resource(&self) -> Resource {
+    fn new_resource(&self, path: &str) -> Resource {
         let handler = self.get_handler();
-        web::resource(self.path())
+        web::resource(path)
             .app_data(web::Data::new(self.clone()))
             .route(web::post().to(handler))
     }
 
-    fn clone_boxed(&self) -> BoxedToResource {
-        BoxedToResource(Box::new(self.clone()))
+    fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
+        Box::new(self.clone())
     }
 }
 
-pub trait Serves {
-    fn register<S, O>(&mut self, endpoint: S) -> &Self
+pub trait Serve {
+    fn register<S, O>(&mut self, path: &str, service: S) -> &Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
@@ -58,11 +58,11 @@ pub trait Serves {
 
 #[derive(Default)]
 pub struct Server {
-    factories: VecDeque<BoxedToResource>,
+    factories: VecDeque<BoxedResourceFactory>,
 }
 
-impl Serves for Server {
-    fn register<S, O>(&mut self, mut service: S) -> &Self
+impl Serve for Server {
+    fn register<S, O>(&mut self, path: &str, mut service: S) -> &Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
@@ -71,7 +71,7 @@ impl Serves for Server {
     {
         info!("Registering endpoint with path: ...");
         service.run();
-        self.factories.push_back(BoxedToResource(Box::new(service)));
+        self.factories.push_back(BoxedResourceFactory(Box::new(service), path.to_string()));
         self
     }
 
@@ -81,7 +81,7 @@ impl Serves for Server {
                 .clone()
                 .into_iter()
                 .fold(actix_web::App::new(), |app, factory| {
-                    app.service(factory.0.to_resource())
+                    app.service(factory.0.new_resource(&factory.1))
                 })
         })
         .disable_signals();
