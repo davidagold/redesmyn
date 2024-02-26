@@ -46,7 +46,7 @@ where
 }
 
 pub trait Serve {
-    fn register<S, O>(&mut self, path: &str, service: S) -> &Self
+    fn register<S, O>(self, service: S) -> Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
@@ -62,7 +62,7 @@ pub struct Server {
 }
 
 impl Serve for Server {
-    fn register<S, O>(&mut self, path: &str, mut service: S) -> &Self
+    fn register<S, O>(mut self, mut service: S) -> Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
@@ -71,7 +71,8 @@ impl Serve for Server {
     {
         info!("Registering endpoint with path: ...");
         service.run();
-        self.factories.push_back(BoxedResourceFactory(Box::new(service), path.to_string()));
+        let path = service.config(None).path.to_string();
+        self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
         self
     }
 

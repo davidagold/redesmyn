@@ -1,8 +1,8 @@
 use polars::prelude::*;
 use redesmyn::{
     error::ServiceError,
-    predictions::{BatchPredictor, Schema},
-    server::{Server, Serve},
+    predictions::{BatchPredictor, Configurable, Schema},
+    server::{Serve, Server},
 };
 use redesmyn_macros::Schema;
 use serde::Deserialize;
@@ -16,11 +16,13 @@ pub struct ToyRecord {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
-    let service = BatchPredictor::<ToyRecord>::new();
-    let mut server = Server::default();
-    server.register("predictions/{model_name}/{model_version}", service);
-    let handle = server.serve()?;
+    let service = BatchPredictor::<ToyRecord>::new()
+        .path("predictions/{model_name}/{model_version}")
+        .handler("handlers.model:handle");
 
+    let server = Server::default().register(service);
+
+    let handle = server.serve()?;
     handle.await?.map_err(|err| {
         error!("{err}");
         err.into()
