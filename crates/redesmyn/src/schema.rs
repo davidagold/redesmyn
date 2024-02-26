@@ -1,7 +1,7 @@
 use std::{any::Any, collections::HashMap};
 
 use arrow::array::Array;
-use polars::datatypes::AnyValue;
+use polars::datatypes::{AnyValue, DataType};
 // use polars::prelude::Schema;
 use pyo3::prelude::*;
 use serde::{
@@ -10,32 +10,19 @@ use serde::{
     Deserialize, Deserializer,
 };
 use serde_json::Value;
-// use polars::prelude::{Field};
 
-#[derive(Clone, Debug, Deserialize)]
-pub enum DataType {
-    // Int16,
-    // Int32,
-    // F32,
-    F64,
-    // String,
-}
+type ScalarType<'a> = AnyValue<'a>;
+type ColumnType<'a> = Vec<ScalarType<'a>>;
 
-impl DataType {
-    fn parse<'a>(&self) -> impl Fn(Value) -> AnyValue<'a> {
-        match self {
-            // Self::Int16 => |v: Value| AnyValue::UInt16(v.into()),
-            // Self::Int32 => Box::new(arrow::array::Int32Array::from(Vec::<i32>::new())),
-            Self::F64 => |v: Value| AnyValue::Float64(v.as_f64().unwrap()),
-            // Self::Int32 => Box::new(Vec::<i32>::new()),
-            // Self::F32 => Box::new(Vec::<f32>::new()),
-            // Self::F64 => Box::new(Vec::<f64>::new()),
-            // Self::String => Box::new(Vec::<String>::new()),
-        }
+
+fn parse<'a>(dtype: &DataType, v: Value) -> ScalarType<'a> {
+    match dtype {
+        DataType::Float64 => v.as_f64().map(|v| AnyValue::Float64(v)).unwrap_or(AnyValue::Null),
+        _ => todo!(),
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Field {
     pub name: String,
     pub data_type: DataType,
@@ -47,23 +34,24 @@ pub struct Schema {
 }
 
 impl Schema {
-    pub fn columns(&self) -> HashMap<String, (DataType, Vec<AnyValue>)> {
+    pub fn columns<'a>(&self) -> HashMap<String, (DataType, ColumnType<'a>)> {
         let mut columns =
-            HashMap::<String, (DataType, Vec<AnyValue>)>::with_capacity((&self).fields.len());
+            HashMap::<String, (DataType, ColumnType<'a>)>::with_capacity((&self).fields.len());
         for field in self.fields.iter() {
-            columns.insert(field.name.clone(), (field.data_type.clone(), Vec::<AnyValue>::new()));
+            columns.insert(field.name.clone(), (field.data_type.clone(), ColumnType::<'a>::new()));
         }
         columns
     }
 }
 
+
 #[derive(Debug)]
-pub struct Columns<'a>(pub HashMap<String, (DataType, Vec<AnyValue<'a>>)>);
+pub struct Columns<'a>(pub HashMap<String, (DataType, ColumnType<'a>)>);
 
 impl<'de, 'a> DeserializeSeed<'de> for Columns<'a> {
     type Value = Self;
 
-    fn deserialize<D>(mut self, deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -80,12 +68,9 @@ impl<'de, 'a> DeserializeSeed<'de> for Columns<'a> {
             where
                 M: MapAccess<'de>,
             {
-                // let mut columns = self.columns();
                 while let Some((key, value)) = visited.next_entry::<String, Value>()? {
-                    println!("{key}: {:#?}", value);
                     self.0.0.get_mut(&key).map(|(dtype, col)| {
-                        println!("{:#?}", *col);
-                        col.push(dtype.parse()(value))
+                        col.push(parse(dtype, value))
                     });
                 }
                 Ok(self.0)
