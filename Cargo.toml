@@ -1,14 +1,41 @@
-[package]
-name = "rs-model-server"
+[workspace]
+resolver = "2"
+members = ["examples", "crates/*"]
+default-members = ["examples", "crates/*"]
+
+[workspace.package]
+authors = ["David Gold <david.gold.a@gmail.com>"]
 version = "0.1.0"
 edition = "2021"
+homepage = "https://github.com/davidagold/redesmyn"
+repository = "https://github.com/davidagold/redesmyn"
+readme = "https://github.com/davidagold/redesmyn/README.md"
+license = "MIT"
 
-[dependencies]
+[workspace.dependencies]
 actix-web = "4"
 arrow = "6.0.0"
 futures = "0.3"
 memmap = "0.7.0"
+polars = { version = "0.37.0", features = [
+    "lazy",
+    "dtype-struct",
+    "partition_by",
+] }
+prost = "0.12"
+pyo3 = "0.20.2"
+pyo3-polars = "0.11.3"
+rayon = "1.8.1"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0.57"
 tokio = { version = "1", features = ["full"] }
+tonic = "0.11"
 tracing = "0.1.40"
-tracing-subscriber = { verison = "0.3.18", features = ["json", "env-filter"]}
+tracing-subscriber = { version = "0.3.18", features = ["json", "env-filter"] }
+uuid = { version = "*", features = ["v4"] }
+
+examples = { workspace = true, path = "examples" }
+redesmyn = { workspace = true, path = "crates/redesmyn" }
+redesmyn-macros = { workspace = true, path = "crates/redesmyn-macros" }
+redesmyn-cascade = { workspace = true, path = "crates/redesmyn-cascade" }
