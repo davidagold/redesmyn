@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["examples", "crates/*"]
+members = ["examples", "crates/*", "py-redesmyn"]
 default-members = ["examples", "crates/*"]
 
 [workspace.package]
@@ -39,3 +39,4 @@ examples = { workspace = true, path = "examples" }
 redesmyn = { workspace = true, path = "crates/redesmyn" }
 redesmyn-macros = { workspace = true, path = "crates/redesmyn-macros" }
 redesmyn-cascade = { workspace = true, path = "crates/redesmyn-cascade" }
+py-redesmyn = { workspace = true, path = "py-redesmyn" }

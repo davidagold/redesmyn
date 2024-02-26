@@ -63,6 +63,13 @@ macro_rules! config_methods {
     }
 }
 
+// enum ServiceParameter {
+//     Path { path: usize },
+//     BatchMaxDelayMilliseconds { batch_max_delay_ms: u32 },
+//     BatchMaxCapacity { batch_max_capacity: usize },
+//     PyHandler { handler: &'static str },
+// }
+
 pub trait Configurable: Sized {
     fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig;
 
