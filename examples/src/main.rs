@@ -23,10 +23,5 @@ async fn main() -> Result<(), ServiceError> {
         .handler("handlers.model:handle");
 
     let server = Server::default().register(service);
-
-    let handle = server.serve()?;
-    handle.await?.map_err(|err| {
-        error!("{err}");
-        err.into()
-    })
+    server.serve()?.await?.map_err(Into::into)
 }

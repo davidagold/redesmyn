@@ -238,7 +238,7 @@ where
         mut rx_abort: oneshot::Receiver<()>,
         config: ServiceConfig,
     ) {
-        println!("Starting predict task with config: {:?}", config);
+        println!("Starting predict task with config: {:#?}", config);
         loop {
             if rx_abort.try_recv().is_ok() {
                 // TODO: Ensure that outstanding requests are handled gracefully.
