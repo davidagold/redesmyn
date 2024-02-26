@@ -35,9 +35,7 @@ where
 {
     fn new_resource(&self, path: &str) -> Resource {
         let handler = self.get_handler();
-        web::resource(path)
-            .app_data(web::Data::new(self.clone()))
-            .route(web::post().to(handler))
+        web::resource(path).app_data(web::Data::new(self.clone())).route(web::post().to(handler))
     }
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
@@ -78,12 +76,9 @@ impl Serve for Server {
 
     fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> {
         let http_server = HttpServer::new(move || {
-            self.factories
-                .clone()
-                .into_iter()
-                .fold(actix_web::App::new(), |app, factory| {
-                    app.service(factory.0.new_resource(&factory.1))
-                })
+            self.factories.clone().into_iter().fold(actix_web::App::new(), |app, factory| {
+                app.service(factory.0.new_resource(&factory.1))
+            })
         })
         .disable_signals();
 

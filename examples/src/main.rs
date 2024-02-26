@@ -18,6 +18,8 @@ pub struct ToyRecord {
 async fn main() -> Result<(), ServiceError> {
     let service = BatchPredictor::<ToyRecord>::new()
         .path("predictions/{model_name}/{model_version}")
+        .batch_max_capacity(50)
+        .batch_max_delay_ms(10)
         .handler("handlers.model:handle");
 
     let server = Server::default().register(service);

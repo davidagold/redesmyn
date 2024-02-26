@@ -50,36 +50,27 @@ impl Default for ServiceConfig {
     }
 }
 
-// TODO: macro for this.
+macro_rules! config_methods {
+    ($($name:ident : $type:ty),*) => {
+        $(
+            fn $name(mut self, $name: $type) -> Self {
+                let mut config = self.config(None);
+                config.$name = $name;
+                self.config(Some(config));
+                self
+            }
+        )*
+    }
+}
+
 pub trait Configurable: Sized {
     fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig;
 
-    fn path(mut self, path: &'static str) -> Self {
-        let mut config = self.config(None);
-        config.path = path;
-        self.config(Some(config));
-        self
-    }
-
-    fn batch_max_delay_ms(mut self, batch_max_delay_ms: u32) -> Self {
-        let mut config = self.config(None);
-        config.batch_max_delay_ms = batch_max_delay_ms;
-        self.config(Some(config));
-        self
-    }
-
-    fn batch_max_capacity(mut self, batch_max_capacity: usize) -> Self {
-        let mut config = self.config(None);
-        config.batch_max_capacity = batch_max_capacity;
-        self.config(Some(config));
-        self
-    }
-
-    fn handler(mut self, handler: &'static str) -> Self {
-        let mut config = self.config(None);
-        config.handler = handler;
-        self.config(Some(config));
-        self
+    config_methods! {
+        path: &'static str,
+        batch_max_delay_ms: u32,
+        batch_max_capacity: usize,
+        handler: &'static str
     }
 }
 
@@ -116,10 +107,7 @@ where
     fn clone(&self) -> Self {
         BatchPredictor {
             tx: self.tx.clone(),
-            handle: ServiceHandle {
-                rx: None,
-                config: self.handle.config,
-            },
+            handle: ServiceHandle { rx: None, config: self.handle.config },
         }
     }
 }
@@ -182,7 +170,7 @@ where
     R: Schema<R> + Sync + Send + 'static,
     ModelSpec: serde::Deserialize<'de>,
 {
-    let ModelSpec { model_name, model_version } = &*model_spec;
+    // let ModelSpec { model_name, model_version } = &*model_spec;
     // info!(%model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
@@ -222,7 +210,7 @@ where
 impl<R> Default for BatchPredictor<R>
 where
     R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
- {
+{
     fn default() -> Self {
         Self::new()
     }
@@ -264,7 +252,6 @@ where
             sleep(Duration::new(0, 1_000_000)).await;
             while start.elapsed() <= duration_wait {
                 if let Ok(job) = rx.try_recv() {
-                    info!("{}", jobs.len());
                     jobs.push(job);
                     if jobs.len() == config.batch_max_capacity {
                         break;
