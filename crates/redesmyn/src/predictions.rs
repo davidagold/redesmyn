@@ -1,4 +1,5 @@
 use super::error::ServiceError;
+use super::config_methods;
 
 use actix_web::{web, Handler, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
@@ -36,7 +37,7 @@ pub struct ServiceConfig {
     pub(super) path: &'static str,
     pub(super) batch_max_delay_ms: u32,
     pub(super) batch_max_capacity: usize,
-    pub(super) handler: &'static str,
+    pub(super) py_handler: &'static str,
 }
 
 impl Default for ServiceConfig {
@@ -45,30 +46,10 @@ impl Default for ServiceConfig {
             path: "predictions/{model_name}/{model_version}",
             batch_max_delay_ms: 5,
             batch_max_capacity: 1024,
-            handler: "handlers.model:handle",
+            py_handler: "handlers.model:handle",
         }
     }
 }
-
-macro_rules! config_methods {
-    ($($name:ident : $type:ty),*) => {
-        $(
-            fn $name(mut self, $name: $type) -> Self {
-                let mut config = self.config(None);
-                config.$name = $name;
-                self.config(Some(config));
-                self
-            }
-        )*
-    }
-}
-
-// enum ServiceParameter {
-//     Path { path: usize },
-//     BatchMaxDelayMilliseconds { batch_max_delay_ms: u32 },
-//     BatchMaxCapacity { batch_max_capacity: usize },
-//     PyHandler { handler: &'static str },
-// }
 
 pub trait Configurable: Sized {
     fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig;
@@ -77,7 +58,7 @@ pub trait Configurable: Sized {
         path: &'static str,
         batch_max_delay_ms: u32,
         batch_max_capacity: usize,
-        handler: &'static str
+        py_handler: &'static str
     }
 }
 
@@ -285,10 +266,10 @@ where
     fn predict_batch(mut batch: BatchJob<R>, config: &ServiceConfig) -> Result<(), ServiceError> {
         info!("Running batch predict for {} jobs.", batch.len());
 
-        let Some((handler_module, handler_fn)) = config.handler.split_once(':') else {
+        let Some((handler_module, handler_fn)) = config.py_handler.split_once(':') else {
             return Err(ServiceError::Error(format!(
                 "Failed to parse `handler` specification: {}",
-                config.handler
+                config.py_handler
             )));
         };
         let df_batch = batch.swap_df(None)?.unwrap();

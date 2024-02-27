@@ -18,8 +18,8 @@ type ColumnType<'a> = Vec<ScalarType<'a>>;
 
 fn parse<'a>(dtype: &DataType, v: Value) -> ScalarType<'a> {
     match dtype {
-        DataType::Int64 => v.as_i64().map(|v| AnyValue::Int64(v)).unwrap_or(AnyValue::Null),
-        DataType::Float64 => v.as_f64().map(|v| AnyValue::Float64(v)).unwrap_or(AnyValue::Null),
+        DataType::Int64 => v.as_i64().map(AnyValue::Int64).unwrap_or(AnyValue::Null),
+        DataType::Float64 => v.as_f64().map(AnyValue::Float64).unwrap_or(AnyValue::Null),
         DataType::String => {
             v.as_str().map(move |v| AnyValue::StringOwned(v.into())).unwrap_or(AnyValue::Null)
         }
@@ -31,10 +31,11 @@ fn parse<'a>(dtype: &DataType, v: Value) -> ScalarType<'a> {
 pub struct Field<'a> {
     pub name: &'a str,
     pub data_type: DataType,
-    pub index: u8,
+    pub index: usize,
 }
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct Schema<'a> {
     pub fields: Vec<Field<'a>>,
     pub columns: Vec<ColumnType<'a>>,
@@ -44,13 +45,25 @@ impl<'a> Schema<'a> {
     pub fn new(fields: Vec<Field<'a>>, capacity: Option<usize>) -> Schema<'a> {
         let column_factory: Box<dyn FnOnce() -> Vec<AnyValue<'a>>> = match capacity {
             Some(capacity) => Box::new(move || ColumnType::<'a>::with_capacity(capacity)),
-            None => Box::new(|| ColumnType::<'a>::new()),
+            None => Box::new(ColumnType::<'a>::new),
         };
         let n_fields = &fields.len();
         Schema {
             fields,
             columns: repeat(column_factory()).take(*n_fields).collect(),
         }
+    }
+
+    fn len(&self) -> usize {
+        assert!(self.fields.len() == self.columns.len());
+        self.fields.len()
+    }
+
+    fn add_field(mut self, name: &'a str, data_type: DataType) -> Self {
+        let index = self.len() + 1;
+        self.fields.push(Field { name, data_type, index });
+        self.columns.push(Vec::new());
+        self
     }
 
     pub fn dataframe_from_records(self, records: Vec<&'a str>) -> Result<DataFrame, ServiceError> {
@@ -66,7 +79,7 @@ impl<'a> Schema<'a> {
             .iter()
             .zip(fields)
             .filter_map(|(col, field)| {
-                match Series::from_any_values_and_dtype(field.name, &col, &field.data_type, true) {
+                match Series::from_any_values_and_dtype(field.name, col, &field.data_type, true) {
                     Ok(series) => Some(series),
                     Err(err) => {
                         println!("Error; {err}");
@@ -97,10 +110,9 @@ impl<'de, 'a> Visitor<'de> for SchemaVisitor<'a> {
             let Ok(index) = &self.0.fields[..].binary_search_by_key(&key, |f| f.name) else {
                 continue;
             };
-            self.0
+            if let Some(col) = self.0
                 .columns
-                .get_mut(*index)
-                .map(|col| col.push(parse(&self.0.fields[*index].data_type, value)));
+                .get_mut(*index) { col.push(parse(&self.0.fields[*index].data_type, value)) }
         }
         Ok(self.0)
     }
