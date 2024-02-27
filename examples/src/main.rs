@@ -39,64 +39,18 @@ fn main() -> Result<(), ServiceError> {
         }
     "#;
 
-    let n_records: usize = 100_000;
-    fn get_schema<'a>(n_records: Option<usize>) -> schema::Schema<'a> {
-        schema::Schema::new(
-            vec![
-                schema::Field {
-                    name: "a",
-                    data_type: DataType::Float64,
-                    index: 0,
-                },
-                schema::Field {
-                    name: "b",
-                    data_type: DataType::Float64,
-                    index: 1,
-                },
-                schema::Field {
-                    name: "c",
-                    data_type: DataType::String,
-                    index: 2,
-                },
-                schema::Field {
-                    name: "d",
-                    data_type: DataType::Int64,
-                    index: 3,
-                },
-            ],
-            n_records,
-        )
-    }
+    let n_records: usize = 10_000;
+
+    let schema = schema::Schema::default()
+        .add_field("a", DataType::Float64)
+        .add_field("b", DataType::Float64)
+        .add_field("c", DataType::String)
+        .add_field("d", DataType::Int64);
 
     let records = repeat(json).take(n_records).collect::<Vec<_>>();
-
-    let schema: schema::Schema = records.into_iter().fold(
-        Ok(get_schema(None)),
-        |schema: Result<schema::Schema, _>, record| {
-            let mut de = Deserializer::from_str(record);
-            schema?.deserialize(&mut de)
-        },
-    )?;
-
-    let start = Instant::now();
-
-    let series = schema
-        .columns
-        .iter()
-        .zip(schema.fields)
-        .filter_map(|(col, field)| {
-            match Series::from_any_values_and_dtype(field.name, &col, &field.data_type, true) {
-                Ok(series) => Some(series),
-                Err(err) => {
-                    println!("Error; {err}");
-                    None
-                }
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let df = DataFrame::new(series)?;
-    println!("{:#?}", start.elapsed());
+    // let start = Instant::now();
+    let df = schema.dataframe_from_records(records)?;
+    // println!("{:#?}", start.elapsed());
     println!("{df}");
 
     #[derive(Deserialize)]
@@ -106,13 +60,6 @@ fn main() -> Result<(), ServiceError> {
         c: String,
         d: i64,
     }
-
-    let record = ToyRecord {
-        a: 1.0,
-        b: None,
-        c: "Foo".to_string(),
-        d: 13321312312,
-    };
 
     let start_2 = Instant::now();
     let (a, b, c, d) = repeat(json).take(n_records).map(|r| serde_json::from_str(r).unwrap()).fold(

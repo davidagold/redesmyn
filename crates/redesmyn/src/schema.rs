@@ -1,4 +1,4 @@
-use std::iter::repeat;
+use std::{iter::repeat, time::Instant};
 
 use polars::{
     datatypes::{AnyValue, DataType},
@@ -39,6 +39,7 @@ pub struct Field<'a> {
 pub struct Schema<'a> {
     pub fields: Vec<Field<'a>>,
     pub columns: Vec<ColumnType<'a>>,
+    capacity: Option<usize>,
 }
 
 impl<'a> Schema<'a> {
@@ -51,34 +52,52 @@ impl<'a> Schema<'a> {
         Schema {
             fields,
             columns: repeat(column_factory()).take(*n_fields).collect(),
+            capacity: None
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         assert!(self.fields.len() == self.columns.len());
         self.fields.len()
     }
 
-    fn add_field(mut self, name: &'a str, data_type: DataType) -> Self {
+    pub fn add_field(mut self, name: &'a str, data_type: DataType) -> Self {
         let index = self.len() + 1;
         self.fields.push(Field { name, data_type, index });
         self.columns.push(Vec::new());
         self
     }
 
+    pub fn capacity(&mut self, capacity: Option<usize>) -> Option<usize> {
+        match capacity {
+            Some(capacity) => {
+                self.capacity = Some(capacity);
+                Some(capacity)
+            },
+            None => self.capacity
+        }
+    }
+
     pub fn dataframe_from_records(self, records: Vec<&'a str>) -> Result<DataFrame, ServiceError> {
         let fields = self.fields.clone();
-        let series = records
+        
+        let start = Instant::now();
+        let schema = records
             .into_iter()
             .fold(Ok(self), |schema, record| {
                 let mut de = serde_json::Deserializer::from_str(record);
                 schema?.deserialize(&mut de)
             })
-            .map_err(|err| ServiceError::Error(err.to_string()))?
-            .columns
+            .map_err(|err| ServiceError::Error(err.to_string()))?;
+
+        println!("{:#?}", start.elapsed());
+        
+        let start_2 = Instant::now();
+        let series = schema.columns
             .iter()
             .zip(fields)
             .filter_map(|(col, field)| {
+                // TODO: Handle better.
                 match Series::from_any_values_and_dtype(field.name, col, &field.data_type, true) {
                     Ok(series) => Some(series),
                     Err(err) => {
@@ -89,7 +108,9 @@ impl<'a> Schema<'a> {
             })
             .collect::<Vec<_>>();
 
-        DataFrame::new(series).map_err(Into::into)
+        let df = DataFrame::new(series).map_err(Into::into);
+        println!("{:#?}", start_2.elapsed());
+        df
     }
 }
 
