@@ -1,11 +1,17 @@
 use std::iter::repeat;
 
-use polars::datatypes::{AnyValue, DataType};
+use polars::{
+    datatypes::{AnyValue, DataType},
+    frame::DataFrame,
+    series::Series,
+};
 use serde::{
     de::{DeserializeSeed, MapAccess, Visitor},
     Deserializer,
 };
 use serde_json::Value;
+
+use crate::error::ServiceError;
 
 type ScalarType<'a> = AnyValue<'a>;
 type ColumnType<'a> = Vec<ScalarType<'a>>;
@@ -38,13 +44,39 @@ impl<'a> Schema<'a> {
     pub fn new(fields: Vec<Field<'a>>, capacity: Option<usize>) -> Schema<'a> {
         let column_factory: Box<dyn FnOnce() -> Vec<AnyValue<'a>>> = match capacity {
             Some(capacity) => Box::new(move || ColumnType::<'a>::with_capacity(capacity)),
-            None => Box::new(|| ColumnType::<'a>::new())
+            None => Box::new(|| ColumnType::<'a>::new()),
         };
         let n_fields = &fields.len();
         Schema {
             fields,
             columns: repeat(column_factory()).take(*n_fields).collect(),
         }
+    }
+
+    pub fn dataframe_from_records(self, records: Vec<&'a str>) -> Result<DataFrame, ServiceError> {
+        let fields = self.fields.clone();
+        let series = records
+            .into_iter()
+            .fold(Ok(self), |schema, record| {
+                let mut de = serde_json::Deserializer::from_str(record);
+                schema?.deserialize(&mut de)
+            })
+            .map_err(|err| ServiceError::Error(err.to_string()))?
+            .columns
+            .iter()
+            .zip(fields)
+            .filter_map(|(col, field)| {
+                match Series::from_any_values_and_dtype(field.name, &col, &field.data_type, true) {
+                    Ok(series) => Some(series),
+                    Err(err) => {
+                        println!("Error; {err}");
+                        None
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        DataFrame::new(series).map_err(Into::into)
     }
 }
 
