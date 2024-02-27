@@ -156,7 +156,7 @@ pub async fn invoke<'de, R>(
 ) -> impl Responder
 where
     R: Schema<R> + Sync + Send + 'static,
-    ModelSpec: serde::Deserialize<'de>,
+ModelSpec: serde::Deserialize<'de>,
 {
     // let ModelSpec { model_name, model_version } = &*model_spec;
     // info!(%model_name, %model_version);

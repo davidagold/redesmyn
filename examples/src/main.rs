@@ -5,7 +5,7 @@ use polars::prelude::*;
 use redesmyn::{
     error::ServiceError,
     predictions::{BatchPredictor, Configurable},
-    schema::{self},
+    schema::{self, dataframe_from_records},
     server::{Serve, Server},
 };
 // use redesmyn_macros::Schema;
@@ -49,7 +49,7 @@ fn main() -> Result<(), ServiceError> {
 
     let records = repeat(json).take(n_records).collect::<Vec<_>>();
     // let start = Instant::now();
-    let df = schema.dataframe_from_records(records)?;
+    let df = dataframe_from_records(&schema, records)?;
     // println!("{:#?}", start.elapsed());
     println!("{df}");
 

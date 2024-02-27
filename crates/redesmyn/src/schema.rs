@@ -1,4 +1,4 @@
-use std::{iter::repeat, time::Instant};
+use std::{collections::HashMap, iter::repeat, time::Instant};
 
 use polars::{
     datatypes::{AnyValue, DataType},
@@ -6,26 +6,13 @@ use polars::{
     series::Series,
 };
 use serde::{
-    de::{DeserializeSeed, MapAccess, Visitor},
-    Deserializer,
+    de::{DeserializeSeed, MapAccess, Visitor}, Deserializer
 };
 use serde_json::Value;
 
 use crate::error::ServiceError;
 
-type ScalarType<'a> = AnyValue<'a>;
-type ColumnType<'a> = Vec<ScalarType<'a>>;
 
-fn parse<'a>(dtype: &DataType, v: Value) -> ScalarType<'a> {
-    match dtype {
-        DataType::Int64 => v.as_i64().map(AnyValue::Int64).unwrap_or(AnyValue::Null),
-        DataType::Float64 => v.as_f64().map(AnyValue::Float64).unwrap_or(AnyValue::Null),
-        DataType::String => {
-            v.as_str().map(move |v| AnyValue::StringOwned(v.into())).unwrap_or(AnyValue::Null)
-        }
-        _ => todo!(),
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct Field<'a> {
@@ -34,118 +21,134 @@ pub struct Field<'a> {
     pub index: usize,
 }
 
+type ScalarType<'a> = AnyValue<'a>;
+// type ColumnType<'a> = Vec<ScalarType<'a>>;
+type ColumnValues<'a> = Vec<ScalarType<'a>>;
+struct Column<'a> {
+    pub field: &'a Field<'a>,
+    pub values: ColumnValues<'a>
+}
+
+impl<'a> Column<'a> {
+    fn parse(&self, v: Value) -> ScalarType<'a> {
+        match self.field.data_type {
+            DataType::Int64 => v.as_i64().map(AnyValue::Int64).unwrap_or(AnyValue::Null),
+            DataType::Float64 => v.as_f64().map(AnyValue::Float64).unwrap_or(AnyValue::Null),
+            DataType::String => {
+                v.as_str().map(move |v| AnyValue::StringOwned(v.into())).unwrap_or(AnyValue::Null)
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn push(&mut self, v: ScalarType<'a>) {
+        self.values.push(v)
+    }
+}
+
+
+type Columns<'a> = HashMap<&'a str, Column<'a>>;
+
 #[derive(Clone, Debug)]
 #[derive(Default)]
 pub struct Schema<'a> {
     pub fields: Vec<Field<'a>>,
-    pub columns: Vec<ColumnType<'a>>,
-    capacity: Option<usize>,
 }
 
 impl<'a> Schema<'a> {
-    pub fn new(fields: Vec<Field<'a>>, capacity: Option<usize>) -> Schema<'a> {
-        let column_factory: Box<dyn FnOnce() -> Vec<AnyValue<'a>>> = match capacity {
-            Some(capacity) => Box::new(move || ColumnType::<'a>::with_capacity(capacity)),
-            None => Box::new(ColumnType::<'a>::new),
-        };
-        let n_fields = &fields.len();
-        Schema {
-            fields,
-            columns: repeat(column_factory()).take(*n_fields).collect(),
-            capacity: None
-        }
+    pub fn len(&self) -> usize {
+        self.fields.len()
     }
 
-    pub fn len(&self) -> usize {
-        assert!(self.fields.len() == self.columns.len());
-        self.fields.len()
+    pub fn columns(&'a self, capacity: Option<usize>) -> Columns<'a> {
+        let mut columns = Columns::<'a>::new();
+        for field in self.fields.iter() {
+            let values = match capacity {
+                Some(capacity) => ColumnValues::<'a>::with_capacity(capacity),
+                None => ColumnValues::<'a>::new()
+            };
+            columns.insert(field.name, Column{field, values});
+        }
+        columns
     }
 
     pub fn add_field(mut self, name: &'a str, data_type: DataType) -> Self {
         let index = self.len() + 1;
         self.fields.push(Field { name, data_type, index });
-        self.columns.push(Vec::new());
         self
-    }
-
-    pub fn capacity(&mut self, capacity: Option<usize>) -> Option<usize> {
-        match capacity {
-            Some(capacity) => {
-                self.capacity = Some(capacity);
-                Some(capacity)
-            },
-            None => self.capacity
-        }
-    }
-
-    pub fn dataframe_from_records(self, records: Vec<&'a str>) -> Result<DataFrame, ServiceError> {
-        let fields = self.fields.clone();
-        
-        let start = Instant::now();
-        let schema = records
-            .into_iter()
-            .fold(Ok(self), |schema, record| {
-                let mut de = serde_json::Deserializer::from_str(record);
-                schema?.deserialize(&mut de)
-            })
-            .map_err(|err| ServiceError::Error(err.to_string()))?;
-
-        println!("{:#?}", start.elapsed());
-        
-        let start_2 = Instant::now();
-        let series = schema.columns
-            .iter()
-            .zip(fields)
-            .filter_map(|(col, field)| {
-                // TODO: Handle better.
-                match Series::from_any_values_and_dtype(field.name, col, &field.data_type, true) {
-                    Ok(series) => Some(series),
-                    Err(err) => {
-                        println!("Error; {err}");
-                        None
-                    }
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let df = DataFrame::new(series).map_err(Into::into);
-        println!("{:#?}", start_2.elapsed());
-        df
     }
 }
 
-struct SchemaVisitor<'a>(Schema<'a>);
+pub fn dataframe_from_records(schema: &Schema, records: Vec<&str>) -> Result<DataFrame, ServiceError> {
+    let start = Instant::now();
+    let mut columns = &mut schema.columns(None);
+    let wrapped = &mut InnerWrapper(&mut columns);
+    
+    for record in records {
+        let mut de = serde_json::Deserializer::from_str(record);
+        wrapped.deserialize(&mut de);
+    }
 
-impl<'de, 'a> Visitor<'de> for SchemaVisitor<'a> {
-    type Value = Schema<'a>;
+    let series = &columns
+        .iter()
+        .filter_map(|(col_name, col)| {
+            // TODO: Handle better.
+            match Series::from_any_values_and_dtype(col_name, &col.values, &col.field.data_type, true) {
+                Ok(series) => Some(series),
+                Err(err) => {
+                    println!("Error; {err}");
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let df = DataFrame::new(series.to_vec()).map_err(Into::into);
+    println!("{:#?}", start.elapsed());
+    df
+}
+
+// struct SchemaVisitor<'a>(&'a mut Schema<'a>);
+// type VisitorInner<'a> = &'a mut Schema<'a>;
+type VisitorInner<'a> = Columns<'a>;
+
+struct InnerWrapper<'w, 'cols: 'w>(&'w mut VisitorInner<'cols>);
+struct SchemaVisitor<'a, 'cols: 'a>(&'a mut VisitorInner<'cols>);
+
+impl<'de> Visitor<'de> for &mut SchemaVisitor<'_, '_> {
+    // type Value = VisitorInner<'a>;
+    type Value = ();
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("a mapping of fields to values")
     }
 
-    fn visit_map<M>(mut self, mut visited: M) -> Result<Schema<'a>, M::Error>
+    fn visit_map<M>(self, mut visited: M) -> Result<<Self as Visitor<'de>>::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
         while let Some((key, value)) = visited.next_entry::<&str, Value>()? {
-            let Ok(index) = &self.0.fields[..].binary_search_by_key(&key, |f| f.name) else {
-                continue;
+            let Some(col) = self.0.get_mut(key) else {
+                continue
             };
-            if let Some(col) = self.0
-                .columns
-                .get_mut(*index) { col.push(parse(&self.0.fields[*index].data_type, value)) }
+            col.push(col.parse(value))
         }
-        Ok(self.0)
+        // Ok(self.0)
+        Ok(())
     }
 }
 
-impl<'de, 'a> DeserializeSeed<'de> for Schema<'a> {
-    type Value = Schema<'a>;
+impl<'de, 'v: 'de, 'w: 'v> DeserializeSeed<'de> for &'v mut InnerWrapper<'w, '_> {
+    // type Value = VisitorInner<'a>;
+    type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self, D::Error>
+    // fn deserialize<D>(mut self, deserializer: D) -> Result<&'a mut Schema<'a>, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_map(SchemaVisitor(self))
+        let mut visitor = SchemaVisitor::<'v, '_>(self.0);
+        deserializer.deserialize_map(&mut visitor)
     }
 }
+
