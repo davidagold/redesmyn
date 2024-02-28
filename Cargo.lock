@@ -2214,7 +2214,6 @@ dependencies = [
 name = "py-redesmyn"
 version = "0.1.0"
 dependencies = [
- "heapless",
  "polars",
  "pyo3",
  "redesmyn",
@@ -2380,6 +2379,7 @@ dependencies = [
  "redesmyn-macros",
  "serde",
  "serde_json",
+ "smartstring",
  "thiserror",
  "tokio",
  "tonic",
@@ -2633,6 +2633,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
 dependencies = [
  "autocfg",
+ "serde",
  "static_assertions",
  "version_check",
 ]

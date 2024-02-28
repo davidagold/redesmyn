@@ -1,6 +1,7 @@
 use std::iter::repeat;
 use std::{collections::HashMap, time::Instant};
 
+
 use polars::prelude::*;
 use redesmyn::{
     error::ServiceError,
@@ -39,48 +40,52 @@ fn main() -> Result<(), ServiceError> {
         }
     "#;
 
-    let n_records: usize = 1_000;
+    for _ in 0..10 {
 
-    let schema = schema::Schema::default()
-        .add_field("a", DataType::Float64)
-        .add_field("b", DataType::Float64)
-        .add_field("c", DataType::String)
-        .add_field("d", DataType::Int64);
+        let n_records: usize = 1000;
+    
+        let start_0 = Instant::now();
+        let schema = schema::Schema::default()
+            .add_field("a", DataType::Float64)
+            .add_field("b", DataType::Float64)
+            .add_field("c", DataType::String)
+            .add_field("d", DataType::Int64);
+    
+        let records = repeat(json).take(n_records).collect::<Vec<_>>();
+        let df = dataframe_from_records(&schema, records)?;
+        println!("Elapsed: {:#?}", start_0.elapsed());
+        // println!("{:#?}", df);
+        
+        // let start_1 = Instant::now();
 
-    let records = repeat(json).take(n_records).collect::<Vec<_>>();
-    // let start = Instant::now();
-    let df = dataframe_from_records(&schema, records)?;
-    // println!("{:#?}", start.elapsed());
-    println!("{df}");
-
-    #[derive(Deserialize)]
-    struct ToyRecord {
-        a: f64,
-        b: Option<f64>,
-        c: String,
-        d: i64,
+        // #[derive(Deserialize)]
+        // struct ToyRecord {
+        //     a: f64,
+        //     b: Option<f64>,
+        //     c: String,
+        //     d: i64,
+        // }
+        // let (a, b, c, d) = repeat(json).take(n_records).map(|r| serde_json::from_str(r).unwrap()).fold(
+        //     (Vec::<f64>::new(), Vec::<Option<f64>>::new(), Vec::<String>::new(), Vec::<i64>::new()),
+        //     |(mut a, mut b, mut c, mut d), r: ToyRecord| {
+        //         a.push(r.a);
+        //         b.push(r.b);
+        //         c.push(r.c);
+        //         d.push(r.d);
+        //         (a, b, c, d)
+        //     },
+        // );
+        // let df = DataFrame::new(vec![
+        //     Series::new("a", a),
+        //     Series::new("b", b),
+        //     Series::new("c", c),
+        //     Series::new("d", d),
+        // ])?;
+    
+        // println!("{:#?}", start_1.elapsed());
+        // println!("{df}");
     }
 
-    let start_2 = Instant::now();
-    let (a, b, c, d) = repeat(json).take(n_records).map(|r| serde_json::from_str(r).unwrap()).fold(
-        (Vec::<f64>::new(), Vec::<Option<f64>>::new(), Vec::<String>::new(), Vec::<i64>::new()),
-        |(mut a, mut b, mut c, mut d), r: ToyRecord| {
-            a.push(r.a);
-            b.push(r.b);
-            c.push(r.c);
-            d.push(r.d);
-            (a, b, c, d)
-        },
-    );
-    let df = DataFrame::new(vec![
-        Series::new("a", a),
-        Series::new("b", b),
-        Series::new("c", c),
-        Series::new("d", d),
-    ])?;
-
-    println!("{:#?}", start_2.elapsed());
-    println!("{df}");
 
     Ok(())
 }

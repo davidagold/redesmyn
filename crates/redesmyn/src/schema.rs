@@ -1,11 +1,10 @@
-use std::{time::Instant};
-
 use heapless;
 use polars::{
     datatypes::{AnyValue, DataType},
     frame::DataFrame,
     series::Series,
 };
+use rayon::prelude::*;
 use serde::{
     de::{DeserializeSeed, MapAccess, Visitor},
     Deserializer,
@@ -14,7 +13,7 @@ use serde_json::Value;
 
 use crate::error::ServiceError;
 
-type Size4String = heapless::String<4>;
+type Size4String = heapless::String<128>;
 
 #[derive(Clone, Debug)]
 pub struct Field<'a> {
@@ -24,32 +23,45 @@ pub struct Field<'a> {
 }
 
 type ScalarType<'a> = AnyValue<'a>;
-// type ColumnType<'a> = Vec<ScalarType<'a>>;
 type ColumnValues<'a> = Vec<ScalarType<'a>>;
 struct Column<'a> {
     pub field: Field<'a>,
-    pub values: ColumnValues<'a>,
+    pub raw_values: ColumnValues<'a>,
 }
 
 impl<'a> Column<'a> {
+    #[inline]
     fn parse(&self, v: Value) -> ScalarType<'a> {
         match self.field.data_type {
-            DataType::Int64 => v.as_i64().map(AnyValue::Int64).unwrap_or(AnyValue::Null),
-            DataType::Float64 => v.as_f64().map(AnyValue::Float64).unwrap_or(AnyValue::Null),
-            DataType::String => {
-                v.as_str().map(move |v| AnyValue::StringOwned(v.into())).unwrap_or(AnyValue::Null)
-            }
+            DataType::Int64 => match v {
+                Value::Number(v) => {
+                    v.as_i64().map(AnyValue::Int64).unwrap_or_else(|| AnyValue::Null)
+                }
+                _ => AnyValue::Null,
+            },
+            DataType::Float64 => match v {
+                Value::Number(v) => {
+                    v.as_f64().map(AnyValue::Float64).unwrap_or_else(|| AnyValue::Null)
+                }
+                _ => AnyValue::Null,
+            },
+            DataType::String => match v {
+                Value::String(v) => AnyValue::StringOwned(v.into()),
+                _ => AnyValue::Null,
+            },
             _ => todo!(),
         }
     }
-
     fn push(&mut self, v: ScalarType<'a>) {
-        self.values.push(v)
+        self.raw_values.push(v)
+    }
+
+    fn extend(&mut self, other: Column<'a>) {
+        self.raw_values.extend(other.raw_values)
     }
 }
 
-// type Columns<'a> = HashMap<&'a str, Column<'a>>;
-type Columns<'a> = heapless::Vec<Column<'a>, 256>;
+type Columns<'a> = Vec<Column<'a>>;
 
 #[derive(Clone, Debug, Default)]
 pub struct Schema<'a> {
@@ -65,11 +77,12 @@ impl<'a> Schema<'a> {
         self.fields
             .iter()
             .map(|field| {
-                let values = match capacity {
+                let raw_values = match capacity {
                     Some(capacity) => ColumnValues::<'a>::with_capacity(capacity),
                     None => ColumnValues::<'a>::new(),
                 };
-                Column { field: field.clone(), values }
+                // (field.name, Column { field: field.clone(), values })
+                Column { field: field.clone(), raw_values }
             })
             .collect()
     }
@@ -86,25 +99,29 @@ pub fn dataframe_from_records(
     schema: &Schema,
     records: Vec<&str>,
 ) -> Result<DataFrame, ServiceError> {
-    let start = Instant::now();
-    let mut columns = &mut schema.columns(None);
-    let wrapped = &mut InnerWrapper(columns);
-
-    for record in records {
-        let mut de = serde_json::Deserializer::from_str(record);
-        wrapped.deserialize(&mut de);
-    }
-
-    let series = columns
+    let series = records
+        .into_par_iter()
+        .fold(
+            || schema.columns(None),
+            |mut columns, record| {
+                let mut de = serde_json::Deserializer::from_str(record);
+                match ColumnsWrapper(&mut columns).deserialize(&mut de) {
+                    _ => columns,
+                }
+            },
+        )
+        .reduce(
+            || schema.columns(None),
+            |mut acc, x| {
+                acc.iter_mut().zip(x).for_each(|(col, other)| col.extend(other));
+                acc
+            },
+        )
         .iter()
         .filter_map(|col| {
             // TODO: Handle better.
-            match Series::from_any_values_and_dtype(
-                col.field.name,
-                &col.values,
-                &col.field.data_type,
-                true,
-            ) {
+            let dtype = &col.field.data_type.clone();
+            match Series::from_any_values_and_dtype(col.field.name, &col.raw_values, dtype, true) {
                 Ok(series) => Some(series),
                 Err(err) => {
                     println!("Error; {err}");
@@ -114,20 +131,17 @@ pub fn dataframe_from_records(
         })
         .collect::<Vec<_>>();
 
-    let df = DataFrame::new(series.to_vec()).map_err(Into::into);
-    println!("{:#?}", start.elapsed());
-    df
+    DataFrame::new(series.to_vec()).map_err(Into::into)
 }
 
-// struct SchemaVisitor<'a>(&'a mut Schema<'a>);
-// type Inner<'a> = &'a mut Schema<'a>;
-type Inner<'cols> = Columns<'cols>;
+struct ColumnsWrapper<'w, 'cols: 'w>(&'w mut Columns<'cols>);
+struct SchemaVisitor<'v, 'cols: 'v>(&'v mut Columns<'cols>);
 
-struct InnerWrapper<'w, 'cols: 'w>(&'w mut Inner<'cols>);
-struct SchemaVisitor<'v, 'cols: 'v>(&'v mut Inner<'cols>);
-
-impl<'de, 'v: 'de, 'cols: 'v> Visitor<'de> for &mut SchemaVisitor<'v, 'cols> {
-    // type Value = Inner<'a>;
+impl<'v, 'de, 'cols> Visitor<'de> for &mut SchemaVisitor<'v, 'cols>
+where
+    'cols: 'v,
+    'de: 'cols,
+{
     type Value = ();
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -153,11 +167,12 @@ impl<'de, 'v: 'de, 'cols: 'v> Visitor<'de> for &mut SchemaVisitor<'v, 'cols> {
     }
 }
 
-impl<'de, 'v: 'de, 'w: 'de, 'cols: 'w> DeserializeSeed<'de> for &'v mut InnerWrapper<'w, 'cols> {
-    // type Value = Inner<'a>;
+impl<'v, 'w, 'de, 'cols> DeserializeSeed<'de> for &'v mut ColumnsWrapper<'w, 'cols>
+where
+    'de: 'cols,
+{
     type Value = ();
 
-    // fn deserialize<D>(mut self, deserializer: D) -> Result<&'a mut Schema<'a>, D::Error>
     fn deserialize<D>(
         self,
         deserializer: D,
