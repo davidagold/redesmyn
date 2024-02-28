@@ -33,6 +33,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 redesmyn-macros = { workspace = true }
 tower = "0.4.13"
+heapless = "0.8.0"
 
 [build-dependencies]
 tonic-build = "0.11"

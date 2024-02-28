@@ -39,7 +39,7 @@ fn main() -> Result<(), ServiceError> {
         }
     "#;
 
-    let n_records: usize = 10_000;
+    let n_records: usize = 1_000;
 
     let schema = schema::Schema::default()
         .add_field("a", DataType::Float64)
