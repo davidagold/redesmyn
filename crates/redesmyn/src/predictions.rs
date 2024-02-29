@@ -243,7 +243,7 @@ where
     // info!(%model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::<R>::new(records.into_inner(), tx, schema);
+    let job = PredictionJob::<R>::new(records.into_inner(), tx, schema.into_inner());
 
     if let Err(err) = app_state.tx.lock().await.send(job).await {
         return HttpResponse::InternalServerError().body(err.to_string());
@@ -278,7 +278,7 @@ where
             rx: Some(rx),
             config: Some(ServiceConfig::default()),
             schema: schema.clone(),
-            phantom: PhantomData
+            phantom: PhantomData,
         }
     }
 
@@ -325,10 +325,7 @@ where
     }
 
     #[instrument(skip_all)]
-    fn predict_batch(
-        mut batch: BatchJob<R>,
-        config: &ServiceConfig,
-    ) -> Result<(), ServiceError> {
+    fn predict_batch(mut batch: BatchJob<R>, config: &ServiceConfig) -> Result<(), ServiceError> {
         info!("Running batch predict for {} jobs.", batch.len());
 
         let Some((handler_module, handler_fn)) = config.py_handler.split_once(':') else {

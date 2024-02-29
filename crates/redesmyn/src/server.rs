@@ -1,4 +1,4 @@
-use crate::predictions::{HandlerArgs, Service};
+use crate::predictions::{Configurable, HandlerArgs, Service};
 
 use super::error::ServiceError;
 use super::schema::Relation;
@@ -26,12 +26,12 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, Ser, T> ResourceFactory for T
+impl<R, H, O, Ser> ResourceFactory for Ser
 where
     Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
-    Ser: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    <Self as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
     R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
-    H: Handler<HandlerArgs<<Self as Service>::R, HandlerArgs<<Self as Service>::T>, Output = O>,
+    H: Handler<HandlerArgs<<Self as Service>::R, <Self as Service>::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&self, path: &str) -> Resource {
@@ -47,9 +47,10 @@ where
 pub trait Serve {
     fn register<S, O>(self, service: S) -> Self
     where
-        S: Service + Clone + Sync + Send + 'static,
+        S: Service + Configurable + Clone + Sync + Send + 'static,
+        <S as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
+        S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
     fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
@@ -63,14 +64,15 @@ pub struct Server {
 impl Serve for Server {
     fn register<S, O>(mut self, mut service: S) -> Self
     where
-        S: Service + Clone + Sync + Send + 'static,
+        S: Service + Configurable + Clone + Sync + Send + 'static,
+        <S as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
-        S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
+        S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
         service.run();
-        let path = service.config(None).path.to_string();
+        let path = service.get_config().unwrap().path.to_string();
         self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
         self
     }
