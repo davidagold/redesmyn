@@ -436,30 +436,31 @@ where
     }
 }
 
-pub struct PredictionJob<R>
+pub struct PredictionJob<R, T>
 where
     R: Relation + Sync + Send + 'static,
 {
     id: Uuid,
-    records: Option<Vec<R>>,
+    records: Option<Vec<T>>,
     tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
     schema: Schema,
+    phantom: PhantomData<R>
 }
 
-impl<R> PredictionJob<R>
+impl<R, T> PredictionJob<R, T>
 where
     R: Relation + Sync + Send + 'static,
 {
     fn new(
-        records: Vec<R>,
+        records: Vec<T>,
         tx: Sender<Result<PredictionResponse, ServiceError>>,
         schema: Schema,
-    ) -> PredictionJob<R>
+    ) -> PredictionJob<R, T>
     where
         R: Relation + Sync + Send + 'static,
     {
         let id = Uuid::new_v4();
-        PredictionJob { id, records: Some(records), tx, schema }
+        PredictionJob { id, records: Some(records), tx, schema, phantom: PhantomData }
     }
 
     fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError>
