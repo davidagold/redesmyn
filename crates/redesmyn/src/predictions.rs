@@ -1,12 +1,15 @@
-use super::error::ServiceError;
 use super::config_methods;
+use super::error::ServiceError;
+use super::schema::{Relation, Schema};
 
 use actix_web::{web, Handler, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
+use tokio::sync::mpsc::Receiver;
 use tokio::time::sleep;
 use tokio::{
     sync::{
@@ -18,13 +21,8 @@ use tokio::{
     time::Instant,
 };
 use tracing::{error, info, instrument};
-use uuid::Uuid;
 
-pub trait Schema<R> {
-    fn to_dataframe(records: Vec<R>) -> PolarsResult<DataFrame>
-    where
-        Self: Sized;
-}
+use uuid::Uuid;
 
 #[derive(Serialize)]
 pub struct PredictionResponse {
@@ -32,108 +30,189 @@ pub struct PredictionResponse {
     predictions: Vec<Option<f64>>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ServiceConfig {
-    pub(super) path: &'static str,
+    pub(super) path: String,
     pub(super) batch_max_delay_ms: u32,
     pub(super) batch_max_capacity: usize,
-    pub(super) py_handler: &'static str,
+    pub(super) py_handler: String,
 }
 
-impl Default for ServiceConfig {
+impl<'c> Default for ServiceConfig {
     fn default() -> Self {
         ServiceConfig {
-            path: "predictions/{model_name}/{model_version}",
+            path: "predictions/{model_name}/{model_version}".to_string(),
             batch_max_delay_ms: 5,
             batch_max_capacity: 1024,
-            py_handler: "handlers.model:handle",
+            py_handler: "handlers.model:handle".to_string(),
         }
     }
 }
 
 pub trait Configurable: Sized {
-    fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig;
+    fn get_config(&self) -> Result<ServiceConfig, ServiceError>;
+
+    fn set_config(
+        &mut self,
+        new_config: Option<ServiceConfig>,
+    ) -> Result<ServiceConfig, ServiceError>;
 
     config_methods! {
-        path: &'static str,
+        path: String,
         batch_max_delay_ms: u32,
         batch_max_capacity: usize,
-        py_handler: &'static str
+        py_handler: String
     }
 }
 
 impl Configurable for ServiceConfig {
-    fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig {
-        match config {
-            Some(new_config) => new_config,
-            None => *self,
+    fn get_config(&self) -> Result<ServiceConfig, ServiceError> {
+        return Ok(self.clone());
+    }
+
+    fn set_config(
+        &mut self,
+        new_config: Option<ServiceConfig>,
+    ) -> Result<ServiceConfig, ServiceError> {
+        match new_config {
+            Some(new_config) => Ok(new_config),
+            None => Ok(self.clone()),
         }
     }
 }
 
-pub trait Service: Sized + Configurable {
+pub trait Service: Sized {
     type R;
+    type T;
     type H;
 
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 
-    fn get_handler(&self) -> Self::H;
+    fn get_handler_fn(&self) -> Self::H;
 }
 
-pub struct BatchPredictor<R>
+// struct TaskDaemon<R>
+// where
+//     R: Relation + Sync + Send + 'static,
+// {
+//     rx: Option<mpsc::Receiver<PredictionJob<R>>>,
+//     config: Option<ServiceConfig>,
+//     schema: Schema,
+// }
+
+// impl<R> TaskDaemon<R>
+// where
+//     R: Relation + Sync + Send + 'static,
+// {
+//     fn start_task(&mut self) -> Result<JoinHandle<()>, ServiceError>
+//     where
+//         R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+//     {
+//         let err = ServiceError::Error(
+//             "Tried to start task from subordinate daemon.".to_string(),
+//         );
+//         let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+//         let config = self.config.clone().ok_or_else(|| err)?;
+//         let mut rx = std::mem::take(&mut self.rx)
+//             .ok_or_else(|| err)?;
+
+//         let handle = tokio::spawn(async move {
+//             tokio::spawn(async move { BatchPredictor::<R>::task(rx, rx_abort, config).await });
+//             // BatchPredictor::<R>::await_shutdown(tx_abort).await
+//         });
+//         Ok(handle)
+//     }
+// }
+
+pub struct BatchPredictor<R, T>
 where
-    Self: Sync,
+    Self: Sync + Configurable,
+    R: Relation + Sync + Send + 'static,
 {
+    config: Option<ServiceConfig>,
+    schema: Schema,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<R>>>>,
-    handle: ServiceHandle<R>,
+    rx: Option<mpsc::Receiver<PredictionJob<R>>>,
+    phantom: PhantomData<T>,
 }
 
-impl<R> Clone for BatchPredictor<R>
+impl<R, T> Clone for BatchPredictor<R, T>
 where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    Self: Sync + Configurable,
+    R: Relation + Sync + Send + 'static,
 {
     fn clone(&self) -> Self {
         BatchPredictor {
+            config: self.get_config().ok().clone(),
+            schema: self.schema.clone(),
             tx: self.tx.clone(),
-            handle: ServiceHandle { rx: None, config: self.handle.config },
+            rx: None,
+            phantom: PhantomData,
         }
     }
 }
 
-impl<R> Configurable for BatchPredictor<R>
+impl<R, T> Configurable for BatchPredictor<R, T>
 where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    Self: Sync,
+    R: Relation + Sync + Send + 'static,
 {
-    fn config(&mut self, config: Option<ServiceConfig>) -> ServiceConfig {
-        match config {
-            Some(new_config) => {
-                self.handle.config = new_config;
-                new_config
+    fn get_config(&self) -> Result<ServiceConfig, ServiceError> {
+        match &self.config {
+            Some(config) => Ok(config.clone()),
+            None => Err(ServiceError::Error("Tried to take missing config.".to_string())),
+        }
+    }
+
+    fn set_config(
+        &mut self,
+        new_config: Option<ServiceConfig>,
+    ) -> Result<ServiceConfig, ServiceError> {
+        let old_config = &self.config;
+        match (old_config, new_config) {
+            (None, Some(new_config)) => {
+                self.config = Some(new_config.clone());
+                Ok(new_config)
             }
-            None => self.handle.config,
+            (Some(config), None) => Ok(config.clone()),
+            _ => {
+                Err(ServiceError::Error("Can only exchange distinct config variants.".to_string()))
+            }
         }
     }
 }
 
-pub(crate) type HandlerArgs<R> =
-    (web::Path<ModelSpec>, web::Json<Vec<R>>, web::Data<BatchPredictor<R>>);
+pub(crate) type HandlerArgs<R, T> =
+    (web::Path<ModelSpec>, web::Json<Vec<T>>, web::Data<BatchPredictor<R, T>>, web::Data<Schema>);
 
-impl<R> Service for BatchPredictor<R>
+impl<R, T> Service for BatchPredictor<R, T>
 where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    R: Relation + Sync + Send + for<'de> Deserialize<'de> + 'static,
+    T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    Self: Sync + Configurable,
 {
     type R = R;
-    type H = impl Handler<HandlerArgs<Self::R>, Output = impl Responder + 'static>;
+    type T = T;
+    type H =
+        impl for<'rec> Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
 
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        match self.handle.rx {
-            Some(_) => Ok(self.handle.start()),
-            None => Err(ServiceError::Error("Cannot start service task from clone".to_string())),
-        }
+        let err = ServiceError::Error("Tried to start task from subordinate daemon.".to_string());
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        let config = self.get_config()?;
+        let rx = std::mem::take(&mut self.rx).ok_or_else(|| err)?;
+
+        let handle = tokio::spawn(async move {
+            tokio::spawn(async move { BatchPredictor::<R, T>::task(rx, rx_abort, config).await });
+            BatchPredictor::<R, T>::await_shutdown(tx_abort).await
+        });
+        Ok(handle)
     }
 
-    fn get_handler(&self) -> Self::H {
-        invoke::<R>
+    fn get_handler_fn(&self) -> Self::H {
+        invoke::<Self::R, Self::T>
     }
 }
 
@@ -149,20 +228,22 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub async fn invoke<'de, R>(
+pub async fn invoke<R, T>(
     model_spec: web::Path<ModelSpec>,
-    records: web::Json<Vec<R>>,
-    app_state: web::Data<BatchPredictor<R>>,
+    records: web::Json<Vec<T>>,
+    app_state: web::Data<BatchPredictor<R, T>>,
+    schema: web::Data<Schema>,
 ) -> impl Responder
 where
-    R: Schema<R> + Sync + Send + 'static,
-ModelSpec: serde::Deserialize<'de>,
+    R: Relation + Sync + Send + for<'de> Deserialize<'de> + 'static,
+    T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    ModelSpec: for<'de> serde::Deserialize<'de>,
 {
     // let ModelSpec { model_name, model_version } = &*model_spec;
     // info!(%model_name, %model_version);
 
     let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::new(records.into_inner(), tx);
+    let job = PredictionJob::<R>::new(records.into_inner(), tx, schema);
 
     if let Err(err) = app_state.tx.lock().await.send(job).await {
         return HttpResponse::InternalServerError().body(err.to_string());
@@ -174,49 +255,30 @@ ModelSpec: serde::Deserialize<'de>,
     }
 }
 
-struct ServiceHandle<R> {
-    rx: Option<mpsc::Receiver<PredictionJob<R>>>,
-    config: ServiceConfig,
-}
+// impl<'r, 'rec, R> Default for BatchPredictor<'r, 'rec>
+// where
+//     R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+// {
+//     fn default() -> Self {
+//         let schema = <R as Relation>::schema(None);
+//         Self::new()
+//     }
+// }
 
-impl<R> ServiceHandle<R>
+impl<R, T> BatchPredictor<R, T>
 where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    T: Sync + Send + for<'de> Deserialize<'de> + 'static,
 {
-    fn start(&mut self) -> JoinHandle<()> {
-        let rx = self.rx.take().unwrap();
-        let (tx_abort, rx_abort) = oneshot::channel::<()>();
-
-        let config = self.config;
-        tokio::spawn(async move {
-            tokio::spawn(async move { BatchPredictor::<R>::task(rx, rx_abort, config).await });
-            BatchPredictor::<R>::await_shutdown(tx_abort).await
-        })
-    }
-}
-
-impl<R> Default for BatchPredictor<R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<R> BatchPredictor<R>
-where
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-{
-    pub fn new() -> BatchPredictor<R> {
+    pub fn new(schema: Schema) -> BatchPredictor<R, T> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
             tx: Arc::new(tx.into()),
-            handle: ServiceHandle {
-                rx: Some(rx),
-                config: ServiceConfig::default(),
-            },
+            rx: Some(rx),
+            config: Some(ServiceConfig::default()),
+            schema: schema.clone(),
+            phantom: PhantomData
         }
     }
 
@@ -263,7 +325,10 @@ where
     }
 
     #[instrument(skip_all)]
-    fn predict_batch(mut batch: BatchJob<R>, config: &ServiceConfig) -> Result<(), ServiceError> {
+    fn predict_batch(
+        mut batch: BatchJob<R>,
+        config: &ServiceConfig,
+    ) -> Result<(), ServiceError> {
         info!("Running batch predict for {} jobs.", batch.len());
 
         let Some((handler_module, handler_fn)) = config.py_handler.split_once(':') else {
@@ -305,7 +370,7 @@ where
 
 struct BatchJob<R>
 where
-    R: Schema<R> + Sync + Send + 'static,
+    R: Relation + Sync + Send + 'static,
 {
     jobs_by_id: HashMap<String, PredictionJob<R>>,
     df: Option<DataFrame>,
@@ -313,10 +378,10 @@ where
 
 impl<R> BatchJob<R>
 where
-    R: Schema<R> + Sync + Send + 'static,
+    R: Relation + Sync + Send + 'static,
 {
     fn from_jobs(jobs: Vec<PredictionJob<R>>) -> Result<BatchJob<R>, PolarsError> {
-        let mut jobs_by_id = HashMap::<String, PredictionJob<R>>::new();
+        let mut jobs_by_id = HashMap::<String, PredictionJob<T>>::new();
         let dfs = jobs
             .into_iter()
             .filter_map(|mut job| match job.take_records_as_df() {
@@ -374,31 +439,42 @@ where
     }
 }
 
-pub struct PredictionJob<R> {
+pub struct PredictionJob<R>
+where
+    R: Relation + Sync + Send + 'static,
+{
     id: Uuid,
     records: Option<Vec<R>>,
     tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
+    schema: Schema,
 }
 
 impl<R> PredictionJob<R>
 where
-    R: Schema<R> + Sync + Send + 'static,
+    R: Relation + Sync + Send + 'static,
 {
     fn new(
         records: Vec<R>,
         tx: Sender<Result<PredictionResponse, ServiceError>>,
-    ) -> PredictionJob<R> {
+        schema: Schema,
+    ) -> PredictionJob<R>
+    where
+        R: Relation + Sync + Send + 'static,
+    {
         let id = Uuid::new_v4();
-        PredictionJob { id, records: Some(records), tx }
+        PredictionJob { id, records: Some(records), tx, schema }
     }
 
-    fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError> {
+    fn take_records_as_df(&mut self) -> Result<DataFrame, ServiceError>
+    where
+        R: Relation + Sync + Send + 'static,
+    {
         let Some(records) = self.records.take() else {
             let msg = "Tried to take missing records".to_string();
             return Err(ServiceError::Error(msg));
         };
         let n_records = records.len();
-        let mut df = R::to_dataframe(records)?;
+        let mut df = R::parse(records, &self.schema)?;
         let col_job_id =
             Series::from_iter(repeat(self.id.to_string()).take(n_records)).with_name("job_id");
         match df.with_column(col_job_id) {

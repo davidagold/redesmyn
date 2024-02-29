@@ -1,7 +1,7 @@
 use crate::predictions::{HandlerArgs, Service};
 
 use super::error::ServiceError;
-use super::predictions::Schema;
+use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
@@ -26,15 +26,16 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, T> ResourceFactory for T
+impl<R, H, O, Ser, T> ResourceFactory for T
 where
     Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
-    R: Schema<R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
-    H: Handler<HandlerArgs<<Self as Service>::R>, Output = O>,
+    Ser: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    H: Handler<HandlerArgs<<Self as Service>::R, HandlerArgs<<Self as Service>::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&self, path: &str) -> Resource {
-        let handler = self.get_handler();
+        let handler = self.get_handler_fn();
         web::resource(path).app_data(web::Data::new(self.clone())).route(web::post().to(handler))
     }
 
@@ -47,7 +48,7 @@ pub trait Serve {
     fn register<S, O>(self, service: S) -> Self
     where
         S: Service + Clone + Sync + Send + 'static,
-        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
         S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
@@ -63,7 +64,7 @@ impl Serve for Server {
     fn register<S, O>(mut self, mut service: S) -> Self
     where
         S: Service + Clone + Sync + Send + 'static,
-        S::R: Schema<S::R> + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
         S::H: Handler<HandlerArgs<<S as Service>::R>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
