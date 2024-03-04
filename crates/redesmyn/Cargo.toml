@@ -23,7 +23,7 @@ pyo3 = { workspace = true }
 pyo3-polars = { workspace = true }
 rayon = { workspace = true }
 serde = { features = ["derive"], workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror = { workspace = true }
 tokio = { features = ["full"], workspace = true }
 tracing = { workspace = true }
@@ -31,8 +31,10 @@ tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 tonic = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
-redesmyn-macros = { workspace = true }
+# redesmyn-macros = { workspace = true }
 tower = "0.4.13"
+heapless = "0.8.0"
+smartstring = {version = "1.0.1", features = ["std", "serde"]}
 
 [build-dependencies]
 tonic-build = "0.11"

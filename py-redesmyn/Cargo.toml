@@ -1,0 +1,23 @@
+[package]
+name = "py-redesmyn"
+edition = "2021"
+authors.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
+license.workspace = true
+
+[lib]
+name = "redesmyn"
+crate-type = ["cdylib"]
+
+[dependencies]
+polars = { workspace = true }
+serde = { workspace = true }
+
+redesmyn = { workspace = true }
+
+[dependencies.pyo3]
+version = "0.20.0"
+features = ["abi3-py38"]

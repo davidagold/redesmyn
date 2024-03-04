@@ -1,6 +1,7 @@
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Fields, FieldsNamed, Type};
 use thiserror::Error;
@@ -24,11 +25,22 @@ fn get_struct_fields(input: &DeriveInput) -> Result<&FieldsNamed, MacroError> {
     }
 }
 
-#[proc_macro_derive(Schema)]
-pub fn to_dataframe_derive(input: TokenStream) -> TokenStream {
+fn get_expr_data_type(type_ident: &Ident) -> proc_macro2::TokenStream {
+    match type_ident.to_string().as_str() {
+        "i64" => quote!(polars::datatypes::DataType::Int64),
+        "f64" => quote!(polars::datatypes::DataType::Float64),
+        "String" => quote!(polars::datatypes::DataType::String),
+        _ => todo!(),
+    }
+}
+
+#[proc_macro_derive(Relation)]
+pub fn derive_relation(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     let name = &input.ident;
+
+    let mut exprs_schema_fields: Vec<proc_macro2::TokenStream> = Vec::new();
 
     let mut exprs_vec_init: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut exprs_vec_push: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -58,18 +70,34 @@ pub fn to_dataframe_derive(input: TokenStream) -> TokenStream {
                 let name = ident_field.to_string();
                 exprs_series.push(quote! {
                     Series::new(#name, #ident_field)
-                })
+                });
+
+                let expr_data_type = get_expr_data_type(type_ident);
+                exprs_schema_fields.push(quote! {
+                    .add_field(#name, #expr_data_type)
+                });
             }
             _ => unimplemented!(),
         }
     }
 
     let gen = quote! {
-        impl Schema<#name> for #name {
-            fn to_dataframe(records: Vec<#name>) -> PolarsResult<DataFrame> {
+        impl Relation for #name {
+            type Serialized = String;
+
+            fn schema(rel: Option<&Self>) -> Option<Schema> {
+                let schema = redesmyn::schema::Schema::default()
+                    #(#exprs_schema_fields)*;
+                Some(schema)
+            }
+
+            fn parse(records: Vec<String>, schema: &redesmyn::schema::Schema) -> Result<polars::prelude::DataFrame, redesmyn::error::ServiceError>
+            where
+                Self: Sized
+            {
                 #(#exprs_vec_init);*;
 
-                for record in records {
+                for record in records.iter().filter_map(|record| -> Option<#name> { serde_json::from_str(record).ok() }) {
                     #(#exprs_vec_push);*;
                 };
 
@@ -77,7 +105,7 @@ pub fn to_dataframe_derive(input: TokenStream) -> TokenStream {
                     #(#exprs_series),*
                 ];
 
-                DataFrame::new(columns)
+                DataFrame::new(columns).map_err(|err| err.into())
             }
         }
     };
