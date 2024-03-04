@@ -134,28 +134,6 @@ impl Relation for Schema {
                     _ => columns,
                 }
             })
-            // .par_iter()
-            // .map(|record| record.as_str())
-            // .fold(
-            //     || schema.columns(None),
-            //     |mut columns, record| {
-            //         let mut de = serde_json::Deserializer::from_str(record);
-            //         match ColumnsWrapper(&mut columns).deserialize(&mut de) {
-            //             _ => columns,
-            //         }
-            //     },
-            // )
-            // .reduce(
-            //     || schema.columns(None),
-            //     |mut acc, mut other| {
-            //         // acc.iter_mut().zip(x).for_each(|(col, other)| col.extend(other));
-            //         // acc
-            //         acc.iter_mut().for_each(|(key, col)| {
-            //             col.extend(other.remove(key).unwrap())
-            //         });
-            //         acc
-            //     },
-            // )
             .into_iter()
             .filter_map(|(_, col)| {
                 // TODO: Handle better.
