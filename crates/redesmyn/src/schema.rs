@@ -94,7 +94,6 @@ impl Schema {
                     Some(capacity) => ColumnValues::<'a>::with_capacity(capacity),
                     None => ColumnValues::<'a>::new(),
                 };
-                // (field.name, Column { field: field.clone(), values })
                 (field.name.as_str(), Column { field: field.clone(), raw_values })
             })
             .collect()
