@@ -1,5 +1,6 @@
 import asyncio
 from itertools import repeat
+import json
 import time
 from typing import Dict
 import aiohttp
@@ -12,7 +13,7 @@ url = f"http://localhost:8080/predictions/{model_name}/{model_version}"
 
 
 record = {"a": 1, "b": 2}
-data = list(repeat(record, 4))
+data = list(repeat(json.dumps(record), 4))
 
 async def send_post_request(
     task_id: int,
@@ -24,6 +25,7 @@ async def send_post_request(
     start = time.perf_counter_ns()
     async with session.post(url, json=data) as response:
         response_data = await response.text()
+        # print(f"{response_data=}")
         if isinstance(response_data, str):
             message = response_data
         else: 

@@ -31,7 +31,7 @@ tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 tonic = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
-redesmyn-macros = { workspace = true }
+# redesmyn-macros = { workspace = true }
 tower = "0.4.13"
 heapless = "0.8.0"
 smartstring = {version = "1.0.1", features = ["std", "serde"]}

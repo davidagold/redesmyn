@@ -1,3 +1,5 @@
+use crate::common::Sized128String;
+use crate::error::ServiceError;
 use heapless::{self, FnvIndexMap};
 use polars::prelude::*;
 use polars::{
@@ -5,20 +7,19 @@ use polars::{
     frame::DataFrame,
     series::Series,
 };
+use rayon::prelude::*;
 use serde::{
     de::{DeserializeSeed, MapAccess, Visitor},
     Deserializer,
 };
 use serde_json::Value;
-use rayon::prelude::*;
-use crate::common::Sized128String;
-use crate::error::ServiceError;
 
 pub trait Relation {
+    type Serialized;
 
-    fn schema(rel: Option<&Self>) -> Option<&Schema>;
+    fn schema(rel: Option<&Self>) -> Option<Schema>;
 
-    fn parse<R>(records: Vec<R>, schema: &Schema) -> Result<DataFrame, ServiceError>
+    fn parse(records: Vec<Self::Serialized>, schema: &Schema) -> Result<DataFrame, ServiceError>
     where
         Self: Sized;
 }
@@ -33,7 +34,7 @@ pub struct Field {
 
 type ScalarType<'a> = AnyValue<'a>;
 type ColumnValues<'a> = Vec<ScalarType<'a>>;
-struct Column<'a> {
+pub struct Column<'a> {
     pub field: Field,
     pub raw_values: ColumnValues<'a>,
 }
@@ -102,46 +103,59 @@ impl Schema {
     pub fn add_field(mut self, name: &str, data_type: DataType) -> Self {
         let index = self.len();
         // TODO: Handle possible error
-        self.fields.push(Field { name: Sized128String::try_from(name).unwrap(), data_type, index });
+        self.fields.push(Field {
+            name: Sized128String::try_from(name).unwrap(),
+            data_type,
+            index,
+        });
         self
     }
 }
 
 impl Relation for Schema {
+    type Serialized = String;
 
-    fn schema(rel: Option<&Self>) -> Option<&Schema> {
+    fn schema(rel: Option<&Self>) -> Option<Schema> {
         match rel {
-            Some(schema) => Some(schema),
-            None => None
+            Some(schema) => Some(schema.clone()),
+            None => None,
         }
     }
 
-    fn parse<R>(records: Vec<R>, schema: &Schema) -> Result<DataFrame, ServiceError>
+    fn parse(records: Vec<<Self as Relation>::Serialized>, schema: &Schema) -> Result<DataFrame, ServiceError>
     where
         Self: Sized,
     {
         let series = records
-            .into_par_iter()
-            .fold(
-                || schema.columns(None),
-                |mut columns, record| {
-                    let mut de = serde_json::Deserializer::from_str(record);
-                    match ColumnsWrapper(&mut columns).deserialize(&mut de) {
-                        _ => columns,
-                    }
-                },
-            )
-            .reduce(
-                || schema.columns(None),
-                |mut acc, mut other| {
-                    // acc.iter_mut().zip(x).for_each(|(col, other)| col.extend(other));
-                    // acc
-                    acc.iter_mut().for_each(|(key, col)| {
-                        col.extend(other.remove(key).unwrap())
-                    });
-                    acc
-                },
-            )
+            .iter()
+            .fold(schema.columns(None), |mut columns, record| {
+                let mut de = serde_json::Deserializer::from_str(&record);
+                match ColumnsWrapper(&mut columns).deserialize(&mut de) {
+                    _ => columns,
+                }
+            })
+            // .par_iter()
+            // .map(|record| record.as_str())
+            // .fold(
+            //     || schema.columns(None),
+            //     |mut columns, record| {
+            //         let mut de = serde_json::Deserializer::from_str(record);
+            //         match ColumnsWrapper(&mut columns).deserialize(&mut de) {
+            //             _ => columns,
+            //         }
+            //     },
+            // )
+            // .reduce(
+            //     || schema.columns(None),
+            //     |mut acc, mut other| {
+            //         // acc.iter_mut().zip(x).for_each(|(col, other)| col.extend(other));
+            //         // acc
+            //         acc.iter_mut().for_each(|(key, col)| {
+            //             col.extend(other.remove(key).unwrap())
+            //         });
+            //         acc
+            //     },
+            // )
             .into_iter()
             .filter_map(|(_, col)| {
                 // TODO: Handle better.
@@ -184,16 +198,7 @@ where
         M: MapAccess<'de>,
     {
         while let Some((key, value)) = visited.next_entry::<&str, Value>()? {
-            // let Ok(index) =
-            //     self.0.binary_search_by_key(&Sized128String::try_from(key).unwrap(), |col| {
-            //         col.field.name
-            //     })
-            // else {
-            //     continue;
-            // };
-            // let col: &mut Column = self.0.get_mut(index).unwrap();
             self.0.get_mut(key).map(|col| col.push(col.parse(value)));
-            
         }
         Ok(())
     }

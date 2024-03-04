@@ -30,7 +30,7 @@ fn get_expr_data_type(type_ident: &Ident) -> proc_macro2::TokenStream {
         "i64" => quote!(polars::datatypes::DataType::Int64),
         "f64" => quote!(polars::datatypes::DataType::Float64),
         "String" => quote!(polars::datatypes::DataType::String),
-        _ => todo!()
+        _ => todo!(),
     }
 }
 
@@ -40,7 +40,7 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
 
     let name = &input.ident;
 
-    let mut exprs_schema_fields: Vec<proc_macro2::TokenStream> = Vec::new(); 
+    let mut exprs_schema_fields: Vec<proc_macro2::TokenStream> = Vec::new();
 
     let mut exprs_vec_init: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut exprs_vec_push: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -74,7 +74,7 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
 
                 let expr_data_type = get_expr_data_type(type_ident);
                 exprs_schema_fields.push(quote! {
-                    schema.add_field(#name, #expr_data_type)
+                    .add_field(#name, #expr_data_type)
                 });
             }
             _ => unimplemented!(),
@@ -83,15 +83,21 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
 
     let gen = quote! {
         impl Relation for #name {
-            fn schema<'r>(&self) -> Schema<'r> {
-                let schema = schema::Schema::default()
-                #(#exprs_schema_fields);*;
+            type Serialized = String;
+
+            fn schema(rel: Option<&Self>) -> Option<Schema> {
+                let schema = redesmyn::schema::Schema::default()
+                    #(#exprs_schema_fields)*;
+                Some(schema)
             }
 
-            fn to_dataframe(records: Vec<&str>) -> PolarsResult<DataFrame> {
+            fn parse(records: Vec<String>, schema: &redesmyn::schema::Schema) -> Result<polars::prelude::DataFrame, redesmyn::error::ServiceError>
+            where
+                Self: Sized
+            {
                 #(#exprs_vec_init);*;
 
-                for record in records {
+                for record in records.iter().filter_map(|record| -> Option<#name> { serde_json::from_str(record).ok() }) {
                     #(#exprs_vec_push);*;
                 };
 
@@ -99,7 +105,7 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
                     #(#exprs_series),*
                 ];
 
-                DataFrame::new(columns)
+                DataFrame::new(columns).map_err(|err| err.into())
             }
         }
     };

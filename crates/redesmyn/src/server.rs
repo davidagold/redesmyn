@@ -1,11 +1,12 @@
 use crate::predictions::{Configurable, HandlerArgs, Service};
+use crate::schema::Schema;
 
 use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::env;
 use tokio::{signal, task::JoinHandle};
@@ -26,17 +27,20 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, Ser> ResourceFactory for Ser
+impl<R, H, O, Serv> ResourceFactory for Serv
 where
     Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
     <Self as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-    R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+    R: Relation<Serialized = <Self as Service>::T> + Sync + Send + 'static,
     H: Handler<HandlerArgs<<Self as Service>::R, <Self as Service>::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&self, path: &str) -> Resource {
         let handler = self.get_handler_fn();
-        web::resource(path).app_data(web::Data::new(self.clone())).route(web::post().to(handler))
+        web::resource(path)
+            .app_data(web::Data::<Self>::new(self.clone()))
+            .app_data(web::Data::<Schema>::new(self.get_schema()))
+            .route(web::post().to(handler))
     }
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
@@ -48,8 +52,8 @@ pub trait Serve {
     fn register<S, O>(self, service: S) -> Self
     where
         S: Service + Configurable + Clone + Sync + Send + 'static,
-        <S as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-        S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
@@ -65,8 +69,8 @@ impl Serve for Server {
     fn register<S, O>(mut self, mut service: S) -> Self
     where
         S: Service + Configurable + Clone + Sync + Send + 'static,
-        <S as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-        S::R: Relation + Sync + Send + 'static + for<'a> Deserialize<'a>,
+        S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {

@@ -2376,7 +2376,6 @@ dependencies = [
  "pyo3",
  "pyo3-polars",
  "rayon",
- "redesmyn-macros",
  "serde",
  "serde_json",
  "smartstring",
@@ -2417,6 +2416,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "redesmyn",
  "syn 2.0.49",
  "thiserror",
 ]
