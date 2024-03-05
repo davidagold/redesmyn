@@ -27,12 +27,12 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, Serv> ResourceFactory for Serv
+impl<R, H, O, S> ResourceFactory for S
 where
-    Self: Service<R = R, H = H> + Clone + Sync + Send + 'static,
-    <Self as Service>::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-    R: Relation<Serialized = <Self as Service>::T> + Sync + Send + 'static,
-    H: Handler<HandlerArgs<<Self as Service>::R, <Self as Service>::T>, Output = O>,
+    S: Service<R = R, H = H> + Clone + Sync + Send + 'static,
+    S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    R: Relation<Serialized = S::T> + Sync + Send + 'static,
+    H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&self, path: &str) -> Resource {
@@ -54,7 +54,7 @@ pub trait Serve {
         S: Service + Configurable + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
-        S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
+        S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
     fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
@@ -71,7 +71,7 @@ impl Serve for Server {
         S: Service + Configurable + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
-        S::H: Handler<HandlerArgs<<S as Service>::R, <S as Service>::T>, Output = O> + Sync + Send,
+        S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
