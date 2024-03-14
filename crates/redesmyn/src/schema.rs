@@ -65,10 +65,6 @@ impl<'a> Column<'a> {
     fn push(&mut self, v: ScalarType<'a>) {
         self.raw_values.push(v)
     }
-
-    fn extend(&mut self, other: Column<'a>) {
-        self.raw_values.extend(other.raw_values)
-    }
 }
 
 const MAX_FIELDS: usize = 256;
@@ -99,7 +95,7 @@ impl Schema {
             .collect()
     }
 
-    pub fn add_field(mut self, name: &str, data_type: DataType) -> Self {
+    pub fn add_field(&mut self, name: &str, data_type: DataType) -> &Self {
         let index = self.len();
         // TODO: Handle possible error
         self.fields.push(Field {

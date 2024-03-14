@@ -13,8 +13,10 @@ name = "redesmyn"
 crate-type = ["cdylib"]
 
 [dependencies]
-polars = { workspace = true }
 serde = { workspace = true }
+polars = { workspace = true }
+polars-core = "0.38.1"
+pyo3-asyncio = { version = "0.20.0", features = ["attributes", "tokio-runtime"] }
 
 redesmyn = { workspace = true }
 

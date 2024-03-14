@@ -3,4 +3,5 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
+module-name = "redesmyn.py_redesmyn"
 features = ["pyo3/extension-module"]

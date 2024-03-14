@@ -1,1 +1,3 @@
 /target
+*/**/*.abi3.so
+*/**/__pycache__

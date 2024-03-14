@@ -5,21 +5,24 @@ use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
+use futures::{Future, TryFutureExt};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
+use tracing::subscriber::set_default;
 use std::collections::VecDeque;
 use std::env;
+use std::future::{ready, Ready};
 use tokio::{signal, task::JoinHandle};
-use tracing::{error, info};
+use tracing::{error, info, Dispatch};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 trait ResourceFactory: Sync + Send {
-    fn new_resource(&self, path: &str) -> Resource;
+    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError>;
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
 }
 
-struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
+pub(crate) struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
 
 impl Clone for BoxedResourceFactory {
     fn clone(&self) -> Self {
@@ -35,12 +38,14 @@ where
     H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
-    fn new_resource(&self, path: &str) -> Resource {
+    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
+        self.run()?;
         let handler = self.get_handler_fn();
-        web::resource(path)
+        let resource = web::resource(path)
             .app_data(web::Data::<Self>::new(self.clone()))
             .app_data(web::Data::<Schema>::new(self.get_schema()))
-            .route(web::post().to(handler))
+            .route(web::post().to(handler));
+        Ok(resource)
     }
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
@@ -49,7 +54,7 @@ where
 }
 
 pub trait Serve {
-    fn register<S, O>(self, service: S) -> Self
+    fn register<S, O>(&mut self, service: S) -> &Self
     where
         S: Service + Configurable + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
@@ -57,16 +62,26 @@ pub trait Serve {
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
-    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError>;
+        fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError>;
 }
 
 #[derive(Default)]
 pub struct Server {
-    factories: VecDeque<BoxedResourceFactory>,
+    pub(crate) factories: VecDeque<BoxedResourceFactory>,
+}
+
+impl Clone for Server {
+    fn clone(&self) -> Self {
+        let mut server = Server::default();
+        for factory in self.factories.iter() {
+            server.factories.push_back(factory.clone());
+        };
+        server
+    }
 }
 
 impl Serve for Server {
-    fn register<S, O>(mut self, mut service: S) -> Self
+    fn register<S, O>(&mut self, service: S) -> &Self
     where
         S: Service + Configurable + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
@@ -75,27 +90,36 @@ impl Serve for Server {
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
-        service.run();
         let path = service.get_config().unwrap().path.to_string();
         self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
         self
     }
 
-    fn serve(self) -> Result<JoinHandle<Result<(), std::io::Error>>, ServiceError> {
+    fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
+        let factories = self.factories.clone();
         let http_server = HttpServer::new(move || {
-            self.factories.clone().into_iter().fold(actix_web::App::new(), |app, factory| {
-                app.service(factory.0.new_resource(&factory.1))
-            })
+            match factories.clone().into_iter().fold(
+                Result::<actix_web::App<_>, ServiceError>::Ok(actix_web::App::new()),
+                |app, mut factory| {
+                    let resource = factory.0.new_resource(&factory.1)?;
+                    Ok(app?.service(resource))
+            }) 
+            {
+                Ok(app) => app,
+                Err(err) => {
+                    panic!("{err}")
+                }
+            }
         })
         .disable_signals();
 
         let server = http_server.bind("127.0.0.1:8080")?.run();
 
         let subscribe_layer = tracing_subscriber::fmt::layer().json();
-        tracing_subscriber::registry()
+        let guard = tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
             .with(subscribe_layer)
-            .init();
+            .set_default();
 
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
@@ -126,7 +150,9 @@ impl Serve for Server {
         info!("Starting server...");
         let server_handle = server.handle();
         tokio::spawn(async move { await_shutdown(server_handle).await });
-        Ok(tokio::spawn(server))
+        // Ok(tokio::spawn(server))
+        // server.map_err(|err| err.into())
+        Ok(server)
     }
 }
 

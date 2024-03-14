@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2021"
 homepage = "https://github.com/davidagold/redesmyn"
 repository = "https://github.com/davidagold/redesmyn"
-readme = "https://github.com/davidagold/redesmyn/README.md"
+readme = "./README.md"
 license = "MIT"
 
 [workspace.dependencies]

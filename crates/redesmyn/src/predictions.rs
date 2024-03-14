@@ -31,13 +31,13 @@ pub struct PredictionResponse {
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
-    pub(super) path: String,
-    pub(super) batch_max_delay_ms: u32,
-    pub(super) batch_max_size: usize,
-    pub(super) py_handler: String,
+    pub path: String,
+    pub batch_max_delay_ms: u32,
+    pub batch_max_size: usize,
+    pub py_handler: String,
 }
 
-impl<'c> Default for ServiceConfig {
+impl Default for ServiceConfig {
     fn default() -> Self {
         ServiceConfig {
             path: "predictions/{model_name}/{model_version}".to_string(),
@@ -92,16 +92,20 @@ pub trait Service: Sized {
     fn get_handler_fn(&self) -> Self::H;
 }
 
-//
+#[derive(Clone, Copy)]
+enum EndpointState {
+    Ready,
+    Running
+}
 pub struct BatchPredictor<T, R>
 where
-    Self: Configurable,
     R: Relation,
 {
     config: Option<ServiceConfig>,
     schema: Schema,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<T, R>>>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
+    state: EndpointState
 }
 
 impl<T, R> Clone for BatchPredictor<T, R>
@@ -110,11 +114,19 @@ where
     R: Relation,
 {
     fn clone(&self) -> Self {
+        let (tx, rx) = match self.state {
+            EndpointState::Ready => {
+                let (tx, rx) = mpsc::channel::<PredictionJob<T, R>>(1024);
+                (Arc::new(Mutex::new(tx)), Some(rx))
+            },
+            EndpointState::Running => (self.tx.clone(), None)
+        };
         BatchPredictor {
             config: self.get_config().ok().clone(),
             schema: self.schema.clone(),
-            tx: self.tx.clone(),
-            rx: None,
+            tx: tx,
+            rx: rx,
+            state: self.state
         }
     }
 }
@@ -159,8 +171,7 @@ where
 {
     type R = R;
     type T = T;
-    type H =
-        impl for<'rec> Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
+    type H = impl Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
 
     fn get_schema(&self) -> Schema {
         self.schema.clone()
@@ -177,6 +188,7 @@ where
             tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
             BatchPredictor::<T, R>::await_shutdown(tx_abort).await
         });
+        self.state = EndpointState::Running;
         Ok(handle)
     }
 
@@ -197,33 +209,6 @@ impl fmt::Display for ModelSpec {
     }
 }
 
-pub async fn invoke<T, R>(
-    model_spec: web::Path<ModelSpec>,
-    records: web::Json<Vec<T>>,
-    app_state: web::Data<BatchPredictor<T, R>>,
-    schema: web::Data<Schema>,
-) -> impl Responder
-where
-    T: Send + std::fmt::Debug,
-    R: Relation<Serialized = T>,
-    ModelSpec: for<'de> serde::Deserialize<'de>,
-{
-    // let ModelSpec { model_name, model_version } = &*model_spec;
-    // info!(%model_name, %model_version);
-
-    let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
-
-    if let Err(err) = app_state.tx.lock().expect("Whoops").send(job).await {
-        return HttpResponse::InternalServerError().body(err.to_string());
-    }
-    match rx.await {
-        Ok(Ok(response)) => HttpResponse::Ok().json(response),
-        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
-        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
-    }
-}
-
 impl<T, R> BatchPredictor<T, R>
 where
     T: Send,
@@ -237,6 +222,7 @@ where
             rx: Some(rx),
             config: Some(ServiceConfig::default()),
             schema,
+            state: EndpointState::Ready,
         }
     }
 
@@ -322,6 +308,33 @@ where
         if tx_abort.send(()).is_err() {
             tracing::error!("Failed to send cancel signal.");
         }
+    }
+}
+
+pub async fn invoke<T, R>(
+    model_spec: web::Path<ModelSpec>,
+    records: web::Json<Vec<T>>,
+    app_state: web::Data<BatchPredictor<T, R>>,
+    schema: web::Data<Schema>,
+) -> impl Responder
+where
+    T: Send + std::fmt::Debug,
+    R: Relation<Serialized = T>,
+    ModelSpec: for<'de> serde::Deserialize<'de>,
+{
+    // let ModelSpec { model_name, model_version } = &*model_spec;
+    // info!(%model_name, %model_version);
+
+    let (tx, rx) = oneshot::channel();
+    let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
+
+    if let Err(err) = app_state.tx.lock().expect("Whoops").send(job).await {
+        return HttpResponse::InternalServerError().body(err.to_string());
+    }
+    match rx.await {
+        Ok(Ok(response)) => HttpResponse::Ok().json(response),
+        Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
+        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
     }
 }
 

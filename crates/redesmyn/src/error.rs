@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use polars::prelude::PolarsError;
-use pyo3::prelude::PyErr;
+use pyo3::{exceptions::PyRuntimeError, prelude::PyErr};
 use std::env::VarError;
 use tokio::{
     sync::{mpsc::error::SendError, oneshot::error::RecvError},
@@ -28,6 +28,12 @@ pub enum ServiceError {
     ParseError(#[from] PolarsError),
     #[error("Failed to serialize result: {0}")]
     JsonError(#[from] serde_json::Error),
+}
+
+impl From<ServiceError> for PyErr {
+    fn from(err: ServiceError) -> Self {
+        PyRuntimeError::new_err(err.to_string())
+    }
 }
 
 impl<T> From<SendError<T>> for ServiceError {
