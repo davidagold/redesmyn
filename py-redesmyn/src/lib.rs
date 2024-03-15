@@ -1,4 +1,3 @@
-use futures_util::future::TryFutureExt;
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -55,7 +54,7 @@ fn get_dtype_from_name(dtype_name: &str) -> PyResult<DataType> {
         "Boolean" => Ok(DataType::Boolean),
         "Float32" => Ok(DataType::Float32),
         "Float64" => Ok(DataType::Float64),
-        dt => return Err(PyTypeError::new_err(format!("'{dt}' is not a Polars data type",))),
+        dt => Err(PyTypeError::new_err(format!("'{dt}' is not a Polars data type",))),
     }
 }
 
@@ -98,10 +97,10 @@ impl Endpoint {
         batch_max_size: usize,
     ) -> Self {
         let config = ServiceConfig {
-            path: path,
+            path,
             py_handler: handler,
-            batch_max_delay_ms: batch_max_delay_ms,
-            batch_max_size: batch_max_size,
+            batch_max_delay_ms,
+            batch_max_size,
         };
         let (schema_in, schema_out) = signature;
         Endpoint {
@@ -145,7 +144,7 @@ impl PyServer {
     pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&'py PyAny> {
         let mut server = self.server.clone();
         pyo3_asyncio::tokio::future_into_py(py, async move {
-            server.serve()?.await.map_err(|err| PyRuntimeError::new_err(err))
+            server.serve()?.await.map_err(PyRuntimeError::new_err)
         })
 
     }

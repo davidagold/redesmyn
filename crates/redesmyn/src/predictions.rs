@@ -101,60 +101,6 @@ where
     }
 }
 
-pub(crate) type HandlerArgs<R, T> =
-    (web::Path<ModelSpec>, web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
-
-impl<T, R> Service for BatchPredictor<T, R>
-where
-    Self: Sync,
-    T: Send + std::fmt::Debug + 'static,
-    R: Relation<Serialized = T> + Send + 'static,
-{
-    type R = R;
-    type T = T;
-    type H = impl Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
-
-    fn get_schema(&self) -> Schema {
-        self.schema.clone()
-    }
-
-    fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        let (tx_abort, rx_abort) = oneshot::channel::<()>();
-
-        let rx = std::mem::take(&mut self.rx).ok_or_else(|| {
-            ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
-        })?;
-
-        let config = self.config.clone();
-        let handle = tokio::spawn(async move {
-            tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
-            BatchPredictor::<T, R>::await_shutdown(tx_abort).await
-        });
-        self.state = EndpointState::Running;
-        Ok(handle)
-    }
-
-    fn get_path(&self) -> String {
-        self.config.path.clone()
-    }
-
-    fn get_handler_fn(&self) -> Self::H {
-        invoke::<Self::T, Self::R>
-    }
-}
-
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
-}
-
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
-    }
-}
-
 macro_rules! config_methods {
     ($($name:ident : $type:ty),*) => {
         $(
@@ -275,6 +221,18 @@ where
     }
 }
 
+#[derive(Deserialize)]
+pub struct ModelSpec {
+    model_name: String,
+    model_version: String,
+}
+
+impl fmt::Display for ModelSpec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}", self.model_name, self.model_version)
+    }
+}
+
 pub async fn invoke<T, R>(
     model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<T>>,
@@ -299,6 +257,48 @@ where
         Ok(Ok(response)) => HttpResponse::Ok().json(response),
         Ok(Err(err)) => HttpResponse::InternalServerError().body(err.to_string()),
         Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+    }
+}
+
+pub(crate) type HandlerArgs<R, T> =
+    (web::Path<ModelSpec>, web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
+
+impl<T, R> Service for BatchPredictor<T, R>
+where
+    Self: Sync,
+    T: Send + std::fmt::Debug + 'static,
+    R: Relation<Serialized = T> + Send + 'static,
+{
+    type R = R;
+    type T = T;
+    type H = impl Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
+
+    fn get_schema(&self) -> Schema {
+        self.schema.clone()
+    }
+
+    fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        let rx = std::mem::take(&mut self.rx).ok_or_else(|| {
+            ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
+        })?;
+
+        let config = self.config.clone();
+        let handle = tokio::spawn(async move {
+            tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
+            BatchPredictor::<T, R>::await_shutdown(tx_abort).await
+        });
+        self.state = EndpointState::Running;
+        Ok(handle)
+    }
+
+    fn get_path(&self) -> String {
+        self.config.path.clone()
+    }
+
+    fn get_handler_fn(&self) -> Self::H {
+        invoke::<Self::T, Self::R>
     }
 }
 
@@ -379,7 +379,7 @@ where
 //  - R: Relation (can produce a Schema, can parse records into a DataFrame)
 pub struct PredictionJob<T, R>
 where
-    R: Relation,
+    R: Relation<Serialized = T>,
 {
     id: Uuid,
     records: Option<Vec<T>>,
@@ -436,3 +436,4 @@ where
         }
     }
 }
+
