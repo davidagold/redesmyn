@@ -1,5 +1,5 @@
 use futures_util::future::TryFutureExt;
-use ::redesmyn::predictions::{BatchPredictor, Configurable, Service, ServiceConfig};
+use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::intern;
@@ -97,11 +97,12 @@ impl Endpoint {
         batch_max_delay_ms: u32,
         batch_max_size: usize,
     ) -> Self {
-        let config = ServiceConfig::default()
-            .path(path)
-            .py_handler(handler)
-            .batch_max_delay_ms(batch_max_delay_ms)
-            .batch_max_size(batch_max_size);
+        let config = ServiceConfig {
+            path: path,
+            py_handler: handler,
+            batch_max_delay_ms: batch_max_delay_ms,
+            batch_max_size: batch_max_size,
+        };
         let (schema_in, schema_out) = signature;
         Endpoint {
             signature: (schema_in.0, schema_out.0),

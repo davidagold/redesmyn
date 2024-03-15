@@ -1,7 +1,7 @@
 use polars::prelude::*;
 use redesmyn::{
     error::ServiceError,
-    predictions::{BatchPredictor, Configurable},
+    predictions::BatchPredictor,
     schema::{Relation, Schema},
     server::{Serve, Server},
 };

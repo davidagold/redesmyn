@@ -1,4 +1,4 @@
-use crate::predictions::{Configurable, HandlerArgs, Service};
+use crate::predictions::{HandlerArgs, Service};
 use crate::schema::Schema;
 
 use super::error::ServiceError;
@@ -61,7 +61,7 @@ where
 pub trait Serve {
     fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: Service + Configurable + Clone + Sync + Send + 'static,
+        S: Service + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
@@ -88,14 +88,14 @@ impl Clone for Server {
 impl Serve for Server {
     fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: Service + Configurable + Clone + Sync + Send + 'static,
+        S: Service + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
-        let path = service.get_config().unwrap().path.to_string();
+        let path = service.get_path();
         self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
         self
     }
