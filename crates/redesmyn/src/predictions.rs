@@ -234,7 +234,7 @@ impl fmt::Display for ModelSpec {
 }
 
 pub async fn invoke<T, R>(
-    model_spec: web::Path<ModelSpec>,
+    _model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<T>>,
     app_state: web::Data<BatchPredictor<T, R>>,
     schema: web::Data<Schema>,

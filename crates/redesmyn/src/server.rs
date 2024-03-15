@@ -5,15 +5,13 @@ use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
-use futures::{Future, TryFutureExt};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
 use tracing::instrument;
 use std::collections::VecDeque;
 use std::env;
-use std::future::{ready, Ready};
 use tokio::{signal, task::JoinHandle};
-use tracing::{error, info, Dispatch};
+use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 trait ResourceFactory: Sync + Send {
@@ -113,11 +111,11 @@ impl Serve for Server {
             factory.0.start_service()?;
         }
         let http_server = HttpServer::new(move || {
-            match factories.clone().into_iter().fold(
-                Result::<actix_web::App<_>, ServiceError>::Ok(actix_web::App::new()),
+            match factories.clone().into_iter().try_fold(
+                actix_web::App::new(),
                 |app, mut factory| {
                     let resource = factory.0.new_resource(&factory.1)?;
-                    Ok(app?.service(resource))
+                    Result::<actix_web::App<_>, ServiceError>::Ok(app.service(resource))
             }) 
             {
                 Ok(app) => app,

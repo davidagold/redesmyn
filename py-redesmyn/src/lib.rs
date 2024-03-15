@@ -110,13 +110,7 @@ impl Endpoint {
     }
 
     pub fn __repr__(&self) -> String {
-        // let str_config = format!("{:#?}", self.config);
-        let ServiceConfig {
-            path,
-            batch_max_delay_ms,
-            batch_max_size,
-            py_handler,
-        } = self.config.clone();
+        let ServiceConfig { path, py_handler, .. } = self.config.clone();
         format!("Endpoint {{ path: \"{path}\", handler: `{py_handler}` }}")
     }
 }
@@ -146,7 +140,6 @@ impl PyServer {
         pyo3_asyncio::tokio::future_into_py(py, async move {
             server.serve()?.await.map_err(PyRuntimeError::new_err)
         })
-
     }
 }
 
