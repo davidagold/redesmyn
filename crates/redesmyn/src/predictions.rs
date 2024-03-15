@@ -95,7 +95,7 @@ pub trait Service: Sized {
 #[derive(Clone, Copy)]
 enum EndpointState {
     Ready,
-    Running
+    Running,
 }
 pub struct BatchPredictor<T, R>
 where
@@ -105,7 +105,7 @@ where
     schema: Schema,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<T, R>>>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
-    state: EndpointState
+    state: EndpointState,
 }
 
 impl<T, R> Clone for BatchPredictor<T, R>
@@ -118,15 +118,15 @@ where
             EndpointState::Ready => {
                 let (tx, rx) = mpsc::channel::<PredictionJob<T, R>>(1024);
                 (Arc::new(Mutex::new(tx)), Some(rx))
-            },
-            EndpointState::Running => (self.tx.clone(), None)
+            }
+            EndpointState::Running => (self.tx.clone(), None),
         };
         BatchPredictor {
             config: self.get_config().ok().clone(),
             schema: self.schema.clone(),
-            tx: tx,
-            rx: rx,
-            state: self.state
+            tx,
+            rx,
+            state: self.state,
         }
     }
 }
@@ -146,8 +146,8 @@ where
         &mut self,
         new_config: Option<ServiceConfig>,
     ) -> Result<ServiceConfig, ServiceError> {
-        let old_config = &self.config;
-        match (old_config, new_config) {
+        // let old_config = &self.config;
+        match (&self.config, new_config) {
             (None, Some(new_config)) => {
                 self.config = Some(new_config.clone());
                 Ok(new_config)
@@ -178,11 +178,12 @@ where
     }
 
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        let err = ServiceError::Error("Tried to start task from subordinate daemon.".to_string());
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
         let config = self.get_config()?;
-        let rx = std::mem::take(&mut self.rx).ok_or_else(|| err)?;
+        let rx = std::mem::take(&mut self.rx).ok_or_else(|| {
+            ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
+        })?;
 
         let handle = tokio::spawn(async move {
             tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
@@ -212,7 +213,7 @@ impl fmt::Display for ModelSpec {
 impl<T, R> BatchPredictor<T, R>
 where
     T: Send,
-    R: Relation<Serialized = T> + Send + 'static, // T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+    R: Relation<Serialized = T> + Send + 'static,
 {
     pub fn new(schema: Schema) -> BatchPredictor<T, R> {
         let (tx, rx) = mpsc::channel(1024);

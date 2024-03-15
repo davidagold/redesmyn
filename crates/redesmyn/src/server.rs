@@ -8,7 +8,7 @@ use actix_web::{Handler, Resource, Responder};
 use futures::{Future, TryFutureExt};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
-use tracing::subscriber::set_default;
+use tracing::instrument;
 use std::collections::VecDeque;
 use std::env;
 use std::future::{ready, Ready};
@@ -20,6 +20,8 @@ trait ResourceFactory: Sync + Send {
     fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError>;
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
+
+    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 }
 
 pub(crate) struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
@@ -39,7 +41,6 @@ where
     O: Responder + 'static,
 {
     fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
-        self.run()?;
         let handler = self.get_handler_fn();
         let resource = web::resource(path)
             .app_data(web::Data::<Self>::new(self.clone()))
@@ -50,6 +51,10 @@ where
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
         Box::new(self.clone())
+    }
+
+    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError> {
+        self.run()
     }
 }
 
@@ -62,7 +67,7 @@ pub trait Serve {
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static;
 
-        fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError>;
+    fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError>;
 }
 
 #[derive(Default)]
@@ -95,8 +100,18 @@ impl Serve for Server {
         self
     }
 
+    #[instrument(skip_all)]
     fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        let factories = self.factories.clone();
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
+
+        // Start the services before moving 
+        let mut factories = self.factories.clone();
+        for factory in factories.iter_mut() {
+            factory.0.start_service()?;
+        }
         let http_server = HttpServer::new(move || {
             match factories.clone().into_iter().fold(
                 Result::<actix_web::App<_>, ServiceError>::Ok(actix_web::App::new()),
@@ -106,20 +121,12 @@ impl Serve for Server {
             }) 
             {
                 Ok(app) => app,
-                Err(err) => {
-                    panic!("{err}")
-                }
+                Err(err) => panic!("{err}")
             }
         })
         .disable_signals();
 
         let server = http_server.bind("127.0.0.1:8080")?.run();
-
-        let subscribe_layer = tracing_subscriber::fmt::layer().json();
-        let guard = tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(subscribe_layer)
-            .set_default();
 
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,

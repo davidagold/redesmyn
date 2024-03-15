@@ -1,3 +1,4 @@
+use futures_util::future::TryFutureExt;
 use ::redesmyn::predictions::{BatchPredictor, Configurable, Service, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -137,18 +138,15 @@ impl PyServer {
         let (schema_in, _) = endpoint.signature;
         let service = BatchPredictor::<String, Schema>::new(schema_in);
         self.server.register(service);
-        // Ok(self)
         Ok(())
     }
 
-    pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&PyAny> {
+    pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&'py PyAny> {
         let mut server = self.server.clone();
         pyo3_asyncio::tokio::future_into_py(py, async move {
-            match server.serve()?.await {
-                Ok(_) => Ok(Python::with_gil(|py| py.None())),
-                Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
-            }
+            server.serve()?.await.map_err(|err| PyRuntimeError::new_err(err))
         })
+
     }
 }
 

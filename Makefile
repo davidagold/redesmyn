@@ -15,3 +15,10 @@ run:
 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run --package examples
+
+run-python:
+	cd py-redesmyn && \
+	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
+	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
+	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
+	python -m tests.test_server.py

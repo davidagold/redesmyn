@@ -2326,6 +2326,7 @@ dependencies = [
 name = "py-redesmyn"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "polars",
  "polars-core 0.38.1",
  "pyo3",

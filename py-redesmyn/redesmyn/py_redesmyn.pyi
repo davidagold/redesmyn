@@ -1,3 +1,4 @@
+from asyncio import Future
 from typing import Tuple, Self
 import polars as pl
 
@@ -25,3 +26,5 @@ class PyServer:
     def __new__(cls) -> Self: ...
 
     def register(self, endpoint: Endpoint) -> Self: ...
+
+    def serve(self) -> Future: ...
