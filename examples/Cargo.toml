@@ -37,7 +37,6 @@ uuid = { workspace = true, features = ["v4"] }
 
 redesmyn = { workspace = true }
 redesmyn-macros = { workspace = true }
-py-redesmyn = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.11"

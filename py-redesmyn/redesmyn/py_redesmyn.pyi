@@ -1,5 +1,5 @@
 from asyncio import Future
-from typing import Tuple, Self
+from typing import Callable, Tuple, Self
 import polars as pl
 
 
@@ -12,19 +12,19 @@ class PySchema:
     def as_str(self) -> str: ...
 
 
-class Endpoint:
+class PyEndpoint:
     def __new__(
         cls,
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
-        handler: str,
+        handler: Callable,
         batch_max_delay_ms: int = 10,
-        batch_max_size: int = 50,
-    ) -> "Endpoint": ...
+        batch_max_size: int = 32,
+    ) -> "PyEndpoint": ...
 
 class PyServer:
     def __new__(cls) -> Self: ...
 
-    def register(self, endpoint: Endpoint) -> Self: ...
+    def register(self, endpoint: PyEndpoint) -> Self: ...
 
     def serve(self) -> Future: ...

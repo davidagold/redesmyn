@@ -805,7 +805,6 @@ dependencies = [
  "memmap",
  "polars",
  "prost",
- "py-redesmyn",
  "pyo3",
  "pyo3-polars",
  "rayon",

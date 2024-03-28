@@ -1,7 +1,10 @@
+use crate::{config_methods, validate_param};
+use crate::handler::{Handler, HandlerConfig, PyHandler};
+
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
 
-use actix_web::{web, Handler, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
@@ -38,11 +41,11 @@ pub trait Service: Sized {
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 
     fn get_path(&self) -> String;
-    
+
     fn get_handler_fn(&self) -> Self::H;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum EndpointState {
     Ready,
     Running,
@@ -50,29 +53,77 @@ enum EndpointState {
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
+    pub schema: Schema,
     pub path: String,
     pub batch_max_delay_ms: u32,
     pub batch_max_size: usize,
-    pub py_handler: String,
+    pub handler_config: HandlerConfig,
+    pub handler: Option<Handler>
 }
 
-impl Default for ServiceConfig {
+impl ServiceConfig {
+    fn try_init_handler(&mut self) -> Result<&Self, ServiceError> {
+        self.handler = Some(Handler::Python(PyHandler::try_new(&self.handler_config)?));
+        Ok(self)
+    }
+}
+
+
+#[derive(Debug)]
+pub struct EndpointBuilder<T, R> {
+    schema: Option<Schema>,
+    path: Option<String>,
+    batch_max_delay_ms: Option<u32>,
+    batch_max_size: Option<usize>,
+    handler_config: Option<HandlerConfig>,
+    _phantom: (PhantomData<T>, PhantomData<R>),
+}
+
+impl<T, R> Default for EndpointBuilder<T, R> {
     fn default() -> Self {
-        ServiceConfig {
-            path: "predictions/{model_name}/{model_version}".to_string(),
-            batch_max_delay_ms: 5,
-            batch_max_size: 1024,
-            py_handler: "handlers.model:handle".to_string(),
+        EndpointBuilder {
+            schema: None,
+            path: None,
+            batch_max_delay_ms: Some(5),
+            batch_max_size: Some(64),
+            handler_config: None,
+            _phantom: (PhantomData, PhantomData),
         }
     }
 }
 
+impl<T, R> EndpointBuilder<T, R>
+where
+    T: Send,
+    R: Relation<Serialized = T> + Send + 'static,
+{
+    config_methods! {
+        schema: Schema,
+        path: &str,
+        batch_max_delay_ms: u32,
+        batch_max_size: usize,
+        handler_config: HandlerConfig
+    }
+
+    pub fn build(self) -> Result<BatchPredictor<T, R>, ServiceError> {
+        let config = ServiceConfig {
+            schema: validate_param!(&self, schema),
+            path: validate_param!(&self, path),
+            batch_max_delay_ms: validate_param!(&self, batch_max_delay_ms),
+            batch_max_size: validate_param!(&self, batch_max_size),
+            handler_config: validate_param!(&self, handler_config),
+            handler: None
+        };
+        Ok(BatchPredictor::<T, R>::new(config))
+    }
+}
+
+#[derive(Debug)]
 pub struct BatchPredictor<T, R>
 where
     R: Relation<Serialized = T>,
 {
     config: ServiceConfig,
-    schema: Schema,
     tx: Arc<Mutex<mpsc::Sender<PredictionJob<T, R>>>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
     state: EndpointState,
@@ -93,22 +144,10 @@ where
         };
         BatchPredictor {
             config: self.config.clone(),
-            schema: self.schema.clone(),
             tx,
             rx,
             state: self.state,
         }
-    }
-}
-
-macro_rules! config_methods {
-    ($($name:ident : $type:ty),*) => {
-        $(
-            pub fn $name(mut self, $name: $type) -> Self {
-                self.config.$name = $name;
-                self
-            }
-        )*
     }
 }
 
@@ -117,21 +156,22 @@ where
     T: Send,
     R: Relation<Serialized = T> + Send + 'static,
 {
-    config_methods! {
-        path: String,
-        batch_max_delay_ms: u32,
-        batch_max_size: usize,
-        py_handler: String
+    pub fn builder() -> EndpointBuilder<T, R> {
+        EndpointBuilder::<T, R>::default()
     }
 
-    pub fn new(schema: Schema) -> BatchPredictor<T, R> {
+    pub fn set_config(&mut self, config: ServiceConfig) -> &Self {
+        self.config = config;
+        self
+    }
+
+    pub fn new(config: ServiceConfig) -> BatchPredictor<T, R> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
             tx: Arc::new(tx.into()),
             rx: Some(rx),
-            config: ServiceConfig::default(),
-            schema,
+            config,
             state: EndpointState::Ready,
         }
     }
@@ -173,7 +213,7 @@ where
                     tokio::task::spawn_blocking(move || Self::predict_batch(batch, config))
                 }
                 Err(err) => {
-                    error!("Failed to {err}");
+                    error!("Failed to predict against batch: {err}");
                     continue;
                 }
             };
@@ -182,26 +222,27 @@ where
 
     #[instrument(skip_all)]
     fn predict_batch(mut batch: BatchJob<R>, config: ServiceConfig) -> Result<(), ServiceError> {
-        info!("Running batch predict for {} jobs.", batch.len());
-
-        let Some((handler_module, handler_fn)) = config.py_handler.split_once(':') else {
-            return Err(ServiceError::Error(format!(
-                "Failed to parse `handler` specification: {}",
-                config.py_handler
-            )));
-        };
+        info!(batch_size = batch.len(), "Running batch predict.");
         let df_batch = batch.swap_df(None)?.unwrap();
         let df_results = match Python::with_gil(|py| {
-            py.import(handler_module)?
-                .getattr(handler_fn)?
-                .call((PyDataFrame(df_batch),), None)?
-                .extract::<PyDataFrame>()
+            config
+                .handler.ok_or_else(|| ServiceError::Error("Handler not initialized".to_string()))?
+                .invoke(PyDataFrame(df_batch), Some(py))
+                .inspect_err(|err| {
+                    error!("Failed to call handler function `{:#?}`: {err}", config.handler_config);
+                })?
+                .extract::<PyDataFrame>(py)
                 .map(|pydf| -> DataFrame { pydf.into() })
         }) {
             Ok(df_results) => df_results,
             Err(err) => {
-                // TODO: Handle errors
+                // TODO: Handle errors! Because this runs in a separate blocking thread whose result
+                //       we don't join, we cannot delegate sending failures to the caller.
                 error!("{err}");
+                Python::with_gil(|py| match err.traceback(py) {
+                    Some(traceback) => println!("{:#?}", traceback),
+                    None => println!("No traceback."),
+                });
                 return Err(err.into());
             }
         };
@@ -234,7 +275,7 @@ impl fmt::Display for ModelSpec {
 }
 
 pub async fn invoke<T, R>(
-    _model_spec: web::Path<ModelSpec>,
+    model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<T>>,
     app_state: web::Data<BatchPredictor<T, R>>,
     schema: web::Data<Schema>,
@@ -246,6 +287,7 @@ where
 {
     // let ModelSpec { model_name, model_version } = &*model_spec;
     // info!(%model_name, %model_version);
+    // println!("{model_name} {model_version}");
 
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
@@ -271,10 +313,10 @@ where
 {
     type R = R;
     type T = T;
-    type H = impl Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
+    type H = impl actix_web::Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
 
     fn get_schema(&self) -> Schema {
-        self.schema.clone()
+        self.config.schema.clone()
     }
 
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
@@ -284,7 +326,8 @@ where
             ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
         })?;
 
-        let config = self.config.clone();
+        let mut config = self.config.clone();
+        config.try_init_handler()?;
         let handle = tokio::spawn(async move {
             tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
             BatchPredictor::<T, R>::await_shutdown(tx_abort).await
@@ -436,4 +479,3 @@ where
         }
     }
 }
-

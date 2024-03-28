@@ -12,6 +12,8 @@ mlflow = "*"
 aiohttp = "*"
 maturin = "*"
 pytest = "*"
+pydantic = "*"
+more-itertools = "*"
 
 [dev-packages]
 ipykernel = "*"

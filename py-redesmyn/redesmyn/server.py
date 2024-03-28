@@ -1,7 +1,14 @@
+
 from asyncio import Future
-from redesmyn.py_redesmyn import Endpoint, PyServer
-from typing import Callable, List, Self, Tuple
+from redesmyn.py_redesmyn import PyEndpoint, PyServer
+from redesmyn.endpoint import Endpoint
+from typing import Callable, List, Self, Tuple, Type, cast
 import polars as pl
+from redesmyn.schema import Schema
+
+
+SchemaLike = pl.Struct | Type[Schema]
+Signature = Tuple[pl.Struct, pl.Struct]
 
 
 class Server:
@@ -14,9 +21,9 @@ class Server:
 
     def register(self, endpoint: Endpoint) -> Self:
         self._endpoints.append(endpoint)
-        self._pyserver.register(endpoint)
+        self._pyserver.register(endpoint._pyendpoint)
         return self
-    
+
     def serve(self) -> Future:
         return self._pyserver.serve()
 
@@ -25,14 +32,3 @@ class Server:
         repr_endpoints = "\n".join(f"{tab}{endpoint}" for endpoint in self._endpoints)
         repr = f"Endpoints\n{repr_endpoints}"
         return repr
-    
-    def endpoint(self, path: str, signature: Tuple[pl.Struct, pl.Struct]) -> Callable[[Callable], Callable]:
-        def wrapper(fn):
-            endpoint = Endpoint(
-                path=path,
-                signature=signature,
-                handler=f"{fn.__module__}.{fn.__name__}",
-            )
-            self.register(endpoint=endpoint)
-            return fn
-        return wrapper
