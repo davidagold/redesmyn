@@ -18,7 +18,7 @@ class Output(Schema):
 
 
 @endpoint(
-    path="predictions/{model_name}/{model_version}",
+    path="/predictions/{model_name}/{model_version}",
     batch_max_delay_ms=10,
     batch_max_size=64,
 )
