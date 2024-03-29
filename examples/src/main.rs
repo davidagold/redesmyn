@@ -1,10 +1,10 @@
 use polars::datatypes::DataType;
 use redesmyn::{
-    common::LogConfig, error::ServiceError, handler::PySpec, predictions::BatchPredictor, schema::{Relation, Schema}, server::{Serve, Server}
+    error::ServiceError, handler::PySpec, predictions::BatchPredictor, schema::{Relation, Schema}, server::{Serve, Server}
 };
 
-use redesmyn_macros::Relation;
-use serde::Deserialize;
+
+
 
 // #[derive(Debug, Deserialize, Relation)]
 // pub struct ToyRecord {

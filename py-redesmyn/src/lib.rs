@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use ::redesmyn::common::LogConfig;
-use ::redesmyn::handler::{Handler, HandlerConfig, PyHandler};
+use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};

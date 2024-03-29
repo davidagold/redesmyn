@@ -1,5 +1,5 @@
-use pyo3::{exceptions::PyTypeError, prelude::*};
 use pyo3::types::PyFunction;
+use pyo3::{exceptions::PyTypeError, prelude::*};
 use pyo3_polars::PyDataFrame;
 use tracing::{error, info};
 
@@ -62,16 +62,17 @@ impl From<&PyFunction> for PyHandler {
 impl PyHandler {
     fn get_func(spec: &PySpec, obj: &PyAny) -> PyResult<Py<PyFunction>> {
         let method_name = validate_param!(&spec, method);
-        let handler = obj.getattr(method_name.as_str())
-            .inspect_err(|err| {
-                error!("Failed to read handler function `{method_name}`: {err}");
-            })?;
-        
+        let handler = obj.getattr(method_name.as_str()).inspect_err(|err| {
+            error!("Failed to read handler function `{method_name}`: {err}");
+        })?;
+
         match handler.get_type().name()? {
             "function" => handler.extract(),
             // TODO: What if the Python `Endpoint` is configured differently from the native endpoint?
             "Endpoint" => handler.getattr("_handler")?.extract(),
-            name => Err(PyTypeError::new_err(format!("Object of type `{name}` cannot be used as handler.")))
+            name => Err(PyTypeError::new_err(format!(
+                "Object of type `{name}` cannot be used as handler."
+            ))),
         }
     }
 
