@@ -1,5 +1,5 @@
-use crate::{config_methods, validate_param};
 use crate::handler::{Handler, HandlerConfig, PyHandler};
+use crate::{config_methods, validate_param};
 
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
@@ -58,7 +58,7 @@ pub struct ServiceConfig {
     pub batch_max_delay_ms: u32,
     pub batch_max_size: usize,
     pub handler_config: HandlerConfig,
-    pub handler: Option<Handler>
+    pub handler: Option<Handler>,
 }
 
 impl ServiceConfig {
@@ -67,7 +67,6 @@ impl ServiceConfig {
         Ok(self)
     }
 }
-
 
 #[derive(Debug)]
 pub struct EndpointBuilder<T, R> {
@@ -112,7 +111,7 @@ where
             batch_max_delay_ms: validate_param!(&self, batch_max_delay_ms),
             batch_max_size: validate_param!(&self, batch_max_size),
             handler_config: validate_param!(&self, handler_config),
-            handler: None
+            handler: None,
         };
         Ok(BatchPredictor::<T, R>::new(config))
     }
@@ -226,7 +225,8 @@ where
         let df_batch = batch.swap_df(None)?.unwrap();
         let df_results = match Python::with_gil(|py| {
             config
-                .handler.ok_or_else(|| ServiceError::Error("Handler not initialized".to_string()))?
+                .handler
+                .ok_or_else(|| ServiceError::Error("Handler not initialized".to_string()))?
                 .invoke(PyDataFrame(df_batch), Some(py))
                 .inspect_err(|err| {
                     error!("Failed to call handler function `{:#?}`: {err}", config.handler_config);
@@ -313,7 +313,8 @@ where
 {
     type R = R;
     type T = T;
-    type H = impl actix_web::Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
+    type H =
+        impl actix_web::Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
 
     fn get_schema(&self) -> Schema {
         self.config.schema.clone()

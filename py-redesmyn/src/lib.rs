@@ -7,7 +7,7 @@ use ::redesmyn::schema::Schema;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::intern;
 
-use ::redesmyn::server::{Serve, Server};
+use ::redesmyn::server::Server;
 use polars::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
@@ -123,7 +123,7 @@ impl PyEndpoint {
     }
 
     pub fn __repr__(&self) -> String {
-        let ServiceConfig { path , .. } = self.config.clone();
+        let ServiceConfig { path, .. } = self.config.clone();
         format!("Endpoint {{ path: \"{path}\", handler: `{:#?}` }}", self.config.handler)
     }
 }

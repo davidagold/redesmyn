@@ -57,18 +57,6 @@ where
     }
 }
 
-pub trait Serve {
-    fn register<S, O>(&mut self, service: S) -> &Self
-    where
-        S: Service + Clone + Sync + Send + 'static,
-        S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-        S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
-        S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
-        O: Responder + 'static;
-
-    fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError>;
-}
-
 #[derive(Default)]
 pub struct Server {
     pub(crate) factories: VecDeque<BoxedResourceFactory>,
@@ -100,8 +88,8 @@ impl Server {
     }
 }
 
-impl Serve for Server {
-    fn register<S, O>(&mut self, service: S) -> &Self
+impl Server {
+    pub fn register<S, O>(&mut self, service: S) -> &Self
     where
         S: Service + Clone + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
@@ -116,7 +104,7 @@ impl Serve for Server {
     }
 
     #[instrument(skip_all)]
-    fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
+    pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
         println!("Log config: {:#?}", self.config_log);
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
@@ -144,7 +132,7 @@ impl Serve for Server {
                     if let Err(err) = insert.call((0, path), None) {
                         error!("{err}");
                     };
-                };
+                }
             })?;
             let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
             let str_python_path = serde_json::to_string_pretty(&python_path)

@@ -45,6 +45,9 @@ macro_rules! config_methods {
 #[macro_export]
 macro_rules! validate_param {
     ($self:expr, $name:ident) => {
-        $self.$name.clone().ok_or(ServiceError::Error(format!("Unset required parameter `{}`", stringify!($name))))?
-    }
+        $self.$name.clone().ok_or(ServiceError::Error(format!(
+            "Unset required parameter `{}`",
+            stringify!($name)
+        )))?
+    };
 }
