@@ -1,13 +1,11 @@
 use crate::common::Sized128String;
 use crate::error::ServiceError;
 use heapless::{self, FnvIndexMap};
-use polars::prelude::*;
 use polars::{
     datatypes::{AnyValue, DataType},
     frame::DataFrame,
     series::Series,
 };
-use rayon::prelude::*;
 use serde::{
     de::{DeserializeSeed, MapAccess, Visitor},
     Deserializer,
@@ -65,10 +63,6 @@ impl<'a> Column<'a> {
     fn push(&mut self, v: ScalarType<'a>) {
         self.raw_values.push(v)
     }
-
-    fn extend(&mut self, other: Column<'a>) {
-        self.raw_values.extend(other.raw_values)
-    }
 }
 
 const MAX_FIELDS: usize = 256;
@@ -86,23 +80,23 @@ impl Schema {
         self.fields.len()
     }
 
-    pub fn columns<'a>(&'a self, capacity: Option<usize>) -> Columns<'a> {
+    pub fn columns(&self, capacity: Option<usize>) -> Columns<'_> {
         self.fields
             .iter()
             .map(|field| {
                 let raw_values = match capacity {
-                    Some(capacity) => ColumnValues::<'a>::with_capacity(capacity),
-                    None => ColumnValues::<'a>::new(),
+                    Some(capacity) => ColumnValues::<'_>::with_capacity(capacity),
+                    None => ColumnValues::<'_>::new(),
                 };
                 (field.name.as_str(), Column { field: field.clone(), raw_values })
             })
             .collect()
     }
 
-    pub fn add_field(mut self, name: &str, data_type: DataType) -> Self {
+    pub fn add_field(&mut self, name: &str, data_type: DataType) -> &Self {
         let index = self.len();
         // TODO: Handle possible error
-        self.fields.push(Field {
+        let _ = self.fields.push(Field {
             name: Sized128String::try_from(name).unwrap(),
             data_type,
             index,
@@ -115,23 +109,23 @@ impl Relation for Schema {
     type Serialized = String;
 
     fn schema(rel: Option<&Self>) -> Option<Schema> {
-        match rel {
-            Some(schema) => Some(schema.clone()),
-            None => None,
-        }
+        rel.cloned()
     }
 
-    fn parse(records: Vec<<Self as Relation>::Serialized>, schema: &Schema) -> Result<DataFrame, ServiceError>
+    fn parse(
+        records: Vec<<Self as Relation>::Serialized>,
+        schema: &Schema,
+    ) -> Result<DataFrame, ServiceError>
     where
         Self: Sized,
     {
         let series = records
             .iter()
             .fold(schema.columns(None), |mut columns, record| {
-                let mut de = serde_json::Deserializer::from_str(&record);
-                match ColumnsWrapper(&mut columns).deserialize(&mut de) {
-                    _ => columns,
-                }
+                let mut de = serde_json::Deserializer::from_str(record);
+                // TODO: Handle
+                let _ = ColumnsWrapper(&mut columns).deserialize(&mut de);
+                columns
             })
             .into_iter()
             .filter_map(|(_, col)| {
@@ -175,7 +169,9 @@ where
         M: MapAccess<'de>,
     {
         while let Some((key, value)) = visited.next_entry::<&str, Value>()? {
-            self.0.get_mut(key).map(|col| col.push(col.parse(value)));
+            if let Some(col) = self.0.get_mut(key) {
+                col.push(col.parse(value))
+            }
         }
         Ok(())
     }

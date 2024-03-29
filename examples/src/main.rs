@@ -1,13 +1,10 @@
-use polars::prelude::*;
+use polars::datatypes::DataType;
 use redesmyn::{
-    error::ServiceError,
-    predictions::{BatchPredictor, Configurable},
-    schema::{Relation, Schema},
-    server::{Serve, Server},
+    error::ServiceError, handler::PySpec, predictions::BatchPredictor, schema::{Relation, Schema}, server::{Serve, Server}
 };
 
-use redesmyn_macros::Relation;
-use serde::Deserialize;
+
+
 
 // #[derive(Debug, Deserialize, Relation)]
 // pub struct ToyRecord {
@@ -19,18 +16,24 @@ use serde::Deserialize;
 async fn main() -> Result<(), ServiceError> {
     // let schema = <ToyRecord as Relation>::schema(None).unwrap();
 
-    let schema = Schema::default()
-        .add_field("a", datatypes::DataType::Float64)
-        .add_field("b", datatypes::DataType::Float64);
+    let mut schema = Schema::default();
+    schema.add_field("a", DataType::Float64);
+    schema.add_field("b", DataType::Float64);
 
     // let service = BatchPredictor::<String, ToyRecord>::new(schema)
-    let service = BatchPredictor::<String, Schema>::new(schema)
-        .path("predictions/{model_name}/{model_version}".into())
-        .batch_max_size(50)
-        .batch_max_delay_ms(10)
-        .py_handler("handlers.model:handle".into());
 
-    let server = Server::default().register(service);
+    let service = BatchPredictor::<String, Schema>::builder()
+        .schema(schema)
+        .path("predictions/{model_name}/{model_version}")
+        .batch_max_size(100)
+        .batch_max_delay_ms(5)
+        .handler_config(PySpec::new().module("tests.test_server").method("handler").into())
+        .build()?;
+
+    let mut server = Server::default();
+    // server.log_config(LogConfig::Stdout);
+    server.register(service);
+    server.push_pythonpath("./py-redesmyn");
     server.serve()?.await?;
 
     Ok(())

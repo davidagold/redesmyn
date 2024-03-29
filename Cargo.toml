@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2021"
 homepage = "https://github.com/davidagold/redesmyn"
 repository = "https://github.com/davidagold/redesmyn"
-readme = "https://github.com/davidagold/redesmyn/README.md"
+readme = "./README.md"
 license = "MIT"
 
 [workspace.dependencies]
@@ -23,7 +23,7 @@ polars = { version = "0.37.0", features = [
     "partition_by",
 ] }
 prost = "0.12"
-pyo3 = "0.20.2"
+pyo3 = { version = "0.20.2", features = ["auto-initialize"]}
 pyo3-polars = "0.11.3"
 rayon = "1.8.1"
 serde = { version = "1.0", features = ["derive"] }

@@ -11,9 +11,14 @@ numpy = "*"
 mlflow = "*"
 aiohttp = "*"
 maturin = "*"
+pytest = "*"
+pydantic = "*"
+more-itertools = "*"
 
 [dev-packages]
 ipykernel = "*"
+jupyter = "*"
+notebook = "*"
 
 [requires]
 python_version = "3.11"
