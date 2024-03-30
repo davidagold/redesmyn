@@ -1,3 +1,6 @@
 /target
 */**/*.*.so
 */**/__pycache__
+
+py-redesmyn/docs/src/**/api
+py-redesmyn/docs/build
