@@ -32,5 +32,6 @@ docs-py:
 		-c ./py-redesmyn/docs
 
 clean-docs-py:
-	@rm -rf py-redesmyn/docs/src/api/*
+	@rm -rf py-redesmyn/docs/src/api/
+	@rm -rf py-redesmyn/docs/src/**/*/api/
 	@rm -rf py-redesmyn/docs/build/*

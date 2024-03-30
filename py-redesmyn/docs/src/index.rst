@@ -3,7 +3,7 @@ Index
 =====
 
 ..  toctree::
-    :maxdepth: 2
-    
-    schema/index
-    server/index
+    :maxdepth: 3
+
+    user-guide/index
+    api-reference/index
