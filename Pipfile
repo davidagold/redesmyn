@@ -14,11 +14,13 @@ maturin = "*"
 pytest = "*"
 pydantic = "*"
 more-itertools = "*"
+pydata-sphinx-theme = "*"
 
 [dev-packages]
 ipykernel = "*"
 jupyter = "*"
 notebook = "*"
+sphinx = "*"
 
 [requires]
 python_version = "3.11"

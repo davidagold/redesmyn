@@ -1,0 +1,13 @@
+/* Remove RHS sidebar */
+div.bd-sidebar-secondary {
+    display: none;
+}
+
+label.sidebar-toggle.secondary-toggle {
+    display: none !important;
+}
+
+/* Remove LHS sidebar scroll display */
+.sidebar-primary-items__end {
+    margin: 0 !important;
+}

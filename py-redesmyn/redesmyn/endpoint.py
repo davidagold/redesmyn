@@ -3,7 +3,6 @@ from itertools import islice
 from typing import Callable, Tuple, Type, get_args
 
 from more_itertools import first, one
-from pandas import DataFrame
 import polars as pl
 
 from redesmyn.py_redesmyn import PyEndpoint
@@ -53,7 +52,7 @@ def endpoint(
     path: str,
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
-) -> Callable[..., Endpoint]:
+) -> Callable[[Callable], Endpoint]:
     def wrapper(handler: Callable) -> Endpoint:
         signature = get_signature(handler)
         return Endpoint(

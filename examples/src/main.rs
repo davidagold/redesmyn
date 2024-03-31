@@ -25,7 +25,7 @@ async fn main() -> Result<(), ServiceError> {
 
     let service = BatchPredictor::<String, Schema>::builder()
         .schema(schema)
-        .path("predictions/{model_name}/{model_version}")
+        .path("/predictions/{model_name}/{model_version}")
         .batch_max_size(100)
         .batch_max_delay_ms(5)
         .handler_config(PySpec::new().module("tests.test_server").method("handler").into())
