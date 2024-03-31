@@ -1,4 +1,4 @@
-name: Build and deploy docs to GH Pages
+name: GitHub Pages
 
 on:
   push:
