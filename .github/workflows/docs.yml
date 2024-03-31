@@ -34,6 +34,9 @@ jobs:
           python3 -m pip install -U pipenv
           make install-py PY_PKG_GROUPS=docs
 
+      - name: Generate documentation
+        run: make docs-py
+
       - name: Configure pages
         uses: actions/configure-pages@v5
 
