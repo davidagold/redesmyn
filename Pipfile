@@ -3,25 +3,29 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
+[pipenv]
+sort_pipfile = true
+
 [packages]
-lightgbm = "*"
-polars = "*"
-scikit-learn = "1.4.0"
-numpy = "*"
-mlflow = "*"
 aiohttp = "*"
-maturin = "*"
-pytest = "*"
-pydantic = "*"
+lightgbm = "*"
+mlflow = "*"
 more-itertools = "*"
-pydata-sphinx-theme = "*"
+numpy = "*"
+polars = "*"
+pydantic = "*"
+scikit-learn = "1.4.0"
 
 [dev-packages]
+maturin = "*"
+pytest = "*"
+sphinx = "*"
+pydata-sphinx-theme = "*"
+
+[notebook]
 ipykernel = "*"
 jupyter = "*"
 notebook = "*"
-sphinx = "*"
 
 [requires]
 python_version = "3.11"
-python_full_version = "3.11.7"

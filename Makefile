@@ -1,31 +1,49 @@
 SHELL := /bin/bash
 
-.PHONY: build build-python run run-python docs-py
+.PHONY: install-py develop-py build-rs build-py run-rs run-py docs-py clean-docs-py
+
+
+PY_PKG_GROUPS ?= "packages dev-packages"
+
+install-py:
+	pipenv install --categories $(PY_PKG_GROUPS)
+
+
+FLAGS ?= ""
+MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
+	--strip \
+	--target-dir target/py-redesmyn
+
+develop-py:
+	pipenv run maturin develop $(MATURIN_OPTIONS) $(FLAGS)
+
+build-py:
+	pipenv run maturin build $(MATURIN_OPTIONS) $(FLAGS)
+
 
 PYO3_PRINT_CONFIG = 0
-RUST_LOG ?= INFO
-FLAGS ?= ""
 
-build:
+build-rs:
 	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS)
 
-build-python:
-	maturin develop -m py-redesmyn/Cargo.toml --target-dir target/py-redesmyn
 
-run:
+RUST_LOG ?= INFO
+
+run-rs:
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run --package examples
 
-run-python:
+run-py:
 	cd py-redesmyn && \
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	python -m tests.test_server
+
 
 docs-py:
 	pipenv run sphinx-build -M html ./py-redesmyn/docs/src ./py-redesmyn/docs/build \
