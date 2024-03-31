@@ -30,9 +30,16 @@ jobs:
           python-version: '3.11'
         
       - name: Install Python dependencies
-        run: | 
-          python3 -m pip install -U pipenv
-          make install-py PY_PKG_GROUPS=docs
+        run: python3 -m pip install -U pipenv && make install-py
+      
+      - name: Build Python package
+        uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          container: 'off'
+          rust-toolchain: nightly
+          args: -o dist -i "$(pipenv --py)" -m py-redesmyn/Cargo.toml
+          sccache: 'true'
 
       - name: Generate documentation
         run: make docs-py
@@ -41,10 +48,10 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload artifacts
-        uses: actions/upload-pages-artifact@v3.0.1
+        uses: actions/upload-pages-artifact@v3
         with:
-          path: 'py-redesmyn/docs/build/html'
+          path: py-redesmyn/docs/build/html
 
       - name: Deploy pages
         id: deployment
-        uses: actions/deploy-pages@v4.0.5
+        uses: actions/deploy-pages@v4
