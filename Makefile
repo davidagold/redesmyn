@@ -1,25 +1,29 @@
 SHELL := /bin/bash
 
-.PHONY: build build-python run run-python docs-py
+.PHONY: install-py build-rs build-py run-rs run-py docs-py clean-docs-py
 
 PYO3_PRINT_CONFIG = 0
 RUST_LOG ?= INFO
 FLAGS ?= ""
+PY_PKG_GROUPS ?= packages
 
-build:
+install-py:
+	pipenv install --categories $(PY_PKG_GROUPS)
+
+build-rs:
 	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS)
 
-build-python:
+build-py:
 	maturin develop -m py-redesmyn/Cargo.toml --target-dir target/py-redesmyn
 
-run:
+run-rs:
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run --package examples
 
-run-python:
+run-py:
 	cd py-redesmyn && \
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
