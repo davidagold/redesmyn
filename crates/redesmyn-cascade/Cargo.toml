@@ -11,9 +11,6 @@ repository = { workspace = true }
 
 [dependencies]
 actix-web = { workspace = true }
-arrow = { workspace = true }
-futures = { workspace = true }
-memmap = { workspace = true }
 polars = { features = [
     "lazy",
     "dtype-struct",
@@ -21,11 +18,10 @@ polars = { features = [
 ], workspace = true }
 pyo3 = { workspace = true }
 pyo3-polars = { workspace = true }
-rayon = { workspace = true }
 serde = { features = ["derive"], workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { features = ["full"], workspace = true }
+tokio = { features = ["rt-multi-thread", "macros"], workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 

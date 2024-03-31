@@ -2,31 +2,32 @@ SHELL := /bin/bash
 
 .PHONY: install-py build-rs build-py run-rs run-py docs-py clean-docs-py
 
-PYO3_PRINT_CONFIG = 0
-RUST_LOG ?= INFO
-FLAGS ?= ""
-PY_PKG_GROUPS ?= "packages dev-packages"
 
+PY_PKG_GROUPS ?= "packages dev-packages"
 
 install-py:
 	pipenv install --categories $(PY_PKG_GROUPS)
 
 
+FLAGS ?= ""
 MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
 
 develop-py:
-	pipenv run maturin develop $(MATURIN_OPTIONS) \
-		--pip-path="$(shell pipenv --venv)/bin/pip3"
+	pipenv run maturin develop $(MATURIN_OPTIONS) $(FLAGS)
 
 build-py:
-	pipenv run maturin build $(MATURIN_OPTIONS)
+	pipenv run maturin build $(MATURIN_OPTIONS) $(FLAGS)
+
+
+PYO3_PRINT_CONFIG = 0
 
 build-rs:
-	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS) \
-		-i $(shell pipenv --py)
+	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS)
 
+
+RUST_LOG ?= INFO
 
 run-rs:
 	RUST_LOG=$(RUST_LOG) \
