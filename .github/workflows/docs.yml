@@ -36,14 +36,15 @@ jobs:
       - name: Install Python dependencies
         run: python3 -m pip install -U pipenv && make install-py
 
+      - run: echo "VIRTUAL_ENV=$(pipenv --venv)" >> "$GITHUB_ENV"
+
       - name: Build Python package
         uses: PyO3/maturin-action@v1
         with:
           command: develop
           container: 'off'
           rust-toolchain: nightly
-          before-script-linux: pipenv shell
-          args: --target-dir dist --pip-path="$(pipenv --venv)/bin/pip3" -m py-redesmyn/Cargo.toml
+          args: --target-dir dist -m py-redesmyn/Cargo.toml
           sccache: 'true'
 
       - name: Generate documentation
