@@ -38,7 +38,7 @@ jobs:
           command: develop
           container: 'off'
           rust-toolchain: nightly
-          args: --target-dir dist --pip-path "$(pipenv --venv)/bin/pip3" -m py-redesmyn/Cargo.toml
+          args: '--target-dir dist --pip-path "$(pipenv --venv)/bin/pip3" -m py-redesmyn/Cargo.toml'
           sccache: 'true'
 
       - name: Generate documentation
