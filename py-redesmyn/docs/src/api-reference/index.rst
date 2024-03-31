@@ -2,8 +2,9 @@
 API Reference
 =============
 
-..  toctree::
-    :maxdepth: 2
+.. autosummary::
+   :toctree: api/
 
-    schema/index
-    server/index
+   redesmyn.endpoint
+   redesmyn.schema
+   redesmyn.server

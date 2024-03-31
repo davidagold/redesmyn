@@ -29,9 +29,9 @@ run-python:
 
 docs-py:
 	pipenv run sphinx-build -M html ./py-redesmyn/docs/src ./py-redesmyn/docs/build \
-		-c ./py-redesmyn/docs
+		-c ./py-redesmyn/docs -vv
 
 clean-docs-py:
 	@rm -rf py-redesmyn/docs/src/api/
-	@rm -rf py-redesmyn/docs/src/**/*/api/
+	@rm -rf py-redesmyn/docs/src/**/api/
 	@rm -rf py-redesmyn/docs/build/*

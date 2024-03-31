@@ -1,8 +1,13 @@
 from pathlib import Path
 import sys
 
+dir_docs = Path(__file__).parent
+dir_package = dir_docs.parent
 
-sys.path.insert(0, Path("../..").resolve().as_posix())
+print(f"{dir_package=}")
+print(f"{dir_docs=}")
+
+sys.path.insert(0, dir_package.as_posix())
 
 
 # Project
@@ -19,9 +24,29 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.coverage",
 ]
-templates_path = ["_templates"]
+templates_path = [(dir_docs / "_templates").as_posix()]
 default_role = "code"
 maximum_signature_line_length = 88
+
+
+# Extensions
+
+# autosummary
+
+autosummary_filename_map = {
+    "redesmyn.endpoint.Endpoint": "Endpoint.rst",
+    "redesmyn.endpoint.endpoint": "endpoint-decorator.rst",
+}
+autosummary_context = {
+    "decorators": [
+        "redesmyn.endpoint.endpoint"
+    ],
+    "special": {
+        "redesmyn.schema.Schema": [
+            "DataFrame"
+        ]
+    }
+}
 
 
 # HTML

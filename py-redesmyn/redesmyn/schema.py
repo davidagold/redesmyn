@@ -13,9 +13,9 @@ class SchemaMeta(abc.ABCMeta):
 
 
 class Schema(metaclass=SchemaMeta):
-    """Abstract class to facilitate handler signature specification.
+    """Base class to facilitate handler signature specification.
 
-    ..  code-block:: python
+    .. code-block:: python
 
         import polars as pl
         from redesmyn.schema import Schema
@@ -35,8 +35,6 @@ class Schema(metaclass=SchemaMeta):
             return model.predict(records)
 
     """
-
-    _pyschema: PySchema
 
     def __init__(self, pyschema: Optional[PySchema]) -> None:
         self._pyschema = pyschema or PySchema()
