@@ -38,6 +38,7 @@ jobs:
           command: develop
           container: 'off'
           rust-toolchain: nightly
+          before-script-linux: pipenv shell
           args: --target-dir dist --pip-path="$(pipenv --venv)/bin/pip3" -m py-redesmyn/Cargo.toml
           sccache: 'true'
 
