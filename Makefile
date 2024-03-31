@@ -15,10 +15,11 @@ install-py:
 
 develop-py:
 	pipenv run maturin develop $(MATURIN_OPTIONS) \
-		-i $(shell pipenv --py)
+		--pip-path="$(shell pipenv --venv)/bin/pip3"
 
 build-rs:
-	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS)
+	PYO3_PRINT_CONFIG=$(PYO3_PRINT_CONFIG) . scripts/build.sh $(FLAGS) \
+		-i $(shell pipenv --py)
 
 build-py:
 	pipenv run maturin build $(MATURIN_OPTIONS)
