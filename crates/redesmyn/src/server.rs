@@ -106,10 +106,14 @@ impl Server {
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
         println!("Log config: {:#?}", self.config_log);
+
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
             .with(self.config_log.layer())
             .init();
+
+        let available_parallelism = std::thread::available_parallelism()?;
+        info!(%available_parallelism);
 
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,

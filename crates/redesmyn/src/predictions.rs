@@ -10,7 +10,6 @@ use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::sync::Mutex;
 use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
 use tokio::time::sleep;
 use tokio::{
@@ -123,7 +122,7 @@ where
     R: Relation<Serialized = T>,
 {
     config: ServiceConfig,
-    tx: Arc<Mutex<mpsc::Sender<PredictionJob<T, R>>>>,
+    tx: mpsc::Sender<PredictionJob<T, R>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
     state: EndpointState,
 }
@@ -137,7 +136,7 @@ where
         let (tx, rx) = match self.state {
             EndpointState::Ready => {
                 let (tx, rx) = mpsc::channel::<PredictionJob<T, R>>(1024);
-                (Arc::new(Mutex::new(tx)), Some(rx))
+                (tx, Some(rx))
             }
             EndpointState::Running => (self.tx.clone(), None),
         };
@@ -168,7 +167,7 @@ where
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
-            tx: Arc::new(tx.into()),
+            tx,
             rx: Some(rx),
             config,
             state: EndpointState::Ready,
@@ -292,7 +291,7 @@ where
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
 
-    if let Err(err) = app_state.tx.lock().expect("Whoops").send(job).await {
+    if let Err(err) = app_state.tx.send(job).await {
         return HttpResponse::InternalServerError().body(err.to_string());
     }
     match rx.await {
