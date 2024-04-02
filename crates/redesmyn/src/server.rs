@@ -31,12 +31,12 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, S> ResourceFactory for S
+impl<S, O> ResourceFactory for S
 where
-    S: Service<R = R, H = H> + Clone + Sync + Send + 'static,
+    S: Service + Clone + Sync + Send + 'static,
     S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-    R: Relation<Serialized = S::T> + Sync + Send + 'static,
-    H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
+    S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
+    S::H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
@@ -130,19 +130,18 @@ impl Server {
             let sys = py.import("sys")?;
             let version = sys.getattr("version")?.extract::<String>()?;
             tracing::info!("Found Python version: {}", version);
-            sys.getattr("path")?.getattr("insert").map(|insert| {
-                let additional_paths = [&(pwd.to_str().unwrap().to_string())];
-                for path in self.pythonpath.iter().chain(additional_paths) {
-                    if let Err(err) = insert.call((0, path), None) {
-                        error!("{err}");
-                    };
-                }
-            })?;
-            let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
-            let str_python_path = serde_json::to_string_pretty(&python_path)
-                .expect("Failed to serialize `sys.path`.");
+
+            let insert = sys.getattr("path")?.getattr("insert")?;
+            let additional_paths = [&(pwd.to_str().unwrap().to_string())];
+            for path in self.pythonpath.iter().chain(additional_paths) {
+                insert.call((0, path), None)?;
+            }
+
+            let pythonpath = sys.getattr("path")?.extract::<Vec<String>>()?;
+            let str_python_path =
+                serde_json::to_string_pretty(&pythonpath).expect("Failed to serialize `sys.path`.");
             println!("Found Python path: {str_python_path}");
-            info!(python_path = format!("{}", str_python_path.as_str()));
+            info!(pythonpath = format!("{}", str_python_path.as_str()));
             PyResult::<()>::Ok(())
         }) {
             error!("{}", format!("Failed to initialize Python process: {err}"));
@@ -168,9 +167,8 @@ impl Server {
         })
         .disable_signals();
 
-        let server = http_server.bind("127.0.0.1:8080")?.run();
-
         info!("Starting server...");
+        let server = http_server.bind("127.0.0.1:8080")?.run();
         let server_handle = server.handle();
         tokio::spawn(async move { await_shutdown(server_handle).await });
         Ok(server)

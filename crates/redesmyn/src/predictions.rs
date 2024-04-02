@@ -245,10 +245,7 @@ where
                 return Err(err.into());
             }
         };
-        match batch.send_responses(df_results) {
-            Ok(_) => (),
-            Err(err) => error!("{}", err),
-        };
+        batch.send_responses(df_results).inspect_err(|err| error!("{}", err))?;
         Result::<(), ServiceError>::Ok(())
     }
 
@@ -322,9 +319,10 @@ where
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
-        let rx = std::mem::take(&mut self.rx).ok_or_else(|| {
-            ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
-        })?;
+        let Some(rx) = std::mem::take(&mut self.rx) else {
+            return ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
+                .into();
+        };
 
         let mut config = self.config.clone();
         config.try_init_handler()?;
