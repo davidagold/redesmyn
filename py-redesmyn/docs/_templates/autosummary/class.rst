@@ -3,6 +3,9 @@
 .. currentmodule:: {{ module }}
 
 .. autoclass:: {{ objname }}
+   {%-if fullname in show_inheritance %}
+   :show-inheritance:
+   {%- endif -%}
 
    {% block methods %}
    {% if methods | map("string") | map("first") | reject("equalto", "_") | list %}

@@ -7,3 +7,4 @@ API Reference
 
    redesmyn.schema
    redesmyn.service
+   redesmyn.artifacts
