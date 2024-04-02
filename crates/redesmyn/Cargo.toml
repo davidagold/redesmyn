@@ -20,6 +20,7 @@ pyo3 = { workspace = true }
 pyo3-polars = { workspace = true }
 serde = { features = ["derive"], workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
+strum = { workspace = true, features = ["derive"]}
 thiserror = { workspace = true }
 tokio = { features = ["rt-multi-thread", "macros"], workspace = true }
 tracing = { workspace = true }

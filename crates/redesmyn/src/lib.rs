@@ -5,3 +5,4 @@ pub mod handler;
 pub mod predictions;
 pub mod schema;
 pub mod server;
+pub mod metrics;
