@@ -1,8 +1,7 @@
 name: GitHub Pages
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -21,7 +20,6 @@ defaults:
 
 jobs:
   deploy:
-    if: github.event.pull_request.merged == true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
