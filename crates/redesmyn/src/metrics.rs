@@ -234,6 +234,7 @@ impl AwsEmfSubscriber {
                 ServiceError::Error("Failed to receive metrics: Channel closed".into())
             })?;
 
+            // TODO: Flush early if we hit the 100 metric limit.
             metrics_by_dims
                 .entry(entry.dimension_pairs())
                 .or_insert_with(|| {
