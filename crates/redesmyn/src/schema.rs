@@ -1,4 +1,4 @@
-use crate::common::Sized128String;
+use crate::common::{Sized128String, Wrap};
 use crate::error::ServiceError;
 use heapless::{self, FnvIndexMap};
 use polars::{
@@ -6,6 +6,8 @@ use polars::{
     frame::DataFrame,
     series::Series,
 };
+use pyo3::exceptions::PyTypeError;
+use pyo3::{intern, FromPyObject, PyAny, PyResult};
 use serde::{
     de::{DeserializeSeed, MapAccess, Visitor},
     Deserializer,
@@ -192,5 +194,53 @@ where
     {
         let mut visitor = SchemaVisitor::<'v, 'cols>(self.0);
         deserializer.deserialize_map(&mut visitor)
+    }
+}
+
+impl From<Wrap<Schema>> for Schema {
+    fn from(wrapped: Wrap<Schema>) -> Self {
+        wrapped.0
+    }
+}
+
+impl FromPyObject<'_> for Wrap<Schema> {
+    fn extract(ob: &'_ PyAny) -> PyResult<Self> {
+        let py = ob.py();
+        let name = ob.get_type().name()?;
+        if name != "Struct" {
+            return Err(PyTypeError::new_err(format!(
+                "Cannot convert object of type `{name}` into Schema"
+            )));
+        };
+        let mut schema = Schema::default();
+        let fields = ob.getattr(intern!(py, "fields"))?.extract::<Vec<&PyAny>>()?;
+        for field in fields {
+            let field_name = field.getattr(intern!(py, "name"))?.extract::<&str>()?;
+            let dtype = field.getattr("dtype")?;
+
+            let dtype = dtype.get_type().name().and_then(get_dtype_from_name)?;
+            schema.add_field(field_name, dtype);
+        }
+
+        Ok(Wrap(schema))
+    }
+}
+
+fn get_dtype_from_name(dtype_name: &str) -> PyResult<DataType> {
+    match dtype_name {
+        "Int8" => Ok(DataType::Int8),
+        "Int16" => Ok(DataType::Int16),
+        "Int32" => Ok(DataType::Int32),
+        "Int64" => Ok(DataType::Int64),
+        "UInt8" => Ok(DataType::UInt8),
+        "UInt16" => Ok(DataType::UInt16),
+        "UInt32" => Ok(DataType::UInt32),
+        "UInt64" => Ok(DataType::UInt64),
+        "String" => Ok(DataType::String),
+        "Binary" => Ok(DataType::Binary),
+        "Boolean" => Ok(DataType::Boolean),
+        "Float32" => Ok(DataType::Float32),
+        "Float64" => Ok(DataType::Float64),
+        dt => Err(PyTypeError::new_err(format!("'{dt}' is not a Polars data type",))),
     }
 }

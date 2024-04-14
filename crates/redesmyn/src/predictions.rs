@@ -1,5 +1,6 @@
 use crate::handler::{Handler, HandlerConfig, PyHandler};
-use crate::{config_methods, validate_param};
+use crate::{config_methods, metrics, validate_param};
+use redesmyn_macros::metric_instrument;
 
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
@@ -245,10 +246,7 @@ where
                 return Err(err.into());
             }
         };
-        match batch.send_responses(df_results) {
-            Ok(_) => (),
-            Err(err) => error!("{}", err),
-        };
+        batch.send_responses(df_results).inspect_err(|err| error!("{}", err))?;
         Result::<(), ServiceError>::Ok(())
     }
 
@@ -273,6 +271,9 @@ impl fmt::Display for ModelSpec {
     }
 }
 
+#[metric_instrument(
+    dimensions(FunctionName = "Invoke", ModelVersion = model_spec.model_version)
+)]
 pub async fn invoke<T, R>(
     model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<T>>,
@@ -284,9 +285,7 @@ where
     R: Relation<Serialized = T>,
     ModelSpec: for<'de> serde::Deserialize<'de>,
 {
-    // let ModelSpec { model_name, model_version } = &*model_spec;
-    // info!(%model_name, %model_version);
-    // println!("{model_name} {model_version}");
+    metrics!(RequestCount: Count = 1);
 
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
@@ -322,9 +321,10 @@ where
     fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
-        let rx = std::mem::take(&mut self.rx).ok_or_else(|| {
-            ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
-        })?;
+        let Some(rx) = std::mem::take(&mut self.rx) else {
+            return ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
+                .into();
+        };
 
         let mut config = self.config.clone();
         config.try_init_handler()?;

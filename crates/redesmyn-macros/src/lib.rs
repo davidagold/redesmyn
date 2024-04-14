@@ -3,7 +3,10 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, FieldsNamed, Type};
+use syn::{
+    parenthesized, parse::Parse, parse_macro_input, parse_quote, Data, DeriveInput, Expr, Fields,
+    FieldsNamed, ItemFn, MetaNameValue, PathSegment, Signature, Token, Type,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -64,9 +67,11 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
                 exprs_vec_init.push(quote! {
                     let mut #ident_field = Vec::<#type_ident>::new()
                 });
+
                 exprs_vec_push.push(quote! {
                     #ident_field.push(record.#ident_field)
                 });
+
                 let name = ident_field.to_string();
                 exprs_series.push(quote! {
                     Series::new(#name, #ident_field)
@@ -96,14 +101,11 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
                 Self: Sized
             {
                 #(#exprs_vec_init);*;
-
                 for record in records.iter().filter_map(|record| -> Option<#name> { serde_json::from_str(record).ok() }) {
-                    #(#exprs_vec_push);*;
+                    #(#exprs_vec_push); *;
                 };
 
-                let columns: Vec<Series> = vec![
-                    #(#exprs_series),*
-                ];
+                let columns: Vec<Series> = vec![#(#exprs_series), *];
 
                 DataFrame::new(columns).map_err(|err| err.into())
             }
@@ -111,4 +113,67 @@ pub fn derive_relation(input: TokenStream) -> TokenStream {
     };
 
     gen.into()
+}
+
+#[derive(Default)]
+struct MetricInstrumentArgs {
+    dimensions: Vec<(PathSegment, Expr)>,
+}
+
+mod kw {
+    use syn::custom_keyword;
+
+    custom_keyword!(dimensions);
+}
+
+impl Parse for MetricInstrumentArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut args = Self::default();
+        while !input.is_empty() {
+            let lookahead = input.lookahead1();
+            if lookahead.peek(kw::dimensions) {
+                let _ = input.parse::<kw::dimensions>();
+                let content;
+                parenthesized!(content in input);
+                for kw in content.parse_terminated(MetaNameValue::parse, Token![,])?.into_iter() {
+                    let dim_name =
+                        kw.path.segments.first().expect("Expected dimension name.").clone();
+                    args.dimensions.push((dim_name, kw.value));
+                }
+            };
+        }
+        Ok(args)
+    }
+}
+
+#[proc_macro_attribute]
+pub fn metric_instrument(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as MetricInstrumentArgs);
+    let ItemFn { attrs, vis, sig, block } = parse_macro_input!(item as ItemFn);
+    let Signature {
+        output,
+        inputs: params,
+        unsafety,
+        asyncness,
+        constness,
+        abi,
+        ident,
+        generics: syn::Generics { params: gen_params, where_clause, .. },
+        ..
+    } = sig;
+
+    let dimensions: Vec<Expr> = args
+        .dimensions
+        .into_iter()
+        .map(|(key, value)| parse_quote!(__Dimensions.#key = #value))
+        .collect();
+
+    quote!(
+        #[tracing::instrument(skip_all, fields(#(#dimensions), *))]
+        #(#attrs) *
+        #vis #constness #unsafety #asyncness #abi fn #ident<#gen_params>(#params) #output
+        #where_clause
+        #block
+    )
+    .into()
 }

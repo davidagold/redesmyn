@@ -51,3 +51,16 @@ macro_rules! validate_param {
         )))?
     };
 }
+
+#[derive(Clone)]
+pub struct Wrap<T>(pub T);
+
+impl<T> Wrap<T> {
+    pub fn inner<'a>(&'a self) -> &'a T {
+        &self.0
+    }
+
+    pub fn inner_mut<'a>(&'a mut self) -> &'a mut T {
+        &mut self.0
+    }
+}

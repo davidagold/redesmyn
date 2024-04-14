@@ -1,4 +1,5 @@
 use crate::common::LogConfig;
+use crate::metrics::AwsEmfSubscriber;
 use crate::predictions::{HandlerArgs, Service};
 use crate::schema::Schema;
 
@@ -8,10 +9,12 @@ use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
+use tracing::subscriber::Interest;
+use tracing_subscriber::layer::Filter;
 use std::collections::VecDeque;
 use std::env;
 use tokio::{signal, task::JoinHandle};
-use tracing::instrument;
+use tracing::{instrument, Subscriber};
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
@@ -31,12 +34,12 @@ impl Clone for BoxedResourceFactory {
     }
 }
 
-impl<R, H, O, S> ResourceFactory for S
+impl<S, O> ResourceFactory for S
 where
-    S: Service<R = R, H = H> + Clone + Sync + Send + 'static,
+    S: Service + Clone + Sync + Send + 'static,
     S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
-    R: Relation<Serialized = S::T> + Sync + Send + 'static,
-    H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
+    S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
+    S::H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
     fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
@@ -88,6 +91,49 @@ impl Server {
     }
 }
 
+enum MetricFilter {
+    Subscribe,
+    Ignore
+}
+
+impl<S: Subscriber> Filter<S> for MetricFilter {
+    fn enabled(&self, meta: &tracing::Metadata<'_>, ctx: &tracing_subscriber::layer::Context<'_,S>) -> bool {
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Subscribe) => return true,
+                    ("__Dimensions", Self::Subscribe) => return true,
+                    ("__Metrics", Self::Ignore) => return false,
+                    ("__Dimensions", Self::Ignore) => return false,
+                    _ => continue
+                }
+            }
+        };
+        match self {
+            Self::Subscribe => false,
+            Self::Ignore => true
+        }
+    }
+    
+    fn callsite_enabled(&self,meta: &'static tracing::Metadata<'static>) -> tracing::subscriber::Interest {        
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Subscribe) => return Interest::always(),
+                    ("__Dimensions", Self::Subscribe) => return Interest::always(),
+                    ("__Metrics", Self::Ignore) => return Interest::never(),
+                    ("__Dimensions", Self::Ignore) => return Interest::never(),
+                    _ => continue
+                }
+            }
+        };
+        match self {
+            Self::Subscribe => Interest::never(),
+            Self::Ignore => Interest::always()
+        }
+    }
+}
+
 impl Server {
     pub fn register<S, O>(&mut self, service: S) -> &Self
     where
@@ -109,7 +155,8 @@ impl Server {
 
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
-            .with(self.config_log.layer())
+            .with(AwsEmfSubscriber::new(10, "./metrics.log".into()).with_filter(MetricFilter::Subscribe))
+            .with(self.config_log.layer().with_filter(MetricFilter::Ignore))
             .init();
 
         let available_parallelism = std::thread::available_parallelism()?;
@@ -130,19 +177,18 @@ impl Server {
             let sys = py.import("sys")?;
             let version = sys.getattr("version")?.extract::<String>()?;
             tracing::info!("Found Python version: {}", version);
-            sys.getattr("path")?.getattr("insert").map(|insert| {
-                let additional_paths = [&(pwd.to_str().unwrap().to_string())];
-                for path in self.pythonpath.iter().chain(additional_paths) {
-                    if let Err(err) = insert.call((0, path), None) {
-                        error!("{err}");
-                    };
-                }
-            })?;
-            let python_path = sys.getattr("path")?.extract::<Vec<String>>()?;
-            let str_python_path = serde_json::to_string_pretty(&python_path)
-                .expect("Failed to serialize `sys.path`.");
+
+            let insert = sys.getattr("path")?.getattr("insert")?;
+            let additional_paths = [&(pwd.to_str().unwrap().to_string())];
+            for path in self.pythonpath.iter().chain(additional_paths) {
+                insert.call((0, path), None)?;
+            }
+
+            let pythonpath = sys.getattr("path")?.extract::<Vec<String>>()?;
+            let str_python_path =
+                serde_json::to_string_pretty(&pythonpath).expect("Failed to serialize `sys.path`.");
             println!("Found Python path: {str_python_path}");
-            info!(python_path = format!("{}", str_python_path.as_str()));
+            info!(pythonpath = format!("{}", str_python_path.as_str()));
             PyResult::<()>::Ok(())
         }) {
             error!("{}", format!("Failed to initialize Python process: {err}"));
@@ -168,9 +214,8 @@ impl Server {
         })
         .disable_signals();
 
-        let server = http_server.bind("127.0.0.1:8080")?.run();
-
         info!("Starting server...");
+        let server = http_server.bind("127.0.0.1:8080")?.run();
         let server_handle = server.handle();
         tokio::spawn(async move { await_shutdown(server_handle).await });
         Ok(server)
