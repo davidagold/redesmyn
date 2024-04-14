@@ -285,7 +285,7 @@ where
     R: Relation<Serialized = T>,
     ModelSpec: for<'de> serde::Deserialize<'de>,
 {
-    metrics!(RequestCount: Count = 1, OtherMetric = 1);
+    metrics!(RequestCount: Count = 1);
 
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
