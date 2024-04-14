@@ -2013,6 +2013,7 @@ dependencies = [
  "polars",
  "pyo3",
  "pyo3-polars",
+ "redesmyn-macros",
  "serde",
  "serde_json",
  "strum 0.26.2",
@@ -2046,7 +2047,6 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "redesmyn",
  "syn 2.0.57",
  "thiserror",
 ]

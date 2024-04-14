@@ -30,6 +30,12 @@ pub enum ServiceError {
     JsonError(#[from] serde_json::Error),
 }
 
+impl Default for ServiceError {
+    fn default() -> Self {
+        ServiceError::Error("Generic Error".into())
+    }
+}
+
 impl From<ServiceError> for PyErr {
     fn from(err: ServiceError) -> Self {
         PyRuntimeError::new_err(err.to_string())

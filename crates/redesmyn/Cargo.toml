@@ -26,3 +26,5 @@ tokio = { features = ["rt-multi-thread", "macros"], workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+
+redesmyn-macros = { workspace = true }

@@ -51,3 +51,6 @@ macro_rules! validate_param {
         )))?
     };
 }
+
+#[derive(Clone)]
+pub struct Wrap<T>(pub T);
