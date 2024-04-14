@@ -51,9 +51,6 @@ enum Unit {
     CountPerSecond,
 }
 
-#[derive(Serialize)]
-struct CloudWatchMetrics {}
-
 #[derive(Serialize, Default)]
 struct AwsEmfDocument {
     #[serde(rename = "_aws")]
