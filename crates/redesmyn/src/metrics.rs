@@ -64,7 +64,7 @@ struct AwsEmfDocument {
 }
 
 trait Metrics: Sized + Serialize {
-    fn with_dimensions(self, dimensions: DimensionMapping) -> Self;
+    fn with_dimensions(self, dimensions: DimensionsMapping) -> Self;
 
     fn put_metrics(&mut self, metrics: MetricsMapping) -> &mut Self;
 
@@ -93,7 +93,7 @@ impl AwsEmfDocument {
 }
 
 impl Metrics for AwsEmfDocument {
-    fn with_dimensions(mut self, dimensions: DimensionMapping) -> Self {
+    fn with_dimensions(mut self, dimensions: DimensionsMapping) -> Self {
         let mut dim_set = DimensionSet::new();
         for (name, value) in dimensions {
             self.dimensions.insert(name, value);
@@ -125,7 +125,7 @@ struct AwsEmfMetadata {
 
 type DimensionSet = Vec<&'static str>;
 type DimensionPair = (&'static str, String);
-type DimensionMapping = BTreeMap<&'static str, String>;
+type DimensionsMapping = BTreeMap<&'static str, String>;
 type MetricsMapping = BTreeMap<&'static str, Value>;
 
 #[derive(Serialize, Default, Clone, Debug)]
@@ -171,12 +171,12 @@ struct MetricDefinition {
 
 #[derive(Debug)]
 struct MetricsEntry {
-    dimensions: DimensionMapping,
+    dimensions: DimensionsMapping,
     metrics: MetricsMapping,
 }
 
 impl MetricsEntry {
-    fn new(dimensions: DimensionMapping, metrics: MetricsMapping) -> Self {
+    fn new(dimensions: DimensionsMapping, metrics: MetricsMapping) -> Self {
         MetricsEntry { dimensions, metrics }
     }
 
@@ -192,13 +192,12 @@ pub struct AwsEmfSubscriber {
 }
 
 impl AwsEmfSubscriber {
-    pub fn new(max_delay_milliseconds: u32, fp: String) -> AwsEmfSubscriber {
+    pub fn new(max_delay_ms: u32, fp: String) -> AwsEmfSubscriber {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<MetricsEntry>(512);
         tokio::spawn(async move {
             let mut file = File::create(fp.as_str()).await.unwrap();
             loop {
-                let task =
-                    AwsEmfSubscriber::receive_and_flush(&mut rx, &mut file, max_delay_milliseconds);
+                let task = AwsEmfSubscriber::receive_and_flush(&mut rx, &mut file, max_delay_ms);
                 if let Err(err) = task.await {
                     error!("{err}");
                 };
@@ -210,13 +209,13 @@ impl AwsEmfSubscriber {
     async fn receive_and_flush<W: AsyncWriteExt + Unpin>(
         rx: &mut Receiver<MetricsEntry>,
         writer: &mut W,
-        max_delay_milliseconds: u32,
+        max_delay_ms: u32,
     ) -> Result<(), ServiceError> {
         let mut metrics_by_dims = BTreeMap::<Vec<DimensionPair>, AwsEmfDocument>::new();
         let (tx_timeout, mut rx_timeout) = oneshot::channel::<()>();
 
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::new(0, 1_000_000 * max_delay_milliseconds)).await;
+            tokio::time::sleep(Duration::new(0, 1_000_000 * max_delay_ms)).await;
             tx_timeout.send(());
         });
 
@@ -252,23 +251,23 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         _event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let mut dims_event = DimensionMapping::new();
-        let mut metrics = BTreeMap::<&'static str, Value>::new();
-        _event.record(&mut Wrap((&mut dims_event, &mut metrics)));
+        let dims_event = DimensionsMapping::new();
+        let metrics = BTreeMap::<&'static str, Value>::new();
+        let mut entry = MetricsEntry::new(dims_event, metrics);
+        _event.record(&mut Wrap(&mut entry));
 
         // Include, but do not overwrite with, dimensions from parent span.
         // (Operate in closure for easier `None`-handling.)
         (|| {
             let span = _ctx.event_span(_event)?;
             let ext = span.extensions();
-            let dims_span = ext.get::<DimensionMapping>()?;
+            let dims_span = ext.get::<DimensionsMapping>()?;
             for (k, v) in dims_span.iter() {
-                dims_event.entry(*k).or_insert(v.clone());
+                entry.dimensions.entry(*k).or_insert(v.clone());
             }
             Some(())
         })();
 
-        let entry = MetricsEntry::new(dims_event, metrics);
         let _ = self.tx.try_send(entry);
     }
 
@@ -278,7 +277,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         id: &span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let mut dims = DimensionMapping::new();
+        let mut dims = DimensionsMapping::new();
 
         // Include dimensions of present span.
         attrs.record(&mut Wrap(&mut dims));
@@ -286,19 +285,19 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         // Inherit dimensions of parent span.
         (|| {
             let parent_span = ctx.span_scope(id)?.nth(1)?;
-            for (k, v) in parent_span.extensions().get::<Wrap<DimensionMapping>>()?.0.iter() {
+            for (k, v) in parent_span.extensions().get::<Wrap<DimensionsMapping>>()?.0.iter() {
                 // TODO: Avoid cloning
                 dims.entry(*k).or_insert_with(|| v.clone());
             }
             Some(())
         })();
 
-        if dims.is_empty() {
-            return;
-        }
-        if let Some(span) = ctx.span(id) {
-            span.extensions_mut().insert(dims);
-        };
+        // Store dimensions if non-trivial; otherwise, return early.
+        (|| {
+            dims.is_empty().then(|| ())?;
+            ctx.span(id)?.extensions_mut().insert(dims);
+            Some(())
+        })();
     }
 }
 
@@ -307,59 +306,63 @@ fn unprefix<'a>(field: &Field, prefix: &str) -> Option<&'a str> {
     Some(key)
 }
 
-impl Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
-    // Could make this a macro to avoid creating unnecessary `Value` variants.
-    fn record_if_metric(&mut self, field: &Field, value: Value) {
-        let (_, metrics) = &mut self.0;
-        unprefix(field, "__Metrics.").map(|key| match value {
-            // k-v pair may be of form `__Metrics.<name>.Unit = <unit>`.
-            // The actual metric is recorded in a separate field,
-            // so we do not need to insert the value into `metrics` here.
-            Value::String(maybe_unit) => match key.rsplit_once(".Unit") {
-                Some(_) => {
-                    // TODO: Handle unit declaration
-                }
-                // Metrics cannot be strings.
-                None => (),
-            },
-            // k-v pair is of form `__Metrics.<key> = <value>`.
-            _ => metrics.insert(key, value).map(|_| ()).unwrap_or(()),
-        });
-    }
+fn record_if_dimension(dims: &mut DimensionsMapping, field: &Field, value: &str) {
+    unprefix(field, "__Dimensions").map(|dim_name| dims.insert(dim_name, value.to_string()));
 }
 
-impl Visit for Wrap<&mut DimensionMapping> {
+// Could make this a macro to avoid creating unnecessary `Value` variants.
+fn record_if_metric(metrics: &mut MetricsMapping, field: &Field, value: Value) {
+    unprefix(field, "__Metrics.").map(|key| match value {
+        // k-v pair may be of form `__Metrics.<name>.Unit = <unit>`.
+        // The actual metric is recorded in a separate field,
+        // so we do not need to insert the value into `metrics` here.
+        Value::String(maybe_unit) => match key.rsplit_once(".Unit") {
+            Some(_) => {
+                // TODO: Handle unit declaration
+            }
+            // Metrics cannot be strings.
+            None => (),
+        },
+        // k-v pair is of form `__Metrics.<key> = <value>`.
+        _ => metrics.insert(key, value).map(|_| ()).unwrap_or(()),
+    });
+}
+
+impl Visit for Wrap<&mut DimensionsMapping> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        return;
+        record_if_dimension(self.inner_mut(), field, format!("{:#?}", value).as_str());
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        unprefix(field, "__Dimensions").map(|dim_name| self.0.insert(dim_name, value.to_string()));
+        record_if_dimension(self.inner_mut(), field, value);
     }
 }
 
-impl Visit for Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
+impl Visit for Wrap<&mut MetricsEntry> {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.record_if_metric(field, Value::String(format!("{:#?}", value)));
+        let metrics = &mut self.inner_mut().metrics;
+        record_if_metric(metrics, field, Value::String(format!("{:#?}", value)));
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        self.record_if_metric(field, Value::Bool(value));
+        let metrics = &mut self.inner_mut().metrics;
+        record_if_metric(metrics, field, Value::Bool(value));
     }
 
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
-        self.record_if_metric(field, Value::Number(Number::from_f64(value).unwrap()))
+        let metrics = &mut self.inner_mut().metrics;
+        record_if_metric(metrics, field, Value::Number(Number::from_f64(value).unwrap()))
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.record_if_metric(field, Value::Number(Number::from_f64(value as f64).unwrap()))
+        let metrics = &mut self.inner_mut().metrics;
+        record_if_metric(metrics, field, Value::Number(Number::from_f64(value as f64).unwrap()))
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        let (dimensions, metrics) = &mut self.0;
-        unprefix(field, "__Dimensions")
-            .map(|dim_name| dimensions.insert(dim_name, value.to_string()));
-        self.record_if_metric(field, Value::String(value.to_string()))
+        let MetricsEntry { metrics, dimensions } = &mut self.inner_mut();
+        record_if_dimension(dimensions, field, value);
+        record_if_metric(metrics, field, Value::String(value.to_string()))
     }
 }
 

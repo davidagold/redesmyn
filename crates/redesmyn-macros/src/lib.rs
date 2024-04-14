@@ -1,20 +1,11 @@
 extern crate proc_macro;
 
-use std::collections::{HashMap, VecDeque};
-
-use kw::dimensions;
 use proc_macro::TokenStream;
-use proc_macro2::{extra::DelimSpan, Ident, Span};
-use quote::{quote, ToTokens};
+use proc_macro2::Ident;
+use quote::quote;
 use syn::{
-    bracketed, parenthesized,
-    parse::Parse,
-    parse_macro_input, parse_quote,
-    punctuated::Punctuated,
-    spanned::Spanned,
-    token::{self, Bracket},
-    Attribute, Data, DeriveInput, Expr, Fields, FieldsNamed, ItemFn, LitStr, Meta, MetaList,
-    MetaNameValue, Path, PathSegment, Signature, Token, Type, Visibility,
+    parenthesized, parse::Parse, parse_macro_input, parse_quote, Data, DeriveInput, Expr, Fields,
+    FieldsNamed, ItemFn, MetaNameValue, PathSegment, Signature, Token, Type,
 };
 use thiserror::Error;
 
