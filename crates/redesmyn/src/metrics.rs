@@ -283,9 +283,8 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         // Include dimensions of present span.
         attrs.record(&mut Wrap(&mut dims));
 
-        // Work in a closure for simpler `None`-handling.
+        // Inherit dimensions of parent span.
         (|| {
-            // Inherit dimensions of parent span.
             let parent_span = ctx.span_scope(id)?.nth(1)?;
             for (k, v) in parent_span.extensions().get::<Wrap<DimensionMapping>>()?.0.iter() {
                 // TODO: Avoid cloning
@@ -308,29 +307,23 @@ fn unprefix<'a>(field: &Field, prefix: &str) -> Option<&'a str> {
     Some(key)
 }
 
-fn unsuffix<'a>(field: &Field, suffix: &str) -> Option<&'a str> {
-    let (key, _) = field.name().rsplit_once(suffix)?;
-    Some(key)
-}
-
 impl Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
-    // Could make this a macro to avoid creating unnecessary `Value` variants
+    // Could make this a macro to avoid creating unnecessary `Value` variants.
     fn record_if_metric(&mut self, field: &Field, value: Value) {
         let (_, metrics) = &mut self.0;
-        unprefix(field, "__Metrics.").and_then(|key| match value {
-            // k-v pair may be of form `__Metrics.<name>.Unit = <unit>`
+        unprefix(field, "__Metrics.").map(|key| match value {
+            // k-v pair may be of form `__Metrics.<name>.Unit = <unit>`.
+            // The actual metric is recorded in a separate field,
+            // so we do not need to insert the value into `metrics` here.
             Value::String(maybe_unit) => match key.rsplit_once(".Unit") {
-                Some((name, _)) => {
+                Some(_) => {
                     // TODO: Handle unit declaration
-                    Some(())
                 }
-                None => Some(()),
+                // Metrics cannot be strings.
+                None => (),
             },
-            // k-v pair is of form `__Metrics.<key> = <value>`
-            _ => {
-                metrics.insert(key, value);
-                Some(())
-            }
+            // k-v pair is of form `__Metrics.<key> = <value>`.
+            _ => metrics.insert(key, value).map(|_| ()).unwrap_or(()),
         });
     }
 }
@@ -364,10 +357,8 @@ impl Visit for Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
         let (dimensions, metrics) = &mut self.0;
-        if let Some((_, dimension_name)) = field.name().split_once("__Dimensions.") {
-            dimensions.insert(dimension_name, value.to_string());
-            return;
-        };
+        unprefix(field, "__Dimensions")
+            .map(|dim_name| dimensions.insert(dim_name, value.to_string()));
         self.record_if_metric(field, Value::String(value.to_string()))
     }
 }
