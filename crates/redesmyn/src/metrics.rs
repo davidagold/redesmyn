@@ -309,11 +309,30 @@ fn unprefix<'a>(field: &Field, prefix: &str) -> Option<&'a str> {
     Some(key)
 }
 
+fn unsuffix<'a>(field: &Field, suffix: &str) -> Option<&'a str> {
+    let (key, _) = field.name().rsplit_once(suffix)?;
+    Some(key)
+}
+
 impl Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
     // Could make this a macro to avoid creating unnecessary `Value` variants
     fn record_if_metric(&mut self, field: &Field, value: Value) {
         let (_, metrics) = &mut self.0;
-        unprefix(field, "__Metrics.").and_then(|name| metrics.insert(name, value));
+        unprefix(field, "__Metrics.").and_then(|key| match value {
+            // k-v pair may be of form `__Metrics.<name>.Unit = <unit>`
+            Value::String(maybe_unit) => match key.rsplit_once(".Unit") {
+                Some((name, _)) => {
+                    // TODO: Handle unit declaration
+                    Some(())
+                }
+                None => Some(()),
+            },
+            // k-v pair is of form `__Metrics.<key> = <value>`
+            _ => {
+                metrics.insert(key, value);
+                Some(())
+            }
+        });
     }
 }
 
@@ -356,13 +375,11 @@ impl Visit for Wrap<(&mut DimensionMapping, &mut MetricsMapping)> {
 
 #[macro_export]
 macro_rules! metrics {
-    ($($name:ident = $value:expr),+) => {
-        tracing::info!($(__Metrics.$name = $value),+)
-    };
-    ($($name:ident: $unit:path = $value:expr),+) => {
-        tracing::info!($(__Metrics.$name = $value, __Metrics.$name.Unit = stringify!($unit)),+)
-    };
-    ($($value:expr => $name:ident: $unit:tt),+) => {
-        tracing::info!($(__Metrics.$name = $value, __Metrics.$name.Unit = stringify!($unit)),+)
+    ($($name:ident $(: $unit:path)? = $value:expr),* $(,)?) => {
+        {
+            tracing::info!(
+                $(__Metrics.$name = $value $(, __Metrics.$name.Unit = stringify!($unit))?),*
+            )
+        }
     };
 }
