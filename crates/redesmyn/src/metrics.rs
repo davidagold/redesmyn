@@ -104,7 +104,6 @@ impl Metrics for AwsEmfDocument {
     }
 
     fn put_metrics(&mut self, metrics: MetricsMapping) -> &mut Self {
-        // self.values.entry(name).and_modify(|values| values.push(value));
         for (metric_name, metric_value) in metrics {
             self.aws.directive.define_metric(metric_name, None);
             self.values
