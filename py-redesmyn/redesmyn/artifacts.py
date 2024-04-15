@@ -89,11 +89,9 @@ class ArtifactSpec(BaseModel):
         )
         params = {k: (Optional[str], None) for k in param_ids}
         return create_model(spec_name, __base__=(ArtifactSpec,), **params)
-        # return ArtifactSpec(**{param: str for param in path.get_identifiers()})
 
     @staticmethod
     def generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec"]:
-        # def is_latest_key(key_field_tuple: Tuple[str, FieldInfo]) -> Optional[str]:
         def is_latest_key(key_field_tuple: Tuple[str, FieldInfo]) -> Optional[str]:
             key, field = key_field_tuple
             key_cls = only(
