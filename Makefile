@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: install-py develop-py build-rs build-py run-rs run-py docs-py clean-docs-py
+.PHONY: install-py develop-py build-rs build-py run-rs run-py docs-py clean-docs-py test-py
 
 
 PY_PKG_GROUPS ?= "packages dev-packages"
