@@ -59,19 +59,11 @@ class EndpointPath:
         self.query = self.query | query_params
 
 
-# TODO: Write ordering protocol and use for bound
-L = TypeVar("L", bound=Union[int, str])
+class LatestKey:
+    pass
 
 
-class LatestKey(Generic[L]):
-    def __init__(self, key: L) -> None:
-        self._key = key
-
-    def key(self) -> L:
-        return self._key
-
-
-class ArtifactSpec(BaseModel, Generic[L]):
+class ArtifactSpec(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     _cache_path: ClassVar[Optional[PathTemplate]]
     _latest_key: ClassVar[Optional[str]]

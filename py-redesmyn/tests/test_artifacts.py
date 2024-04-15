@@ -113,6 +113,14 @@ class TestModelCache:
         error = one(e.value.errors())
         assert error["msg"] == "Value error, 'Iso3166_2.GB_ENG is not a subdivision of Iso3166_1.US"
 
+    def test_invalid_id(self):
+        cache = afs.ModelCache(client=self.client, spec=DummyArtifact, latest_key="id")
+        with pytest.raises(ValidationError) as e:
+            cache.get(iso3166_1="US", iso3166_2="US-CA", id=-1)
+
+        error = one(e.value.errors())
+        assert error["msg"] == "Input should be greater than or equal to 0"
+
     def test_path_mismatch(self):
         with pytest.raises(ValueError) as e:
 
