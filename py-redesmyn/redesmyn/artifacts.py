@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, create_model
 from pydantic.fields import FieldInfo
 
 
-def ensure_trailing_slash(path_component: str) -> str:
+def _ensure_trailing_slash(path_component: str) -> str:
     return re.sub(r"^(.*)(?!/)$", r"\1/", path_component)
 
 
