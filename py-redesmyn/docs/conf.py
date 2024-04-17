@@ -40,11 +40,11 @@ autosummary_filename_map = {
 autosummary_context = {
     "decorators": ["redesmyn.service.endpoint", "redesmyn.artifacts.artifact_spec"],
     "special": {"redesmyn.schema.Schema": ["DataFrame"]},
-    "show_inheritance": [
-        "redesmyn.artifacts.ModelCache",
-        "redesmyn.artifacts.ArtifactSpec",
-    ],
-    "no_inherited_members": {"redesmyn.artifacts.ArtifactSpec": ["BaseModel"]},
+    "show_inheritance": ["redesmyn.artifacts.ModelCache", "redesmyn.artifacts.ArtifactSpec"],
+    "no_inherited_members": {
+        "redesmyn.artifacts.ArtifactSpec": ["BaseModel"],
+        "redesmyn.artifacts.LatestKey": ["BaseModel"],
+    },
     "exclude_attributes": {
         "redesmyn.artifacts.ArtifactSpec": [
             "model_computed_fields",
@@ -52,7 +52,14 @@ autosummary_context = {
             "model_fields",
             "model_extra",
             "model_fields_set",
-        ]
+        ],
+        "redesmyn.artifacts.LatestKey": [
+            "model_computed_fields",
+            "model_config",
+            "model_fields",
+            "model_extra",
+            "model_fields_set",
+        ],
     },
 }
 
