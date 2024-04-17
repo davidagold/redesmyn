@@ -28,7 +28,7 @@
    .. rubric:: {{ _('Attributes') }}
 
    .. autosummary::
-   {% for item in all_attributes -%}
+   {% for item in all_attributes %}
       ~{{ name }}.{{ item }}
    {%- endfor -%}
 
