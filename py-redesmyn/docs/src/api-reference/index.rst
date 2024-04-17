@@ -6,5 +6,5 @@ API Reference
    :toctree: api/
 
    redesmyn.schema
-   redesmyn.service
    redesmyn.artifacts
+   redesmyn.service
