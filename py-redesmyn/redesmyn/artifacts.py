@@ -97,7 +97,7 @@ class LatestKey(BaseModel, Generic[K]):
 
     # TODO: Include model validator
     @model_validator(mode="after")
-    def validate(self) -> Self:
+    def _validate(self) -> Self:
         return self
 
 
