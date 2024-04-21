@@ -338,16 +338,11 @@ struct Cache {
     task: JoinHandle<ServiceResult<()>>,
 }
 
+type RefreshEntry = Box<dyn Refresh<State = dyn RefreshState + Send> + Send>;
+
 impl Cache {
     async fn task(
-        model_cache: Arc<
-            Mutex<
-                LruCache<
-                    CacheKey,
-                    (Box<dyn Refresh<State = dyn RefreshState + Send> + Send>, Py<PyAny>),
-                >,
-            >,
-        >,
+        model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>>,
         mut rx: mpsc::Receiver<Message>,
     ) -> ServiceResult<()> {
         loop {
@@ -392,14 +387,8 @@ impl PyCache {
             _ => return Err(PyValueError::new_err("Something went terribly wrong.")),
         };
 
-        let model_cache: Arc<
-            Mutex<
-                LruCache<
-                    CacheKey,
-                    (Box<dyn Refresh<State = dyn RefreshState + Send> + Send>, Py<PyAny>),
-                >,
-            >,
-        > = Arc::new(LruCache::new(NonZeroUsize::new(max_size.unwrap_or(128)).unwrap()).into());
+        let model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>> =
+            Arc::new(LruCache::new(NonZeroUsize::new(max_size.unwrap_or(128)).unwrap()).into());
         let (tx, rx) = mpsc::channel::<Message>(128);
         let task = tokio::spawn(Cache::task(model_cache.clone(), rx));
         let cache = Cache {
@@ -521,10 +510,7 @@ impl Client for FsClient {
         path: PathBuf,
         mut bytes: BytesMut,
     ) -> Pin<Box<dyn Future<Output = ServiceResult<BytesMut>> + Send + 'static>> {
-        // TODO read into the bytes
         Box::pin(async move {
-            // let mut buf = bytes.writer();
-            // buf.write_all(.as_slice());
             bytes.extend(tokio::fs::read(path).await?);
             Ok(bytes)
         })
