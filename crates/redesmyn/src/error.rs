@@ -60,6 +60,27 @@ impl From<PyErr> for ServiceError {
     }
 }
 
+impl From<String> for ServiceError {
+    fn from(s: String) -> Self {
+        ServiceError::Error(s)
+    }
+}
+
+impl From<&str> for ServiceError {
+    fn from(s: &str) -> Self {
+        ServiceError::Error(s.to_string())
+    }
+}
+
+pub type ServiceResult<T> = Result<T, ServiceError>;
+
+// impl<T: for<'py> FromPyObject<'py>> From<PyResult<PyObject>> for ServiceResult<T> {
+// impl<T> From<ServiceResult<T>> for Wrap<FromPyObject<'py>> {
+//     fn from(value: PyResult<PyObject>) -> Self {
+//         Ok(Python::with_gil(|py| value?.extract::<T>(py))?)
+//     }
+// }
+
 #[derive(Error, Debug)]
 pub enum PredictionError {
     #[error("Prediction failed: {0}.")]

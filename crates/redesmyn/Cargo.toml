@@ -10,7 +10,12 @@ repository = { workspace = true }
 
 [dependencies]
 actix-web = { workspace = true }
+bytes = { worksace = true }
+cron = { workspace = true }
+chrono = { workspace = true, default-features = false }
+futures = { workspace = true }
 heapless = "0.8.0"
+lru = { workspace = true }
 polars = { features = [
     "lazy",
     "dtype-struct",
@@ -21,6 +26,7 @@ pyo3-polars = { workspace = true }
 serde = { features = ["derive"], workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 strum = { workspace = true, features = ["derive"]}
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { features = ["rt-multi-thread", "macros"], workspace = true }
 tracing = { workspace = true }
@@ -28,3 +34,4 @@ tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
 redesmyn-macros = { workspace = true }
+erased-serde = "0.4.4"
