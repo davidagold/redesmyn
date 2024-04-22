@@ -1,19 +1,18 @@
 import inspect
 from asyncio import Future
 from itertools import islice
-from typing import Callable, List, Self, Tuple, Type, get_args
+from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
 
 import polars as pl
 from more_itertools import first, one
 
+from redesmyn.artifacts import ArtifactSpec, ModelCache
 from redesmyn.py_redesmyn import PyEndpoint, PyServer
 from redesmyn.schema import Schema
 
 
 def extract_schema(annotation: Type) -> pl.Struct:
-    schema_cls = one(
-        e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema)
-    )
+    schema_cls = one(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
     return schema_cls.to_struct_type()
 
 
@@ -27,12 +26,16 @@ def get_signature(f: Callable) -> Tuple[pl.Struct, pl.Struct]:
     return (extract_schema(param_df.annotation), extract_schema(s.return_annotation))
 
 
-class Endpoint:
+M = TypeVar("M")
+
+
+class Endpoint(Generic[M]):
     def __init__(
         self,
-        handler: Callable[..., pl.DataFrame],
+        handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
+        cache: ModelCache[ArtifactSpec[M], M],
         batch_max_delay_ms: int,
         batch_max_size: int,
     ) -> None:
@@ -45,16 +48,18 @@ class Endpoint:
             handler=handler,
         )
 
-    def __call__(self, *args, **kawrgs) -> pl.DataFrame:
-        return self._handler(*args, **kawrgs)
+    def __call__(self, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
+        model: M = self._cache.get(**kwargs)
+        return self._handler(model, records)
 
 
 def endpoint(
     path: str,
+    cache: ModelCache[ArtifactSpec[M], M],
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
-) -> Callable[[Callable], Endpoint]:
-    def wrapper(handler: Callable) -> Endpoint:
+) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
+    def wrapper(handler: Callable[[M, pl.DataFrame], pl.DataFrame]) -> Endpoint:
         return Endpoint(
             handler=handler,
             signature=get_signature(handler),
