@@ -1,11 +1,10 @@
 import asyncio
 import re
-from typing import Annotated, Any
+from typing import Annotated, Self
 
 import polars as pl
-from annotated_types import Predicate
 from handlers.model import Model
-from pydantic import BaseModel
+from pydantic import model_validator
 
 from redesmyn import artifacts as afs
 from redesmyn import service as svc
@@ -20,34 +19,39 @@ class Output(svc.Schema):
     prediction = pl.Float64()
 
 
-@afs.artifact_spec(
-    load_fn=lambda run_id: Model().load(run_id=run_id),
-    cache_path="s3://model-bucket/{model_name}/{model_version}/",
-)
-class ModelArtifact(BaseModel):
-    @staticmethod
-    def validate_version(v: Any) -> bool:
-        version_match = re.match(r"v^\d\.\d\.\d", v)
-        return True if version_match is not None else False
-
+class VersionedModelSpec(afs.ArtifactSpec[Model]):
     model_name: str
-    model_version: Annotated[str, Predicate(validate_version)]
+    model_version: str
     run_id: Annotated[str, afs.LatestKey]
+
+    @model_validator(mode="after")
+    def check_version(self) -> Self:
+        if re.match(r"v^\d\.\d\.\d", self.model_version) is None:
+            raise ValueError(f"'{self.model_version}' is not a valid version.")
+
+        return self
+
+    @classmethod
+    def load_model(cls, loadable: str) -> Model:
+        return Model().load(run_id=loadable)
 
 
 @svc.endpoint(
     path="/predictions/{model_name}/{model_version}",
-    cache=afs.ModelCache[ModelArtifact, Model](client=afs.FsClient()),
+    cache=afs.ModelCache[VersionedModelSpec, Model](
+        client=afs.FsClient(as_type=afs.Fetchable.Uri),
+        path=afs.path("s3://model-bucket/{model_name}/{model_version}/"),
+        refresh=afs.Cron(schedule="0 * * * * *"),
+    ),
     batch_max_delay_ms=10,
     batch_max_size=64,
 )
-def handler(model: Model, records_df: Input.DataFrame) -> Output.DataFrame:
-    return model.predict(records_df=records_df)
+def handler(model: Model, records: Input.DataFrame) -> Output.DataFrame:
+    return model.predict(records_df=records)
 
 
 async def main():
-    server = svc.Server()
-    server.register(handler)
+    server = svc.Server().register(handler)
     await server.serve()
 
 

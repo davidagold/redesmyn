@@ -1,6 +1,8 @@
 from enum import Enum
+from pathlib import Path
 from typing import Annotated, Any, Self, cast
 from annotated_types import Ge, Predicate
+import lightgbm as lgbm
 import mlflow
 from more_itertools import first, one
 from pydantic import (
@@ -73,8 +75,11 @@ class RegionalModelSpec(afs.ArtifactSpec):
 
     # These fields are `ArtifactSpec` class variables.
     # You can omit and pass them to `artifact_spec` instead.
-    load_fn = mlflow.sklearn.load_model
     cache_path = afs.path("s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}")
+
+    @classmethod
+    def load_model(cls, uri: str | Path) -> lgbm.sklearn.LGBMRegressor:
+        return mlflow.sklearn.load_model(model_uri=uri)
 
     @field_validator("iso3166_2", mode="before")
     @classmethod
@@ -99,31 +104,31 @@ class TestArtifactSpec:
 
 class TestModelCache:
     client = DummyClient()
-    path = "s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}/"
+    path = afs.path("s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}/")
 
     def test_init_with_type_annotation(self):
         _ = afs.ModelCache[RegionalModelSpec, object](
-            client=self.client, spec=RegionalModelSpec, latest_key="id"
+            client=self.client, path=self.path, spec=RegionalModelSpec[object]
         )
 
     def test_get(self):
-        cache = afs.ModelCache(client=self.client, spec=RegionalModelSpec, latest_key="id")
+        cache = afs.ModelCache(client=self.client, path=self.path, spec=RegionalModelSpec)
         cache.get(iso3166_1="US", iso3166_2="US-CA", id=123)
 
     def test_get_latest(self):
         print(f"{RegionalModelSpec.latest_key=}")
-        cache = afs.ModelCache(client=self.client, spec=RegionalModelSpec, latest_key="id")
+        cache = afs.ModelCache(client=self.client, path=self.path, spec=RegionalModelSpec)
         cache.get_latest(iso3166_1="US", iso3166_2="US-CA")
         with pytest.raises(Exception):
             cache.get_latest(iso3166_1="US", iso3166_2="US-CA", id=123)
 
     def test_invalid_iso3166_1(self):
-        cache = afs.ModelCache(client=self.client, spec=RegionalModelSpec, latest_key="id")
+        cache = afs.ModelCache(client=self.client, path=self.path, spec=RegionalModelSpec)
         with pytest.raises(ValidationError):
             cache.get_latest(iso3166_1="FR", iso3166_2="FR-17", id=123)
 
     def test_invalid_iso3166_2(self):
-        cache = afs.ModelCache(client=self.client, spec=RegionalModelSpec, latest_key="id")
+        cache = afs.ModelCache(client=self.client, path=self.path, spec=RegionalModelSpec)
         with pytest.raises(ValidationError) as e:
             cache.get_latest(iso3166_1="US", iso3166_2="GB-ENG", id=123)
 
@@ -131,7 +136,7 @@ class TestModelCache:
         assert error["msg"] == "Value error, 'Iso3166_2.GB_ENG is not a subdivision of Iso3166_1.US"
 
     def test_invalid_id(self):
-        cache = afs.ModelCache(client=self.client, spec=RegionalModelSpec, latest_key="id")
+        cache = afs.ModelCache(client=self.client, path=self.path, spec=RegionalModelSpec)
         with pytest.raises(ValidationError) as e:
             cache.get(iso3166_1="US", iso3166_2="US-CA", id=-1)
 

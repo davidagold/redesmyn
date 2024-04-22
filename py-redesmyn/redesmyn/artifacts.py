@@ -1,15 +1,21 @@
+from datetime import timedelta
+from enum import Enum
+from inspect import signature
+from io import FileIO
 import operator
-import re
 from abc import abstractmethod
 from pathlib import Path
 from string import Template
+from cachetools import LRUCache
 from typing import (
+    IO,
     Callable,
     ClassVar,
     Dict,
     Generic,
     Iterable,
     List,
+    Literal,
     Optional,
     Self,
     Tuple,
@@ -18,16 +24,13 @@ from typing import (
     Union,
     cast,
     get_args,
+    overload,
 )
 
 from annotated_types import SupportsGt, SupportsLt
-from more_itertools import filter_map, only
+from more_itertools import filter_map, first, only
 from pydantic import BaseModel, ConfigDict, create_model, model_validator
 from pydantic.fields import FieldInfo
-
-
-def _ensure_trailing_slash(path_component: str) -> str:
-    return re.sub(r"^(.*)(?!/)$", r"\1/", path_component)
 
 
 class PathTemplate(Template):
@@ -101,17 +104,18 @@ class LatestKey(BaseModel, Generic[K]):
         return self
 
 
+# TODO: Implement Rust ModelUri enum with URL and FS variants
 ModelUri = str
 M = TypeVar("M", covariant=True)
 LoadFn = Callable[[ModelUri], M]
 
 
-class ArtifactSpec(BaseModel):
+class ArtifactSpec(BaseModel, Generic[M]):
     """A `Pydantic <https://docs.pydantic.dev/latest/>`_ `BaseModel` subclass for declaring and validating artifact specifications.
 
     Requests made to a :class:`redesmyn.service.Endpoint` may include URL parameters to specify
     which variant of a model to apply to the requesst payload. We use subclasses
-    of `ArtifactSpec` to validate URL parameters requested of an endpoint.
+    of `ArtifactSpec` to validate URL parameters of a requestsed endpoint.
     The fields of an `ArtifactSpec` correspond one-to-one with both the endpoint's
     path parameters and the storage location's path parameters. An endpoint declaring
     use of a given `ArtifactSpec` will apply the latter's `BaseModel.model_validate`
@@ -185,7 +189,7 @@ class ArtifactSpec(BaseModel):
                     not isinstance(iso3166_1, Iso3166_1)
                     or not iso3166_2.is_subdivision(of=iso3166_1)
                 ):
-                    raise ValueError(f"'{iso3166_2} is not a subdivision of {iso3166_1}")
+                    raise ValueError(f"{iso3166_2} is not a subdivision of {iso3166_1}")
 
                 return iso3166_2
 
@@ -198,7 +202,6 @@ class ArtifactSpec(BaseModel):
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    load_fn: ClassVar[LoadFn]
     cache_path: ClassVar[Optional[PathTemplate]]
     """(Optional) The (templated) path that, with parameters substituted, directs to an artifact location.
 
@@ -208,17 +211,22 @@ class ArtifactSpec(BaseModel):
     latest_key: ClassVar[Optional[str]]
 
     @classmethod
-    def from_path(cls, path: str | PathTemplate, spec_name: str) -> Type["ArtifactSpec"]:
+    @abstractmethod
+    def load_model(cls, loadable: str | Path | bytes | FileIO) -> M:
+        pass
+
+    @classmethod
+    def from_path_template(cls, path: str | PathTemplate, spec_name: str) -> Type["ArtifactSpec[M]"]:
         param_ids = (
             path.get_identifiers()
             if isinstance(path, PathTemplate)
             else PathTemplate(path).get_identifiers()
         )
         params = {k: (Optional[str], None) for k in param_ids}
-        return create_model(spec_name, __base__=(ArtifactSpec,), **params)
+        return create_model(spec_name, __base__=(ArtifactSpec, Generic[M]), **params)
 
     @staticmethod
-    def generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec"]:
+    def generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec[M]"]:
         def is_latest_key(key_field_tuple: Tuple[str, FieldInfo]) -> Optional[str]:
             key, field = key_field_tuple
             key_cls = only(
@@ -231,7 +239,9 @@ class ArtifactSpec(BaseModel):
         err = ValueError(f"Too many fields in `{base.__name__}` annotated as `LatestKey`")
         latest_key = only(filter_map(is_latest_key, base.model_fields.items()), too_long=err)
 
-        spec: Type[ArtifactSpec] = create_model(f"{base.__name__}Spec", __base__=(base, ArtifactSpec))
+        spec: Type[ArtifactSpec[M]] = create_model(
+            f"{base.__name__}Spec", __base__=(base, ArtifactSpec, Generic[M])
+        )
         spec.latest_key = latest_key
         return spec
 
@@ -246,7 +256,6 @@ class ArtifactSpec(BaseModel):
 
 
 def artifact_spec(
-    load_fn: Callable[[ModelUri], M],
     cache_path: Optional[str] = None,
     latest_key: Optional[str] = None,
 ) -> Callable[[Type[BaseModel]], Type[ArtifactSpec]]:
@@ -285,7 +294,6 @@ def artifact_spec(
     def wrapper(cls: Type[BaseModel]) -> Type[ArtifactSpec]:
         spec = ArtifactSpec.generate_subclass(cls)
         spec.latest_key = spec.latest_key or latest_key
-        spec.load_fn = load_fn
 
         if not cache_path:
             return spec
@@ -300,31 +308,74 @@ def artifact_spec(
     return wrapper
 
 
+class FetchAs(Enum):
+    Uri = "URI"
+    Bytes = "BYTES"
+    Utf8String = "STRING"
+    TmpFile = "TMP_FILE"
+
+
 class ArtifactsClient(Generic[M]):
+    def __init__(self, fetch_as: FetchAs = FetchAs.Uri) -> None:
+        self._fetch_as = fetch_as
+
     @abstractmethod
     def _list(self, path: str) -> Iterable[str]:
         pass
 
     @abstractmethod
-    def _get(self, path: str) -> Path:
+    def _fetch_uri(self, path: str) -> Path:
         pass
+
+    @abstractmethod
+    def _fetch_bytes(self, path: str) -> bytes:
+        pass
+
+    def _fetch_tmp_file(self, path: str) -> IO:
+        raise NotImplementedError()
+
+    def _fetch_utf8_str(self, path: str) -> str:
+        return self._fetch_bytes(path).decode("utf8")
 
     def list(self, path: PathTemplate, **kwargs) -> Iterable[str]:
         return self._list(path.substitute(**kwargs))
 
-    def get(self, path: PathTemplate, **kwargs) -> Path:
-        return self._get(path.substitute(**kwargs))
+    @overload
+    def fetch(self, path: PathTemplate, as_type: Literal[FetchAs.Uri], **kwargs) -> Path: ...
+    @overload
+    def fetch(self, path: PathTemplate, as_type: Literal[FetchAs.TmpFile], **kwargs) -> IO: ...
+    @overload
+    def fetch(self, path: PathTemplate, as_type: Literal[FetchAs.Bytes], **kwargs) -> bytes: ...
+    @overload
+    def fetch(self, path: PathTemplate, as_type: Literal[FetchAs.Utf8String], **kwargs) -> str: ...
+
+    def fetch(self, path: PathTemplate, as_type: FetchAs, **kwargs) -> Union[Path, IO, bytes, str]:
+        uri = path.substitute(mapping=kwargs)
+        match as_type:
+            case FetchAs.Uri:
+                return Path(uri)
+            case FetchAs.Bytes:
+                return self._fetch_bytes(path=uri)
+            case FetchAs.TmpFile:
+                return self._fetch_tmp_file(path=uri)
+            case FetchAs.Utf8String:
+                return self._fetch_utf8_str(path=uri)
 
 
 class FsClient(ArtifactsClient):
     def _list(self, path: str) -> Iterable[str]:
         yield from (fp.as_posix() for fp in Path(path).glob("*"))
 
-    def _get(self, path: str) -> Path:
-        return Path(path).resolve()
+    def _fetch(self, path: str) -> bytes:
+        with Path(path).open(mode="r") as f:
+            return f.buffer.read()
 
 
-T = TypeVar("T", bound=ArtifactSpec)
+class Cron(BaseModel):
+    schedule: str
+
+
+T = TypeVar("T", bound=ArtifactSpec, covariant=True)
 
 
 class ModelCache(Generic[T, M]):
@@ -379,40 +430,70 @@ class ModelCache(Generic[T, M]):
             return model.predict(records_df=records_df)
     """
 
+    @staticmethod
+    def _validate_spec_type(spec: Type) -> Optional[Type[ArtifactSpec[M]]]:
+        if not isinstance(spec, Type) or not issubclass(spec, ArtifactSpec):
+            raise ValueError(f"`spec={spec}` is not a type")
+
+        if len(type_param_args := get_args(spec)) == 0:
+            return None
+
+        # Runtime type check
+        model_type = first(type_param_args)
+        if model_type != signature(spec.load_model).return_annotation:
+            raise TypeError(
+                f"Model type `{model_type}` specified in `{spec.__name__}` type param "
+                f"does not match return type annotation of {spec.load_model}"
+            )
+
+        return spec
+
     def __init__(
         self,
         client: ArtifactsClient[M],
-        spec: Optional[Type[T]] = None,
-        path: Optional[str] = None,
-        latest_key: Optional[str] = None,
+        path: PathTemplate,
+        spec: Optional[Type[ArtifactSpec[M]]] = None,
+        refresh: Optional[timedelta | Cron] = None,
+        max_size: int = 128,
     ) -> None:
         if len(type_param_args := get_args(type(self))) > 0:
-            spec, _ = type_param_args
-            self._spec = cast(Type[ArtifactSpec], spec)
+            if not (spec := self._validate_spec_type(spec=cast(Type, first(type_param_args)))):
+                msg = f"First type param to `ModelCache` must be valid `ArtifactSpec` (got `{spec}`)"
+                raise ValueError(msg)
+            else:
+                self._Spec = spec
         elif spec is None or not issubclass(spec, ArtifactSpec):
             msg = f"Argument `spec={spec}` of type `{type(spec)}` is not a subclass of `ArtifactSpec`"
             raise ValueError(msg)
         else:
-            self._spec = spec
+            self._Spec = spec
 
-        if (path is None) ^ (self._spec.cache_path is not None):
-            raise ValueError("Precisely one of `path` or `spec.cache_path()` must not be `None`")
-        if path and not path.endswith("/"):
+        if not path.template.endswith("/"):
             raise ValueError(f"Path must end with '/' (received '{path}').")
 
+        self._path = path
         self._client = client
-        self._path = self._spec.cache_path or PathTemplate(cast(str, path))
-        self._latest_key = self._spec.latest_key or latest_key
+        self._refresh = refresh
+        self._cache = LRUCache(maxsize=max_size)
 
     def get(self, **kwargs) -> M:
-        self._spec.model_validate(kwargs)
-        return self._client.get(self._path, **kwargs)
+        self._Spec.model_validate(kwargs)
+        loadable = self._client.fetch(self._path, **kwargs)
+        return self._Spec.load_model(loadable)
 
     def get_latest(self, **kwargs) -> M:
-        spec = self._spec.model_validate(kwargs)
+        spec = self._Spec.model_validate(kwargs)
+        # TODO: Move this check to model validation and pass `use_latest` through validation context
         if not ((latest_key := spec.latest_key) is None or (v := getattr(spec, latest_key)) is None):
             msg = f"Cannot fetch latest when `latest_key='{latest_key}' is set to {v}`"
             raise ValueError(msg)
+
+        spec_params: Dict = {self._Spec.latest_key: self.resolve_latest(**kwargs), **kwargs}
+        loadable = self._client.fetch(self._path, **spec_params)
+        return self._Spec.load_model(loadable)
+
+    def resolve_latest(self, **T) -> str:
+        pass
 
     def referesh(self, all: bool = False, **kwargs):
         pass
