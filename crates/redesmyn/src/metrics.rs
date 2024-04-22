@@ -14,13 +14,16 @@ use tokio::{
         mpsc::{Receiver, Sender},
         oneshot,
     },
+    task::JoinHandle,
 };
 use tracing::{
     error,
     field::{Field, Visit},
-    span, Subscriber,
+    span,
+    subscriber::Interest,
+    Subscriber,
 };
-use tracing_subscriber::{registry::LookupSpan, Layer};
+use tracing_subscriber::{filter::Filtered, layer::Filter, registry::LookupSpan, Layer};
 
 use crate::error::ServiceError;
 
@@ -186,24 +189,28 @@ impl MetricsEntry {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AwsEmfSubscriber {
+#[derive(Debug)]
+pub struct EmfMetrics {
     tx: Sender<MetricsEntry>,
+    task: JoinHandle<Result<(), ServiceError>>,
 }
 
-impl AwsEmfSubscriber {
-    pub fn new(max_delay_ms: u32, fp: String) -> AwsEmfSubscriber {
+impl EmfMetrics {
+    pub fn new<S>(max_delay_ms: u32, fp: String) -> Filtered<EmfMetrics, EmfInterest, S>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<MetricsEntry>(512);
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let mut file = File::create(fp.as_str()).await.unwrap();
             loop {
-                let task = AwsEmfSubscriber::receive_and_flush(&mut rx, &mut file, max_delay_ms);
+                let task = EmfMetrics::receive_and_flush(&mut rx, &mut file, max_delay_ms);
                 if let Err(err) = task.await {
                     error!("{err}");
                 };
             }
         });
-        AwsEmfSubscriber { tx }
+        EmfMetrics { tx, task }.with_filter(EmfInterest::Exclusive)
     }
 
     async fn receive_and_flush<W: AsyncWriteExt + Unpin>(
@@ -246,7 +253,7 @@ impl AwsEmfSubscriber {
     }
 }
 
-impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
     fn on_event(
         &self,
         _event: &tracing::Event<'_>,
@@ -299,6 +306,56 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
             ctx.span(id)?.extensions_mut().insert(dims);
             Some(())
         })();
+    }
+}
+
+pub enum EmfInterest {
+    Exclusive,
+    Never,
+}
+
+impl<S: Subscriber> Filter<S> for EmfInterest {
+    fn enabled(
+        &self,
+        meta: &tracing::Metadata<'_>,
+        ctx: &tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Exclusive) => return true,
+                    ("__Dimensions", Self::Exclusive) => return true,
+                    ("__Metrics", Self::Never) => return false,
+                    ("__Dimensions", Self::Never) => return false,
+                    _ => continue,
+                }
+            }
+        }
+        match self {
+            Self::Exclusive => false,
+            Self::Never => true,
+        }
+    }
+
+    fn callsite_enabled(
+        &self,
+        meta: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Exclusive) => return Interest::always(),
+                    ("__Dimensions", Self::Exclusive) => return Interest::always(),
+                    ("__Metrics", Self::Never) => return Interest::never(),
+                    ("__Dimensions", Self::Never) => return Interest::never(),
+                    _ => continue,
+                }
+            }
+        }
+        match self {
+            Self::Exclusive => Interest::never(),
+            Self::Never => Interest::always(),
+        }
     }
 }
 
