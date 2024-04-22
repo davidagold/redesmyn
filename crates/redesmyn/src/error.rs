@@ -74,13 +74,6 @@ impl From<&str> for ServiceError {
 
 pub type ServiceResult<T> = Result<T, ServiceError>;
 
-// impl<T: for<'py> FromPyObject<'py>> From<PyResult<PyObject>> for ServiceResult<T> {
-// impl<T> From<ServiceResult<T>> for Wrap<FromPyObject<'py>> {
-//     fn from(value: PyResult<PyObject>) -> Self {
-//         Ok(Python::with_gil(|py| value?.extract::<T>(py))?)
-//     }
-// }
-
 #[derive(Error, Debug)]
 pub enum PredictionError {
     #[error("Prediction failed: {0}.")]

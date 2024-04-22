@@ -75,3 +75,9 @@ impl<T> Wrap<T> {
         &mut self.0
     }
 }
+
+impl<T> From<T> for Wrap<T> {
+    fn from(value: T) -> Self {
+        Wrap(value)
+    }
+}
