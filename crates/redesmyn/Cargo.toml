@@ -22,6 +22,7 @@ polars = { features = [
     "partition_by",
 ], workspace = true }
 pyo3 = { workspace = true }
+pyo3-asyncio = { workspace = "true", features = ["attributes", "tokio-runtime"]}
 pyo3-polars = { workspace = true }
 serde = { features = ["derive"], workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }

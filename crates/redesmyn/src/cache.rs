@@ -2,15 +2,21 @@ use crate::{
     common::Wrap,
     error::{ServiceError, ServiceResult},
 };
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{buf::Reader, Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
-use futures::TryFutureExt;
+use futures::{
+    channel::oneshot::{self, Canceled},
+    TryFutureExt,
+};
 use lru::LruCache;
 use pyo3::{
-    exceptions::PyValueError, pyclass, pymethods, types::PyFunction, FromPyObject, Py, PyAny,
-    PyResult,
+    exceptions::{PyRuntimeError, PyValueError},
+    ffi::PyObject,
+    pyclass, pymethods,
+    types::PyFunction,
+    FromPyObject, Py, PyAny, PyResult, Python,
 };
 use serde::Serialize;
 use std::{
@@ -18,13 +24,21 @@ use std::{
     fs,
     future::{self, Future},
     num::NonZeroUsize,
+    ops::Deref,
     path::PathBuf,
     pin::Pin,
     str::FromStr,
     sync::Arc,
 };
+use thiserror::Error;
 use tokio::{
-    sync::{mpsc, Mutex},
+    sync::{
+        mpsc::{
+            self,
+            error::{SendError, TrySendError},
+        },
+        Mutex,
+    },
     task::JoinHandle,
 };
 
@@ -45,6 +59,12 @@ impl Schedule {
             (Schedule::Interval(_), None) => UpdateTime::Now,
         };
         next_update.into()
+    }
+}
+
+impl Default for Schedule {
+    fn default() -> Self {
+        Schedule::Cron(cron::Schedule::from_str("0 0 0 * * *").unwrap())
     }
 }
 
@@ -72,22 +92,76 @@ impl From<DateTime<Utc>> for UpdateTime {
     }
 }
 
-trait ArtifactSpec {
+// For ease of use, should consider:
+// - Keeping this trait as an internal, renamed trait, exposing an `ArtifactSpec` trait
+//   that implements the internal trait for all `Serialize` types,
+// - Including a `derive` macro
+trait ArtifactSpec<'a> {
     type Spec: Serialize;
+    type Ref: Deref<Target = Self::Spec> + 'a;
 
-    fn spec(&self) -> &Self::Spec;
+    fn spec(&'a self) -> Self::Ref;
+}
+
+impl<'a> ArtifactSpec<'a> for BTreeMap<String, String> {
+    type Spec = &'a Self;
+    type Ref = Box<&'a Self>;
+
+    fn spec(&'a self) -> Box<&'a Self> {
+        self.into()
+    }
+}
+
+impl<'a, T> ArtifactSpec<'a> for Wrap<T>
+where
+    T: ArtifactSpec<'a, Spec = T, Ref = &'a T> + Serialize + 'a,
+{
+    type Spec = T;
+    type Ref = &'a T;
+
+    fn spec(&'a self) -> &'a T {
+        self.inner().spec()
+    }
+}
+
+impl<'a, T> ArtifactSpec<'a> for Box<T>
+where
+    T: ArtifactSpec<'a, Spec = T, Ref = &'a T> + Serialize + 'a,
+{
+    type Spec = &'a T;
+    type Ref = Box<&'a T>;
+
+    fn spec(&'a self) -> Box<&'a T> {
+        self.as_ref().spec().into()
+    }
+}
+
+type BoxedSpec = Box<
+    dyn for<'a> ArtifactSpec<
+            'a,
+            Spec = &'a BTreeMap<String, String>,
+            Ref = Box<&'a BTreeMap<String, String>>,
+        > + Send,
+>;
+
+impl<S> std::fmt::Debug for dyn for<'a> ArtifactSpec<'a, Spec = S, Ref = &'a S>
+where
+    S: Serialize + for<'a> ArtifactSpec<'a>,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!(
+            "<impl ArtifactSpec, fields: {{ {:#?} }}>",
+            serde_json::to_string(self.spec())
+        ))
+    }
 }
 
 // TODO: We will probably want to make the original `Box` a reference type
-impl From<Box<dyn ArtifactSpec<Spec = Box<dyn erased_serde::Serialize + Send>> + Send>>
-    for Wrap<Result<CacheKey, serde_json::Error>>
-{
-    fn from(
-        dyn_spec: Box<dyn ArtifactSpec<Spec = Box<dyn erased_serde::Serialize + Send>> + Send>,
-    ) -> Self {
+impl From<BoxedSpec> for Wrap<Result<CacheKey, serde_json::Error>> {
+    fn from(dyn_spec: BoxedSpec) -> Self {
         {
             let mut writer = BytesMut::new().writer();
-            serde_json::to_writer(&mut writer, dyn_spec.spec());
+            serde_json::to_writer(&mut writer, dyn_spec.spec().as_ref());
             let spec: BTreeMap<String, String> = {
                 match serde_json::from_reader(writer.into_inner().reader()) {
                     Ok(spec) => spec,
@@ -107,14 +181,6 @@ impl Serialize for Wrap<BTreeMap<String, String>> {
         S: serde::Serializer,
     {
         self.0.serialize(serializer)
-    }
-}
-
-impl ArtifactSpec for Wrap<BTreeMap<String, String>> {
-    type Spec = BTreeMap<String, String>;
-
-    fn spec(&self) -> &Self::Spec {
-        &self.0
     }
 }
 
@@ -209,10 +275,29 @@ impl FetchAs {
     }
 }
 
-enum Message {
-    FetchLatest(Box<dyn ArtifactSpec<Spec = Box<dyn erased_serde::Serialize + Send>> + Send>),
-    UpdateEntry(CacheKey, FetchAs),
-    GetEntry(Box<dyn ArtifactSpec<Spec = Box<dyn erased_serde::Serialize + Send>> + Send>),
+enum Command {
+    UpdateEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
+    InsertEntry(CacheKey, FetchAs, oneshot::Sender<ServiceResult<()>>),
+    GetEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Command::*;
+        match self {
+            UpdateEntry(spec, _) => f.write_fmt(format_args!(
+                "<UpdateEntry: spec = {}>",
+                serde_json::to_string(spec.spec().as_ref())
+                    .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
+            )),
+            InsertEntry(key, ..) => f.write_fmt(format_args!("<InsertEntry: key = {key}>")),
+            GetEntry(spec, _) => f.write_fmt(format_args!(
+                "<GetEntry: spec = {}>",
+                serde_json::to_string(spec.spec().as_ref())
+                    .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
+            )),
+        }
+    }
 }
 
 type CacheKey = String;
@@ -222,7 +307,7 @@ struct RefreshConfig {
     key: String,
     path: PathBuf,
     last_updated: Option<DateTime<Utc>>,
-    tx: mpsc::Sender<Message>,
+    tx: mpsc::Sender<Command>,
     client: Arc<ArtifactsClient>,
     fetch_as: FetchAs,
 }
@@ -233,7 +318,7 @@ impl RefreshConfig {
         path: PathBuf,
         last_updated: Option<DateTime<Utc>>,
         client: Arc<ArtifactsClient>,
-        tx: mpsc::Sender<Message>,
+        tx: mpsc::Sender<Command>,
         fetch_as: FetchAs,
     ) -> RefreshConfig {
         RefreshConfig {
@@ -331,36 +416,71 @@ impl From<RefreshTask<PendingFetch>> for RefreshTask<FetchingData> {
 }
 
 struct Cache {
-    // model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshTask, Py<PyAny>)>>>,
     schedule: Schedule,
     load_model: Py<PyFunction>,
-    tx: Arc<mpsc::Sender<Message>>,
+    tx: Arc<mpsc::Sender<Command>>,
     task: JoinHandle<ServiceResult<()>>,
 }
 
 type RefreshEntry = Box<dyn Refresh<State = dyn RefreshState + Send> + Send>;
 
 impl Cache {
+    pub fn new(
+        max_size: Option<usize>,
+        load_model: Py<PyFunction>,
+        schedule: Option<Schedule>,
+    ) -> Cache {
+        let default_cache_size = 128;
+        let model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>> = Arc::new(
+            LruCache::new(NonZeroUsize::new(max_size.unwrap_or(default_cache_size)).unwrap())
+                .into(),
+        );
+
+        let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(default_cache_size));
+        let task = tokio::spawn(Cache::task(model_cache, rx));
+
+        Cache {
+            schedule: schedule.unwrap_or_default(),
+            load_model,
+            tx: tx.into(),
+            task,
+        }
+    }
+
     async fn task(
         model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>>,
-        mut rx: mpsc::Receiver<Message>,
+        mut rx: mpsc::Receiver<Command>,
     ) -> ServiceResult<()> {
         loop {
             let Some(msg) = rx.recv().await else { return ServiceError::from("").into() };
             match msg {
-                Message::FetchLatest(dyn_spec) => {
-                    let Wrap(maybe_key): Wrap<Result<CacheKey, serde_json::Error>> =
-                        dyn_spec.into();
+                Command::UpdateEntry(spec, tx) => {
+                    // TODO: Make this `TryInto` and convert the error type.
+                    let Wrap(maybe_key): Wrap<Result<CacheKey, serde_json::Error>> = spec.into();
 
                     // The following does not refresh the cache entry directly, but rather spawns a new task
                     // to handle data fetching for the given key and tracks the task's association with said key.
                     // self.refresh(key).await;
                 }
-                Message::UpdateEntry(key, payload) => {}
-                Message::GetEntry(key) => {}
+                Command::InsertEntry(key, payload, tx) => {}
+                Command::GetEntry(key, tx) => {}
             }
         }
     }
+
+    fn try_send(&self, command: Command) -> Result<(), CacheError> {
+        self.tx.try_send(command).map_err(|err| err.into())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("Failed to send command {:#?}", 0.0)]
+    SendCommandError(#[from] SendError<Command>),
+    #[error("Failed to send command {:#?} ({})", 0.0, 0)]
+    TrySendCommandError(#[from] TrySendError<Command>),
+    #[error("CacheError: Failed to receive response (channel closed)")]
+    ReceiveResponseError(#[from] Canceled),
 }
 
 #[pyclass]
@@ -379,26 +499,42 @@ impl PyCache {
         cron_expr: Option<String>,
         max_age_seconds: Option<u32>,
     ) -> PyResult<PyCache> {
-        let schedule: Schedule = match (cron_expr, max_age_seconds) {
-            (Some(expr), None) => cron::Schedule::from_str(expr.as_str())
-                .map_err(|err| PyValueError::new_err(err.to_string()))?
-                .into(),
-            (None, Some(seconds)) => seconds.into(),
-            _ => return Err(PyValueError::new_err("Something went terribly wrong.")),
+        let schedule: Option<Schedule> = match (cron_expr, max_age_seconds) {
+            (Some(expr), None) => Some(
+                cron::Schedule::from_str(expr.as_str())
+                    .map_err(|err| PyValueError::new_err(err.to_string()))?
+                    .into(),
+            ),
+            (None, Some(seconds)) => Some(seconds.into()),
+            (None, None) => None,
+            (Some(_), Some(_)) => {
+                let msg = "Specify *at most* one of either `cron_expr` or `max_age_seconds`.";
+                return Err(PyValueError::new_err(msg));
+            }
         };
 
-        let model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>> =
-            Arc::new(LruCache::new(NonZeroUsize::new(max_size.unwrap_or(128)).unwrap()).into());
-        let (tx, rx) = mpsc::channel::<Message>(128);
-        let task = tokio::spawn(Cache::task(model_cache.clone(), rx));
-        let cache = Cache {
-            // model_cache,
-            schedule,
-            load_model: load_model.into(),
-            tx: tx.into(),
-            task,
-        };
-        Ok(PyCache { cache, client: client_spec.to_client() })
+        Ok(PyCache {
+            cache: Cache::new(max_size, load_model.into(), schedule),
+            client: client_spec.to_client(),
+        })
+    }
+
+    #[pyo3(signature = (**kwargs))]
+    fn get<'py>(
+        &'py self,
+        py: Python<'py>,
+        kwargs: Option<BTreeMap<String, String>>,
+    ) -> PyResult<&'py PyAny> {
+        let (tx, rx) = oneshot::channel::<Py<PyAny>>();
+        let spec = kwargs.unwrap_or_default();
+        let cmd = Command::GetEntry(Box::new(spec), tx);
+        self.cache.try_send(cmd).map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        pyo3_asyncio::tokio::future_into_py(py, async move {
+            let model = rx.await.map_err(|err| {
+                PyRuntimeError::new_err(format!("Failed to receive response from cache: {err}"))
+            })?;
+            Ok(model)
+        })
     }
 }
 

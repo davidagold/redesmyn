@@ -177,3 +177,5 @@ pub fn metric_instrument(attr: TokenStream, item: TokenStream) -> TokenStream {
     )
     .into()
 }
+
+// TODO: do_scope!

@@ -2085,6 +2085,7 @@ dependencies = [
  "lru",
  "polars",
  "pyo3",
+ "pyo3-asyncio",
  "pyo3-polars",
  "redesmyn-macros",
  "serde",
