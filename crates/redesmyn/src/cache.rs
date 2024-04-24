@@ -4,6 +4,7 @@ use crate::{
 };
 use bytes::{buf::Reader, Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
+use polars::lazy::dsl::reduce_exprs;
 use core::fmt;
 use cron;
 use futures::{
@@ -136,13 +137,6 @@ where
     }
 }
 
-type BoxedSpec = Box<
-    dyn for<'a> ArtifactSpec<
-            'a,
-            Spec = &'a BTreeMap<String, String>,
-            Ref = Box<&'a BTreeMap<String, String>>,
-        > + Send,
->;
 
 impl<S> std::fmt::Debug for dyn for<'a> ArtifactSpec<'a, Spec = S, Ref = &'a S>
 where
@@ -156,24 +150,30 @@ where
     }
 }
 
-// TODO: We will probably want to make the original `Box` a reference type
-impl From<BoxedSpec> for Wrap<Result<CacheKey, serde_json::Error>> {
-    fn from(dyn_spec: BoxedSpec) -> Self {
-        {
-            let mut writer = BytesMut::new().writer();
-            serde_json::to_writer(&mut writer, dyn_spec.spec().as_ref());
-            let spec: BTreeMap<String, String> = {
-                match serde_json::from_reader(writer.into_inner().reader()) {
-                    Ok(spec) => spec,
-                    Err(err) => return Wrap(Err(err)),
-                }
-            };
-            let parts = spec.into_iter().map(|(k, v)| [k, v].join("/")).collect::<Vec<_>>();
-            let key = parts.join("/");
-            Wrap(Ok(key))
-        }
+type BoxedSpec = Box<
+    dyn for<'a> ArtifactSpec<
+            'a,
+            Spec = &'a BTreeMap<String, String>,
+            Ref = Box<&'a BTreeMap<String, String>>,
+        > + Send,
+>;
+
+impl Wrap<BoxedSpec> {
+    fn try_as_key(&self) -> Result<CacheKey, serde_json::Error> {
+        let mut writer = BytesMut::new().writer();
+        serde_json::to_writer(&mut writer, self.inner().spec().as_ref());
+        let spec: BTreeMap<String, String> =
+            serde_json::from_reader(writer.into_inner().reader())?;
+        let parts = spec.into_iter().map(|(k, v)| [k, v].join("/")).collect::<Vec<_>>();
+        let key = parts.join("/");
+        Ok(key)
+    }
+    
+    fn try_as_path(&self) -> Result<PathBuf, serde_json::Error> {
+        
     }
 }
+
 
 impl Serialize for Wrap<BTreeMap<String, String>> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -276,7 +276,7 @@ impl FetchAs {
 }
 
 enum Command {
-    UpdateEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
+    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Py<PyAny>>),
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<ServiceResult<()>>),
     GetEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
 }
@@ -285,7 +285,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Command::*;
         match self {
-            UpdateEntry(spec, _) => f.write_fmt(format_args!(
+            UpdateEntry(spec, _, _) => f.write_fmt(format_args!(
                 "<UpdateEntry: spec = {}>",
                 serde_json::to_string(spec.spec().as_ref())
                     .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
@@ -307,7 +307,7 @@ struct RefreshConfig {
     key: String,
     path: PathBuf,
     last_updated: Option<DateTime<Utc>>,
-    tx: mpsc::Sender<Command>,
+    tx: Arc<mpsc::Sender<Command>>,
     client: Arc<ArtifactsClient>,
     fetch_as: FetchAs,
 }
@@ -318,7 +318,7 @@ impl RefreshConfig {
         path: PathBuf,
         last_updated: Option<DateTime<Utc>>,
         client: Arc<ArtifactsClient>,
-        tx: mpsc::Sender<Command>,
+        tx: Arc<mpsc::Sender<Command>>,
         fetch_as: FetchAs,
     ) -> RefreshConfig {
         RefreshConfig {
@@ -332,9 +332,15 @@ impl RefreshConfig {
     }
 }
 
-struct RefreshTask<T> {
+struct RefreshTask<T: RefreshState> {
     config: RefreshConfig,
     state: T,
+}
+
+impl<T:RefreshState> RefreshTask<T> {
+    fn is_done(&self) -> bool {
+        self.state.refresh_complete()
+    }
 }
 
 impl RefreshTask<PendingFetch> {
@@ -359,11 +365,15 @@ impl<T: Send> Refresh for RefreshTask<T> {
     type State = T;
 }
 
-trait RefreshState {}
+trait RefreshState {
+    fn refresh_complete(&self) -> bool {
+        false
+    }
+}
 
 struct PendingFetch {
     next_update: UpdateTime,
-    handle: JoinHandle<ServiceResult<()>>,
+    task: JoinHandle<ServiceResult<()>>,
 }
 impl RefreshState for PendingFetch {}
 
@@ -384,34 +394,79 @@ impl PendingFetch {
         };
         let state = PendingFetch {
             next_update: next_update.clone(),
-            handle: tokio::spawn(async move { wait_task.await }),
+            task: tokio::spawn(async move { wait_task.await }),
         };
         Ok(state)
     }
 }
 
 struct FetchingData {
-    handle: JoinHandle<ServiceResult<FetchAs>>,
+    task: JoinHandle<ServiceResult<FetchAs>>,
 }
+impl RefreshState for FetchingData {}
 
 struct UpdatingCache {
-    data: FetchAs,
-    handle: JoinHandle<ServiceResult<()>>,
+    task: JoinHandle<ServiceResult<()>>,
+}
+impl RefreshState for UpdatingCache {}
+
+struct RefreshComplete {
+    
 }
 
-trait Transition<U, V> {
-    fn into(self) -> impl Future<Output = ServiceResult<(RefreshConfig, V)>>;
+impl RefreshState for RefreshComplete {
+    fn refresh_complete(&self) -> bool {
+        true
+    }
 }
 
-impl From<RefreshTask<PendingFetch>> for RefreshTask<FetchingData> {
-    fn from(task: RefreshTask<PendingFetch>) -> Self {
-        let RefreshTask { config, state: _ } = task;
+trait Transition {
+    // type Current;
+    type Next;
+
+    // fn new<T, S>(config: RefreshConfig, state: S) -> RefreshTask<Self::Current>
+    // where
+    //     T: Transition<Current = S, Next = Self::Current>
+    // {
+
+    // }
+
+    fn transition(self) -> impl Future<Output = ServiceResult<RefreshTask<Self::Next>>>;
+}
+
+impl Transition for RefreshTask<PendingFetch> {
+    type Next = FetchingData;
+
+    async fn transition(self) -> ServiceResult<RefreshTask<FetchingData>> {
+        let RefreshTask { config, state: _ } = self;
         let RefreshConfig { client, path, .. } = config.clone();
 
         let container = FetchAs::new_empty_not_none(&config.fetch_as);
         let fut = client.fetch(path, container).into_future();
-        let handle = tokio::spawn(async move { fut.await });
-        RefreshTask { config, state: FetchingData { handle } }
+        let task = tokio::spawn(async move { fut.await });
+        Ok(RefreshTask { config, state: FetchingData { task } })
+    }
+}
+
+impl Transition for RefreshTask<FetchingData> {
+    type Next = UpdatingCache;
+
+    async fn transition(self) -> ServiceResult<RefreshTask<UpdatingCache>> {
+        let RefreshTask { config, state } = self;
+        let Ok(data) = state.task.await? else {
+            let msg = "Failed to receive artifact data from `RefreshTask<FetchingData>`";
+            return ServiceError::from(msg).into();
+        };
+        let (tx, rx) = oneshot::channel::<ServiceResult<()>>();
+        let msg = Command::InsertEntry(config.key.clone(), data, tx);
+
+        let task = tokio::spawn(async move {
+            match rx.await {
+                Ok(res) => res,
+                Err(err) => Err(ServiceError::from(err.to_string())),
+            }
+        });
+        Ok(RefreshTask { config, state: UpdatingCache { task } })
     }
 }
 
@@ -454,18 +509,46 @@ impl Cache {
         loop {
             let Some(msg) = rx.recv().await else { return ServiceError::from("").into() };
             match msg {
-                Command::UpdateEntry(spec, tx) => {
-                    // TODO: Make this `TryInto` and convert the error type.
-                    let Wrap(maybe_key): Wrap<Result<CacheKey, serde_json::Error>> = spec.into();
+                Command::UpdateEntry(spec, fetch_as, tx) => {
 
-                    // The following does not refresh the cache entry directly, but rather spawns a new task
-                    // to handle data fetching for the given key and tracks the task's association with said key.
-                    // self.refresh(key).await;
+                // The following does not refresh the cache entry directly, but rather spawns a new task
+                // to handle data fetching for the given key and tracks the task's association with said key.
+                // self.refresh(key).await;
+                //
+                // Will need to get the cache entry, lock the key, get last updated, pass everything
+                // to `refresh_entry`
+
                 }
                 Command::InsertEntry(key, payload, tx) => {}
                 Command::GetEntry(key, tx) => {}
             }
         }
+    }
+
+    async fn refresh_entry(
+        &self,
+        client: &Arc<ArtifactsClient>,
+        spec: BoxedSpec,
+        last_updated: Option<DateTime<Utc>>,
+        fetch_as: FetchAs,
+        fetch_now: bool,
+    ) -> Result<(), CacheError> {
+        let config = RefreshConfig {
+            client: client.clone(),
+            key: Wrap(spec).try_as_key()?;,
+            fetch_as,
+            path: Wrap(spec).try_as_path()?,
+            last_updated,
+            tx: self.tx.clone(),
+        };
+        let result = RefreshTask::new(&self.schedule, config, fetch_now)?
+            .transition()
+            .await?
+            .transition()
+            .await?;
+
+        // while Refre
+        Ok(())
     }
 
     fn try_send(&self, command: Command) -> Result<(), CacheError> {
