@@ -1,9 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::Not,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::common::Wrap;
+use crate::{common::Wrap, do_in};
 use serde::{self, Serialize, Serializer};
 use serde_json::{Number, Value};
 use strum::IntoStaticStr;
@@ -265,16 +266,14 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
         _event.record(&mut Wrap(&mut entry));
 
         // Include, but do not overwrite with, dimensions from parent span.
-        // (Operate in closure for easier `None`-handling.)
-        (|| {
+        do_in!(|| -> Option<()> {
             let span = _ctx.event_span(_event)?;
             let ext = span.extensions();
             let dims_span = ext.get::<DimensionsMapping>()?;
             for (k, v) in dims_span.iter() {
                 entry.dimensions.entry(*k).or_insert(v.clone());
             }
-            Some(())
-        })();
+        });
 
         let _ = self.tx.try_send(entry);
     }
@@ -285,27 +284,24 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
         id: &span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let mut dims = DimensionsMapping::new();
-
         // Include dimensions of present span.
+        let mut dims = DimensionsMapping::new();
         attrs.record(&mut Wrap(&mut dims));
 
         // Inherit dimensions of parent span.
-        (|| {
+        do_in!(|| -> Option<()> {
             let parent_span = ctx.span_scope(id)?.nth(1)?;
             for (k, v) in parent_span.extensions().get::<Wrap<DimensionsMapping>>()?.0.iter() {
                 // TODO: Avoid cloning
                 dims.entry(*k).or_insert_with(|| v.clone());
             }
-            Some(())
-        })();
+        });
 
         // Store dimensions if non-trivial; otherwise, return early.
-        (|| {
-            dims.is_empty().then(|| ())?;
+        do_in!(|| -> Option<()> {
+            dims.is_empty().not().then_some(())?;
             ctx.span(id)?.extensions_mut().insert(dims);
-            Some(())
-        })();
+        });
     }
 }
 
@@ -365,7 +361,7 @@ fn unprefix<'a>(field: &Field, prefix: &str) -> Option<&'a str> {
 }
 
 fn record_if_dimension(dims: &mut DimensionsMapping, field: &Field, value: &str) {
-    unprefix(field, "__Dimensions").map(|dim_name| dims.insert(dim_name, value.to_string()));
+    unprefix(field, "__Dimensions.").map(|dim_name| dims.insert(dim_name, value.to_string()));
 }
 
 // Could make this a macro to avoid creating unnecessary `Value` variants.

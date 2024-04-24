@@ -31,6 +31,16 @@ impl LogConfig {
 }
 
 #[macro_export]
+macro_rules! do_in {
+    (|| -> $ret:ty $body:block) => {{
+        (|| -> $ret {
+            //
+            { $body }.into()
+        })()
+    }};
+}
+
+#[macro_export]
 macro_rules! config_methods {
     ($($name:ident : $type:ty),*) => {
         $(
@@ -52,6 +62,7 @@ macro_rules! validate_param {
     };
 }
 
+// Make this a derivable trait, implement on wrapper structs from current type aliases
 #[derive(Clone)]
 pub struct Wrap<T>(pub T);
 
