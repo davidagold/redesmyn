@@ -1,6 +1,7 @@
 pub(crate) type Sized128String = heapless::String<128>;
 use std::{fs::File, io, path::PathBuf};
 
+use serde::Serialize;
 // pub(crate) type Sized256String = heapless::String<256>;
 // use tracing::{error, info};
 use tracing_subscriber::{layer::Layer, registry::LookupSpan};
@@ -79,5 +80,14 @@ impl<T> Wrap<T> {
 impl<T> From<T> for Wrap<T> {
     fn from(value: T) -> Self {
         Wrap(value)
+    }
+}
+
+impl<T: Serialize> Serialize for Wrap<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner().serialize(serializer)
     }
 }

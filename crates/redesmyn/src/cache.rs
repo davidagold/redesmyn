@@ -1,8 +1,5 @@
-use crate::{
-    common::Wrap,
-    error::{ServiceError, ServiceResult},
-};
-use bytes::{buf::Reader, Buf, BufMut, BytesMut};
+use crate::error::ServiceResult;
+use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
@@ -11,10 +8,8 @@ use futures::{
     TryFutureExt,
 };
 use lru::LruCache;
-use polars::lazy::dsl::reduce_exprs;
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
-    ffi::PyObject,
     pyclass, pymethods,
     types::PyFunction,
     FromPyObject, Py, PyAny, PyResult, Python,
@@ -25,7 +20,6 @@ use std::{
     fs,
     future::{self, Future},
     num::NonZeroUsize,
-    ops::Deref,
     path::PathBuf,
     pin::Pin,
     str::FromStr,
@@ -97,88 +91,49 @@ impl From<DateTime<Utc>> for UpdateTime {
 // - Keeping this trait as an internal, renamed trait, exposing an `ArtifactSpec` trait
 //   that implements the internal trait for all `Serialize` types,
 // - Including a `derive` macro
-trait ArtifactSpec<'a> {
-    type Spec: Serialize;
-    type Ref: Deref<Target = Self::Spec> + 'a;
+trait ArtifactSpec {
+    fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
 
-    fn spec(&'a self) -> Self::Ref;
-}
+    fn try_as_map(&self) -> Result<BTreeMap<String, String>, serde_json::Error> {
+        let mut writer = BytesMut::new().writer();
+        serde_json::to_writer(&mut writer, self.spec().as_ref())?;
+        serde_json::from_reader(writer.into_inner().reader())
+    }
 
-impl<'a> ArtifactSpec<'a> for BTreeMap<String, String> {
-    type Spec = &'a Self;
-    type Ref = Box<&'a Self>;
+    fn try_as_key(&self) -> Result<CacheKey, serde_json::Error> {
+        let parts = self.try_as_map()?.into_iter().map(|(k, v)| [k, v].join("="));
+        let key = parts.collect::<Vec<_>>().join("/");
+        Ok(key)
+    }
 
-    fn spec(&'a self) -> Box<&'a Self> {
-        self.into()
+    fn try_as_path(&self) -> Result<PathBuf, serde_json::Error> {
+        let path = self.try_as_map()?.values().collect();
+        Ok(path)
     }
 }
 
-impl<'a, T> ArtifactSpec<'a> for Wrap<T>
-where
-    T: ArtifactSpec<'a, Spec = T, Ref = &'a T> + Serialize + 'a,
-{
-    type Spec = T;
-    type Ref = &'a T;
-
-    fn spec(&'a self) -> &'a T {
-        self.inner().spec()
+impl Serialize for dyn ArtifactSpec {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.spec().as_ref().serialize(serializer)
     }
 }
 
-impl<'a, T> ArtifactSpec<'a> for Box<T>
-where
-    T: ArtifactSpec<'a, Spec = T, Ref = &'a T> + Serialize + 'a,
-{
-    type Spec = &'a T;
-    type Ref = Box<&'a T>;
-
-    fn spec(&'a self) -> Box<&'a T> {
-        self.as_ref().spec().into()
+impl<T: Serialize> ArtifactSpec for T {
+    fn spec(&self) -> Box<&dyn erased_serde::Serialize> {
+        Box::new(self as &dyn erased_serde::Serialize)
     }
 }
 
-impl<S> std::fmt::Debug for dyn for<'a> ArtifactSpec<'a, Spec = S, Ref = &'a S>
-where
-    S: Serialize + for<'a> ArtifactSpec<'a>,
-{
+impl std::fmt::Debug for dyn ArtifactSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
             "<impl ArtifactSpec, fields: {{ {:#?} }}>",
-            serde_json::to_string(self.spec())
+            serde_json::to_string(self.spec().as_ref())
         ))
     }
 }
 
-type BoxedSpec = Box<
-    dyn for<'a> ArtifactSpec<
-            'a,
-            Spec = &'a BTreeMap<String, String>,
-            Ref = Box<&'a BTreeMap<String, String>>,
-        > + Send
-        + Sync,
->;
-
-impl Wrap<&BoxedSpec> {
-    fn try_as_key(&self) -> Result<CacheKey, serde_json::Error> {
-        let mut writer = BytesMut::new().writer();
-        serde_json::to_writer(&mut writer, self.inner().spec().as_ref());
-        let spec: BTreeMap<String, String> = serde_json::from_reader(writer.into_inner().reader())?;
-        let parts = spec.into_iter().map(|(k, v)| [k, v].join("/")).collect::<Vec<_>>();
-        let key = parts.join("/");
-        Ok(key)
-    }
-
-    fn try_as_path(&self) -> Result<PathBuf, serde_json::Error> {}
-}
-
-impl Serialize for Wrap<BTreeMap<String, String>> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.0.serialize(serializer)
-    }
-}
+type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync>;
 
 #[derive(Clone)]
 enum Uri {
@@ -254,7 +209,7 @@ impl From<BytesMut> for FetchAs {
 }
 
 impl FetchAs {
-    fn new_empty_not_none(fetch_as: &FetchAs) -> FetchAs {
+    fn new_like(fetch_as: &FetchAs) -> FetchAs {
         match &fetch_as {
             &FetchAs::Uri(Some(Uri::Path(_))) => {
                 FetchAs::Uri(Some(Uri::Path(Some(PathBuf::new()))))
@@ -416,16 +371,8 @@ impl RefreshState for RefreshComplete {
 }
 
 trait Transition {
-    // type Current;
     type Next: RefreshState + Send;
     type Error;
-
-    // fn new<T, S>(config: RefreshConfig, state: S) -> RefreshTask<Self::Current>
-    // where
-    //     T: Transition<Current = S, Next = Self::Current>
-    // {
-
-    // }
 
     fn into_next(self) -> impl Future<Output = Result<RefreshTask<Self::Next>, Self::Error>>;
 }
@@ -438,7 +385,7 @@ impl Transition for RefreshTask<PendingFetch> {
         let RefreshTask { config, state: _ } = self;
         let RefreshConfig { client, path, .. } = config.clone();
 
-        let container = FetchAs::new_empty_not_none(&config.fetch_as);
+        let container = FetchAs::new_like(&config.fetch_as);
         let fut = client.fetch(path, container).into_future();
         let task = tokio::spawn(async move { fut.await });
         Ok(RefreshTask { config, state: FetchingData { task } })
@@ -509,7 +456,6 @@ impl Cache {
             let Some(msg) = rx.recv().await else { return Err(CacheError::from("")) };
             match msg {
                 Command::UpdateEntry(spec, fetch_as, tx) => {
-
                     // The following does not refresh the cache entry directly, but rather spawns a new task
                     // to handle data fetching for the given key and tracks the task's association with said key.
                     // self.refresh(key).await;
@@ -533,9 +479,9 @@ impl Cache {
     ) -> Result<(), CacheError> {
         let config = RefreshConfig {
             client: client.clone(),
-            key: Wrap(&spec).try_as_key()?,
+            key: spec.try_as_key()?,
             fetch_as,
-            path: Wrap(&spec).try_as_path()?,
+            path: spec.try_as_path()?,
             last_updated,
             tx: self.tx.clone(),
         };
@@ -545,7 +491,6 @@ impl Cache {
             .into_next()
             .await?;
 
-        // while Refre
         Ok(())
     }
 
