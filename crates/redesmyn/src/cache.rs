@@ -9,16 +9,17 @@ use futures::{
 };
 use lru::LruCache;
 use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     pyclass, pymethods,
-    types::PyFunction,
-    FromPyObject, Py, PyAny, PyResult, Python,
+    types::{PyByteArray, PyFunction, PyNone, PyString},
+    FromPyObject, IntoPy, Py, PyAny, PyResult, Python,
 };
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
     fs,
     future::{self, Future},
+    io::Read,
     num::NonZeroUsize,
     path::PathBuf,
     pin::Pin,
@@ -173,8 +174,34 @@ impl Uri {
 enum FetchAs {
     Uri(Option<Uri>),
     Bytes(Option<BytesMut>),
-    Utf8String(Option<String>),
-    TmpFile(Option<tokio::fs::File>),
+    // Utf8String(Option<String>),
+    // TmpFile(Option<tokio::fs::File>),
+}
+
+impl IntoPy<PyResult<Py<PyAny>>> for FetchAs {
+    fn into_py(self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self {
+            FetchAs::Uri(Some(Uri::Path(Some(path)))) => {
+                let res: &PyAny = match path.to_str() {
+                    Some(path_str) => PyString::new(py, path_str).into(),
+                    None => PyNone::get(py).into(),
+                };
+                Ok(res.into())
+            }
+            FetchAs::Uri(Some(Uri::Id { id: Some(id), .. })) => Ok(PyString::new(py, &id).into()),
+            FetchAs::Bytes(Some(bytes)) => {
+                let mut buf = Vec::<u8>::new();
+                bytes.reader().read_to_end(&mut buf);
+                Ok(PyByteArray::new(py, buf.as_slice()).into())
+            }
+            FetchAs::Uri(Some(Uri::Id { id: None, .. }))
+            | FetchAs::Uri(Some(Uri::Path(None)))
+            | FetchAs::Uri(None)
+            | FetchAs::Bytes(None) => {
+                Err(PyTypeError::new_err("Cannot load model from type `None`"))
+            }
+        }
+    }
 }
 
 impl Clone for FetchAs {
@@ -183,9 +210,9 @@ impl Clone for FetchAs {
         match self {
             Uri(maybe_uri) => FetchAs::Uri(maybe_uri.clone()),
             Bytes(maybe_bytes) => FetchAs::Bytes(maybe_bytes.clone()),
-            Utf8String(maybe_s) => FetchAs::Utf8String(maybe_s.clone()),
+            // Utf8String(maybe_s) => FetchAs::Utf8String(maybe_s.clone()),
             // Not exactly sure what to do with this one.
-            TmpFile(_) => FetchAs::TmpFile(None),
+            // TmpFile(_) => FetchAs::TmpFile(None),
         }
     }
 }
@@ -213,8 +240,8 @@ impl FetchAs {
             })),
             &FetchAs::Uri(None) => FetchAs::Uri(Some(Uri::default())),
             &FetchAs::Bytes(_) => FetchAs::Bytes(Some(BytesMut::new())),
-            &FetchAs::Utf8String(_) => FetchAs::Utf8String(Some(String::new())),
-            &FetchAs::TmpFile(_) => FetchAs::TmpFile(None),
+            // &FetchAs::Utf8String(_) => FetchAs::Utf8String(Some(String::new())),
+            // &FetchAs::TmpFile(_) => FetchAs::TmpFile(None),
         }
     }
 }
@@ -407,7 +434,6 @@ impl Transition<FetchingData> for UpdatingCache {
 struct Cache {
     client: Arc<ArtifactsClient>,
     schedule: Schedule,
-    load_model: Py<PyFunction>,
     tx: Arc<mpsc::Sender<Command>>,
     task: JoinHandle<Result<(), CacheError>>,
 }
@@ -416,7 +442,6 @@ impl Cache {
     pub fn new(
         client: ArtifactsClient,
         max_size: Option<usize>,
-        load_model: Py<PyFunction>,
         schedule: Option<Schedule>,
     ) -> Cache {
         let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(DEFAULT_CACHE_SIZE));
@@ -426,7 +451,6 @@ impl Cache {
         Cache {
             client: client.into(),
             schedule: schedule.unwrap_or_default(),
-            load_model,
             tx: tx.into(),
             task,
         }
@@ -470,6 +494,8 @@ impl Cache {
                     let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
                         let start = PendingFetch::new(UpdateTime::Now)?;
                         let mut state = <RefreshState as From<PendingFetch>>::from(start);
+
+                        // TODO: Do something with this
                         let end = loop {
                             let next =
                                 <RefreshState as Transition<RefreshState>>::from(state, &cloned);
@@ -489,7 +515,31 @@ impl Cache {
 
                     model_cache.put(key, (TaskFlow { config, handle }, None));
                 }
-                Command::InsertEntry(key, payload, tx) => {}
+                Command::InsertEntry(key, data, tx) => {
+                    // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
+                    //       Furthermore, we need to use a concurrent hashmap, or something like it, to lock access
+                    //       to individual keys while we are updating the respective models.
+                    let result = match (client.load_model(data), model_cache.get_mut(&key)) {
+                        (Ok(model), Some(entry)) => {
+                            entry.1.replace(model);
+                            Ok(())
+                        }
+                        (Ok(model), None) => {
+                            // TODO: Handle this case better.
+                            let msg = "Trying to replace model without taskflow";
+                            Err(CacheError::from(msg))
+                        }
+                        (Err(err), _) => Err(err.into()),
+                    };
+                    match tx.send(result) {
+                        Err(Err(err)) => return Err(err),
+                        Err(Ok(())) => {
+                            let msg = "Successfully fetched and loaded model but failed to communicate result to refresh task";
+                            return Err(CacheError::from(msg));
+                        }
+                        _ => (),
+                    }
+                }
                 Command::GetEntry(key, tx) => {}
             }
         }
@@ -516,6 +566,8 @@ pub enum CacheError {
     SerializeError(#[from] serde_json::Error),
     #[error("IO Error: {}", 0.to_string())]
     IoError(#[from] std::io::Error),
+    #[error("Python Error: {}", 0.to_string())]
+    PythonError(#[from] pyo3::PyErr),
 }
 
 impl From<String> for CacheError {
@@ -560,7 +612,7 @@ impl PyCache {
         };
 
         Ok(PyCache {
-            cache: Cache::new(client_spec.to_client(), max_size, load_model.into(), schedule),
+            cache: Cache::new(client_spec.to_client(load_model.into()), max_size, schedule),
         })
     }
 
@@ -589,9 +641,11 @@ enum ClientSpec {
 }
 
 impl ClientSpec {
-    fn to_client(self) -> ArtifactsClient {
+    fn to_client(self, load_model: Py<PyFunction>) -> ArtifactsClient {
         match self {
-            ClientSpec::FsClient { protocol } => ArtifactsClient::FsClient(FsClient {}),
+            ClientSpec::FsClient { protocol } => {
+                ArtifactsClient::FsClient { client: FsClient {}, load_model }
+            }
         }
     }
 }
@@ -628,7 +682,7 @@ impl Default for FsClient {
 
 #[derive(Clone, Debug)]
 enum ArtifactsClient {
-    FsClient(FsClient),
+    FsClient { client: FsClient, load_model: Py<PyFunction> },
 }
 
 impl ArtifactsClient {
@@ -655,6 +709,14 @@ impl ArtifactsClient {
             _ => panic!(),
         }
     }
+
+    fn load_model(&self, data: FetchAs) -> PyResult<Py<PyAny>> {
+        match self {
+            Self::FsClient { load_model, .. } => {
+                Python::with_gil(|py| load_model.call(py, (data.into_py(py)?,), None))
+            }
+        }
+    }
 }
 
 impl Client for ArtifactsClient {
@@ -665,7 +727,7 @@ impl Client for ArtifactsClient {
     ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>> {
         use ArtifactsClient::*;
         match self {
-            FsClient(client) => client.fetch_bytes(path, bytes),
+            FsClient { client, .. } => client.fetch_bytes(path, bytes),
         }
     }
 
@@ -675,7 +737,7 @@ impl Client for ArtifactsClient {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send>> {
         use ArtifactsClient::*;
         match self {
-            FsClient(client) => client.list(path),
+            FsClient { client, .. } => client.list(path),
         }
     }
 }
