@@ -247,7 +247,7 @@ impl FetchAs {
 }
 
 enum Command {
-    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Command>),
+    UpdateEntry(BoxedSpec, FetchAs),
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
     GetEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
 }
@@ -256,7 +256,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Command::*;
         match self {
-            UpdateEntry(spec, _, _) => f.write_fmt(format_args!(
+            UpdateEntry(spec, _) => f.write_fmt(format_args!(
                 "<UpdateEntry: spec = {}>",
                 serde_json::to_string(spec.spec().as_ref())
                     .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
@@ -312,13 +312,16 @@ where
 {
     type Error;
 
-    fn from(state: F, config: &RefreshConfig) -> impl Future<Output = Result<Self, Self::Error>>;
+    fn from(
+        state: F,
+        config: Arc<RefreshConfig>,
+    ) -> impl Future<Output = Result<Self, Self::Error>>;
 }
 
 impl Transition<RefreshState> for RefreshState {
     type Error = CacheError;
 
-    async fn from(state: RefreshState, config: &RefreshConfig) -> Result<Self, Self::Error> {
+    async fn from(state: RefreshState, config: Arc<RefreshConfig>) -> Result<Self, Self::Error> {
         match state {
             RefreshState::PendingFetch(state) => Ok(RefreshState::FetchingData(
                 <FetchingData as Transition<PendingFetch>>::from(state, config).await?,
@@ -395,9 +398,12 @@ impl From<UpdatingCache> for RefreshState {
 impl Transition<PendingFetch> for FetchingData {
     type Error = CacheError;
 
-    async fn from(state: PendingFetch, config: &RefreshConfig) -> Result<FetchingData, CacheError> {
+    async fn from(
+        state: PendingFetch,
+        config: Arc<RefreshConfig>,
+    ) -> Result<FetchingData, CacheError> {
         state.task.await?;
-        let RefreshConfig { client, spec, .. } = &config;
+        let RefreshConfig { client, spec, .. } = &config.as_ref();
 
         let container = FetchAs::new_like(&config.fetch_as);
         let fut = client.fetch(spec.as_path()?, container).into_future();
@@ -411,7 +417,7 @@ impl Transition<FetchingData> for UpdatingCache {
 
     async fn from(
         state: FetchingData,
-        config: &RefreshConfig,
+        config: Arc<RefreshConfig>,
     ) -> Result<UpdatingCache, CacheError> {
         let Ok(data) = state.task.await? else {
             let msg = "Failed to receive artifact data from `RefreshTask<FetchingData>`";
@@ -468,80 +474,94 @@ impl Cache {
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
             match msg {
-                Command::UpdateEntry(spec, fetch_as, tx_task) => {
-                    // The following does not refresh the cache entry directly, but rather spawns a new task
-                    // to handle data fetching for the given key and tracks the task's association with said key.
-                    // self.refresh(key).await;
-                    //
-                    // Will need to get the che entry, lock the key, get last updated, pass everything
-                    // to `refresh_entry`
+                Command::UpdateEntry(spec, fetch_as) => {
                     let key = spec.as_key()?;
-                    let (last_updated, model) = match model_cache.pop(&key) {
+                    let (last_updated, _) = match model_cache.pop(&key) {
                         Some((taskflow, model)) => (taskflow.config.last_updated, model),
                         None => (None, None),
                     };
-
-                    let config: Arc<_> = RefreshConfig::new(
+                    let config = RefreshConfig::new(
                         spec,
                         last_updated,
                         client.clone(),
                         tx_cmd.clone(),
                         fetch_as,
-                    )
-                    .into();
-                    let cloned = config.clone();
-
-                    let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
-                        let start = PendingFetch::new(UpdateTime::Now)?;
-                        let mut state = <RefreshState as From<PendingFetch>>::from(start);
-
-                        // TODO: Do something with this
-                        let end = loop {
-                            let next =
-                                <RefreshState as Transition<RefreshState>>::from(state, &cloned);
-                            match next.await {
-                                Ok(RefreshState::Done(last_updated)) => {
-                                    break Ok(RefreshState::Done(last_updated));
-                                }
-                                Ok(next) => {
-                                    state = next;
-                                }
-                                Err(err) => break Err(err),
-                            }
-                        }?;
-
-                        Ok(())
-                    });
-
-                    model_cache.put(key, (TaskFlow { config, handle }, None));
+                    );
+                    let taskflow = Self::spawn_taskflow(config.into())?;
+                    model_cache.put(key, (taskflow, None));
                 }
                 Command::InsertEntry(key, data, tx) => {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
                     //       Furthermore, we need to use a concurrent hashmap, or something like it, to lock access
                     //       to individual keys while we are updating the respective models.
-                    let result = match (client.load_model(data), model_cache.get_mut(&key)) {
-                        (Ok(model), Some(entry)) => {
-                            entry.1.replace(model);
-                            Ok(())
-                        }
-                        (Ok(model), None) => {
-                            // TODO: Handle this case better.
-                            let msg = "Trying to replace model without taskflow";
-                            Err(CacheError::from(msg))
-                        }
-                        (Err(err), _) => Err(err.into()),
-                    };
-                    match tx.send(result) {
-                        Err(Err(err)) => return Err(err),
-                        Err(Ok(())) => {
-                            let msg = "Successfully fetched and loaded model but failed to communicate result to refresh task";
-                            return Err(CacheError::from(msg));
-                        }
-                        _ => (),
-                    }
+                    Self::insert_entry(&client, &mut model_cache, key, data, tx)?;
                 }
                 Command::GetEntry(key, tx) => {}
             }
+        }
+    }
+
+    fn spawn_taskflow(config: Arc<RefreshConfig>) -> Result<TaskFlow, CacheError> {
+        // The following does not refresh the cache entry directly, but rather spawns a new task
+        // to handle data fetching for the given key and tracks the task's association with said key.
+        // self.refresh(key).await;
+        //
+        // Will need to get the che entry, lock the key, get last updated, pass everything
+        // to `refresh_entry`
+
+        // let cloned = config.clone();
+        let _config = config.clone();
+
+        let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
+            let start = PendingFetch::new(UpdateTime::Now)?;
+            let mut state = <RefreshState as From<PendingFetch>>::from(start);
+
+            // TODO: Do something with this
+            let end = loop {
+                let next = <RefreshState as Transition<RefreshState>>::from(state, _config.clone());
+                match next.await {
+                    Ok(RefreshState::Done(last_updated)) => {
+                        break Ok(RefreshState::Done(last_updated));
+                    }
+                    Ok(next) => {
+                        state = next;
+                    }
+                    Err(err) => break Err(err),
+                }
+            }?;
+
+            Ok(())
+        });
+
+        Ok(TaskFlow { config, handle })
+    }
+
+    fn insert_entry(
+        client: &ArtifactsClient,
+        cache: &mut LruCache<CacheKey, (TaskFlow, Option<Py<PyAny>>)>,
+        key: CacheKey,
+        data: FetchAs,
+        tx: oneshot::Sender<Result<(), CacheError>>,
+    ) -> Result<(), CacheError> {
+        let result = match (client.load_model(data), cache.get_mut(&key)) {
+            (Ok(model), Some(entry)) => {
+                entry.1.replace(model);
+                Ok(())
+            }
+            (Ok(model), None) => {
+                // TODO: Handle this case better.
+                let msg = "Trying to replace model without taskflow";
+                Err(CacheError::from(msg))
+            }
+            (Err(err), _) => Err(err.into()),
+        };
+        match tx.send(result) {
+            Err(Err(err)) => return Err(err),
+            Err(Ok(())) => {
+                let msg = "Successfully fetched and loaded model but failed to communicate result to refresh task";
+                return Err(CacheError::from(msg));
+            }
+            _ => Ok(()),
         }
     }
 
