@@ -27,15 +27,14 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
-    sync::{
-        mpsc::{
-            self,
-            error::{SendError, TrySendError},
-        },
-        Mutex,
+    sync::mpsc::{
+        self,
+        error::{SendError, TrySendError},
     },
     task::{JoinError, JoinHandle},
 };
+
+const DEFAULT_CACHE_SIZE: usize = 128;
 
 enum Schedule {
     Cron(cron::Schedule),
@@ -68,7 +67,6 @@ impl From<cron::Schedule> for Schedule {
         Schedule::Cron(value)
     }
 }
-
 impl From<u32> for Schedule {
     fn from(seconds: u32) -> Self {
         Schedule::Interval(Duration::seconds(seconds as i64))
@@ -87,27 +85,23 @@ impl From<DateTime<Utc>> for UpdateTime {
     }
 }
 
-// For ease of use, should consider:
-// - Keeping this trait as an internal, renamed trait, exposing an `ArtifactSpec` trait
-//   that implements the internal trait for all `Serialize` types,
-// - Including a `derive` macro
 trait ArtifactSpec {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
 
-    fn try_as_map(&self) -> Result<BTreeMap<String, String>, serde_json::Error> {
+    fn as_map(&self) -> Result<BTreeMap<String, String>, serde_json::Error> {
         let mut writer = BytesMut::new().writer();
         serde_json::to_writer(&mut writer, self.spec().as_ref())?;
         serde_json::from_reader(writer.into_inner().reader())
     }
 
-    fn try_as_key(&self) -> Result<CacheKey, serde_json::Error> {
-        let parts = self.try_as_map()?.into_iter().map(|(k, v)| [k, v].join("="));
+    fn as_key(&self) -> Result<CacheKey, serde_json::Error> {
+        let parts = self.as_map()?.into_iter().map(|(k, v)| [k, v].join("="));
         let key = parts.collect::<Vec<_>>().join("/");
         Ok(key)
     }
 
-    fn try_as_path(&self) -> Result<PathBuf, serde_json::Error> {
-        let path = self.try_as_map()?.values().collect();
+    fn as_path(&self) -> Result<PathBuf, serde_json::Error> {
+        let path = self.as_map()?.values().collect();
         Ok(path)
     }
 }
@@ -118,18 +112,18 @@ impl Serialize for dyn ArtifactSpec {
     }
 }
 
-impl<T: Serialize> ArtifactSpec for T {
-    fn spec(&self) -> Box<&dyn erased_serde::Serialize> {
-        Box::new(self as &dyn erased_serde::Serialize)
-    }
-}
-
-impl std::fmt::Debug for dyn ArtifactSpec {
+impl std::fmt::Debug for dyn ArtifactSpec + Send + Sync {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
             "<impl ArtifactSpec, fields: {{ {:#?} }}>",
             serde_json::to_string(self.spec().as_ref())
         ))
+    }
+}
+
+impl<T: Serialize> ArtifactSpec for T {
+    fn spec(&self) -> Box<&dyn erased_serde::Serialize> {
+        Box::new(self as &dyn erased_serde::Serialize)
     }
 }
 
@@ -201,7 +195,6 @@ impl From<Uri> for FetchAs {
         FetchAs::Uri(Some(uri))
     }
 }
-
 impl From<BytesMut> for FetchAs {
     fn from(bytes: BytesMut) -> Self {
         FetchAs::Bytes(Some(bytes))
@@ -227,7 +220,7 @@ impl FetchAs {
 }
 
 enum Command {
-    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Py<PyAny>>),
+    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Command>),
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
     GetEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
 }
@@ -253,10 +246,14 @@ impl std::fmt::Debug for Command {
 
 type CacheKey = String;
 
-#[derive(Clone, Debug)]
+struct TaskFlow {
+    config: Arc<RefreshConfig>,
+    handle: JoinHandle<Result<(), CacheError>>,
+}
+
+#[derive(Debug)]
 struct RefreshConfig {
-    key: String,
-    path: PathBuf,
+    spec: BoxedSpec,
     last_updated: Option<DateTime<Utc>>,
     tx: Arc<mpsc::Sender<Command>>,
     client: Arc<ArtifactsClient>,
@@ -265,60 +262,51 @@ struct RefreshConfig {
 
 impl RefreshConfig {
     fn new(
-        key: CacheKey,
-        path: PathBuf,
+        spec: BoxedSpec,
         last_updated: Option<DateTime<Utc>>,
         client: Arc<ArtifactsClient>,
         tx: Arc<mpsc::Sender<Command>>,
         fetch_as: FetchAs,
     ) -> RefreshConfig {
-        RefreshConfig {
-            key,
-            path,
-            last_updated,
-            tx,
-            client,
-            fetch_as,
+        RefreshConfig { spec, last_updated, tx, client, fetch_as }
+    }
+}
+
+enum RefreshState {
+    PendingFetch(PendingFetch),
+    FetchingData(FetchingData),
+    UpdatingCache(UpdatingCache),
+    Done(DateTime<Utc>),
+}
+
+trait Transition<F: Send>
+where
+    Self: Sized,
+{
+    type Error;
+
+    fn from(state: F, config: &RefreshConfig) -> impl Future<Output = Result<Self, Self::Error>>;
+}
+
+impl Transition<RefreshState> for RefreshState {
+    type Error = CacheError;
+
+    async fn from(state: RefreshState, config: &RefreshConfig) -> Result<Self, Self::Error> {
+        match state {
+            RefreshState::PendingFetch(state) => Ok(RefreshState::FetchingData(
+                <FetchingData as Transition<PendingFetch>>::from(state, config).await?,
+            )),
+            RefreshState::FetchingData(state) => Ok(RefreshState::UpdatingCache(
+                <UpdatingCache as Transition<FetchingData>>::from(state, config).await?,
+            )),
+            RefreshState::UpdatingCache(state) => {
+                Ok(RefreshState::Done(state.task.await.map(|_| Utc::now())?))
+            }
+            RefreshState::Done(next_update) => {
+                let state = PendingFetch::new(next_update.into())?;
+                Ok(RefreshState::PendingFetch(state))
+            }
         }
-    }
-}
-
-struct RefreshTask<T: RefreshState + Send> {
-    config: RefreshConfig,
-    state: T,
-}
-
-impl<T: RefreshState + Send> RefreshTask<T> {
-    fn is_done(&self) -> bool {
-        self.state.refresh_complete()
-    }
-}
-
-impl RefreshTask<PendingFetch> {
-    fn new(
-        schedule: &Schedule,
-        config: RefreshConfig,
-        fetch_now: bool,
-    ) -> Result<RefreshTask<PendingFetch>, CacheError> {
-        let RefreshConfig { last_updated, .. } = &config;
-        let next_update =
-            if fetch_now { UpdateTime::Now } else { schedule.next_update(last_updated) };
-        let state = PendingFetch::new(next_update)?;
-        Ok(RefreshTask { config, state })
-    }
-}
-
-trait Refresh {
-    type State: RefreshState + Send;
-}
-
-impl<T: Send + RefreshState> Refresh for RefreshTask<T> {
-    type State = T;
-}
-
-trait RefreshState {
-    fn refresh_complete(&self) -> bool {
-        false
     }
 }
 
@@ -326,7 +314,6 @@ struct PendingFetch {
     next_update: UpdateTime,
     task: JoinHandle<ServiceResult<()>>,
 }
-impl RefreshState for PendingFetch {}
 
 impl PendingFetch {
     fn new(next_update: UpdateTime) -> Result<PendingFetch, CacheError> {
@@ -352,58 +339,59 @@ impl PendingFetch {
     }
 }
 
+impl From<PendingFetch> for RefreshState {
+    fn from(state: PendingFetch) -> Self {
+        Self::PendingFetch(state)
+    }
+}
+
 struct FetchingData {
     task: JoinHandle<Result<FetchAs, CacheError>>,
 }
-impl RefreshState for FetchingData {}
+
+impl From<FetchingData> for RefreshState {
+    fn from(state: FetchingData) -> Self {
+        Self::FetchingData(state)
+    }
+}
 
 struct UpdatingCache {
     task: JoinHandle<Result<(), CacheError>>,
 }
-impl RefreshState for UpdatingCache {}
 
-struct RefreshComplete {}
-
-impl RefreshState for RefreshComplete {
-    fn refresh_complete(&self) -> bool {
-        true
+impl From<UpdatingCache> for RefreshState {
+    fn from(state: UpdatingCache) -> Self {
+        Self::UpdatingCache(state)
     }
 }
 
-trait Transition {
-    type Next: RefreshState + Send;
-    type Error;
-
-    fn into_next(self) -> impl Future<Output = Result<RefreshTask<Self::Next>, Self::Error>>;
-}
-
-impl Transition for RefreshTask<PendingFetch> {
-    type Next = FetchingData;
+impl Transition<PendingFetch> for FetchingData {
     type Error = CacheError;
 
-    async fn into_next(self) -> Result<RefreshTask<FetchingData>, CacheError> {
-        let RefreshTask { config, state: _ } = self;
-        let RefreshConfig { client, path, .. } = config.clone();
+    async fn from(state: PendingFetch, config: &RefreshConfig) -> Result<FetchingData, CacheError> {
+        state.task.await?;
+        let RefreshConfig { client, spec, .. } = &config;
 
         let container = FetchAs::new_like(&config.fetch_as);
-        let fut = client.fetch(path, container).into_future();
+        let fut = client.fetch(spec.as_path()?, container).into_future();
         let task = tokio::spawn(async move { fut.await });
-        Ok(RefreshTask { config, state: FetchingData { task } })
+        Ok(FetchingData { task })
     }
 }
 
-impl Transition for RefreshTask<FetchingData> {
-    type Next = UpdatingCache;
+impl Transition<FetchingData> for UpdatingCache {
     type Error = CacheError;
 
-    async fn into_next(self) -> Result<RefreshTask<UpdatingCache>, CacheError> {
-        let RefreshTask { config, state } = self;
+    async fn from(
+        state: FetchingData,
+        config: &RefreshConfig,
+    ) -> Result<UpdatingCache, CacheError> {
         let Ok(data) = state.task.await? else {
             let msg = "Failed to receive artifact data from `RefreshTask<FetchingData>`";
             return Err(CacheError::from(msg));
         };
         let (tx, rx) = oneshot::channel::<Result<(), CacheError>>();
-        let cmd = Command::InsertEntry(config.key.clone(), data, tx);
+        let cmd = Command::InsertEntry(config.spec.as_key()?.clone(), data, tx);
         config.tx.send(cmd).await?;
 
         let task = tokio::spawn(async move {
@@ -412,35 +400,31 @@ impl Transition for RefreshTask<FetchingData> {
                 Err(err) => Err(CacheError::from(err.to_string())),
             }
         });
-        Ok(RefreshTask { config, state: UpdatingCache { task } })
+        Ok(UpdatingCache { task })
     }
 }
 
 struct Cache {
+    client: Arc<ArtifactsClient>,
     schedule: Schedule,
     load_model: Py<PyFunction>,
     tx: Arc<mpsc::Sender<Command>>,
     task: JoinHandle<Result<(), CacheError>>,
 }
 
-type RefreshEntry = Box<dyn Refresh<State = dyn RefreshState + Send> + Send>;
-
 impl Cache {
     pub fn new(
+        client: ArtifactsClient,
         max_size: Option<usize>,
         load_model: Py<PyFunction>,
         schedule: Option<Schedule>,
     ) -> Cache {
-        let default_cache_size = 128;
-        let model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>> = Arc::new(
-            LruCache::new(NonZeroUsize::new(max_size.unwrap_or(default_cache_size)).unwrap())
-                .into(),
-        );
-
-        let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(default_cache_size));
-        let task = tokio::spawn(Cache::task(model_cache, rx));
+        let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(DEFAULT_CACHE_SIZE));
+        let fut_task = Cache::task(client.clone().into(), max_size, tx.clone().into(), rx);
+        let task = tokio::spawn(fut_task);
 
         Cache {
+            client: client.into(),
             schedule: schedule.unwrap_or_default(),
             load_model,
             tx: tx.into(),
@@ -449,49 +433,66 @@ impl Cache {
     }
 
     async fn task(
-        model_cache: Arc<Mutex<LruCache<CacheKey, (RefreshEntry, Py<PyAny>)>>>,
-        mut rx: mpsc::Receiver<Command>,
+        client: Arc<ArtifactsClient>,
+        max_size: Option<usize>,
+        tx_cmd: Arc<mpsc::Sender<Command>>,
+        mut rx_cmd: mpsc::Receiver<Command>,
     ) -> Result<(), CacheError> {
+        let mut model_cache: LruCache<CacheKey, (TaskFlow, Option<Py<PyAny>>)> =
+            LruCache::new(NonZeroUsize::new(max_size.unwrap_or(DEFAULT_CACHE_SIZE)).unwrap());
+
         loop {
-            let Some(msg) = rx.recv().await else { return Err(CacheError::from("")) };
+            let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
             match msg {
-                Command::UpdateEntry(spec, fetch_as, tx) => {
+                Command::UpdateEntry(spec, fetch_as, tx_task) => {
                     // The following does not refresh the cache entry directly, but rather spawns a new task
                     // to handle data fetching for the given key and tracks the task's association with said key.
                     // self.refresh(key).await;
                     //
-                    // Will need to get the cache entry, lock the key, get last updated, pass everything
+                    // Will need to get the che entry, lock the key, get last updated, pass everything
                     // to `refresh_entry`
+                    let key = spec.as_key()?;
+                    let (last_updated, model) = match model_cache.pop(&key) {
+                        Some((taskflow, model)) => (taskflow.config.last_updated, model),
+                        None => (None, None),
+                    };
+
+                    let config: Arc<_> = RefreshConfig::new(
+                        spec,
+                        last_updated,
+                        client.clone(),
+                        tx_cmd.clone(),
+                        fetch_as,
+                    )
+                    .into();
+                    let cloned = config.clone();
+
+                    let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
+                        let start = PendingFetch::new(UpdateTime::Now)?;
+                        let mut state = <RefreshState as From<PendingFetch>>::from(start);
+                        let end = loop {
+                            let next =
+                                <RefreshState as Transition<RefreshState>>::from(state, &cloned);
+                            match next.await {
+                                Ok(RefreshState::Done(last_updated)) => {
+                                    break Ok(RefreshState::Done(last_updated));
+                                }
+                                Ok(next) => {
+                                    state = next;
+                                }
+                                Err(err) => break Err(err),
+                            }
+                        }?;
+
+                        Ok(())
+                    });
+
+                    model_cache.put(key, (TaskFlow { config, handle }, None));
                 }
                 Command::InsertEntry(key, payload, tx) => {}
                 Command::GetEntry(key, tx) => {}
             }
         }
-    }
-
-    async fn refresh_entry(
-        &self,
-        client: &Arc<ArtifactsClient>,
-        spec: BoxedSpec,
-        last_updated: Option<DateTime<Utc>>,
-        fetch_as: FetchAs,
-        fetch_now: bool,
-    ) -> Result<(), CacheError> {
-        let config = RefreshConfig {
-            client: client.clone(),
-            key: spec.try_as_key()?,
-            fetch_as,
-            path: spec.try_as_path()?,
-            last_updated,
-            tx: self.tx.clone(),
-        };
-        let result = RefreshTask::new(&self.schedule, config, fetch_now)?
-            .into_next()
-            .await?
-            .into_next()
-            .await?;
-
-        Ok(())
     }
 
     fn try_send(&self, command: Command) -> Result<(), CacheError> {
@@ -532,7 +533,6 @@ impl From<&str> for CacheError {
 #[pyclass]
 struct PyCache {
     cache: Cache,
-    client: ArtifactsClient,
 }
 
 #[pymethods]
@@ -560,8 +560,7 @@ impl PyCache {
         };
 
         Ok(PyCache {
-            cache: Cache::new(max_size, load_model.into(), schedule),
-            client: client_spec.to_client(),
+            cache: Cache::new(client_spec.to_client(), max_size, load_model.into(), schedule),
         })
     }
 
