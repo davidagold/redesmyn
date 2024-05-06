@@ -545,7 +545,7 @@ impl Cache {
             let start = PendingFetch::new(UpdateTime::Now)?;
             let mut state = <RefreshState as From<PendingFetch>>::from(start);
 
-            // TODO: Do something with this
+            // THIS IS WHY WE NEED ASYNC ITERATORS
             let end = loop {
                 let next = <RefreshState as Transition<RefreshState>>::from(state, _config.clone());
                 match next.await {
