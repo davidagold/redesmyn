@@ -3,10 +3,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
-use futures::{
-    channel::oneshot::{self, Canceled},
-    TryFutureExt,
-};
+use futures::{channel::oneshot::Canceled, TryFutureExt};
 use lru::LruCache;
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
@@ -28,12 +25,16 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
-    sync::mpsc::{
-        self,
-        error::{SendError, TrySendError},
+    sync::{
+        mpsc::{
+            self,
+            error::{SendError, TrySendError},
+        },
+        oneshot,
     },
     task::{JoinError, JoinHandle},
 };
+use tracing::info;
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
@@ -437,6 +438,37 @@ impl Transition<FetchingData> for UpdatingCache {
     }
 }
 
+enum ModelEntry {
+    Empty,
+    Ready(Py<PyAny>),
+    InUse(oneshot::Receiver<Py<PyAny>>),
+    Refreshing(Option<Py<PyAny>>),
+}
+
+impl ModelEntry {
+    fn borrow(self) -> CacheResult<((oneshot::Sender<Py<PyAny>>, Py<PyAny>), ModelEntry)> {
+        use ModelEntry::*;
+        let (tx, rx) = oneshot::channel();
+        match self {
+            Ready(model) => Ok(((tx, model), InUse(rx))),
+            Refreshing(Some(model)) => Ok(((tx, model), InUse(rx))),
+            // TODO: Wait for refresh
+            Refreshing(None) => Err(CacheError::EmptyEntryError),
+            Empty => Err(CacheError::EmptyEntryError),
+            InUse(_) => Err(CacheError::InUseError),
+        }
+    }
+
+    fn refreshing(entry: ModelEntry) -> CacheResult<ModelEntry> {
+        use ModelEntry::*;
+        match entry {
+            Ready(model) => Ok(Refreshing(Some(model))),
+            Refreshing(Some(model)) => Ok(Refreshing(Some(model))),
+            _ => Err(CacheError::EmptyEntryError),
+        }
+    }
+}
+
 struct Cache {
     client: Arc<ArtifactsClient>,
     schedule: Schedule,
@@ -468,7 +500,7 @@ impl Cache {
         tx_cmd: Arc<mpsc::Sender<Command>>,
         mut rx_cmd: mpsc::Receiver<Command>,
     ) -> Result<(), CacheError> {
-        let mut model_cache: LruCache<CacheKey, (TaskFlow, Option<Py<PyAny>>)> =
+        let mut model_cache: LruCache<CacheKey, (TaskFlow, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size.unwrap_or(DEFAULT_CACHE_SIZE)).unwrap());
 
         loop {
@@ -476,9 +508,9 @@ impl Cache {
             match msg {
                 Command::UpdateEntry(spec, fetch_as) => {
                     let key = spec.as_key()?;
-                    let (last_updated, _) = match model_cache.pop(&key) {
+                    let (last_updated, model_entry) = match model_cache.pop(&key) {
                         Some((taskflow, model)) => (taskflow.config.last_updated, model),
-                        None => (None, None),
+                        None => (None, ModelEntry::Empty),
                     };
                     let config = RefreshConfig::new(
                         spec,
@@ -488,7 +520,7 @@ impl Cache {
                         fetch_as,
                     );
                     let taskflow = Self::spawn_taskflow(config.into())?;
-                    model_cache.put(key, (taskflow, None));
+                    model_cache.put(key, (taskflow, ModelEntry::refreshing(model_entry)?));
                 }
                 Command::InsertEntry(key, data, tx) => {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
@@ -506,10 +538,7 @@ impl Cache {
         // to handle data fetching for the given key and tracks the task's association with said key.
         // self.refresh(key).await;
         //
-        // Will need to get the che entry, lock the key, get last updated, pass everything
-        // to `refresh_entry`
-
-        // let cloned = config.clone();
+        // Will need to get the che entry, lock the key, get last updated, pass everything to `refresh_entry`
         let _config = config.clone();
 
         let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
@@ -538,15 +567,38 @@ impl Cache {
 
     fn insert_entry(
         client: &ArtifactsClient,
-        cache: &mut LruCache<CacheKey, (TaskFlow, Option<Py<PyAny>>)>,
+        cache: &mut LruCache<CacheKey, (TaskFlow, ModelEntry)>,
         key: CacheKey,
         data: FetchAs,
         tx: oneshot::Sender<Result<(), CacheError>>,
     ) -> Result<(), CacheError> {
-        let result = match (client.load_model(data), cache.get_mut(&key)) {
-            (Ok(model), Some(entry)) => {
-                entry.1.replace(model);
-                Ok(())
+        let result = match (client.load_model(data), cache.pop(&key)) {
+            // Successfully refreshed an existing model entry
+            (Ok(new_model), Some((taskflow, model_entry))) => {
+                match model_entry {
+                    // We're trying to update a model for which a refresh has not been initiated
+                    ModelEntry::Ready(old_model) => {
+                        // info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
+                        Err(CacheError::from(format!(
+                            "Tried to update model entry {:#?} at key {} without properly initiating refresh taskflow",
+                            old_model, key
+                        )))
+                    }
+                    ModelEntry::Refreshing(old_model) => {
+                        info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
+                        cache.put(key, (taskflow, ModelEntry::Ready(new_model)));
+                        Ok(())
+                    }
+                    ModelEntry::InUse(rx) => {
+                        // TODO: Await return of model
+                        cache.put(key, (taskflow, ModelEntry::Ready(new_model)));
+                        Ok(())
+                    }
+                    ModelEntry::Empty => Err(CacheError::from(format!(
+                        "Tried to update empty model entry at key {} without properly initiating refresh taskflow",
+                        key
+                    ))),
+                }
             }
             (Ok(model), None) => {
                 // TODO: Handle this case better.
@@ -588,6 +640,10 @@ pub enum CacheError {
     IoError(#[from] std::io::Error),
     #[error("Python Error: {}", 0.to_string())]
     PythonError(#[from] pyo3::PyErr),
+    #[error("Cannot get model for key: entry is empty")]
+    EmptyEntryError,
+    #[error("Cannot get model for key: entry is in use")]
+    InUseError,
 }
 
 impl From<String> for CacheError {
@@ -601,6 +657,8 @@ impl From<&str> for CacheError {
         CacheError::Error(err.to_string())
     }
 }
+
+type CacheResult<T> = Result<T, CacheError>;
 
 #[pyclass]
 struct PyCache {
