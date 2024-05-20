@@ -1,5 +1,5 @@
 import abc
-from typing import Annotated, Optional, Self, Type, cast
+from typing import Annotated, List, Optional, Self, Type, cast, get_type_hints
 
 import polars as pl
 
@@ -50,7 +50,9 @@ class Schema(metaclass=SchemaMeta):
     @classmethod
     def to_struct_type(cls) -> pl.Struct:
         """Generate a `polars.Struct` object from a `Schema` subclass."""
-        schema_dict = {
-            k: v for k, v in vars(cls).items() if issubclass(type(v), pl.DataType)
-        }
+        schema_dict = {k: v.__call__() for k, v in get_type_hints(cls).items()}
         return pl.Struct(schema_dict)
+
+    @classmethod
+    def field_names(cls) -> List[str]:
+        return [field.name for field in cls.to_struct_type().fields]
