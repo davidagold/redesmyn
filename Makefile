@@ -9,7 +9,7 @@ install-py:
 	pipenv install --categories $(PY_PKG_GROUPS)
 
 
-FLAGS ?= ""
+FLAGS ?=
 MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
