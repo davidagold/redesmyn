@@ -266,7 +266,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
         _event.record(&mut Wrap(&mut entry));
 
         // Include, but do not overwrite with, dimensions from parent span.
-        do_in!(|| -> Option<()> {
+        do_in!(|| {
             let span = _ctx.event_span(_event)?;
             let ext = span.extensions();
             let dims_span = ext.get::<DimensionsMapping>()?;
@@ -289,7 +289,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
         attrs.record(&mut Wrap(&mut dims));
 
         // Inherit dimensions of parent span.
-        do_in!(|| -> Option<()> {
+        do_in!(|| {
             let parent_span = ctx.span_scope(id)?.nth(1)?;
             for (k, v) in parent_span.extensions().get::<Wrap<DimensionsMapping>>()?.0.iter() {
                 // TODO: Avoid cloning
@@ -298,7 +298,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
         });
 
         // Store dimensions if non-trivial; otherwise, return early.
-        do_in!(|| -> Option<()> {
+        do_in!(|| {
             dims.is_empty().not().then_some(())?;
             ctx.span(id)?.extensions_mut().insert(dims);
         });

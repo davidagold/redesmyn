@@ -32,12 +32,8 @@ impl LogConfig {
 
 #[macro_export]
 macro_rules! do_in {
-    (|| -> $ret:ty $body:block) => {{
-        (|| -> $ret {
-            //
-            { $body }.into()
-        })()
-    }};
+    (|| -> $body:block) => {{ (|| -> Option<_> { { $body }.into() })() }};
+    (|| -> $ret:ty $body:block) => {{ (|| -> $ret { { $body }.into() })() }};
 }
 
 #[macro_export]
