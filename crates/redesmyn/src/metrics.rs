@@ -1,9 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::Not,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::common::Wrap;
+use crate::{common::Wrap, do_in};
 use serde::{self, Serialize, Serializer};
 use serde_json::{Number, Value};
 use strum::IntoStaticStr;
@@ -14,13 +15,16 @@ use tokio::{
         mpsc::{Receiver, Sender},
         oneshot,
     },
+    task::JoinHandle,
 };
 use tracing::{
     error,
     field::{Field, Visit},
-    span, Subscriber,
+    info, span,
+    subscriber::Interest,
+    Subscriber,
 };
-use tracing_subscriber::{registry::LookupSpan, Layer};
+use tracing_subscriber::{filter::Filtered, layer::Filter, registry::LookupSpan, Layer};
 
 use crate::error::ServiceError;
 
@@ -186,24 +190,29 @@ impl MetricsEntry {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AwsEmfSubscriber {
+#[derive(Debug)]
+pub struct EmfMetrics {
     tx: Sender<MetricsEntry>,
+    task: JoinHandle<Result<(), ServiceError>>,
 }
 
-impl AwsEmfSubscriber {
-    pub fn new(max_delay_ms: u32, fp: String) -> AwsEmfSubscriber {
+impl EmfMetrics {
+    pub fn new<S>(max_delay_ms: u32, fp: String) -> Filtered<EmfMetrics, EmfInterest, S>
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<MetricsEntry>(512);
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
+            info!("Creating metrics log file `{}`", fp);
             let mut file = File::create(fp.as_str()).await.unwrap();
             loop {
-                let task = AwsEmfSubscriber::receive_and_flush(&mut rx, &mut file, max_delay_ms);
+                let task = EmfMetrics::receive_and_flush(&mut rx, &mut file, max_delay_ms);
                 if let Err(err) = task.await {
                     error!("{err}");
                 };
             }
         });
-        AwsEmfSubscriber { tx }
+        EmfMetrics { tx, task }.with_filter(EmfInterest::Exclusive)
     }
 
     async fn receive_and_flush<W: AsyncWriteExt + Unpin>(
@@ -246,7 +255,7 @@ impl AwsEmfSubscriber {
     }
 }
 
-impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
     fn on_event(
         &self,
         _event: &tracing::Event<'_>,
@@ -258,16 +267,14 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         _event.record(&mut Wrap(&mut entry));
 
         // Include, but do not overwrite with, dimensions from parent span.
-        // (Operate in closure for easier `None`-handling.)
-        (|| {
+        do_in!(|| {
             let span = _ctx.event_span(_event)?;
             let ext = span.extensions();
             let dims_span = ext.get::<DimensionsMapping>()?;
             for (k, v) in dims_span.iter() {
                 entry.dimensions.entry(*k).or_insert(v.clone());
             }
-            Some(())
-        })();
+        });
 
         let _ = self.tx.try_send(entry);
     }
@@ -278,27 +285,74 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for AwsEmfSubscriber {
         id: &span::Id,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        let mut dims = DimensionsMapping::new();
-
         // Include dimensions of present span.
+        let mut dims = DimensionsMapping::new();
         attrs.record(&mut Wrap(&mut dims));
 
         // Inherit dimensions of parent span.
-        (|| {
+        do_in!(|| {
             let parent_span = ctx.span_scope(id)?.nth(1)?;
             for (k, v) in parent_span.extensions().get::<Wrap<DimensionsMapping>>()?.0.iter() {
                 // TODO: Avoid cloning
                 dims.entry(*k).or_insert_with(|| v.clone());
             }
-            Some(())
-        })();
+        });
 
         // Store dimensions if non-trivial; otherwise, return early.
-        (|| {
-            dims.is_empty().then(|| ())?;
+        do_in!(|| {
+            dims.is_empty().not().then_some(())?;
             ctx.span(id)?.extensions_mut().insert(dims);
-            Some(())
-        })();
+        });
+    }
+}
+
+pub enum EmfInterest {
+    Exclusive,
+    Never,
+}
+
+impl<S: Subscriber> Filter<S> for EmfInterest {
+    fn enabled(
+        &self,
+        meta: &tracing::Metadata<'_>,
+        ctx: &tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Exclusive) => return true,
+                    ("__Dimensions", Self::Exclusive) => return true,
+                    ("__Metrics", Self::Never) => return false,
+                    ("__Dimensions", Self::Never) => return false,
+                    _ => continue,
+                }
+            }
+        }
+        match self {
+            Self::Exclusive => false,
+            Self::Never => true,
+        }
+    }
+
+    fn callsite_enabled(
+        &self,
+        meta: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        for f in meta.fields() {
+            if let Some((prefix, _)) = f.name().split_once(".") {
+                match (prefix, self) {
+                    ("__Metrics", Self::Exclusive) => return Interest::always(),
+                    ("__Dimensions", Self::Exclusive) => return Interest::always(),
+                    ("__Metrics", Self::Never) => return Interest::never(),
+                    ("__Dimensions", Self::Never) => return Interest::never(),
+                    _ => continue,
+                }
+            }
+        }
+        match self {
+            Self::Exclusive => Interest::never(),
+            Self::Never => Interest::always(),
+        }
     }
 }
 
@@ -308,7 +362,7 @@ fn unprefix<'a>(field: &Field, prefix: &str) -> Option<&'a str> {
 }
 
 fn record_if_dimension(dims: &mut DimensionsMapping, field: &Field, value: &str) {
-    unprefix(field, "__Dimensions").map(|dim_name| dims.insert(dim_name, value.to_string()));
+    unprefix(field, "__Dimensions.").map(|dim_name| dims.insert(dim_name, value.to_string()));
 }
 
 // Could make this a macro to avoid creating unnecessary `Value` variants.

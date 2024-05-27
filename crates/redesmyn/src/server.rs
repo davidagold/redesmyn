@@ -1,5 +1,5 @@
 use crate::common::LogConfig;
-use crate::metrics::AwsEmfSubscriber;
+use crate::metrics::{EmfInterest, EmfMetrics};
 use crate::predictions::{HandlerArgs, Service};
 use crate::schema::Schema;
 
@@ -9,12 +9,10 @@ use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
-use tracing::subscriber::Interest;
-use tracing_subscriber::layer::Filter;
 use std::collections::VecDeque;
 use std::env;
 use tokio::{signal, task::JoinHandle};
-use tracing::{instrument, Subscriber};
+use tracing::instrument;
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
@@ -91,49 +89,6 @@ impl Server {
     }
 }
 
-enum MetricFilter {
-    Subscribe,
-    Ignore
-}
-
-impl<S: Subscriber> Filter<S> for MetricFilter {
-    fn enabled(&self, meta: &tracing::Metadata<'_>, ctx: &tracing_subscriber::layer::Context<'_,S>) -> bool {
-        for f in meta.fields() {
-            if let Some((prefix, _)) = f.name().split_once(".") {
-                match (prefix, self) {
-                    ("__Metrics", Self::Subscribe) => return true,
-                    ("__Dimensions", Self::Subscribe) => return true,
-                    ("__Metrics", Self::Ignore) => return false,
-                    ("__Dimensions", Self::Ignore) => return false,
-                    _ => continue
-                }
-            }
-        };
-        match self {
-            Self::Subscribe => false,
-            Self::Ignore => true
-        }
-    }
-    
-    fn callsite_enabled(&self,meta: &'static tracing::Metadata<'static>) -> tracing::subscriber::Interest {        
-        for f in meta.fields() {
-            if let Some((prefix, _)) = f.name().split_once(".") {
-                match (prefix, self) {
-                    ("__Metrics", Self::Subscribe) => return Interest::always(),
-                    ("__Dimensions", Self::Subscribe) => return Interest::always(),
-                    ("__Metrics", Self::Ignore) => return Interest::never(),
-                    ("__Dimensions", Self::Ignore) => return Interest::never(),
-                    _ => continue
-                }
-            }
-        };
-        match self {
-            Self::Subscribe => Interest::never(),
-            Self::Ignore => Interest::always()
-        }
-    }
-}
-
 impl Server {
     pub fn register<S, O>(&mut self, service: S) -> &Self
     where
@@ -155,8 +110,8 @@ impl Server {
 
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
-            .with(AwsEmfSubscriber::new(10, "./metrics.log".into()).with_filter(MetricFilter::Subscribe))
-            .with(self.config_log.layer().with_filter(MetricFilter::Ignore))
+            .with(self.config_log.layer().with_filter(EmfInterest::Never))
+            .with(EmfMetrics::new(10, "./metrics.log".into()))
             .init();
 
         let available_parallelism = std::thread::available_parallelism()?;

@@ -9,7 +9,7 @@ install-py:
 	pipenv install --categories $(PY_PKG_GROUPS)
 
 
-FLAGS ?= ""
+FLAGS ?=
 MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
@@ -36,7 +36,7 @@ run-rs:
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run --package examples
 
-run-py:
+run-py: develop-py
 	cd py-redesmyn && \
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
