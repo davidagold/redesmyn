@@ -36,7 +36,7 @@ run-rs:
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
 	cargo run --package examples
 
-run-py:
+run-py: develop-py
 	cd py-redesmyn && \
 	RUST_LOG=$(RUST_LOG) \
 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \

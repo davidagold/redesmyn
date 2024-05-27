@@ -20,7 +20,7 @@ use tokio::{
 use tracing::{
     error,
     field::{Field, Visit},
-    span,
+    info, span,
     subscriber::Interest,
     Subscriber,
 };
@@ -203,6 +203,7 @@ impl EmfMetrics {
     {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<MetricsEntry>(512);
         let task = tokio::spawn(async move {
+            info!("Creating metrics log file `{}`", fp);
             let mut file = File::create(fp.as_str()).await.unwrap();
             loop {
                 let task = EmfMetrics::receive_and_flush(&mut rx, &mut file, max_delay_ms);

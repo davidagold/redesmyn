@@ -12,10 +12,8 @@ use serde::Deserialize;
 use std::collections::VecDeque;
 use std::env;
 use tokio::{signal, task::JoinHandle};
-use tracing::subscriber::Interest;
+use tracing::instrument;
 use tracing::{error, info};
-use tracing::{instrument, Subscriber};
-use tracing_subscriber::layer::Filter;
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 trait ResourceFactory: Sync + Send {
@@ -112,8 +110,8 @@ impl Server {
 
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
-            .with(EmfMetrics::new(10, "./metrics.log".into()))
             .with(self.config_log.layer().with_filter(EmfInterest::Never))
+            .with(EmfMetrics::new(10, "./metrics.log".into()))
             .init();
 
         let available_parallelism = std::thread::available_parallelism()?;
