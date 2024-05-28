@@ -17,7 +17,6 @@ serde = { workspace = true }
 polars = { workspace = true }
 polars-core = "0.38.1"
 pyo3 = { workspace = true }
-pyo3-asyncio = { workspace = "true", features = ["attributes", "tokio-runtime"]}
-
+pyo3-asyncio = { workspace = true, features = ["attributes", "tokio-runtime"] }
 redesmyn = { workspace = true }
 futures-util = "0.3.30"

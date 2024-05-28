@@ -10,7 +10,7 @@ repository = { workspace = true }
 
 [dependencies]
 actix-web = { workspace = true }
-bytes = { worksace = true }
+bytes = { workspace = true }
 cron = { workspace = true }
 chrono = { workspace = true, default-features = false }
 futures = { workspace = true }
@@ -22,11 +22,11 @@ polars = { features = [
     "partition_by",
 ], workspace = true }
 pyo3 = { workspace = true }
-pyo3-asyncio = { workspace = "true", features = ["attributes", "tokio-runtime"]}
+pyo3-asyncio = { workspace = true, features = ["attributes", "tokio-runtime"] }
 pyo3-polars = { workspace = true }
 serde = { features = ["derive"], workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
-strum = { workspace = true, features = ["derive"]}
+strum = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { features = ["rt-multi-thread", "macros"], workspace = true }

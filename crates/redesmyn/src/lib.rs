@@ -5,6 +5,5 @@ pub mod error;
 pub mod handler;
 pub mod metrics;
 pub mod predictions;
-pub mod runtime;
 pub mod schema;
 pub mod server;
