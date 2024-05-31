@@ -6,7 +6,7 @@ SHELL := /bin/bash
 PY_PKG_GROUPS ?= packages dev-packages
 
 install:
-	pipenv install --categories $(PY_PKG_GROUPS)
+	poetry install --with dev
 
 
 FLAGS ?=
