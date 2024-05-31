@@ -4,4 +4,9 @@
 
 py-redesmyn/docs/src/**/api
 py-redesmyn/docs/build
+!py-redesmyn/examples/iris/data/iris.csv
 data
+*/**/.venv
+*/**/logs
+*/**/*.log
+*/**/models
