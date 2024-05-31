@@ -1,11 +1,11 @@
 SHELL := /bin/bash
 
-.PHONY: install-py develop-py run
+.PHONY: install build run predict
 
 
-PY_PKG_GROUPS ?= "packages dev-packages"
+PY_PKG_GROUPS ?= packages dev-packages
 
-install-py:
+install:
 	pipenv install --categories $(PY_PKG_GROUPS)
 
 
@@ -14,7 +14,7 @@ MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
 
-develop-py:
+build:
 	cd ../../.. && poetry run --directory py-redesmyn/examples/iris maturin develop $(MATURIN_OPTIONS) $(FLAGS)
 
 
@@ -25,15 +25,3 @@ serve:
 
 predict:
 	poetry run python -m predict
-
-
-
-# RUST_LOG ?= INFO
-
-# run-py: develop-py
-# 	cd py-redesmyn && \
-# 	RUST_LOG=$(RUST_LOG) \
-# 	PYTHONPATH=$(shell pipenv --venv)/lib/python3.11/site-packages \
-# 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
-# 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
-# 	python -m tests.test_server
