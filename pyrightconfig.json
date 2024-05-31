@@ -1,0 +1,5 @@
+{
+    "venvPath": ".",
+    "venv": "py-redesmyn/.venv",
+    "pythonVersion": "3.11"
+}
