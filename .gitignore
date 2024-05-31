@@ -5,3 +5,8 @@
 py-redesmyn/docs/src/**/api
 py-redesmyn/docs/build
 data
+*/**/data
+*/**/.venv
+*/**/logs
+*/**/*.log
+*/**/models
