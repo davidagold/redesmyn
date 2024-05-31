@@ -7,10 +7,11 @@ import mlflow
 from redesmyn.endpoint import endpoint
 from redesmyn.server import Server
 from sklearn.pipeline import Pipeline
+
+from common import project_dir
 from train import Input, Output, SepalLengthPredictor
 
-project_dir = Path(__file__).parent
-mlflow.set_tracking_uri(project_dir / "models/mlflow/iris")
+mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
 arg_parser = ArgumentParser()
 arg_parser.add_argument("run_id", type=str)
 args = arg_parser.parse_args()
@@ -32,5 +33,4 @@ async def main():
     await server.serve()
 
 
-# task = asyncio.create_task(main())
 asyncio.run(main())

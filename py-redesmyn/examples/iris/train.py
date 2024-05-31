@@ -10,6 +10,8 @@ from sklearn.discriminant_analysis import StandardScaler
 from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
 
+from common import load_irises, project_dir
+
 
 class Input(Schema):
     sepal_width: pl.Float64
@@ -59,22 +61,17 @@ class SepalLengthPredictor:
 
 
 def main():
-    project_dir = Path(__file__).parent
-    irises = pl.read_csv(project_dir / "data/iris.csv")
-    mlflow.set_tracking_uri(project_dir / "models/mlflow/iris")
+    irises = load_irises()
+    mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
     experiment_id = (
         experiment.experiment_id
         if (experiment := mlflow.get_experiment_by_name(name="iris"))
         else mlflow.create_experiment(name="iris")
     )
-    logging.info(f"{experiment_id=}")
-    print(f"{experiment_id=}")
-
     run_id: str
     with mlflow.start_run(experiment_id=experiment_id):
         assert (active_run := mlflow.active_run()) is not None
         run_id = active_run.info.run_id
-        print(f"{run_id=}")
         fit = SepalLengthPredictor.fit(df=irises)
         mlflow.sklearn.log_model(fit, artifact_path="model")
 
