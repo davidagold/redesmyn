@@ -34,18 +34,26 @@ maximum_signature_line_length = 88
 # autosummary
 
 autosummary_filename_map = {
-    "redesmyn.endpoint.Endpoint": "Endpoint.rst",
-    "redesmyn.endpoint.endpoint": "endpoint-decorator.rst",
+    "redesmyn.service.Endpoint": "Endpoint.rst",
+    "redesmyn.service.endpoint": "endpoint-decorator.rst",
 }
 autosummary_context = {
-    "decorators": [
-        "redesmyn.endpoint.endpoint"
+    "decorators": ["redesmyn.service.endpoint", "redesmyn.artifacts.artifact_spec"],
+    "special": {"redesmyn.schema.Schema": ["DataFrame"]},
+    "show_inheritance": [
+        "redesmyn.artifacts.ModelCache",
+        "redesmyn.artifacts.ArtifactSpec",
     ],
-    "special": {
-        "redesmyn.schema.Schema": [
-            "DataFrame"
+    "no_inherited_members": {"redesmyn.artifacts.ArtifactSpec": ["BaseModel"]},
+    "exclude_attributes": {
+        "redesmyn.artifacts.ArtifactSpec": [
+            "model_computed_fields",
+            "model_config",
+            "model_fields",
+            "model_extra",
+            "model_fields_set",
         ]
-    }
+    },
 }
 
 

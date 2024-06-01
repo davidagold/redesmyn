@@ -12,7 +12,7 @@
    .. autosummary::
       :toctree:
    {% for item in methods %}
-   {%- if not item.startswith('_') %}
+   {%- if not item.startswith('_') and (item not in inherited_members or fullname not in no_inherited_members) %}
       ~{{ name }}.{{ item }}
    {%- endif -%}
    {%- endfor %}
@@ -27,7 +27,7 @@
    .. autosummary::
    {% for item in all_attributes %}
       ~{{ name }}.{{ item }}
-   {%- endfor %}
+   {%- endfor -%}
 
    {% endif %}
    {% endblock %}

@@ -4,11 +4,9 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import mlflow
-from redesmyn.endpoint import endpoint
-from redesmyn.server import Server
-from sklearn.pipeline import Pipeline
-
 from common import project_dir
+from redesmyn.service import Server, endpoint
+from sklearn.pipeline import Pipeline
 from train import Input, Output, SepalLengthPredictor
 
 mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
