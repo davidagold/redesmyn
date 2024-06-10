@@ -457,13 +457,7 @@ class ModelCache(Generic[T, M]):
         refresh: Optional[timedelta | Cron] = None,
         max_size: int = 128,
     ) -> None:
-        if len(type_param_args := get_args(type(self))) > 0:
-            if not (spec := self._validate_spec_type(spec=cast(Type, first(type_param_args)))):
-                msg = f"First type param to `ModelCache` must be valid `ArtifactSpec` (got `{spec}`)"
-                raise ValueError(msg)
-            else:
-                self._Spec = spec
-        elif spec is None or not issubclass(spec, ArtifactSpec):
+        if spec is None or not issubclass(spec, ArtifactSpec):
             msg = f"Argument `spec={spec}` of type `{type(spec)}` is not a subclass of `ArtifactSpec`"
             raise ValueError(msg)
         else:
