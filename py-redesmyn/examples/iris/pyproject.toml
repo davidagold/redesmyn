@@ -12,6 +12,8 @@ polars = "^0.20.30"
 scikit-learn = "^1.5.0"
 more-itertools = "^10.2.0"
 aiohttp = "^3.9.5"
+annotated-types = "^0.7.0"
+pydantic = "^2.7.3"
 
 [tool.poetry.group.dev.dependencies]
 maturin = "^1.5.1"
@@ -19,7 +21,7 @@ maturin = "^1.5.1"
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
-
+pythonVersion = "3.11"
 
 [build-system]
 requires = ["poetry-core"]
