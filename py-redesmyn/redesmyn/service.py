@@ -18,10 +18,14 @@ def extract_schema(annotation: Type) -> pl.Struct:
 
 def get_signature(f: Callable) -> Tuple[pl.Struct, pl.Struct]:
     s = inspect.signature(f)
+    print(f"{list(get_args(t.annotation) for t in s.parameters.values())}")
     param_df = one(
         param
         for param in s.parameters.values()
-        if issubclass(first(get_args(param.annotation)), pl.DataFrame)
+        if (
+            len((type_args := get_args(param.annotation))) > 0
+            and issubclass(first(type_args), pl.DataFrame)
+        )
     )
     return (extract_schema(param_df.annotation), extract_schema(s.return_annotation))
 
@@ -47,6 +51,7 @@ class Endpoint(Generic[M]):
             batch_max_size=batch_max_size,
             handler=handler,
         )
+        self._cache = cache
 
     def __call__(self, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
         model: M = self._cache.get(**kwargs)
@@ -64,6 +69,7 @@ def endpoint(
             handler=handler,
             signature=get_signature(handler),
             path=path,
+            cache=cache,
             batch_max_delay_ms=batch_max_delay_ms,
             batch_max_size=batch_max_size,
         )
