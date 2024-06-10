@@ -5,7 +5,6 @@ from typing import Annotated, Self
 import polars as pl
 from handlers.model import Model
 from pydantic import model_validator
-
 from redesmyn import artifacts as afs
 from redesmyn import service as svc
 
@@ -20,7 +19,6 @@ class Output(svc.Schema):
 
 
 class VersionedModelSpec(afs.ArtifactSpec[Model]):
-    model_name: str
     model_version: str
     run_id: Annotated[str, afs.LatestKey]
 
@@ -37,10 +35,11 @@ class VersionedModelSpec(afs.ArtifactSpec[Model]):
 
 
 @svc.endpoint(
-    path="/predictions/{model_name}/{model_version}",
-    cache=afs.ModelCache[VersionedModelSpec, Model](
-        client=afs.FsClient(as_type=afs.Fetchable.Uri),
-        path=afs.path("s3://model-bucket/{model_name}/{model_version}/"),
+    path="/predictions/{model_version}",
+    cache=afs.ModelCache(
+        client=afs.FsClient(fetch_as=afs.FetchAs.Uri),
+        path=afs.path("s3://model-bucket/{model_version}/"),
+        spec=VersionedModelSpec,
         refresh=afs.Cron(schedule="0 * * * * *"),
     ),
     batch_max_delay_ms=10,
