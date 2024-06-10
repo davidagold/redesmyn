@@ -1,12 +1,11 @@
+import operator
+from abc import abstractmethod
 from datetime import timedelta
 from enum import Enum
 from inspect import signature
 from io import FileIO
-import operator
-from abc import abstractmethod
 from pathlib import Path
 from string import Template
-from cachetools import LRUCache
 from typing import (
     IO,
     Callable,
@@ -28,6 +27,7 @@ from typing import (
 )
 
 from annotated_types import SupportsGt, SupportsLt
+from cachetools import LRUCache
 from more_itertools import filter_map, first, only
 from pydantic import BaseModel, ConfigDict, create_model, model_validator
 from pydantic.fields import FieldInfo
@@ -205,7 +205,7 @@ class ArtifactSpec(BaseModel, Generic[M]):
     cache_path: ClassVar[Optional[PathTemplate]]
     """(Optional) The (templated) path that, with parameters substituted, directs to an artifact location.
 
-    You can specify the storage location format for model artifacts either 
+    You can specify the storage location format for model artifacts either
     in the definition of an `ArtifactSpec` or in the initialization of a :class:`ModelCache`.
     """
     latest_key: ClassVar[Optional[str]]
@@ -223,7 +223,7 @@ class ArtifactSpec(BaseModel, Generic[M]):
             else PathTemplate(path).get_identifiers()
         )
         params = {k: (Optional[str], None) for k in param_ids}
-        return create_model(spec_name, __base__=(ArtifactSpec, Generic[M]), **params)
+        return create_model(spec_name, __base__=(ArtifactSpec, Generic[M]), **params)  # type: ignore
 
     @staticmethod
     def generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec[M]"]:
@@ -240,7 +240,8 @@ class ArtifactSpec(BaseModel, Generic[M]):
         latest_key = only(filter_map(is_latest_key, base.model_fields.items()), too_long=err)
 
         spec: Type[ArtifactSpec[M]] = create_model(
-            f"{base.__name__}Spec", __base__=(base, ArtifactSpec, Generic[M])
+            f"{base.__name__}Spec",
+            __base__=(base, ArtifactSpec, Generic[M]),  # type: ignore
         )
         spec.latest_key = latest_key
         return spec
