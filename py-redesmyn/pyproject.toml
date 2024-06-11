@@ -10,6 +10,7 @@ polars = "^0.20.30"
 more-itertools = "^10.2.0"
 cachetools = "^5.3.3"
 pydantic = "^2.7.2"
+setuptools = "^70.0.0"
 
 [tool.poetry.group.dev.dependencies]
 maturin = "^1.5.1"
