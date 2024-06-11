@@ -259,23 +259,8 @@ where
     }
 }
 
-#[derive(Deserialize)]
-pub struct ModelSpec {
-    model_name: String,
-    model_version: String,
-}
-
-impl fmt::Display for ModelSpec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.model_name, self.model_version)
-    }
-}
-
-#[metric_instrument(
-    dimensions(FunctionName = "Invoke", ModelVersion = model_spec.model_version)
-)]
+#[metric_instrument(dimensions(FunctionName = "Invoke"))]
 pub async fn invoke<T, R>(
-    model_spec: web::Path<ModelSpec>,
     records: web::Json<Vec<T>>,
     app_state: web::Data<BatchPredictor<T, R>>,
     schema: web::Data<Schema>,
@@ -283,7 +268,6 @@ pub async fn invoke<T, R>(
 where
     T: Send + std::fmt::Debug,
     R: Relation<Serialized = T>,
-    ModelSpec: for<'de> serde::Deserialize<'de>,
 {
     metrics!(RequestCount: Count = 1);
 
@@ -301,7 +285,7 @@ where
 }
 
 pub(crate) type HandlerArgs<R, T> =
-    (web::Path<ModelSpec>, web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
+    (web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
 
 impl<T, R> Service for BatchPredictor<T, R>
 where
