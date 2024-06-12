@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use ::redesmyn::common::{Wrap, LogConfig};
+use ::redesmyn::common::{LogConfig, Wrap};
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
@@ -11,7 +11,6 @@ use ::redesmyn::server::Server;
 use polars::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
-
 
 #[pyclass]
 #[repr(transparent)]
