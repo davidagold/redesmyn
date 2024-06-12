@@ -5,7 +5,6 @@ from typing import Dict
 
 import aiohttp
 import polars as pl
-
 from common import load_irises
 from train import Input
 
@@ -19,6 +18,8 @@ async def send_post_request(
 ):
     start = time.perf_counter_ns()
     async with session.post(url, json=[json.dumps(data)]) as response:
+        if response.status != 200:
+            print(response)
         message = await response.text()
         timing_ms = (time.perf_counter_ns() - start) / 1e9
         record = json.loads(message)
@@ -27,7 +28,7 @@ async def send_post_request(
 
 
 async def main():
-    url = "http://localhost:8080/predictions/iris/v0.1.0"
+    url = "http://localhost:8080/predictions/v1"
     records_by_task_id: Dict[int, Dict] = {}
     irises = load_irises()
 
