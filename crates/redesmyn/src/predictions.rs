@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::{config_methods, metrics, validate_param};
 use redesmyn_macros::metric_instrument;
@@ -59,6 +60,7 @@ pub struct ServiceConfig {
     pub batch_max_size: usize,
     pub handler_config: HandlerConfig,
     pub handler: Option<Handler>,
+    // pub cache: Cache,
 }
 
 impl ServiceConfig {
@@ -75,6 +77,7 @@ pub struct EndpointBuilder<T, R> {
     batch_max_delay_ms: Option<u32>,
     batch_max_size: Option<usize>,
     handler_config: Option<HandlerConfig>,
+    cache: Option<Cache>,
     _phantom: (PhantomData<T>, PhantomData<R>),
 }
 
@@ -86,6 +89,7 @@ impl<T, R> Default for EndpointBuilder<T, R> {
             batch_max_delay_ms: Some(5),
             batch_max_size: Some(64),
             handler_config: None,
+            cache: None,
             _phantom: (PhantomData, PhantomData),
         }
     }
@@ -101,7 +105,8 @@ where
         path: &str,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
-        handler_config: HandlerConfig
+        handler_config: HandlerConfig,
+        cache: Cache
     }
 
     pub fn build(self) -> Result<BatchPredictor<T, R>, ServiceError> {
@@ -113,7 +118,7 @@ where
             handler_config: validate_param!(&self, handler_config),
             handler: None,
         };
-        Ok(BatchPredictor::<T, R>::new(config))
+        Ok(BatchPredictor::<T, R>::new(config, self.cache.unwrap()))
     }
 }
 
@@ -126,6 +131,7 @@ where
     tx: mpsc::Sender<PredictionJob<T, R>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
     state: EndpointState,
+    cache: Cache,
 }
 
 impl<T, R> Clone for BatchPredictor<T, R>
@@ -146,6 +152,7 @@ where
             tx,
             rx,
             state: self.state,
+            cache: self.cache.clone(),
         }
     }
 }
@@ -164,7 +171,7 @@ where
         self
     }
 
-    pub fn new(config: ServiceConfig) -> BatchPredictor<T, R> {
+    pub fn new(config: ServiceConfig, cache: Cache) -> BatchPredictor<T, R> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
@@ -172,6 +179,7 @@ where
             rx: Some(rx),
             config,
             state: EndpointState::Ready,
+            cache,
         }
     }
 
