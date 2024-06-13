@@ -690,6 +690,7 @@ name = "examples"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "cron",
  "polars",
  "pyo3",
  "pyo3-polars",
