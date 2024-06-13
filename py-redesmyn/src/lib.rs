@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ::redesmyn::cache::PyCache;
 use ::redesmyn::common::{LogConfig, Wrap};
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
@@ -94,8 +95,8 @@ impl PyServer {
         PyServer { server }
     }
 
-    pub fn register(&mut self, endpoint: PyEndpoint) -> PyResult<()> {
-        let service = BatchPredictor::<String, Schema>::new(endpoint.config);
+    pub fn register(&mut self, endpoint: PyEndpoint, cache: PyCache) -> PyResult<()> {
+        let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.cache);
         self.server.register(service);
         Ok(())
     }
