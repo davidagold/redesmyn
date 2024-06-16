@@ -95,7 +95,7 @@ impl PyHandler {
         Ok(PyHandler { handler })
     }
 
-    pub fn invoke(&self, py: Python<'_>, df: PyDataFrame) -> PyResult<PyObject> {
+    pub fn invoke(&self, py: Python<'_>, model: Py<PyAny>, df: PyDataFrame) -> PyResult<PyObject> {
         self.handler.call(py, (df,), None)
     }
 }
@@ -110,6 +110,7 @@ impl Handler {
     pub fn invoke(
         &self,
         df: PyDataFrame,
+        model: Py<PyAny>,
         py: Option<Python<'_>>,
     ) -> Result<PyObject, ServiceError> {
         match self {
@@ -119,7 +120,7 @@ impl Handler {
                         "Cannot invoke Python handler without GIL guard.".to_string(),
                     )
                 };
-                pyhandler.invoke(py.ok_or_else(err)?, df).map_err(|err| err.into())
+                pyhandler.invoke(py.ok_or_else(err)?, model, df).map_err(|err| err.into())
             }
             Handler::Rust => todo!(),
         }
