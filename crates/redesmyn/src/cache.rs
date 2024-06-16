@@ -1,4 +1,4 @@
-use crate::{do_in, error::ServiceResult};
+use crate::error::ServiceResult;
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
@@ -16,7 +16,6 @@ use std::{
     collections::BTreeMap,
     fs,
     future::{self, Future},
-    hash::Hash,
     io::Read,
     num::NonZeroUsize,
     path::PathBuf,

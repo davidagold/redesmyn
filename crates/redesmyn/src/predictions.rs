@@ -279,9 +279,7 @@ where
 
 #[metric_instrument(dimensions(FunctionName = "Invoke"))]
 pub async fn invoke<T, R>(
-    // path: web::dev::Path<actix_web::dev::Url>,
     req: HttpRequest,
-    // spec: web::Path<BTreeMap<String, String>>,
     records: web::Json<Vec<T>>,
     app_state: web::Data<BatchPredictor<T, R>>,
     schema: web::Data<Schema>,
