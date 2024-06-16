@@ -1,4 +1,4 @@
-use crate::cache::Cache;
+use crate::cache::{ArtifactSpec, BoxedSpec, Cache, CacheHandle, CacheKey};
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::{config_methods, metrics, validate_param};
 use redesmyn_macros::metric_instrument;
@@ -6,13 +6,15 @@ use redesmyn_macros::metric_instrument;
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
 
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::{collections::HashMap, fmt, iter::repeat, time::Duration};
+use std::{collections::HashMap, iter::repeat, time::Duration};
 use tokio::time::sleep;
 use tokio::{
     sync::{
@@ -22,7 +24,7 @@ use tokio::{
     task::JoinHandle,
     time::Instant,
 };
-use tracing::{error, info, instrument};
+use tracing::{error, info, instrument, warn};
 
 use uuid::Uuid;
 
@@ -188,6 +190,7 @@ where
         mut rx: mpsc::Receiver<PredictionJob<T, R>>,
         mut rx_abort: oneshot::Receiver<()>,
         config: ServiceConfig,
+        cache_handle: CacheHandle,
     ) {
         println!("Starting predict task with config: {:#?}", &config);
         let ServiceConfig { batch_max_delay_ms, batch_max_size, .. } = config.clone();
@@ -214,28 +217,32 @@ where
                 continue;
             }
 
-            let config = config.clone();
-            match BatchJob::from_jobs(jobs) {
-                Ok(batch) => {
-                    tokio::task::spawn_blocking(move || Self::predict_batch(batch, config))
-                }
-                Err(err) => {
-                    error!("Failed to predict against batch: {err}");
+            // TODO: Route jobs to key-specific batch-predict task rather than sort within latter
+            let batches_by_key = batch_jobs_by_key(jobs);
+            for (key, batch) in batches_by_key.into_iter() {
+                let config = config.clone();
+                let Ok(model) = cache_handle.get(&key).await else {
+                    warn!("Failed to load model for spec with key '{}'", key);
                     continue;
-                }
-            };
+                };
+                tokio::task::spawn_blocking(move || Self::predict_batch(batch, config, model));
+            }
         }
     }
 
     #[instrument(skip_all)]
-    fn predict_batch(mut batch: BatchJob<R>, config: ServiceConfig) -> Result<(), ServiceError> {
+    fn predict_batch(
+        mut batch: BatchJob<R>,
+        config: ServiceConfig,
+        model: Py<PyAny>,
+    ) -> Result<(), ServiceError> {
         info!(batch_size = batch.len(), "Running batch predict.");
         let df_batch = batch.swap_df(None)?.unwrap();
         let df_results = match Python::with_gil(|py| {
             config
                 .handler
                 .ok_or_else(|| ServiceError::Error("Handler not initialized".to_string()))?
-                .invoke(PyDataFrame(df_batch), Some(py))
+                .invoke(PyDataFrame(df_batch), model, Some(py))
                 .inspect_err(|err| {
                     error!("Failed to call handler function `{:#?}`: {err}", config.handler_config);
                 })?
@@ -269,6 +276,7 @@ where
 
 #[metric_instrument(dimensions(FunctionName = "Invoke"))]
 pub async fn invoke<T, R>(
+    req: HttpRequest,
     records: web::Json<Vec<T>>,
     app_state: web::Data<BatchPredictor<T, R>>,
     schema: web::Data<Schema>,
@@ -279,8 +287,12 @@ where
 {
     metrics!(RequestCount: Count = 1);
 
+    let spec: BTreeMap<String, String> =
+        req.match_info().iter().map(|(key, val)| (key.to_string(), val.to_string())).collect();
+
     let (tx, rx) = oneshot::channel();
-    let job = PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner());
+    let job =
+        PredictionJob::<T, R>::new(records.into_inner(), tx, schema.into_inner(), Box::new(spec));
 
     if let Err(err) = app_state.tx.send(job).await {
         return HttpResponse::InternalServerError().body(err.to_string());
@@ -293,7 +305,7 @@ where
 }
 
 pub(crate) type HandlerArgs<R, T> =
-    (web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
+    (HttpRequest, web::Json<Vec<T>>, web::Data<BatchPredictor<T, R>>, web::Data<Schema>);
 
 impl<T, R> Service for BatchPredictor<T, R>
 where
@@ -320,8 +332,11 @@ where
 
         let mut config = self.config.clone();
         config.try_init_handler()?;
+        let cache_handle = self.cache.handle();
         let handle = tokio::spawn(async move {
-            tokio::spawn(async move { BatchPredictor::<T, R>::task(rx, rx_abort, config).await });
+            tokio::spawn(async move {
+                BatchPredictor::<T, R>::task(rx, rx_abort, config, cache_handle).await
+            });
             BatchPredictor::<T, R>::await_shutdown(tx_abort).await
         });
         self.state = EndpointState::Running;
@@ -341,8 +356,51 @@ struct BatchJob<R>
 where
     R: Relation,
 {
+    model_key: CacheKey,
     jobs_by_id: HashMap<String, PredictionJob<R::Serialized, R>>,
     df: Option<DataFrame>,
+}
+
+impl<R> Debug for BatchJob<R>
+where
+    R: Relation,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("<BatchJob with model key {}", self.model_key))
+    }
+}
+
+#[instrument(skip_all)]
+fn batch_jobs_by_key<T, R>(
+    jobs: impl IntoIterator<Item = PredictionJob<T, R>>,
+) -> BTreeMap<CacheKey, BatchJob<R>>
+where
+    T: Send,
+    R: Relation<Serialized = T>,
+{
+    let jobs_by_spec_key = jobs.into_iter().fold(
+        BTreeMap::<CacheKey, Vec<PredictionJob<T, R>>>::default(),
+        |mut jobs_by_key, job| {
+            let Ok(key) = job.spec.as_key() else {
+                return jobs_by_key;
+            };
+            jobs_by_key.entry(key).or_insert(Vec::<PredictionJob<T, R>>::new()).push(job);
+            jobs_by_key
+        },
+    );
+    jobs_by_spec_key
+        .into_iter()
+        .filter_map(|(key, jobs)| {
+            let batch = match BatchJob::from_jobs(jobs, key.clone()) {
+                Ok(batch) => batch,
+                Err(err) => {
+                    warn!("Failed to aggregate jobs: {:#?}", err);
+                    return None;
+                }
+            };
+            Some((key.clone(), batch))
+        })
+        .collect()
 }
 
 impl<T, R> BatchJob<R>
@@ -350,7 +408,10 @@ where
     T: Send,
     R: Relation<Serialized = T>,
 {
-    fn from_jobs(jobs: Vec<PredictionJob<R::Serialized, R>>) -> Result<BatchJob<R>, PolarsError> {
+    fn from_jobs(
+        jobs: Vec<PredictionJob<R::Serialized, R>>,
+        key: CacheKey,
+    ) -> Result<BatchJob<R>, PolarsError> {
         let mut jobs_by_id = HashMap::<String, PredictionJob<R::Serialized, R>>::new();
         let dfs = jobs
             .into_iter()
@@ -367,7 +428,7 @@ where
             .collect::<Vec<_>>();
         let df_concatenated = concat::<Vec<_>>(dfs, UnionArgs::default())?;
         match df_concatenated.collect() {
-            Ok(df) => Ok(BatchJob { jobs_by_id, df: Some(df) }),
+            Ok(df) => Ok(BatchJob { jobs_by_id, df: Some(df), model_key: key }),
             Err(err) => Err(err),
         }
     }
@@ -420,6 +481,7 @@ where
     records: Option<Vec<T>>,
     tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
     schema: Arc<Schema>,
+    spec: BoxedSpec,
     phantom: PhantomData<R>,
 }
 
@@ -431,6 +493,7 @@ where
         records: Vec<T>,
         tx: Sender<Result<PredictionResponse, ServiceError>>,
         schema: Arc<Schema>,
+        spec: BoxedSpec,
     ) -> PredictionJob<T, R>
     where
         R: Relation,
@@ -441,6 +504,7 @@ where
             records: Some(records),
             tx,
             schema,
+            spec: spec.into(),
             phantom: PhantomData,
         }
     }

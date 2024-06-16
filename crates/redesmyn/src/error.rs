@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use polars::prelude::PolarsError;
-use pyo3::{exceptions::PyRuntimeError, prelude::PyErr};
+use pyo3::{exceptions::PyRuntimeError, prelude::PyErr, PyDowncastError};
 use std::env::VarError;
 use tokio::{
     sync::{mpsc::error::SendError, oneshot::error::RecvError},
