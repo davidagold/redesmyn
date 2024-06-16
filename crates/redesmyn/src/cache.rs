@@ -1,4 +1,4 @@
-use crate::error::ServiceResult;
+use crate::{do_in, error::ServiceResult};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
@@ -16,6 +16,7 @@ use std::{
     collections::BTreeMap,
     fs,
     future::{self, Future},
+    hash::Hash,
     io::Read,
     num::NonZeroUsize,
     path::PathBuf,
@@ -34,11 +35,12 @@ use tokio::{
     },
     task::{JoinError, JoinHandle},
 };
-use tracing::info;
+use tracing::{info, instrument, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
-enum Schedule {
+#[derive(Clone, Debug)]
+pub enum Schedule {
     Cron(cron::Schedule),
     Interval(Duration),
 }
@@ -87,7 +89,7 @@ impl From<DateTime<Utc>> for UpdateTime {
     }
 }
 
-trait ArtifactSpec {
+pub trait ArtifactSpec {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
 
     fn as_map(&self) -> Result<BTreeMap<String, String>, serde_json::Error> {
@@ -129,7 +131,7 @@ impl<T: Serialize> ArtifactSpec for T {
     }
 }
 
-type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync>;
+pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync>;
 
 #[derive(Clone)]
 enum Uri {
@@ -250,7 +252,7 @@ impl FetchAs {
 enum Command {
     UpdateEntry(BoxedSpec, FetchAs),
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
-    GetEntry(BoxedSpec, oneshot::Sender<Py<PyAny>>),
+    GetEntry(CacheKey, oneshot::Sender<CacheResult<Py<PyAny>>>),
 }
 
 impl std::fmt::Debug for Command {
@@ -272,7 +274,15 @@ impl std::fmt::Debug for Command {
     }
 }
 
-type CacheKey = String;
+impl Command {
+    fn get_entry(key: CacheKey) -> (Command, oneshot::Receiver<CacheResult<Py<PyAny>>>) {
+        let (tx, rx) = oneshot::channel::<CacheResult<Py<PyAny>>>();
+        let cmd = Command::GetEntry(key, tx);
+        (cmd, rx)
+    }
+}
+
+pub type CacheKey = String;
 
 struct TaskFlow {
     config: Arc<RefreshConfig>,
@@ -469,11 +479,42 @@ impl ModelEntry {
     }
 }
 
-struct Cache {
+#[derive(Debug)]
+pub struct Cache {
     client: Arc<ArtifactsClient>,
     schedule: Schedule,
+    max_size: Option<usize>,
     tx: Arc<mpsc::Sender<Command>>,
     task: JoinHandle<Result<(), CacheError>>,
+}
+
+pub struct CacheHandle {
+    tx: Arc<mpsc::Sender<Command>>,
+}
+
+impl CacheHandle {
+    pub async fn get(&self, key: &CacheKey) -> CacheResult<Py<PyAny>> {
+        let (cmd, rx) = Command::get_entry(key.clone());
+        self.tx.try_send(cmd)?;
+        rx.await.map_err(CacheError::from)?
+    }
+}
+
+impl Clone for Cache {
+    fn clone(&self) -> Self {
+        let (tx, rx) = mpsc::channel::<Command>(self.max_size.unwrap_or(DEFAULT_CACHE_SIZE));
+        let fut_task =
+            Cache::task(self.client.clone().into(), self.max_size, tx.clone().into(), rx);
+        let task = tokio::spawn(fut_task);
+
+        Cache {
+            client: self.client.clone(),
+            schedule: self.schedule.clone(),
+            max_size: self.max_size.clone(),
+            tx: tx.into(),
+            task,
+        }
+    }
 }
 
 impl Cache {
@@ -489,11 +530,17 @@ impl Cache {
         Cache {
             client: client.into(),
             schedule: schedule.unwrap_or_default(),
+            max_size,
             tx: tx.into(),
             task,
         }
     }
 
+    pub fn handle(&self) -> CacheHandle {
+        CacheHandle { tx: self.tx.clone() }
+    }
+
+    #[instrument(skip_all)]
     async fn task(
         client: Arc<ArtifactsClient>,
         max_size: Option<usize>,
@@ -528,7 +575,24 @@ impl Cache {
                     //       to individual keys while we are updating the respective models.
                     Self::insert_entry(&client, &mut model_cache, key, data, tx)?;
                 }
-                Command::GetEntry(key, tx) => {}
+                Command::GetEntry(spec, tx) => {
+                    let Ok(key) = spec.as_key() else {
+                        if let Err(_) =
+                            tx.send(Err(CacheError::Error("Failed to obtain model".into())))
+                        {
+                            warn!("Failed to send response");
+                        }
+                        continue;
+                    };
+                    let result_send = match model_cache.get(&key) {
+                        Some((_, ModelEntry::Ready(model))) => tx.send(Ok(model.clone())),
+                        // TODO: Make errors more specific
+                        _ => tx.send(Err(CacheError::Error("Failed to obtain model".into()))),
+                    };
+                    if let Err(_) = result_send {
+                        warn!("Failed to send response");
+                    };
+                }
             }
         }
     }
@@ -644,6 +708,8 @@ pub enum CacheError {
     EmptyEntryError,
     #[error("Cannot get model for key: entry is in use")]
     InUseError,
+    #[error("Failed to receive message over oneshot channel")]
+    RecvError(#[from] oneshot::error::RecvError),
 }
 
 impl From<String> for CacheError {
@@ -661,8 +727,9 @@ impl From<&str> for CacheError {
 type CacheResult<T> = Result<T, CacheError>;
 
 #[pyclass]
-struct PyCache {
-    cache: Cache,
+#[derive(Clone, Debug)]
+pub struct PyCache {
+    pub cache: Cache,
 }
 
 #[pymethods]
@@ -700,15 +767,16 @@ impl PyCache {
         py: Python<'py>,
         kwargs: Option<BTreeMap<String, String>>,
     ) -> PyResult<&'py PyAny> {
-        let (tx, rx) = oneshot::channel::<Py<PyAny>>();
         let spec = kwargs.unwrap_or_default();
-        let cmd = Command::GetEntry(Box::new(spec), tx);
-        self.cache.try_send(cmd).map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let key = spec.as_key().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+        let (cmd, rx) = Command::get_entry(key);
+        let _ = self.cache.try_send(cmd);
         pyo3_asyncio::tokio::future_into_py(py, async move {
-            let model = rx.await.map_err(|err| {
-                PyRuntimeError::new_err(format!("Failed to receive response from cache: {err}"))
-            })?;
-            Ok(model)
+            match rx.await {
+                Ok(Ok(model)) => Ok(model),
+                Ok(Err(err)) => Err(PyRuntimeError::new_err(err.to_string())),
+                Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+            }
         })
     }
 }
@@ -750,7 +818,7 @@ trait Client: Send + Sync + 'static {
 }
 
 #[derive(Clone, Debug)]
-struct FsClient {}
+pub struct FsClient {}
 
 impl Default for FsClient {
     fn default() -> Self {
@@ -759,7 +827,7 @@ impl Default for FsClient {
 }
 
 #[derive(Clone, Debug)]
-enum ArtifactsClient {
+pub enum ArtifactsClient {
     FsClient { client: FsClient, load_model: Py<PyFunction> },
 }
 

@@ -1,19 +1,20 @@
 import asyncio
-from itertools import repeat
 import json
 import time
+from itertools import repeat
 from typing import Dict
+
 import aiohttp
 import polars as pl
 
-
 model_name = "model"
 model_version = "1.0.0"
-url = f"http://localhost:8080/predictions/{model_name}/{model_version}"
+url = f"http://localhost:8080/predictions/{model_version}"
 
 
 record = {"a": 1, "b": 2}
 data = list(repeat(json.dumps(record), 4))
+
 
 async def send_post_request(
     task_id: int,
@@ -28,17 +29,20 @@ async def send_post_request(
         # print(f"{response_data=}")
         if isinstance(response_data, str):
             message = response_data
-        else: 
+        else:
             message = "success"
         timing_ms = (time.perf_counter_ns() - start) / 1e9
         record_request = {
-            "status_code": str(response.status), "timing": timing_ms, "id": task_id, "message": message
+            "status_code": str(response.status),
+            "timing": timing_ms,
+            "id": task_id,
+            "message": message,
         }
         records_by_task_id[task_id] = record_request
 
 
 async def main():
-    n_tasks = 512
+    n_tasks = 1
     records_by_task_id: Dict[int, Dict] = {}
     async with aiohttp.ClientSession() as session:
         async with asyncio.TaskGroup() as tg:
@@ -48,15 +52,14 @@ async def main():
                     session=session,
                     url=url,
                     data=data,
-                    records_by_task_id=records_by_task_id
+                    records_by_task_id=records_by_task_id,
                 )
                 tg.create_task(coroutine)
-    
+
     df = pl.DataFrame(list(records_by_task_id.values())).cast({"status_code": pl.Categorical})
     print(df.select("timing").describe())
     print(df.group_by("status_code", "message").len())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
-
