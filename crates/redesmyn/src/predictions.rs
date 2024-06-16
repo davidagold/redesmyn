@@ -219,11 +219,8 @@ where
 
             // TODO: Route jobs to key-specific batch-predict task rather than sort within latter
             let batches_by_key = batch_jobs_by_key(jobs);
-            warn!("batches_by_key.len() = {:#?}", batches_by_key.len());
             for (key, batch) in batches_by_key.into_iter() {
-                info!("What");
                 let config = config.clone();
-                info!("Key = {}", key);
                 let Ok(model) = cache_handle.get(&key).await else {
                     warn!("Failed to load model for spec with key '{}'", key);
                     continue;
@@ -292,8 +289,6 @@ where
 
     let spec: BTreeMap<String, String> =
         req.match_info().iter().map(|(key, val)| (key.to_string(), val.to_string())).collect();
-
-    info!("{:#?}", spec);
 
     let (tx, rx) = oneshot::channel();
     let job =
@@ -386,11 +381,9 @@ where
     let jobs_by_spec_key = jobs.into_iter().fold(
         BTreeMap::<CacheKey, Vec<PredictionJob<T, R>>>::default(),
         |mut jobs_by_key, job| {
-            //
             let Ok(key) = job.spec.as_key() else {
                 return jobs_by_key;
             };
-            info!("Key: {}", key);
             jobs_by_key.entry(key).or_insert(Vec::<PredictionJob<T, R>>::new()).push(job);
             jobs_by_key
         },
@@ -398,7 +391,6 @@ where
     jobs_by_spec_key
         .into_iter()
         .filter_map(|(key, jobs)| {
-            info!("jobs.len(): {}", jobs.len());
             let batch = match BatchJob::from_jobs(jobs, key.clone()) {
                 Ok(batch) => batch,
                 Err(err) => {
