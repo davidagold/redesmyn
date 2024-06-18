@@ -21,4 +21,4 @@ run:
 	PYTHONPATH=$(shell poetry env info --path --directory py-redesmyn)/lib/python$(PYTHON_VERSION)/site-packages \
 	MLFLOW_TRACKING_DIR=$(shell pwd)/data/models/mlflow \
 	MLFLOW_TRACKING_URI=$(shell pwd)/data/models/mlflow \
-	cargo run --package examples
+	cargo run --package examples --target-dir examples/target
