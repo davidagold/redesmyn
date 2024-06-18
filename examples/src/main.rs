@@ -3,13 +3,14 @@ use polars::datatypes::DataType;
 use pyo3::{types::PyFunction, Py, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
+    do_in,
     error::ServiceError,
     handler::PySpec,
     predictions::BatchPredictor,
     schema::{Relation, Schema},
     server::Server,
 };
-use std::str::FromStr;
+use std::{env::current_exe, str::FromStr};
 
 // #[derive(Debug, Deserialize, Relation)]
 // pub struct ToyRecord {
@@ -34,7 +35,17 @@ async fn main() -> Result<(), ServiceError> {
             .map_err(|err| ServiceError::from(err.to_string()))
     })?;
 
-    let afs_client = ArtifactsClient::FsClient { client: FsClient::default(), load_model };
+    let Some(afs_client) = do_in!(|| {
+        let exe_dir = current_exe().ok()?;
+        let mut models_dir = exe_dir.parent()?.parent()?.parent()?.to_path_buf();
+        models_dir.push("models");
+        ArtifactsClient::FsClient {
+            client: FsClient::new(models_dir),
+            load_model,
+        }
+    }) else {
+        return Ok(());
+    };
     let cache = Cache::new(
         afs_client,
         Some(64),
@@ -42,6 +53,7 @@ async fn main() -> Result<(), ServiceError> {
             cron::Schedule::from_str("0 * * * * * *")
                 .map_err(|err| ServiceError::from(err.to_string()))?,
         )),
+        Some(true),
     );
 
     let endpoint = BatchPredictor::<String, Schema>::builder()
