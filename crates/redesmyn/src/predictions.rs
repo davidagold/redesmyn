@@ -46,6 +46,8 @@ pub trait Service: Sized {
     fn get_path(&self) -> String;
 
     fn get_handler_fn(&self) -> Self::H;
+
+    fn cache(&self) -> &Cache;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -349,6 +351,10 @@ where
 
     fn get_handler_fn(&self) -> Self::H {
         invoke::<Self::T, Self::R>
+    }
+
+    fn cache(&self) -> &Cache {
+        &self.cache
     }
 }
 
