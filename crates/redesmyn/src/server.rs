@@ -1,3 +1,4 @@
+use crate::cache::Cache;
 use crate::common::LogConfig;
 use crate::metrics::{EmfInterest, EmfMetrics};
 use crate::predictions::{HandlerArgs, Service};
@@ -24,11 +25,17 @@ trait ResourceFactory: Sync + Send {
     fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 }
 
-pub(crate) struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
+pub(crate) struct BoxedResourceFactory {
+    factory: Box<dyn ResourceFactory>,
+    path: String,
+}
 
 impl Clone for BoxedResourceFactory {
     fn clone(&self) -> Self {
-        BoxedResourceFactory(self.0.clone_boxed(), self.1.clone())
+        BoxedResourceFactory {
+            factory: self.factory.clone_boxed(),
+            path: self.path.clone(),
+        }
     }
 }
 
@@ -45,6 +52,9 @@ where
         let resource = web::resource(path)
             .app_data(web::Data::<Self>::new(self.clone()))
             .app_data(web::Data::<Schema>::new(self.get_schema()))
+            // // TODO: If we use this pattern, `Cache` will need to be parametrized so that caches from
+            // //       distinct endpoints do not conflict.
+            // .app_data(web::Data::<Cache>::new(self.cache().clone()))
             .route(web::post().to(handler));
         Ok(resource)
     }
@@ -100,22 +110,17 @@ impl Server {
     {
         info!("Registering endpoint with path: ...");
         let path = service.get_path();
-        self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
+        self.factories.push_back(BoxedResourceFactory { factory: Box::new(service), path });
         self
     }
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        println!("Log config: {:#?}", self.config_log);
-
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
             .with(self.config_log.layer().with_filter(EmfInterest::Never))
             .with(EmfMetrics::new(10, "./metrics.log".into()))
             .init();
-
-        let available_parallelism = std::thread::available_parallelism()?;
-        info!(%available_parallelism);
 
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
@@ -150,16 +155,18 @@ impl Server {
             return Err(err.into());
         };
 
-        // Start the services before moving
+        // The `factory` argument to `HttpServer::new()` is invoked for each worker,
+        // hence we must start the services before moving them into the `factory` closure
+        // to avoid creating a separate long-running prediction task for each worker.
         let mut factories = self.factories.clone();
-        for factory in factories.iter_mut() {
-            factory.0.start_service()?;
+        for boxed_factory in factories.iter_mut() {
+            boxed_factory.factory.start_service()?;
         }
         let http_server = HttpServer::new(move || {
             match factories.clone().into_iter().try_fold(
                 actix_web::App::new(),
-                |app, mut factory| {
-                    let resource = factory.0.new_resource(&factory.1)?;
+                |app, mut boxed_factory| {
+                    let resource = boxed_factory.factory.new_resource(&boxed_factory.path)?;
                     Result::<actix_web::App<_>, ServiceError>::Ok(app.service(resource))
                 },
             ) {
