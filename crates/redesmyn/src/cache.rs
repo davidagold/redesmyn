@@ -1,4 +1,4 @@
-use crate::error::ServiceResult;
+use crate::{do_in, error::ServiceResult};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
@@ -483,6 +483,7 @@ pub struct Cache {
     client: Arc<ArtifactsClient>,
     schedule: Schedule,
     max_size: Option<usize>,
+    pre_fetch_all: Option<bool>,
     tx: Arc<mpsc::Sender<Command>>,
     task: JoinHandle<Result<(), CacheError>>,
 }
@@ -502,14 +503,20 @@ impl CacheHandle {
 impl Clone for Cache {
     fn clone(&self) -> Self {
         let (tx, rx) = mpsc::channel::<Command>(self.max_size.unwrap_or(DEFAULT_CACHE_SIZE));
-        let fut_task =
-            Cache::task(self.client.clone().into(), self.max_size, tx.clone().into(), rx);
+        let fut_task = Cache::task(
+            self.client.clone().into(),
+            self.max_size,
+            tx.clone().into(),
+            rx,
+            self.pre_fetch_all,
+        );
         let task = tokio::spawn(fut_task);
 
         Cache {
             client: self.client.clone(),
             schedule: self.schedule.clone(),
             max_size: self.max_size.clone(),
+            pre_fetch_all: self.pre_fetch_all.clone(),
             tx: tx.into(),
             task,
         }
@@ -521,15 +528,18 @@ impl Cache {
         client: ArtifactsClient,
         max_size: Option<usize>,
         schedule: Option<Schedule>,
+        pre_fetch_all: Option<bool>,
     ) -> Cache {
         let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(DEFAULT_CACHE_SIZE));
-        let fut_task = Cache::task(client.clone().into(), max_size, tx.clone().into(), rx);
+        let fut_task =
+            Cache::task(client.clone().into(), max_size, tx.clone().into(), rx, pre_fetch_all);
         let task = tokio::spawn(fut_task);
 
         Cache {
             client: client.into(),
             schedule: schedule.unwrap_or_default(),
             max_size,
+            pre_fetch_all,
             tx: tx.into(),
             task,
         }
@@ -545,9 +555,31 @@ impl Cache {
         max_size: Option<usize>,
         tx_cmd: Arc<mpsc::Sender<Command>>,
         mut rx_cmd: mpsc::Receiver<Command>,
+        pre_fetch_all: Option<bool>,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (TaskFlow, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size.unwrap_or(DEFAULT_CACHE_SIZE)).unwrap());
+
+        do_in!(|| {
+            info!(
+                "Starting model cache task with `max_size = {}`, `pre_fetch_all = {}`",
+                max_size?, pre_fetch_all?
+            );
+        });
+
+        if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
+            // let path: PathBuf = vec!["."].into_iter().collect();
+            match client.list(None).await {
+                Ok(paths) => {
+                    for path in paths {
+                        info!("Path: {:#?}", path);
+                    }
+                }
+                Err(err) => {
+                    warn!("Failed to obtain cache keys during pre-fetch: {:#?}", err)
+                }
+            };
+        };
 
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
@@ -740,6 +772,7 @@ impl PyCache {
         max_size: Option<usize>,
         cron_expr: Option<String>,
         max_age_seconds: Option<u32>,
+        pre_fetch_all: Option<bool>,
     ) -> PyResult<PyCache> {
         let schedule: Option<Schedule> = match (cron_expr, max_age_seconds) {
             (Some(expr), None) => Some(
@@ -756,7 +789,12 @@ impl PyCache {
         };
 
         Ok(PyCache {
-            cache: Cache::new(client_spec.to_client(load_model.into()), max_size, schedule),
+            cache: Cache::new(
+                client_spec.to_client(load_model.into()),
+                max_size,
+                schedule,
+                pre_fetch_all,
+            ),
         })
     }
 
@@ -789,7 +827,7 @@ impl ClientSpec {
     fn to_client(self, load_model: Py<PyFunction>) -> ArtifactsClient {
         match self {
             ClientSpec::FsClient { protocol } => {
-                ArtifactsClient::FsClient { client: FsClient {}, load_model }
+                ArtifactsClient::FsClient { client: FsClient::default(), load_model }
             }
         }
     }
@@ -798,7 +836,7 @@ impl ClientSpec {
 trait Client: Send + Sync + 'static {
     fn list(
         &self,
-        path: PathBuf,
+        path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send + 'static>>;
 
     fn fetch_uri(
@@ -817,11 +855,19 @@ trait Client: Send + Sync + 'static {
 }
 
 #[derive(Clone, Debug)]
-pub struct FsClient {}
+pub struct FsClient {
+    base_path: PathBuf,
+}
 
 impl Default for FsClient {
     fn default() -> Self {
-        FsClient {}
+        FsClient { base_path: ["."].iter().collect() }
+    }
+}
+
+impl FsClient {
+    pub fn new(base_path: PathBuf) -> FsClient {
+        FsClient { base_path }
     }
 }
 
@@ -878,7 +924,7 @@ impl Client for ArtifactsClient {
 
     fn list(
         &self,
-        path: PathBuf,
+        path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send>> {
         use ArtifactsClient::*;
         match self {
@@ -890,10 +936,10 @@ impl Client for ArtifactsClient {
 impl Client for FsClient {
     fn list(
         &self,
-        path: PathBuf,
+        path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send>> {
         match (|| {
-            let items = fs::read_dir(path)?;
+            let items = fs::read_dir(path.unwrap_or(&self.base_path))?;
             let iter_paths = items.filter_map(|item| Some(item.ok()?.path()));
             Ok(iter_paths.collect())
         })() {
