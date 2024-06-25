@@ -1,7 +1,7 @@
 use crate::cache::Cache;
 use crate::common::LogConfig;
 use crate::metrics::{EmfInterest, EmfMetrics};
-use crate::predictions::{HandlerArgs, Service};
+use crate::predictions::{HandlerArgs, PredictionJob, Service};
 use crate::schema::Schema;
 
 use super::error::ServiceError;
@@ -12,6 +12,7 @@ use pyo3::{PyResult, Python};
 use serde::Deserialize;
 use std::collections::VecDeque;
 use std::env;
+use tokio::sync::mpsc;
 use tokio::{signal, task::JoinHandle};
 use tracing::instrument;
 use tracing::{error, info};
@@ -50,11 +51,9 @@ where
     fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
         let handler = self.get_handler_fn();
         let resource = web::resource(path)
-            .app_data(web::Data::<Self>::new(self.clone()))
+            // .app_data(web::Data::<Self>::new(self.clone()))
+            .app_data(web::Data::<mpsc::Sender<PredictionJob<S::T, S::R>>>::new(self.job_sender()))
             .app_data(web::Data::<Schema>::new(self.get_schema()))
-            // // TODO: If we use this pattern, `Cache` will need to be parametrized so that caches from
-            // //       distinct endpoints do not conflict.
-            // .app_data(web::Data::<Cache>::new(self.cache().clone()))
             .route(web::post().to(handler));
         Ok(resource)
     }

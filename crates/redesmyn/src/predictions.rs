@@ -10,7 +10,7 @@ use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use polars::{frame::DataFrame, prelude::*};
 use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -48,6 +48,11 @@ pub trait Service: Sized {
     fn get_handler_fn(&self) -> Self::H;
 
     fn cache(&self) -> &Cache;
+
+    fn job_sender(&self) -> mpsc::Sender<PredictionJob<Self::T, Self::R>>
+    where
+        Self::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -355,6 +360,14 @@ where
 
     fn cache(&self) -> &Cache {
         &self.cache
+    }
+
+    fn job_sender(&self) -> mpsc::Sender<PredictionJob<Self::T, Self::R>>
+    where
+        Self::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static,
+    {
+        self.tx.clone()
     }
 }
 

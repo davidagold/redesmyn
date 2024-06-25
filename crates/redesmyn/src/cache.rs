@@ -568,7 +568,6 @@ impl Cache {
         });
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
-            // let path: PathBuf = vec!["."].into_iter().collect();
             match client.list(None).await {
                 Ok(paths) => {
                     for path in paths {
