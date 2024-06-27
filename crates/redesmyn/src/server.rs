@@ -30,20 +30,6 @@ impl Clone for Box<dyn ResourceFactory> {
     }
 }
 
-pub(crate) struct BoxedResourceFactory {
-    factory: Box<dyn ResourceFactory>,
-    path: String,
-}
-
-impl Clone for BoxedResourceFactory {
-    fn clone(&self) -> Self {
-        BoxedResourceFactory {
-            factory: self.factory.clone_boxed(),
-            path: self.path.clone(),
-        }
-    }
-}
-
 impl<S, O> ResourceFactory for S
 where
     S: Service + Clone + Sync + Send + 'static,
@@ -68,18 +54,15 @@ where
 
 #[derive(Default)]
 pub struct Server {
-    pub(crate) factories: VecDeque<BoxedResourceFactory>,
     pub(crate) services_by_path: BTreeMap<String, Box<dyn ServiceCore + Send + 'static>>,
     pythonpath: Vec<String>,
     config_log: LogConfig,
 }
 
+// TODO: Remove if obviated in `Resource` factory function by new `EndpointHandle` functionality
 impl Clone for Server {
     fn clone(&self) -> Self {
         let mut server = Server::default();
-        for factory in self.factories.iter() {
-            server.factories.push_back(factory.clone());
-        }
         for path in self.pythonpath.iter() {
             server.pythonpath.push(path.clone());
         }
@@ -101,7 +84,7 @@ impl Server {
 impl Server {
     pub fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: Service + Clone + Sync + Send + 'static,
+        S: Service + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
@@ -110,7 +93,6 @@ impl Server {
         info!("Registering endpoint with path: ...");
         let path = service.path();
         self.services_by_path.insert(path, Box::new(service));
-        // self.factories.push_back(BoxedResourceFactory { factory: Box::new(service), path });
         self
     }
 
@@ -165,16 +147,8 @@ impl Server {
             .iter_mut()
             .filter_map(|(_, service)| service.start().ok())
             .collect();
-        //
 
         let http_server = HttpServer::new(move || {
-            // match handles.clone().into_iter().try_fold(|| {
-            // actix_web::App::new(),
-            // |app, mut handle| {
-            //     let resource = handle.new_resource(&boxed_factory.path)?;
-            //     Result::<actix_web::App<_>, ServiceError>::Ok(app.service(resource))
-            // },
-            // })
             match handles.clone().into_iter().try_fold(
                 actix_web::App::new(),
                 |app, mut boxed_factory| {
