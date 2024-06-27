@@ -98,12 +98,6 @@ impl Server {
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(self.config_log.layer().with_filter(EmfInterest::Never))
-            .with(EmfMetrics::new(10, "./metrics.log".into()))
-            .init();
-
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
             Err(err) => {

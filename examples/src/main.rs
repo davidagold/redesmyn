@@ -3,6 +3,7 @@ use polars::datatypes::DataType;
 use pyo3::{types::PyFunction, Py, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
+    common::{init_logging, LogConfig},
     do_in,
     error::ServiceError,
     handler::PySpec,
@@ -11,6 +12,7 @@ use redesmyn::{
     server::Server,
 };
 use std::{env::current_exe, str::FromStr};
+use tracing::info;
 
 // #[derive(Debug, Deserialize, Relation)]
 // pub struct ToyRecord {
@@ -21,6 +23,8 @@ use std::{env::current_exe, str::FromStr};
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
     // let schema = <ToyRecord as Relation>::schema(None).unwrap();
+
+    init_logging(LogConfig::default());
 
     let mut schema = Schema::default();
     schema.add_field("a", DataType::Float64);
@@ -66,7 +70,6 @@ async fn main() -> Result<(), ServiceError> {
         .build()?;
 
     let mut server = Server::default();
-    // server.log_config(LogConfig::Stdout);
     server.register(endpoint);
     server.push_pythonpath("./py-redesmyn");
     server.serve()?.await?;
