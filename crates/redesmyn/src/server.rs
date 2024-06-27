@@ -1,7 +1,7 @@
 use crate::cache::Cache;
 use crate::common::LogConfig;
 use crate::metrics::{EmfInterest, EmfMetrics};
-use crate::predictions::{HandlerArgs, Service};
+use crate::predictions::{EndpointHandle, HandlerArgs, PredictionJob, Service, ServiceCore};
 use crate::schema::Schema;
 
 use super::error::ServiceError;
@@ -10,32 +10,23 @@ use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::env;
+use tokio::sync::mpsc;
 use tokio::{signal, task::JoinHandle};
 use tracing::instrument;
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-trait ResourceFactory: Sync + Send {
-    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError>;
+pub(crate) trait ResourceFactory: Sync + Send {
+    fn new_resource(&mut self) -> Result<Resource, ServiceError>;
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
-
-    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 }
 
-pub(crate) struct BoxedResourceFactory {
-    factory: Box<dyn ResourceFactory>,
-    path: String,
-}
-
-impl Clone for BoxedResourceFactory {
+impl Clone for Box<dyn ResourceFactory> {
     fn clone(&self) -> Self {
-        BoxedResourceFactory {
-            factory: self.factory.clone_boxed(),
-            path: self.path.clone(),
-        }
+        self.clone_boxed()
     }
 }
 
@@ -47,14 +38,10 @@ where
     S::H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
-    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
+    fn new_resource(&mut self) -> Result<Resource, ServiceError> {
         let handler = self.get_handler_fn();
-        let resource = web::resource(path)
-            .app_data(web::Data::<Self>::new(self.clone()))
-            .app_data(web::Data::<Schema>::new(self.get_schema()))
-            // // TODO: If we use this pattern, `Cache` will need to be parametrized so that caches from
-            // //       distinct endpoints do not conflict.
-            // .app_data(web::Data::<Cache>::new(self.cache().clone()))
+        let resource = web::resource(self.path())
+            .app_data(web::Data::<EndpointHandle<S::T, S::R>>::new(self.handle()))
             .route(web::post().to(handler));
         Ok(resource)
     }
@@ -62,25 +49,19 @@ where
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
         Box::new(self.clone())
     }
-
-    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        self.run()
-    }
 }
 
 #[derive(Default)]
 pub struct Server {
-    pub(crate) factories: VecDeque<BoxedResourceFactory>,
+    pub(crate) services_by_path: BTreeMap<String, Box<dyn ServiceCore + Send + 'static>>,
     pythonpath: Vec<String>,
     config_log: LogConfig,
 }
 
+// We need this (at least in the current design) in order to create a Python future from `Server.serve`
 impl Clone for Server {
     fn clone(&self) -> Self {
         let mut server = Server::default();
-        for factory in self.factories.iter() {
-            server.factories.push_back(factory.clone());
-        }
         for path in self.pythonpath.iter() {
             server.pythonpath.push(path.clone());
         }
@@ -102,26 +83,20 @@ impl Server {
 impl Server {
     pub fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: Service + Clone + Sync + Send + 'static,
+        S: Service + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
         info!("Registering endpoint with path: ...");
-        let path = service.get_path();
-        self.factories.push_back(BoxedResourceFactory { factory: Box::new(service), path });
+        let path = service.path();
+        self.services_by_path.insert(path, Box::new(service));
         self
     }
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(self.config_log.layer().with_filter(EmfInterest::Never))
-            .with(EmfMetrics::new(10, "./metrics.log".into()))
-            .init();
-
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
             Err(err) => {
@@ -158,15 +133,19 @@ impl Server {
         // The `factory` argument to `HttpServer::new()` is invoked for each worker,
         // hence we must start the services before moving them into the `factory` closure
         // to avoid creating a separate long-running prediction task for each worker.
-        let mut factories = self.factories.clone();
-        for boxed_factory in factories.iter_mut() {
-            boxed_factory.factory.start_service()?;
-        }
+
+        // TODO: Handle failures
+        let handles: VecDeque<Box<dyn ResourceFactory>> = self
+            .services_by_path
+            .iter_mut()
+            .filter_map(|(_, service)| service.start().ok())
+            .collect();
+
         let http_server = HttpServer::new(move || {
-            match factories.clone().into_iter().try_fold(
+            match handles.clone().into_iter().try_fold(
                 actix_web::App::new(),
                 |app, mut boxed_factory| {
-                    let resource = boxed_factory.factory.new_resource(&boxed_factory.path)?;
+                    let resource = boxed_factory.new_resource()?;
                     Result::<actix_web::App<_>, ServiceError>::Ok(app.service(resource))
                 },
             ) {
