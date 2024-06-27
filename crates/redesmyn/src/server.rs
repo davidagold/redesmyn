@@ -41,7 +41,6 @@ where
     fn new_resource(&mut self) -> Result<Resource, ServiceError> {
         let handler = self.get_handler_fn();
         let resource = web::resource(self.path())
-            // .app_data(web::Data::<Self>::new(self.clone()))
             .app_data(web::Data::<EndpointHandle<S::T, S::R>>::new(self.handle()))
             .route(web::post().to(handler));
         Ok(resource)

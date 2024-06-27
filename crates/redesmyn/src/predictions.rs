@@ -353,6 +353,7 @@ where
 
     fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
+        // TODO: Return ref instead of Arc?
         // self.schema.as_ref()
     }
 

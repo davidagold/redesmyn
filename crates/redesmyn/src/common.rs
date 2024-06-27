@@ -1,14 +1,10 @@
 pub(crate) type Sized128String = heapless::String<128>;
+use crate::metrics::{EmfInterest, EmfMetrics};
+use serde::Serialize;
 use std::{fs::File, io, path::PathBuf};
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
 };
-
-use serde::Serialize;
-// pub(crate) type Sized256String = heapless::String<256>;
-// use tracing::{error, info};
-
-use crate::metrics::{EmfInterest, EmfMetrics};
 
 #[derive(Debug, Clone, Default)]
 pub enum LogConfig {
