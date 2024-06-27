@@ -1,7 +1,10 @@
-use crate::cache::{ArtifactSpec, BoxedSpec, Cache, CacheHandle, CacheKey};
+use crate::cache::{ArtifactSpec, BoxedSpec, Cache, CacheHandle, CacheKey, CacheResult};
+use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
+use crate::server::{BoxedResourceFactory, ResourceFactory};
 use crate::{config_methods, metrics, validate_param};
 use redesmyn_macros::metric_instrument;
+use tokio::sync::mpsc::error::SendError;
 
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
@@ -34,7 +37,31 @@ pub struct PredictionResponse {
     predictions: Vec<Option<f64>>,
 }
 
-pub trait Service: Sized {
+pub(crate) trait ServiceCore {
+    //
+    // fn start(&mut self) -> ServiceResult<()>;
+    fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>>;
+
+    fn path(&self) -> String;
+}
+
+impl<T, R> ServiceCore for BatchPredictor<T, R>
+where
+    T: Send + Sync + Debug + for<'de> Deserialize<'de> + 'static,
+    R: Relation<Serialized = T> + Send + Sync + 'static,
+{
+    fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>> {
+        // TODO: Move entire `run` functionality from `Service` to `ServiceCore`
+        <Self as Service>::run(self)?;
+        Ok(Box::new(self.handle()))
+    }
+
+    fn path(&self) -> String {
+        self.config.path.clone()
+    }
+}
+
+pub trait Service: ServiceCore + Sized {
     type R;
     type T;
     type H;
@@ -49,9 +76,9 @@ pub trait Service: Sized {
 
     fn cache(&self) -> &Cache;
 
-    fn job_sender(&self) -> mpsc::Sender<PredictionJob<Self::T, Self::R>>
+    fn handle(&self) -> EndpointHandle<Self::T, Self::R>
     where
-        Self::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        Self::T: Sync + Send + 'static,
         Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static;
 }
 
@@ -69,7 +96,6 @@ pub struct ServiceConfig {
     pub batch_max_size: usize,
     pub handler_config: HandlerConfig,
     pub handler: Option<Handler>,
-    // pub cache: Cache,
 }
 
 impl ServiceConfig {
@@ -139,6 +165,7 @@ where
     config: ServiceConfig,
     tx: mpsc::Sender<PredictionJob<T, R>>,
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
+    // TODO: Include `RefCell<JoinHandle>` for task
     state: EndpointState,
     cache: Cache,
 }
@@ -281,6 +308,78 @@ where
     }
 }
 
+/// An `EndpointHandle` allows access to `Endpoint` functionality
+pub struct EndpointHandle<T, R>
+where
+    T: Send,
+    R: Relation<Serialized = T>,
+{
+    tx: Arc<mpsc::Sender<PredictionJob<T, R>>>,
+    schema: Arc<Schema>,
+    cache_handle: CacheHandle,
+    path: String,
+}
+
+impl<T, R> Clone for EndpointHandle<T, R>
+where
+    T: Send,
+    R: Relation<Serialized = T>,
+{
+    fn clone(&self) -> Self {
+        EndpointHandle {
+            tx: self.tx.clone(),
+            schema: self.schema.clone(),
+            cache_handle: self.cache_handle.clone(),
+            path: self.path.clone(),
+        }
+    }
+}
+
+impl<T, R> ResourceFactory for EndpointHandle<T, R>
+where
+    T: Debug + Send + Sync + for<'de> Deserialize<'de> + 'static,
+    R: Send + Sync + Relation<Serialized = T> + 'static,
+{
+    fn new_resource(&mut self) -> Result<actix_web::Resource, ServiceError> {
+        let resource = web::resource(self.path.clone())
+            // .app_data(web::Data::<Self>::new(self.clone()))
+            .app_data(web::Data::<EndpointHandle<T, R>>::new(self.clone()))
+            .route(web::post().to(invoke::<T, R>));
+        Ok(resource)
+    }
+
+    fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
+        Box::new(self.clone())
+    }
+}
+
+// pub trait EndpointHandle {
+impl<T, R> EndpointHandle<T, R>
+where
+    T: Send,
+    R: Relation<Serialized = T>,
+{
+    // fn handler<H, O>(&self) -> H
+    // where
+    //     H: Handler<HandlerArgs<R, T>, Output = O>,
+    //     O: Responder + 'static,
+    // {
+
+    // }
+
+    async fn submit_job(&self, job: PredictionJob<T, R>) -> ServiceResult<()> {
+        self.tx.send(job).await.map_err(ServiceError::from)
+    }
+
+    fn schema(&self) -> &Schema {
+        self.schema.as_ref()
+    }
+
+    async fn model_from_spec(&self, spec: &impl ArtifactSpec) -> CacheResult<Py<PyAny>> {
+        self.cache_handle.get(&spec.as_key()?).await
+    }
+}
+
 #[metric_instrument(dimensions(FunctionName = "Invoke"))]
 pub async fn invoke<T, R>(
     req: HttpRequest,
@@ -317,8 +416,8 @@ pub(crate) type HandlerArgs<R, T> =
 impl<T, R> Service for BatchPredictor<T, R>
 where
     Self: Sync,
-    T: Send + std::fmt::Debug + 'static,
-    R: Relation<Serialized = T> + Send + 'static,
+    T: Send + Sync + for<'de> Deserialize<'de> + std::fmt::Debug + 'static,
+    R: Relation<Serialized = T> + Send + Sync + 'static,
 {
     type R = R;
     type T = T;
@@ -362,12 +461,19 @@ where
         &self.cache
     }
 
-    fn job_sender(&self) -> mpsc::Sender<PredictionJob<Self::T, Self::R>>
+    fn handle(&self) -> EndpointHandle<Self::T, Self::R>
     where
-        Self::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
+        Self::T: Sync + Send + 'static,
         Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static,
     {
-        self.tx.clone()
+        {
+            EndpointHandle {
+                tx: self.tx.clone().into(),
+                schema: self.get_schema().into(),
+                cache_handle: self.cache().handle(),
+                path: self.get_path(),
+            }
+        }
     }
 }
 

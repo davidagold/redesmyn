@@ -488,6 +488,7 @@ pub struct Cache {
     task: JoinHandle<Result<(), CacheError>>,
 }
 
+#[derive(Clone)]
 pub struct CacheHandle {
     tx: Arc<mpsc::Sender<Command>>,
 }
@@ -754,7 +755,7 @@ impl From<&str> for CacheError {
     }
 }
 
-type CacheResult<T> = Result<T, CacheError>;
+pub type CacheResult<T> = Result<T, CacheError>;
 
 #[pyclass]
 #[derive(Clone, Debug)]
