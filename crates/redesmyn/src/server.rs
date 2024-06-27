@@ -58,7 +58,7 @@ pub struct Server {
     config_log: LogConfig,
 }
 
-// TODO: Remove if obviated in `Resource` factory function by new `EndpointHandle` functionality
+// We need this (at least in the current design) in order to create a Python future from `Server.serve`
 impl Clone for Server {
     fn clone(&self) -> Self {
         let mut server = Server::default();
