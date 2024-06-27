@@ -38,8 +38,6 @@ pub struct PredictionResponse {
 }
 
 pub(crate) trait ServiceCore {
-    //
-    // fn start(&mut self) -> ServiceResult<()>;
     fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>>;
 
     fn path(&self) -> String;
@@ -51,8 +49,25 @@ where
     R: Relation<Serialized = T> + Send + Sync + 'static,
 {
     fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>> {
-        // TODO: Move entire `run` functionality from `Service` to `ServiceCore`
-        <Self as Service>::run(self)?;
+        let (tx_abort, rx_abort) = oneshot::channel::<()>();
+
+        let Some(rx) = std::mem::take(&mut self.rx) else {
+            return ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
+                .into();
+        };
+
+        let mut config = self.config.clone();
+        config.try_init_handler()?;
+        let cache_handle = self.cache.handle();
+        // TODO: Keep reference to this `JoinHandle`
+        let handle = tokio::spawn(async move {
+            tokio::spawn(async move {
+                BatchPredictor::<T, R>::task(rx, rx_abort, config, cache_handle).await
+            });
+            BatchPredictor::<T, R>::await_shutdown(tx_abort).await
+        });
+
+        self.state = EndpointState::Running;
         Ok(Box::new(self.handle()))
     }
 
@@ -67,8 +82,6 @@ pub trait Service: ServiceCore + Sized {
     type H;
 
     fn get_schema(&self) -> Schema;
-
-    fn run(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 
     fn get_path(&self) -> String;
 
@@ -397,27 +410,6 @@ where
 
     fn get_schema(&self) -> Schema {
         self.config.schema.clone()
-    }
-
-    fn run(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        let (tx_abort, rx_abort) = oneshot::channel::<()>();
-
-        let Some(rx) = std::mem::take(&mut self.rx) else {
-            return ServiceError::Error("Tried to start task from subordinate daemon.".to_string())
-                .into();
-        };
-
-        let mut config = self.config.clone();
-        config.try_init_handler()?;
-        let cache_handle = self.cache.handle();
-        let handle = tokio::spawn(async move {
-            tokio::spawn(async move {
-                BatchPredictor::<T, R>::task(rx, rx_abort, config, cache_handle).await
-            });
-            BatchPredictor::<T, R>::await_shutdown(tx_abort).await
-        });
-        self.state = EndpointState::Running;
-        Ok(handle)
     }
 
     fn get_path(&self) -> String {
