@@ -125,7 +125,7 @@ pub struct EndpointBuilder<T, R> {
     batch_max_delay_ms: Option<u32>,
     batch_max_size: Option<usize>,
     handler_config: Option<HandlerConfig>,
-    cache: Option<Cache>,
+    cache: Option<Arc<Cache>>,
     _phantom: (PhantomData<T>, PhantomData<R>),
 }
 
@@ -180,7 +180,7 @@ where
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
     // TODO: Include `RefCell<JoinHandle>` for task
     state: EndpointState,
-    cache: Cache,
+    cache: Arc<Cache>,
 }
 
 impl<T, R> BatchPredictor<T, R>
@@ -197,7 +197,7 @@ where
         self
     }
 
-    pub fn new(config: ServiceConfig, cache: Cache) -> BatchPredictor<T, R> {
+    pub fn new(config: ServiceConfig, cache: Arc<Cache>) -> BatchPredictor<T, R> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {

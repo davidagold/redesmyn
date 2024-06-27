@@ -501,29 +501,6 @@ impl CacheHandle {
     }
 }
 
-impl Clone for Cache {
-    fn clone(&self) -> Self {
-        let (tx, rx) = mpsc::channel::<Command>(self.max_size.unwrap_or(DEFAULT_CACHE_SIZE));
-        let fut_task = Cache::task(
-            self.client.clone().into(),
-            self.max_size,
-            tx.clone().into(),
-            rx,
-            self.pre_fetch_all,
-        );
-        let task = tokio::spawn(fut_task);
-
-        Cache {
-            client: self.client.clone(),
-            schedule: self.schedule.clone(),
-            max_size: self.max_size.clone(),
-            pre_fetch_all: self.pre_fetch_all.clone(),
-            tx: tx.into(),
-            task,
-        }
-    }
-}
-
 impl Cache {
     pub fn new(
         client: ArtifactsClient,
@@ -561,12 +538,11 @@ impl Cache {
         let mut model_cache: LruCache<CacheKey, (TaskFlow, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size.unwrap_or(DEFAULT_CACHE_SIZE)).unwrap());
 
-        do_in!(|| {
-            info!(
-                "Starting model cache task with `max_size = {}`, `pre_fetch_all = {}`",
-                max_size?, pre_fetch_all?
-            );
-        });
+        info!(
+            "Starting model cache task with `max_size = {}`, `pre_fetch_all = {}`",
+            max_size.unwrap_or(DEFAULT_CACHE_SIZE),
+            pre_fetch_all.unwrap_or(false)
+        );
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
             match client.list(None).await {
@@ -758,9 +734,9 @@ impl From<&str> for CacheError {
 pub type CacheResult<T> = Result<T, CacheError>;
 
 #[pyclass]
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PyCache {
-    pub cache: Cache,
+    pub cache: Arc<Cache>,
 }
 
 #[pymethods]
@@ -794,7 +770,8 @@ impl PyCache {
                 max_size,
                 schedule,
                 pre_fetch_all,
-            ),
+            )
+            .into(),
         })
     }
 
