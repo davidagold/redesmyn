@@ -1,8 +1,5 @@
-use crate::cache::Cache;
 use crate::common::LogConfig;
-use crate::metrics::{EmfInterest, EmfMetrics};
-use crate::predictions::{EndpointHandle, HandlerArgs, PredictionJob, Service, ServiceCore};
-use crate::schema::Schema;
+use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
 
 use super::error::ServiceError;
 use super::schema::Relation;
@@ -12,11 +9,9 @@ use pyo3::{PyResult, Python};
 use serde::Deserialize;
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
-use tokio::sync::mpsc;
-use tokio::{signal, task::JoinHandle};
+use tokio::signal;
 use tracing::instrument;
 use tracing::{error, info};
-use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 pub(crate) trait ResourceFactory: Sync + Send {
     fn new_resource(&mut self) -> Result<Resource, ServiceError>;
