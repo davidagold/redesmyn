@@ -23,6 +23,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use strum::Display;
 use thiserror::Error;
 use tokio::{
     sync::{
@@ -160,11 +161,12 @@ impl fmt::Debug for Uri {
 }
 
 impl Uri {
-    fn parse(self, path: PathBuf) -> Self {
+    // TODO: Figure out more parsimonious ownership model (not pressing)
+    fn parse(self, path: &PathBuf) -> Self {
         match self {
-            Uri::Path(None) => Uri::Path(Some(path)),
+            Uri::Path(None) => Uri::Path(Some(path.clone())),
             Uri::Id { extractor: Some(func), id: None } => {
-                let id = func(path);
+                let id = func(path.clone());
                 Uri::Id { extractor: None, id: Some(id.clone()) }
             }
             _ => panic!(),
@@ -172,7 +174,7 @@ impl Uri {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Display)]
 enum FetchAs {
     Uri(Option<Uri>),
     Bytes(Option<BytesMut>),
@@ -277,6 +279,15 @@ impl Command {
     fn get_entry(key: CacheKey) -> (Command, oneshot::Receiver<CacheResult<Py<PyAny>>>) {
         let (tx, rx) = oneshot::channel::<CacheResult<Py<PyAny>>>();
         let cmd = Command::GetEntry(key, tx);
+        (cmd, rx)
+    }
+
+    fn insert_entry(
+        key: CacheKey,
+        model_data: FetchAs,
+    ) -> (Command, oneshot::Receiver<CacheResult<()>>) {
+        let (tx, rx) = oneshot::channel::<CacheResult<()>>();
+        let cmd = Command::InsertEntry(key, model_data, tx);
         (cmd, rx)
     }
 }
@@ -497,7 +508,13 @@ impl CacheHandle {
     pub async fn get(&self, key: &CacheKey) -> CacheResult<Py<PyAny>> {
         let (cmd, rx) = Command::get_entry(key.clone());
         self.tx.try_send(cmd)?;
-        rx.await.map_err(CacheError::from)?
+        match rx.await.map_err(CacheError::from) {
+            Err(_) => Err(CacheError::from("Failed to receive response from cache task")),
+            Ok(Err(err)) => {
+                Err(CacheError::from(format!("Received error response from cache task: {}", err)))
+            }
+            Ok(Ok(model)) => Ok(model),
+        }
     }
 }
 
@@ -549,6 +566,15 @@ impl Cache {
                 Ok(paths) => {
                     for path in paths {
                         info!("Path: {:#?}", path);
+                        match client.fetch(path.clone(), FetchAs::Uri(None)).await {
+                            Ok(model_data) => {
+                                // Ugh we need to turn the path into a key...
+                                let cmd = Command::insert_entry(key, model_data);
+                            }
+                            Err(err) => {
+                                warn!("Failed to obtain model data for path '{:#?}': {}", path, err)
+                            }
+                        }
                     }
                 }
                 Err(err) => {
@@ -582,18 +608,15 @@ impl Cache {
                     //       to individual keys while we are updating the respective models.
                     Self::insert_entry(&client, &mut model_cache, key, data, tx)?;
                 }
-                Command::GetEntry(spec, tx) => {
-                    let Ok(key) = spec.as_key() else {
-                        if let Err(_) =
-                            tx.send(Err(CacheError::Error("Failed to obtain model".into())))
-                        {
-                            warn!("Failed to send response");
-                        }
-                        continue;
-                    };
+                Command::GetEntry(key, tx) => {
+                    info!("Fetching model entry for key: '{}'", key);
                     let result_send = match model_cache.get(&key) {
                         Some((_, ModelEntry::Ready(model))) => tx.send(Ok(model.clone())),
                         // TODO: Make errors more specific
+                        None => {
+                            warn!("No entry for key {}", key);
+                            tx.send(Err(CacheError::Error("Failed to obtain model".into())))
+                        }
                         _ => tx.send(Err(CacheError::Error("Failed to obtain model".into()))),
                     };
                     if let Err(_) = result_send {
@@ -695,21 +718,21 @@ impl Cache {
 
 #[derive(Error, Debug)]
 pub enum CacheError {
-    #[error("Error: {}", 0)]
+    #[error("Error: {0}")]
     Error(String),
-    #[error("Failed to send command {:#?}", 0.0)]
+    #[error("Failed to send command {0}")]
     SendCommandError(#[from] SendError<Command>),
-    #[error("Failed to send command {:#?} ({})", 0.0, 0)]
+    #[error("Failed to send command {0}")]
     TrySendCommandError(#[from] TrySendError<Command>),
     #[error("CacheError: Failed to receive response (channel closed)")]
     ReceiveResponseError(#[from] Canceled),
-    #[error("Error while awaiting step: {}", 0.to_string())]
+    #[error("Error while awaiting step: {0}")]
     JoinError(#[from] JoinError),
-    #[error("Error serializing `ArtifactSpec`: {}", 0.to_string())]
+    #[error("Error serializing `ArtifactSpec`: {0}")]
     SerializeError(#[from] serde_json::Error),
-    #[error("IO Error: {}", 0.to_string())]
+    #[error("IO Error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Python Error: {}", 0.to_string())]
+    #[error("Python Error: {0}")]
     PythonError(#[from] pyo3::PyErr),
     #[error("Cannot get model for key: entry is empty")]
     EmptyEntryError,
@@ -818,7 +841,7 @@ trait Client: Send + Sync + 'static {
 
     fn fetch_uri(
         &self,
-        path: PathBuf,
+        path: &PathBuf,
         uri: Uri,
     ) -> Pin<Box<dyn Future<Output = Result<Uri, CacheError>> + Send + Sync + 'static>> {
         Box::pin(future::ready(Ok(uri.parse(path))))
@@ -863,7 +886,7 @@ impl ArtifactsClient {
         let client = self.clone();
         match fetch_as {
             FetchAs::Uri(Some(uri)) => {
-                Box::pin(client.fetch_uri(path, uri).and_then(|uri| async { Ok(uri.into()) }))
+                Box::pin(client.fetch_uri(&path, uri).and_then(|uri| async { Ok(uri.into()) }))
             }
             FetchAs::Bytes(Some(bytes)) => {
                 if !bytes.is_empty() {

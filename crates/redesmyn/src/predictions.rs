@@ -245,9 +245,12 @@ where
             let batches_by_key = batch_jobs_by_key(jobs);
             for (key, batch) in batches_by_key.into_iter() {
                 let config = config.clone();
-                let Ok(model) = cache_handle.get(&key).await else {
-                    warn!("Failed to load model for spec with key '{}'", key);
-                    continue;
+                let model = match cache_handle.get(&key).await {
+                    Ok(model) => model,
+                    Err(err) => {
+                        warn!("Failed to load model for spec with key '{}': {}", key, err);
+                        continue;
+                    }
                 };
                 tokio::task::spawn_blocking(move || Self::predict_batch(batch, config, model));
             }
