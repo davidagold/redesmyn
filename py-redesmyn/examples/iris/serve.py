@@ -24,6 +24,7 @@ pipeline = SepalLengthPredictor(run_id=args.run_id)
     batch_max_size=64,
     cache=afs.ModelCache(
         client=afs.FsClient(fetch_as=afs.FetchAs.Uri),
+        # TODO: Conceptually, this field makes more sense as part of the client (also, this shouldn't be an S3 path)
         path=afs.path("s3://model-bucket/{model_version}/"),
         spec=VersionedModelSpec,
         refresh=afs.Cron(schedule="0 * * * * *"),
