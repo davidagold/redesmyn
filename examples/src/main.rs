@@ -44,7 +44,7 @@ async fn main() -> Result<(), ServiceError> {
         let mut models_dir = exe_dir.parent()?.parent()?.parent()?.to_path_buf();
         models_dir.push("models");
         ArtifactsClient::FsClient {
-            client: FsClient::new(models_dir),
+            client: FsClient::new(models_dir, "/{model_id}/artifacts/model".into()),
             load_model,
         }
     }) else {
