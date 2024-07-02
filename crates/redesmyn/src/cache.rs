@@ -13,7 +13,8 @@ use pyo3::{
 };
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
+    ffi::OsStr,
     fs,
     future::{self, Future},
     io::Read,
@@ -35,7 +36,7 @@ use tokio::{
     },
     task::{JoinError, JoinHandle},
 };
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
@@ -148,13 +149,16 @@ impl Default for Uri {
 impl fmt::Debug for Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            &Uri::Path(Some(path)) => f.write_fmt(format_args!("<Uri::Path path = '{:#?}'>", path)),
+            &Uri::Path(Some(path)) => f.write_fmt(format_args!(
+                "<Uri::Path path = '{}'>",
+                path.to_str().unwrap_or("[error]")
+            )),
             &Uri::Path(None) => f.write_fmt(format_args!("<Uri::Path path = unset'>")),
             &Uri::Id { extractor: _, id: Some(id_str) } => {
-                f.write_fmt(format_args!("<Uri::Id id = '{:#?}'>", id_str))
+                f.write_fmt(format_args!("<Uri::Id id = '{}'>", id_str))
             }
             &Uri::Id { extractor: _, id: None } => {
-                f.write_fmt(format_args!("<Uri::Id in = unset'>"))
+                f.write_fmt(format_args!("<Uri::Id in = [unset]'>"))
             }
         }
     }
@@ -562,26 +566,36 @@ impl Cache {
         );
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
-            match client.list(None).await {
-                Ok(paths) => {
-                    for path in paths {
-                        info!("Path: {:#?}", path);
-                        match client.fetch(path.clone(), FetchAs::Uri(None)).await {
-                            Ok(model_data) => {
-                                // Ugh we need to turn the path into a key...
-                                let cmd = Command::insert_entry(key, model_data);
-                            }
-                            Err(err) => {
-                                warn!("Failed to obtain model data for path '{:#?}': {}", path, err)
-                            }
+            let paths = client.list(None).await;
+            info!("paths: {:#?}", paths);
+            for path in paths {
+                info!("Path: {:#?}", path);
+                match client
+                    // LMAO what am I even doing here
+                    .fetch(path.clone(), FetchAs::Uri(Some(Uri::Path(None))))
+                    .await
+                {
+                    Ok(model_data) => {
+                        info!("`model_data`: {}", model_data);
+                        let model_param_mapping = client.parse_path(&path);
+                        info!(
+                            "Pre-fetching model data for parameter mapping: {:#?}",
+                            model_param_mapping
+                        );
+                        let Ok(key) = model_param_mapping.as_key() else {
+                            continue;
+                        };
+                        let (cmd, rx) = Command::insert_entry(key, model_data);
+                        if let Err(err) = tx_cmd.send(cmd).await {
+                            warn!("Failed to send command {} while pre-fetching models", err)
                         }
                     }
+                    Err(err) => {
+                        warn!("Failed to obtain model data for path '{:#?}': {}", path, err)
+                    }
                 }
-                Err(err) => {
-                    warn!("Failed to obtain cache keys during pre-fetch: {:#?}", err)
-                }
-            };
-        };
+            }
+        }
 
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
@@ -606,7 +620,11 @@ impl Cache {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
                     //       Furthermore, we need to use a concurrent hashmap, or something like it, to lock access
                     //       to individual keys while we are updating the respective models.
-                    Self::insert_entry(&client, &mut model_cache, key, data, tx)?;
+                    if let Err(err) =
+                        Self::insert_entry(&client, &mut model_cache, key.clone(), data, tx)
+                    {
+                        error!("Failed to load and insert model for key {}: {}", key, err)
+                    };
                 }
                 Command::GetEntry(key, tx) => {
                     info!("Fetching model entry for key: '{}'", key);
@@ -820,24 +838,29 @@ impl PyCache {
 
 #[derive(FromPyObject)]
 enum ClientSpec {
-    FsClient { protocol: String },
+    FsClient { protocol: String, base_path: PathBuf, path_template: String },
 }
 
 impl ClientSpec {
     fn to_client(self, load_model: Py<PyFunction>) -> ArtifactsClient {
         match self {
-            ClientSpec::FsClient { protocol } => {
-                ArtifactsClient::FsClient { client: FsClient::default(), load_model }
+            ClientSpec::FsClient { protocol, base_path, path_template } => {
+                ArtifactsClient::FsClient {
+                    client: FsClient::new(base_path, path_template),
+                    load_model,
+                }
             }
         }
     }
 }
 
 trait Client: Send + Sync + 'static {
+    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String>;
+
     fn list(
         &self,
         path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send + 'static>>;
+    ) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send + 'static>>;
 
     fn fetch_uri(
         &self,
@@ -855,19 +878,70 @@ trait Client: Send + Sync + 'static {
 }
 
 #[derive(Clone, Debug)]
-pub struct FsClient {
-    base_path: PathBuf,
+struct PathTemplate {
+    template: String,
+    base: PathBuf,
 }
 
-impl Default for FsClient {
-    fn default() -> Self {
-        FsClient { base_path: ["."].iter().collect() }
+enum PathComponent {
+    Fixed(String),
+    Identifier(String),
+}
+
+impl PathTemplate {
+    fn components(&self) -> VecDeque<PathComponent> {
+        self.template
+            .split("/")
+            .filter_map(|part| {
+                if part.starts_with("{") && part.ends_with("}") {
+                    Some(PathComponent::Identifier(part.to_string()))
+                } else if part != "" {
+                    Some(PathComponent::Fixed(part.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn parse(&self, path: &PathBuf) -> BTreeMap<String, String> {
+        let mut base_parts: VecDeque<_> = self.base.iter().collect();
+        let rel_path: PathBuf = path
+            .into_iter()
+            .skip_while(|&part| {
+                let Some(base_part) = base_parts.pop_front() else { return false };
+                base_part == part
+            })
+            .collect();
+
+        self.components()
+            .into_iter()
+            .filter_map(|part| match part {
+                PathComponent::Fixed(_) => None,
+                PathComponent::Identifier(identifier) => Some(identifier),
+            })
+            .zip(rel_path.into_iter().filter_map(|part| part.to_str().map(str::to_string)))
+            .collect()
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct FsClient {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+}
+
 impl FsClient {
-    pub fn new(base_path: PathBuf) -> FsClient {
-        FsClient { base_path }
+    pub fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+        self.path_template.parse(path)
+    }
+
+    pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
+        FsClient {
+            // TODO: Remove redundant `base_path` field somewhere
+            base_path: base_path.clone(),
+            path_template: PathTemplate { template: path_template, base: base_path },
+        }
     }
 }
 
@@ -911,6 +985,12 @@ impl ArtifactsClient {
 }
 
 impl Client for ArtifactsClient {
+    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+        match self {
+            ArtifactsClient::FsClient { client, .. } => client.parse_path(path),
+        }
+    }
+
     fn fetch_bytes(
         &self,
         path: PathBuf,
@@ -922,10 +1002,7 @@ impl Client for ArtifactsClient {
         }
     }
 
-    fn list(
-        &self,
-        path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send>> {
+    fn list(&self, path: Option<&PathBuf>) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send>> {
         use ArtifactsClient::*;
         match self {
             FsClient { client, .. } => client.list(path),
@@ -933,19 +1010,37 @@ impl Client for ArtifactsClient {
     }
 }
 
-impl Client for FsClient {
-    fn list(
-        &self,
-        path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<PathBuf>, CacheError>> + Send>> {
-        match (|| {
-            let items = fs::read_dir(path.unwrap_or(&self.base_path))?;
-            let iter_paths = items.filter_map(|item| Some(item.ok()?.path()));
-            Ok(iter_paths.collect())
-        })() {
-            Ok(paths) => Box::pin(future::ready(Ok(paths))),
-            Err(err) => return Box::pin(future::ready(Err(err))),
+fn _list(
+    mut paths: Vec<PathBuf>,
+    mut remaining_components: VecDeque<PathComponent>,
+) -> Vec<PathBuf> {
+    match remaining_components.pop_front() {
+        Some(PathComponent::Fixed(dir_name)) => {
+            paths.iter_mut().for_each(|mut path| path.push(dir_name.clone()));
+            _list(paths, remaining_components)
         }
+        Some(PathComponent::Identifier(identifier)) => _list(
+            paths
+                .into_iter()
+                .filter_map(|path| fs::read_dir(path).ok())
+                .flat_map(|dir| dir.filter_map(|entry| Some(entry.ok()?.path())))
+                .collect(),
+            remaining_components,
+        ),
+        None => paths,
+    }
+}
+
+impl Client for FsClient {
+    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+        self.parse_path(path)
+    }
+
+    fn list(&self, path: Option<&PathBuf>) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send>> {
+        Box::pin(future::ready(_list(
+            [path.unwrap_or(&self.base_path).clone()].into(),
+            self.path_template.components(),
+        )))
     }
 
     fn fetch_bytes(
