@@ -116,6 +116,17 @@ impl Serialize for dyn ArtifactSpec {
     }
 }
 
+impl std::fmt::Display for dyn ArtifactSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let map = self.as_map().map_err(|_| fmt::Error::default())?;
+        let display = map
+            .into_iter()
+            .map(|(k, v)| [k, v].join("="))
+            .fold("".to_string(), |display, part| [display.to_string(), part].join(", "));
+        f.write_str(display.as_str())
+    }
+}
+
 impl std::fmt::Debug for dyn ArtifactSpec + Send + Sync {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!(
@@ -577,9 +588,11 @@ impl Cache {
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
             let paths_by_spec = client.list(None).await;
             for (spec, path) in paths_by_spec {
-                info!("`spec`: {:#?}", spec);
-                info!("Path: {:#?}", path);
-
+                info!(
+                    "Found artifact for spec `{}` at path `{}`",
+                    &spec as &dyn ArtifactSpec,
+                    path.display()
+                );
                 let cmd = Command::update_entry(spec.clone(), FetchAs::Uri(None));
                 if let Err(_) = tx_cmd.send(cmd).await {
                     warn!("Failed to send update entry command for spec: {:#?}", spec);
@@ -690,7 +703,7 @@ impl Cache {
                 }
             }?;
 
-            info!("Reached state `{}` for key {}", end, key);
+            info!("Finished cache update taskflow for key {}", key);
             Ok(())
         });
 
