@@ -1,4 +1,4 @@
-use crate::{do_in, error::ServiceResult};
+use crate::error::ServiceResult;
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
@@ -14,7 +14,6 @@ use pyo3::{
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, VecDeque},
-    ffi::OsStr,
     fs,
     future::{self, Future},
     io::Read,
@@ -280,10 +279,8 @@ impl std::fmt::Debug for Command {
 }
 
 impl Command {
-    fn get_entry(key: CacheKey) -> (Command, oneshot::Receiver<CacheResult<Py<PyAny>>>) {
-        let (tx, rx) = oneshot::channel::<CacheResult<Py<PyAny>>>();
-        let cmd = Command::GetEntry(key, tx);
-        (cmd, rx)
+    fn update_entry(spec: impl ArtifactSpec + Send + Sync + 'static, fetch_as: FetchAs) -> Command {
+        Command::UpdateEntry(Box::new(spec), fetch_as)
     }
 
     fn insert_entry(
@@ -292,6 +289,12 @@ impl Command {
     ) -> (Command, oneshot::Receiver<CacheResult<()>>) {
         let (tx, rx) = oneshot::channel::<CacheResult<()>>();
         let cmd = Command::InsertEntry(key, model_data, tx);
+        (cmd, rx)
+    }
+
+    fn get_entry(key: CacheKey) -> (Command, oneshot::Receiver<CacheResult<Py<PyAny>>>) {
+        let (tx, rx) = oneshot::channel::<CacheResult<Py<PyAny>>>();
+        let cmd = Command::GetEntry(key, tx);
         (cmd, rx)
     }
 }
@@ -324,6 +327,7 @@ impl RefreshConfig {
     }
 }
 
+#[derive(Display)]
 enum RefreshState {
     PendingFetch(PendingFetch),
     FetchingData(FetchingData),
@@ -462,6 +466,7 @@ impl Transition<FetchingData> for UpdatingCache {
     }
 }
 
+#[derive(Display)]
 enum ModelEntry {
     Empty,
     Ready(Py<PyAny>),
@@ -486,9 +491,13 @@ impl ModelEntry {
     fn refreshing(entry: ModelEntry) -> CacheResult<ModelEntry> {
         use ModelEntry::*;
         match entry {
+            Empty => Ok((Refreshing(None))),
             Ready(model) => Ok(Refreshing(Some(model))),
             Refreshing(Some(model)) => Ok(Refreshing(Some(model))),
-            _ => Err(CacheError::EmptyEntryError),
+            entry => Err(CacheError::from(format!(
+                "Failed to update model entry from previous entry state `{}`",
+                entry
+            ))),
         }
     }
 }
@@ -566,34 +575,15 @@ impl Cache {
         );
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
-            let paths = client.list(None).await;
-            info!("paths: {:#?}", paths);
-            for path in paths {
+            let paths_by_spec = client.list(None).await;
+            for (spec, path) in paths_by_spec {
+                info!("`spec`: {:#?}", spec);
                 info!("Path: {:#?}", path);
-                match client
-                    // LMAO what am I even doing here
-                    .fetch(path.clone(), FetchAs::Uri(Some(Uri::Path(None))))
-                    .await
-                {
-                    Ok(model_data) => {
-                        info!("`model_data`: {}", model_data);
-                        let model_param_mapping = client.parse_path(&path);
-                        info!(
-                            "Pre-fetching model data for parameter mapping: {:#?}",
-                            model_param_mapping
-                        );
-                        let Ok(key) = model_param_mapping.as_key() else {
-                            continue;
-                        };
-                        let (cmd, rx) = Command::insert_entry(key, model_data);
-                        if let Err(err) = tx_cmd.send(cmd).await {
-                            warn!("Failed to send command {} while pre-fetching models", err)
-                        }
-                    }
-                    Err(err) => {
-                        warn!("Failed to obtain model data for path '{:#?}': {}", path, err)
-                    }
-                }
+
+                let cmd = Command::update_entry(spec.clone(), FetchAs::Uri(None));
+                if let Err(_) = tx_cmd.send(cmd).await {
+                    warn!("Failed to send update entry command for spec: {:#?}", spec);
+                };
             }
         }
 
@@ -613,8 +603,30 @@ impl Cache {
                         tx_cmd.clone(),
                         fetch_as,
                     );
-                    let taskflow = Self::spawn_taskflow(config.into())?;
-                    model_cache.put(key, (taskflow, ModelEntry::refreshing(model_entry)?));
+                    let taskflow = match Self::spawn_taskflow(config.into()) {
+                        Ok(taskflow) => {
+                            info!("Initiated refresh taskflow for artifact key `{}`", key);
+                            taskflow
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to initiate refresh taskflow for artifact spec: `{}`: {}",
+                                key, err
+                            );
+                            continue;
+                        }
+                    };
+                    let entry = match ModelEntry::refreshing(model_entry) {
+                        Ok(entry) => entry,
+                        Err(err) => {
+                            error!(
+                                "Failed to create model entry for refreshing artifact with key {}: {}",
+                                key, err
+                            );
+                            continue;
+                        }
+                    };
+                    model_cache.put(key, (taskflow, entry));
                 }
                 Command::InsertEntry(key, data, tx) => {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
@@ -653,24 +665,32 @@ impl Cache {
         // Will need to get the che entry, lock the key, get last updated, pass everything to `refresh_entry`
         let _config = config.clone();
 
+        let key = config.spec.as_key()?;
         let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
             let start = PendingFetch::new(UpdateTime::Now)?;
             let mut state = <RefreshState as From<PendingFetch>>::from(start);
 
             // THIS IS WHY WE NEED ASYNC ITERATORS
             let end = loop {
+                // Pre-compute error message to avoid borrow issues later in loop body
+                let err_msg = format!("Failed to transition from `{}`", state);
                 let next = <RefreshState as Transition<RefreshState>>::from(state, _config.clone());
                 match next.await {
                     Ok(RefreshState::Done(last_updated)) => {
                         break Ok(RefreshState::Done(last_updated));
                     }
                     Ok(next) => {
+                        info!("Entering taskflow state `{}` for key `{}`", next, key);
                         state = next;
                     }
-                    Err(err) => break Err(err),
+                    Err(err) => {
+                        error!("{}: {}", err_msg, err);
+                        break Err(err);
+                    }
                 }
             }?;
 
+            info!("Reached state `{}` for key {}", end, key);
             Ok(())
         });
 
@@ -738,9 +758,9 @@ impl Cache {
 pub enum CacheError {
     #[error("Error: {0}")]
     Error(String),
-    #[error("Failed to send command {0}")]
+    #[error("Failed to send command: {0}")]
     SendCommandError(#[from] SendError<Command>),
-    #[error("Failed to send command {0}")]
+    #[error("Failed to send command: {0}")]
     TrySendCommandError(#[from] TrySendError<Command>),
     #[error("CacheError: Failed to receive response (channel closed)")]
     ReceiveResponseError(#[from] Canceled),
@@ -860,7 +880,7 @@ trait Client: Send + Sync + 'static {
     fn list(
         &self,
         path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send + 'static>>;
+    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>>;
 
     fn fetch_uri(
         &self,
@@ -1002,7 +1022,10 @@ impl Client for ArtifactsClient {
         }
     }
 
-    fn list(&self, path: Option<&PathBuf>) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send>> {
+    fn list(
+        &self,
+        path: Option<&PathBuf>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>> {
         use ArtifactsClient::*;
         match self {
             FsClient { client, .. } => client.list(path),
@@ -1011,23 +1034,41 @@ impl Client for ArtifactsClient {
 }
 
 fn _list(
-    mut paths: Vec<PathBuf>,
+    mut paths_by_spec: Vec<(BTreeMap<String, String>, PathBuf)>,
     mut remaining_components: VecDeque<PathComponent>,
-) -> Vec<PathBuf> {
+) -> Vec<(BTreeMap<String, String>, PathBuf)> {
     match remaining_components.pop_front() {
         Some(PathComponent::Fixed(dir_name)) => {
-            paths.iter_mut().for_each(|mut path| path.push(dir_name.clone()));
-            _list(paths, remaining_components)
+            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| {
+                //
+                path.push(dir_name.clone())
+            });
+            _list(paths_by_spec, remaining_components)
         }
-        Some(PathComponent::Identifier(identifier)) => _list(
-            paths
-                .into_iter()
-                .filter_map(|path| fs::read_dir(path).ok())
-                .flat_map(|dir| dir.filter_map(|entry| Some(entry.ok()?.path())))
-                .collect(),
-            remaining_components,
-        ),
-        None => paths,
+        Some(PathComponent::Identifier(identifier)) => {
+            //
+            _list(
+                paths_by_spec
+                    .into_iter()
+                    .filter_map(|(spec, path)| {
+                        //
+                        Some(((spec, path.clone()), fs::read_dir(path).ok()?))
+                    })
+                    .flat_map(|((spec, path), dir)| {
+                        let cloned_identifier = identifier.clone();
+                        dir.filter_map(move |entry| {
+                            let name = entry.ok()?.file_name().to_string_lossy().to_string();
+                            let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
+                            cloned_spec.insert(cloned_identifier.clone(), name.clone());
+                            cloned_path.push(name);
+                            Some((cloned_spec, cloned_path))
+                        })
+                    })
+                    .collect(),
+                remaining_components,
+            )
+        }
+        None => paths_by_spec,
     }
 }
 
@@ -1036,11 +1077,16 @@ impl Client for FsClient {
         self.parse_path(path)
     }
 
-    fn list(&self, path: Option<&PathBuf>) -> Pin<Box<dyn Future<Output = Vec<PathBuf>> + Send>> {
-        Box::pin(future::ready(_list(
-            [path.unwrap_or(&self.base_path).clone()].into(),
+    fn list(
+        &self,
+        path: Option<&PathBuf>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>> {
+        let spec = BTreeMap::<String, String>::default();
+        let paths_by_spec = _list(
+            [(spec, path.unwrap_or(&self.base_path).clone())].into(),
             self.path_template.components(),
-        )))
+        );
+        Box::pin(future::ready(paths_by_spec))
     }
 
     fn fetch_bytes(
