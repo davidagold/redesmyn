@@ -513,6 +513,7 @@ impl ModelEntry {
     }
 }
 
+#[pyclass]
 #[derive(Debug)]
 pub struct Cache {
     client: Arc<ArtifactsClient>,
@@ -767,6 +768,15 @@ impl Cache {
     }
 }
 
+#[pymethods]
+impl Cache {
+    #[new]
+    // TODO: Include optional `schedule` and `interval` parameters for entry refresh
+    fn __new__(client: FsClient, load_model: Py<PyFunction>) -> Cache {
+        Cache::new(ArtifactsClient::FsClient { client, load_model }, None, None, Some(true))
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum CacheError {
     #[error("Error: {0}")]
@@ -958,6 +968,7 @@ impl PathTemplate {
     }
 }
 
+#[pyclass]
 #[derive(Clone, Debug)]
 pub struct FsClient {
     base_path: PathBuf,
@@ -975,6 +986,20 @@ impl FsClient {
             base_path: base_path.clone(),
             path_template: PathTemplate { template: path_template, base: base_path },
         }
+    }
+}
+
+#[pymethods]
+impl FsClient {
+    #[new]
+    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<FsClient> {
+        Python::with_gil(|py| {
+            let client = FsClient::new(
+                base_path.extract::<PathBuf>(py)?,
+                path_template.extract::<String>(py)?,
+            );
+            Ok(client)
+        })
     }
 }
 
