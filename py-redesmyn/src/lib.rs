@@ -1,15 +1,13 @@
 use std::path::PathBuf;
 
-use ::redesmyn::cache::PyCache;
+use ::redesmyn::cache::{Cache, FsClient, PyCache};
 use ::redesmyn::common::{LogConfig, Wrap};
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
-use pyo3::intern;
+use pyo3::exceptions::PyRuntimeError;
 
 use ::redesmyn::server::Server;
-use polars::prelude::*;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
 
@@ -115,6 +113,8 @@ fn redesmyn(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySchema>().unwrap();
     m.add_class::<PyServer>().unwrap();
     m.add_class::<PyEndpoint>().unwrap();
+    m.add_class::<Cache>().unwrap();
+    m.add_class::<FsClient>().unwrap();
 
     Ok(())
 }
