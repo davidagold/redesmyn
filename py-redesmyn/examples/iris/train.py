@@ -1,9 +1,11 @@
 import logging
+from io import FileIO
 from pathlib import Path
-from typing import Optional
+from typing import cast, Optional
 
 import mlflow
 import polars as pl
+from redesmyn.artifacts import ArtifactSpec
 from redesmyn.schema import Schema
 from sklearn.compose import ColumnTransformer
 from sklearn.discriminant_analysis import StandardScaler
@@ -28,8 +30,8 @@ class Output(Schema):
 
 
 class SepalLengthPredictor:
-    def __init__(self, run_id: str) -> None:
-        self._pipeline: Pipeline = mlflow.sklearn.load_model(f"runs:/{run_id}/model/")
+    def __init__(self, model_uri: str) -> None:
+        self._pipeline: Pipeline = mlflow.sklearn.load_model(model_uri)
 
     @classmethod
     def pipeline(cls) -> Pipeline:
@@ -58,6 +60,14 @@ class SepalLengthPredictor:
             **{Output.field_name(): pl.Series(self._pipeline.predict(records_df))},
         )
         return predictions
+
+class SepalLengthPredictorSpec(ArtifactSpec[SepalLengthPredictor]):
+    # model_version: str
+    model_id: str
+
+    @classmethod
+    def load_model(cls, loadable: str | Path | bytes | FileIO) -> SepalLengthPredictor:
+        return SepalLengthPredictor(cast(str, loadable))
 
 
 def main():

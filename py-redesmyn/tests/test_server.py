@@ -1,7 +1,9 @@
 import asyncio
+from pathlib import Path
 import re
-from typing import Annotated, Self
+from typing import Annotated, Self, TypeVar
 
+import mlflow
 import polars as pl
 from handlers.model import Model
 from pydantic import model_validator
@@ -18,7 +20,9 @@ class Output(svc.Schema):
     prediction = pl.Float64()
 
 
-class VersionedModelSpec(afs.ArtifactSpec[Model]):
+M = TypeVar("M")
+
+class VersionedModelSpec(afs.ArtifactSpec[M]):
     model_version: str
     run_id: Annotated[str, afs.LatestKey]
 
@@ -29,18 +33,15 @@ class VersionedModelSpec(afs.ArtifactSpec[Model]):
 
         return self
 
-    @classmethod
-    def load_model(cls, loadable: str) -> Model:
-        return Model().load(run_id=loadable)
-
 
 @svc.endpoint(
     path="/predictions/{model_version}",
     cache=afs.ModelCache(
-        client=afs.FsClient(fetch_as=afs.FetchAs.Uri),
-        path=afs.path("s3://model-bucket/{model_version}/"),
+        client=afs.FsClient(base_path=Path("."), path_template="s3://model-bucket/{model_version}/"),
+        # path=afs.path("s3://model-bucket/{model_version}/"),
         spec=VersionedModelSpec,
-        refresh=afs.Cron(schedule="0 * * * * *"),
+        # refresh=afs.Cron(schedule="0 * * * * *"),
+        load_model=mlflow.sklearn.load_model,
     ),
     batch_max_delay_ms=10,
     batch_max_size=64,
