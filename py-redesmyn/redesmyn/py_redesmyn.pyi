@@ -1,5 +1,6 @@
 from asyncio import Future
-from typing import Callable, Tuple, Self
+from pathlib import Path
+from typing import Callable, Generic, Tuple, Self, TypeVar
 import polars as pl
 
 
@@ -22,9 +23,21 @@ class PyEndpoint:
         batch_max_size: int = 32,
     ) -> "PyEndpoint": ...
 
+
 class PyServer:
     def __new__(cls) -> Self: ...
 
     def register(self, endpoint: PyEndpoint) -> Self: ...
 
     def serve(self) -> Future: ...
+
+
+class FsClient:
+    def __new__(cls, base_path: Path, path_template: str) -> Self: ...
+
+
+M = TypeVar("M")
+
+
+class Cache:
+    def __new__(cls, client: FsClient, load_model: Callable[..., M]) -> Self: ...

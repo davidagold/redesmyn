@@ -31,6 +31,8 @@ from cachetools import LRUCache
 from more_itertools import filter_map, first, only
 from pydantic import BaseModel, ConfigDict, create_model, model_validator
 from pydantic.fields import FieldInfo
+from redesmyn.py_redesmyn import Cache as Cache
+from redesmyn.py_redesmyn import FsClient as FsClient
 
 
 class PathTemplate(Template):
@@ -363,132 +365,146 @@ class ArtifactsClient(Generic[M]):
                 return self._fetch_utf8_str(path=uri)
 
 
-class FsClient(ArtifactsClient):
-    def _list(self, path: str) -> Iterable[str]:
-        yield from (fp.as_posix() for fp in Path(path).glob("*"))
+# class FsClient(ArtifactsClient):
+#     def _list(self, path: str) -> Iterable[str]:
+#         yield from (fp.as_posix() for fp in Path(path).glob("*"))
 
-    def _fetch(self, path: str) -> bytes:
-        with Path(path).open(mode="r") as f:
-            return f.buffer.read()
+#     def _fetch(self, path: str) -> bytes:
+#         with Path(path).open(mode="r") as f:
+#             return f.buffer.read()
 
 
 class Cron(BaseModel):
     schedule: str
 
 
-T = TypeVar("T", bound=ArtifactSpec, covariant=True)
+# T = TypeVar("T", bound=ArtifactSpec, covariant=True)
+#
 
 
-class ModelCache(Generic[T, M]):
-    """Model cache with asynchronous updating by interval or cron scheduling.
-
-    ..  code-block:: python
-
-        import re
-        from typing import Annotated, Any
-
-        import polars as pl
-        from annotated_types import Predicate
-        from handlers.model import Model
-        from pydantic import BaseModel
-
-        from redesmyn import artifacts as afs
-        from redesmyn import service as svc
-
-        class Input(svc.Schema):
-            a = pl.Float64()
-            b = pl.Float64()
-
-
-        class Output(svc.Schema):
-            prediction = pl.Float64()
-
-
-        @afs.artifact_spec(
-            load_fn=lambda run_id: Model().load(run_id=run_id),
-            cache_path="s3://model-bucket/{model_name}/{model_version}/",
-        )
-        class ModelArtifact(BaseModel):
-            @staticmethod
-            def validate_version(v: Any) -> bool:
-                version_match = re.match(r"v^\d\.\d\.\d", v)
-                return True if version_match is not None else False
-
-            model_name: str
-            model_version: Annotated[str, Predicate(validate_version)]
-            run_id: Annotated[str, afs.LatestKey]
-
-
-        @svc.endpoint(
-            path="/predictions/{model_name}/{model_version}",
-            cache=afs.ModelCache[ModelArtifact, Model](
-                client=afs.FsClient()
-            ),
-            batch_max_delay_ms=10,
-            batch_max_size=64,
-        )
-        def handler(model: Model, records_df: Input.DataFrame) -> Output.DataFrame:
-            return model.predict(records_df=records_df)
-    """
-
-    @staticmethod
-    def _validate_spec_type(spec: Type) -> Optional[Type[ArtifactSpec[M]]]:
-        if not isinstance(spec, Type) or not issubclass(spec, ArtifactSpec):
-            raise ValueError(f"`spec={spec}` is not a type")
-
-        if len(type_param_args := get_args(spec)) == 0:
-            return None
-
-        # Runtime type check
-        model_type = first(type_param_args)
-        if model_type != signature(spec.load_model).return_annotation:
-            raise TypeError(
-                f"Model type `{model_type}` specified in `{spec.__name__}` type param "
-                f"does not match return type annotation of {spec.load_model}"
-            )
-
-        return spec
-
-    def __init__(
-        self,
-        client: ArtifactsClient[M],
-        path: PathTemplate,
-        spec: Optional[Type[ArtifactSpec[M]]] = None,
-        refresh: Optional[timedelta | Cron] = None,
-        max_size: int = 128,
+class ModelCache(Generic[M]):
+    def __init__(self,
+        client: FsClient,
+        spec: Type[ArtifactSpec[M]],
+        load_model: Callable[..., M]
     ) -> None:
-        if spec is None or not issubclass(spec, ArtifactSpec):
-            msg = f"Argument `spec={spec}` of type `{type(spec)}` is not a subclass of `ArtifactSpec`"
-            raise ValueError(msg)
-        else:
-            self._Spec = spec
+        self._Spec = spec
+        self._cache = Cache(client=client, load_model=load_model)
 
-        if not path.template.endswith("/"):
-            raise ValueError(f"Path must end with '/' (received '{path}').")
 
-        self._path = path
-        self._client = client
-        self._refresh = refresh
-        self._cache = LRUCache(maxsize=max_size)
 
-    def get(self, **kwargs) -> M:
-        self._Spec.model_validate(kwargs)
-        loadable = self._client.fetch(self._path, **kwargs)
-        return self._Spec.load_model(loadable)
 
-    def get_latest(self, **kwargs) -> M:
-        spec = self._Spec.model_validate(kwargs)
-        # TODO: Move this check to model validation and pass `use_latest` through validation context
-        if not ((latest_key := spec.latest_key) is None or (v := getattr(spec, latest_key)) is None):
-            msg = f"Cannot fetch latest when `latest_key='{latest_key}' is set to {v}`"
-            raise ValueError(msg)
 
-        spec_params: Dict = {self._Spec.latest_key: self.resolve_latest(**kwargs), **kwargs}
-        loadable = self._client.fetch(self._path, **spec_params)
-        return self._Spec.load_model(loadable)
+# class ModelCache(Generic[T]):
+#     """Model cache with asynchronous updating by interval or cron scheduling.
 
-    def resolve_latest(self, **T) -> str:
-        pass
+#     ..  code-block:: python
 
-    def referesh(self, all: bool = False, **kwargs):
-        pass
+#         import re
+#         from typing import Annotated, Any
+
+#         import polars as pl
+#         from annotated_types import Predicate
+#         from handlers.model import Model
+#         from pydantic import BaseModel
+
+#         from redesmyn import artifacts as afs
+#         from redesmyn import service as svc
+
+#         class Input(svc.Schema):
+#             a = pl.Float64()
+#             b = pl.Float64()
+
+
+#         class Output(svc.Schema):
+#             prediction = pl.Float64()
+
+
+#         @afs.artifact_spec(
+#             load_fn=lambda run_id: Model().load(run_id=run_id),
+#             cache_path="s3://model-bucket/{model_name}/{model_version}/",
+#         )
+#         class ModelArtifact(BaseModel):
+#             @staticmethod
+#             def validate_version(v: Any) -> bool:
+#                 version_match = re.match(r"v^\d\.\d\.\d", v)
+#                 return True if version_match is not None else False
+
+#             model_name: str
+#             model_version: Annotated[str, Predicate(validate_version)]
+#             run_id: Annotated[str, afs.LatestKey]
+
+
+#         @svc.endpoint(
+#             path="/predictions/{model_name}/{model_version}",
+#             cache=afs.ModelCache[ModelArtifact, Model](
+#                 client=afs.FsClient()
+#             ),
+#             batch_max_delay_ms=10,
+#             batch_max_size=64,
+#         )
+#         def handler(model: Model, records_df: Input.DataFrame) -> Output.DataFrame:
+#             return model.predict(records_df=records_df)
+#     """
+
+#     @staticmethod
+#     def _validate_spec_type(spec: Type) -> Optional[Type[ArtifactSpec[M]]]:
+#         if not isinstance(spec, Type) or not issubclass(spec, ArtifactSpec):
+#             raise ValueError(f"`spec={spec}` is not a type")
+
+#         if len(type_param_args := get_args(spec)) == 0:
+#             return None
+
+#         # Runtime type check
+#         model_type = first(type_param_args)
+#         if model_type != signature(spec.load_model).return_annotation:
+#             raise TypeError(
+#                 f"Model type `{model_type}` specified in `{spec.__name__}` type param "
+#                 f"does not match return type annotation of {spec.load_model}"
+#             )
+
+#         return spec
+
+#     def __init__(
+#         self,
+#         client: ArtifactsClient[M],
+#         path: PathTemplate,
+#         spec: Optional[Type[ArtifactSpec[M]]] = None,
+#         refresh: Optional[timedelta | Cron] = None,
+#         max_size: int = 128,
+#     ) -> None:
+#         if spec is None or not issubclass(spec, ArtifactSpec):
+#             msg = f"Argument `spec={spec}` of type `{type(spec)}` is not a subclass of `ArtifactSpec`"
+#             raise ValueError(msg)
+#         else:
+#             self._Spec = spec
+
+#         if not path.template.endswith("/"):
+#             raise ValueError(f"Path must end with '/' (received '{path}').")
+
+#         self._path = path
+#         self._client = client
+#         self._refresh = refresh
+#         self._cache = LRUCache(maxsize=max_size)
+
+#     def get(self, **kwargs) -> M:
+#         self._Spec.model_validate(kwargs)
+#         loadable = self._client.fetch(self._path, **kwargs)
+#         return self._Spec.load_model(loadable)
+
+#     def get_latest(self, **kwargs) -> M:
+#         spec = self._Spec.model_validate(kwargs)
+#         # TODO: Move this check to model validation and pass `use_latest` through validation context
+#         if not ((latest_key := spec.latest_key) is None or (v := getattr(spec, latest_key)) is None):
+#             msg = f"Cannot fetch latest when `latest_key='{latest_key}' is set to {v}`"
+#             raise ValueError(msg)
+
+#         spec_params: Dict = {self._Spec.latest_key: self.resolve_latest(**kwargs), **kwargs}
+#         loadable = self._client.fetch(self._path, **spec_params)
+#         return self._Spec.load_model(loadable)
+
+#     def resolve_latest(self, **T) -> str:
+#         pass
+
+#     def referesh(self, all: bool = False, **kwargs):
+#         pass

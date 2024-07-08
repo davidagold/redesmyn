@@ -9,6 +9,7 @@ from more_itertools import first, one
 from redesmyn.artifacts import ArtifactSpec, ModelCache
 from redesmyn.py_redesmyn import PyEndpoint, PyServer
 from redesmyn.schema import Schema
+from redesmyn.py_redesmyn import Cache
 
 
 def extract_schema(annotation: Type) -> pl.Struct:
@@ -39,7 +40,7 @@ class Endpoint(Generic[M]):
         handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
-        cache: ModelCache[ArtifactSpec[M], M],
+        cache: ModelCache[M],
         batch_max_delay_ms: int,
         batch_max_size: int,
     ) -> None:
@@ -53,14 +54,13 @@ class Endpoint(Generic[M]):
         )
         self._cache = cache
 
-    def __call__(self, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
-        model: M = self._cache.get(**kwargs)
+    def __call__(self, model: M, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
         return self._handler(model, records)
 
 
 def endpoint(
     path: str,
-    cache: ModelCache[ArtifactSpec[M], M],
+    cache: ModelCache[M],
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
 ) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
