@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Callable, Generic, Tuple, Self, TypeVar
 import polars as pl
 
+from redesmyn.artifacts import CacheConfig
+
 
 class PySchema:
     def __new__(cls) -> Self: ...
@@ -27,7 +29,7 @@ class PyEndpoint:
 class PyServer:
     def __new__(cls) -> Self: ...
 
-    def register(self, endpoint: PyEndpoint) -> Self: ...
+    def register(self, endpoint: PyEndpoint, cache_config: CacheConfig) -> Self: ...
 
     def serve(self) -> Future: ...
 
@@ -41,3 +43,9 @@ M = TypeVar("M")
 
 class Cache:
     def __new__(cls, client: FsClient, load_model: Callable[..., M]) -> Self: ...
+
+
+class LogConfig:
+    def __new__(cls, path: Path) -> Self: ...
+
+    def init(self): ...

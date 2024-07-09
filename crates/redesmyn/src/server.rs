@@ -36,7 +36,7 @@ where
     fn new_resource(&mut self) -> Result<Resource, ServiceError> {
         let handler = self.get_handler_fn();
         let resource = web::resource(self.path())
-            .app_data(web::Data::<EndpointHandle<S::T, S::R>>::new(self.handle()))
+            .app_data(web::Data::<EndpointHandle<S::T, S::R>>::new(self.handle()?))
             .route(web::post().to(handler));
         Ok(resource)
     }
@@ -60,6 +60,9 @@ impl Clone for Server {
         for path in self.pythonpath.iter() {
             server.pythonpath.push(path.clone());
         }
+        // for (path, service) in self.services_by_path.iter() {
+        //     server.services_by_path.insert(path, value)
+        // }
         server.log_config(self.config_log.clone());
         server
     }
@@ -84,9 +87,10 @@ impl Server {
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
-        info!("Registering endpoint with path: ...");
+        info!("Registering endpoint with path: {}", service.path());
         let path = service.path();
         self.services_by_path.insert(path, Box::new(service));
+        info!("n services: {}", self.services_by_path.len());
         self
     }
 
@@ -99,8 +103,7 @@ impl Server {
                 return Err(ServiceError::IoError(err));
             }
         };
-        println!("Starting `main` from directory {}", pwd.to_str().unwrap());
-        tracing::info!("Starting `main` from directory {}", pwd.to_str().unwrap());
+        tracing::info!("Starting server from directory {}", pwd.to_str().unwrap());
 
         pyo3::prepare_freethreaded_python();
         if let Err(err) = Python::with_gil(|py| {
@@ -130,10 +133,20 @@ impl Server {
         // to avoid creating a separate long-running prediction task for each worker.
 
         // TODO: Handle failures
+        info!("n services: {}", self.services_by_path.len());
         let handles: VecDeque<Box<dyn ResourceFactory>> = self
             .services_by_path
             .iter_mut()
-            .filter_map(|(_, service)| service.start().ok())
+            .filter_map(|(_, service)| match service.start() {
+                Ok(factory) => {
+                    info!("Successfully started service with path `{}`", service.path());
+                    Some(factory)
+                }
+                Err(err) => {
+                    error!("Failed to start service with path `{}`: {}", service.path(), err);
+                    None
+                }
+            })
             .collect();
 
         let http_server = HttpServer::new(move || {

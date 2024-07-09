@@ -382,14 +382,22 @@ class Cron(BaseModel):
 #
 
 
-class ModelCache(Generic[M]):
-    def __init__(self,
-        client: FsClient,
-        spec: Type[ArtifactSpec[M]],
-        load_model: Callable[..., M]
-    ) -> None:
-        self._Spec = spec
-        self._cache = Cache(client=client, load_model=load_model)
+class CacheConfig(BaseModel, Generic[M]):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    client: FsClient
+    load_model: Callable[..., M]
+    spec: Type[ArtifactSpec[M]]
+
+
+# class ModelCache(Generic[M]):
+#     def __init__(self,
+#         client: FsClient,
+#         spec: Type[ArtifactSpec[M]],
+#         load_model: Callable[..., M]
+#     ) -> None:
+#         self._Spec = spec
+#         self._cache = Cache(client=client, load_model=load_model)
 
 
 

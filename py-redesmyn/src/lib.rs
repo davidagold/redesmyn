@@ -1,15 +1,18 @@
+use std::cell::OnceCell;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use ::redesmyn::cache::{Cache, FsClient, PyCache};
-use ::redesmyn::common::{LogConfig, Wrap};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, PyCache};
+use ::redesmyn::common::{init_logging, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use pyo3::exceptions::PyRuntimeError;
-
 use ::redesmyn::server::Server;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
+use tracing::{error, info};
+use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[pyclass]
 #[repr(transparent)]
@@ -89,12 +92,28 @@ impl PyServer {
         let mut server = Server::default();
         let mut path: PathBuf = ["logs", "this_run"].iter().collect();
         path.set_extension("txt");
-        server.log_config(LogConfig::File(path));
+        server.log_config(RsLogConfig::File(path));
         PyServer { server }
     }
 
-    pub fn register(&mut self, endpoint: PyEndpoint, cache: &PyCache) -> PyResult<()> {
-        let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.cache.clone());
+    pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
+        let cache = match Python::with_gil(|py| -> PyResult<_> {
+            let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
+            let load_model: Py<_> =
+                cache_config.getattr(py, "load_model")?.downcast::<PyFunction>(py)?.into();
+            let client = ArtifactsClient::FsClient { client: fs_client, load_model };
+            Ok(Cache::new(client, None, None, Some(true)))
+        }) {
+            Ok(cache) => {
+                info!("Successfully initialized model cache {}", cache);
+                cache
+            }
+            Err(err) => {
+                error!("Failed to initialize model cache: {}", err);
+                return Err(err);
+            }
+        };
+        let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
         self.server.register(service);
         Ok(())
     }
@@ -107,6 +126,40 @@ impl PyServer {
     }
 }
 
+#[pyclass]
+#[derive(Default)]
+struct LogConfig {
+    config: OnceCell<RsLogConfig>,
+}
+
+#[pymethods]
+impl LogConfig {
+    #[new]
+    fn __new__(path: Py<PyAny>) -> PyResult<LogConfig> {
+        let config = LogConfig::default();
+        Python::with_gil(|py| {
+            config
+                .config
+                .set(RsLogConfig::File(path.extract::<PathBuf>(py)?))
+                .map_err(|_| PyRuntimeError::new_err("Failed to set log config"))?;
+            PyResult::Ok(())
+        })?;
+        Ok(config)
+    }
+
+    fn init(&mut self) -> PyResult<()> {
+        let config = self
+            .config
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("Failed to take log config."))?;
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(config.layer())
+            .init();
+        Ok(())
+    }
+}
+
 #[pymodule]
 #[pyo3(name = "py_redesmyn")]
 fn redesmyn(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -115,6 +168,7 @@ fn redesmyn(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyEndpoint>().unwrap();
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
+    m.add_class::<LogConfig>().unwrap();
 
     Ok(())
 }

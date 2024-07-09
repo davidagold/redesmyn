@@ -6,7 +6,7 @@ from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
 import polars as pl
 from more_itertools import first, one
 
-from redesmyn.artifacts import ArtifactSpec, ModelCache
+from redesmyn.artifacts import ArtifactSpec, CacheConfig
 from redesmyn.py_redesmyn import PyEndpoint, PyServer
 from redesmyn.schema import Schema
 from redesmyn.py_redesmyn import Cache
@@ -40,7 +40,7 @@ class Endpoint(Generic[M]):
         handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
-        cache: ModelCache[M],
+        cache_config: CacheConfig[M],
         batch_max_delay_ms: int,
         batch_max_size: int,
     ) -> None:
@@ -52,7 +52,7 @@ class Endpoint(Generic[M]):
             batch_max_size=batch_max_size,
             handler=handler,
         )
-        self._cache = cache
+        self._cache_config = cache_config
 
     def __call__(self, model: M, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
         return self._handler(model, records)
@@ -60,7 +60,7 @@ class Endpoint(Generic[M]):
 
 def endpoint(
     path: str,
-    cache: ModelCache[M],
+    cache_config: CacheConfig[M],
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
 ) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
@@ -69,7 +69,7 @@ def endpoint(
             handler=handler,
             signature=get_signature(handler),
             path=path,
-            cache=cache,
+            cache_config=cache_config,
             batch_max_delay_ms=batch_max_delay_ms,
             batch_max_size=batch_max_size,
         )
@@ -114,7 +114,7 @@ class Server:
             server.register(handler)
         """
         self._endpoints.append(endpoint)
-        self._pyserver.register(endpoint._pyendpoint)
+        self._pyserver.register(endpoint._pyendpoint, endpoint._cache_config)
         return self
 
     def serve(self) -> Future:

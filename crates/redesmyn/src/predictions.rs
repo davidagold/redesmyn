@@ -58,7 +58,11 @@ where
 
         let mut config = self.config.clone();
         config.try_init_handler()?;
-        let cache_handle = self.cache.handle();
+
+        self.cache().run().map_err(|err| ServiceError::from(err.to_string()))?;
+        let cache_handle =
+            self.cache.handle().map_err(|err| ServiceError::from(err.to_string()))?;
+
         // TODO: Keep reference to this `JoinHandle`
         let handle = tokio::spawn(async move {
             tokio::spawn(async move {
@@ -68,7 +72,7 @@ where
         });
 
         self.state = EndpointState::Running;
-        Ok(Box::new(self.handle()))
+        Ok(Box::new(self.handle()?))
     }
 
     fn path(&self) -> String {
@@ -89,7 +93,7 @@ pub trait Service: ServiceCore + Sized {
 
     fn cache(&self) -> &Cache;
 
-    fn handle(&self) -> EndpointHandle<Self::T, Self::R>
+    fn handle(&self) -> ServiceResult<EndpointHandle<Self::T, Self::R>>
     where
         Self::T: Sync + Send + 'static,
         Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static;
@@ -428,18 +432,21 @@ where
         &self.cache
     }
 
-    fn handle(&self) -> EndpointHandle<Self::T, Self::R>
+    fn handle(&self) -> ServiceResult<EndpointHandle<Self::T, Self::R>>
     where
         Self::T: Sync + Send + 'static,
         Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static,
     {
         {
-            EndpointHandle {
+            Ok(EndpointHandle {
                 tx: self.tx.clone().into(),
                 schema: self.get_schema().into(),
-                cache_handle: self.cache().handle(),
+                cache_handle: self
+                    .cache()
+                    .handle()
+                    .map_err(|err| ServiceError::from(err.to_string()))?,
                 path: self.get_path(),
-            }
+            })
         }
     }
 }

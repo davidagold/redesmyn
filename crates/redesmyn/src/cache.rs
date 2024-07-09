@@ -31,7 +31,7 @@ use tokio::{
             self,
             error::{SendError, TrySendError},
         },
-        oneshot,
+        oneshot, OnceCell,
     },
     task::{JoinError, JoinHandle},
 };
@@ -520,8 +520,14 @@ pub struct Cache {
     schedule: Schedule,
     max_size: Option<usize>,
     pre_fetch_all: Option<bool>,
-    tx: Arc<mpsc::Sender<Command>>,
-    task: JoinHandle<Result<(), CacheError>>,
+    tx: OnceCell<Arc<mpsc::Sender<Command>>>,
+    task: OnceCell<JoinHandle<Result<(), CacheError>>>,
+}
+
+impl std::fmt::Display for Cache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("<Cache (client `{:#?}`)>", self.client))
+    }
 }
 
 #[derive(Clone)]
@@ -550,39 +556,52 @@ impl Cache {
         schedule: Option<Schedule>,
         pre_fetch_all: Option<bool>,
     ) -> Cache {
-        let (tx, rx) = mpsc::channel::<Command>(max_size.unwrap_or(DEFAULT_CACHE_SIZE));
-        let fut_task =
-            Cache::task(client.clone().into(), max_size, tx.clone().into(), rx, pre_fetch_all);
-        let task = tokio::spawn(fut_task);
-
         Cache {
             client: client.into(),
             schedule: schedule.unwrap_or_default(),
             max_size,
             pre_fetch_all,
-            tx: tx.into(),
-            task,
+            tx: OnceCell::<Arc<mpsc::Sender<Command>>>::default(),
+            task: OnceCell::<JoinHandle<Result<(), CacheError>>>::default(),
         }
     }
 
-    pub fn handle(&self) -> CacheHandle {
-        CacheHandle { tx: self.tx.clone() }
+    pub fn run(&self) -> CacheResult<()> {
+        let max_size = self.max_size.unwrap_or(DEFAULT_CACHE_SIZE);
+        let (tx, rx) = mpsc::channel::<Command>(max_size);
+        let fut_task = Cache::task(
+            self.client.clone().into(),
+            max_size,
+            tx.clone().into(),
+            rx,
+            self.pre_fetch_all,
+        );
+        self.task
+            .set(tokio::spawn(fut_task))
+            .map_err(|_| CacheError::from("Cannot start already running Cache"))
+    }
+
+    pub fn handle(&self) -> CacheResult<CacheHandle> {
+        let tx = self.tx.get().clone().ok_or_else(|| {
+            CacheError::from("Cannot obtain handle for Cache that has not yet been started")
+        })?;
+        Ok(CacheHandle { tx: tx.clone() })
     }
 
     #[instrument(skip_all)]
     async fn task(
         client: Arc<ArtifactsClient>,
-        max_size: Option<usize>,
+        max_size: usize,
         tx_cmd: Arc<mpsc::Sender<Command>>,
         mut rx_cmd: mpsc::Receiver<Command>,
         pre_fetch_all: Option<bool>,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (TaskFlow, ModelEntry)> =
-            LruCache::new(NonZeroUsize::new(max_size.unwrap_or(DEFAULT_CACHE_SIZE)).unwrap());
+            LruCache::new(NonZeroUsize::new(max_size).unwrap());
 
         info!(
             "Starting model cache task with `max_size = {}`, `pre_fetch_all = {}`",
-            max_size.unwrap_or(DEFAULT_CACHE_SIZE),
+            max_size,
             pre_fetch_all.unwrap_or(false)
         );
 
@@ -764,7 +783,13 @@ impl Cache {
     }
 
     fn try_send(&self, command: Command) -> Result<(), CacheError> {
-        self.tx.try_send(command).map_err(|err| err.into())
+        self.tx
+            .get()
+            .ok_or_else(|| {
+                CacheError::from("Cannot send command to Cache that has not yet been started")
+            })?
+            .try_send(command)
+            .map_err(|err| err.into())
     }
 }
 

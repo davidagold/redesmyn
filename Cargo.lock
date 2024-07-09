@@ -1892,6 +1892,8 @@ dependencies = [
  "pyo3-asyncio",
  "redesmyn",
  "serde",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
