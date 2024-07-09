@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, PyCache};
 use ::redesmyn::common::{init_logging, LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
@@ -82,7 +83,7 @@ impl PyEndpoint {
 #[pyclass]
 #[repr(transparent)]
 struct PyServer {
-    server: Server,
+    server: OnceCell<Server>,
 }
 
 #[pymethods]
@@ -93,7 +94,9 @@ impl PyServer {
         let mut path: PathBuf = ["logs", "this_run"].iter().collect();
         path.set_extension("txt");
         server.log_config(RsLogConfig::File(path));
-        PyServer { server }
+        let cell = OnceCell::new();
+        cell.set(server);
+        PyServer { server: cell }
     }
 
     pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
@@ -114,12 +117,23 @@ impl PyServer {
             }
         };
         let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
-        self.server.register(service);
+        self.server
+            .get_mut()
+            .ok_or_else(|| {
+                ServiceError::from(
+                    "Cannot register a service with a server that is already running",
+                )
+            })?
+            .register(service);
         Ok(())
     }
 
     pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&'py PyAny> {
-        let mut server = self.server.clone();
+        // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
+        //       server to the future. For one, we should keep a handle.
+        let mut server = self.server.take().ok_or_else(|| {
+            PyRuntimeError::new_err("Cannot start server that has previously  been started")
+        })?;
         pyo3_asyncio::tokio::future_into_py(py, async move {
             server.serve()?.await.map_err(PyRuntimeError::new_err)
         })

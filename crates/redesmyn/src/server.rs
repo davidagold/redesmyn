@@ -53,21 +53,6 @@ pub struct Server {
     config_log: LogConfig,
 }
 
-// We need this (at least in the current design) in order to create a Python future from `Server.serve`
-impl Clone for Server {
-    fn clone(&self) -> Self {
-        let mut server = Server::default();
-        for path in self.pythonpath.iter() {
-            server.pythonpath.push(path.clone());
-        }
-        // for (path, service) in self.services_by_path.iter() {
-        //     server.services_by_path.insert(path, value)
-        // }
-        server.log_config(self.config_log.clone());
-        server
-    }
-}
-
 impl Server {
     pub fn push_pythonpath(&mut self, path: &str) {
         self.pythonpath.push(path.to_string());
