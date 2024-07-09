@@ -28,7 +28,7 @@ async def send_post_request(
 
 
 async def main():
-    url = "http://localhost:8080/predictions/v1"
+    url = "http://localhost:8080/predictions/903683212157180428/000449a650df4e36844626e647d1566"
     records_by_task_id: Dict[int, Dict] = {}
     irises = load_irises()
 

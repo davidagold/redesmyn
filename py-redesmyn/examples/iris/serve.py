@@ -10,7 +10,10 @@ from common import project_dir
 from redesmyn.service import Server, endpoint
 from sklearn.pipeline import Pipeline
 from train import Input, Output, SepalLengthPredictor, SepalLengthPredictorSpec
+from redesmyn.py_redesmyn import LogConfig
 
+
+LogConfig(path=Path("./logs/run.txt")).init()
 mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
 # arg_parser = ArgumentParser()
 # arg_parser.add_argument("run_id", type=str)
@@ -18,11 +21,11 @@ mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
 
 
 @endpoint(
-    path="/predictions/{run_id}/{model_id}/",
+    path="/predictions/{run_id}/{model_id}",
     batch_max_delay_ms=10,
     batch_max_size=64,
-    cache=afs.ModelCache(
-        client=afs.FsClient(base_path=Path("."), path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model"),
+    cache_config=afs.CacheConfig(
+        client=afs.FsClient(base_path=Path(__file__).parent, path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model"),
         load_model=lambda *args: SepalLengthPredictor(*args),
         spec=SepalLengthPredictorSpec,
         # client=afs.FsClient(fetch_as=afs.FetchAs.Uri),
