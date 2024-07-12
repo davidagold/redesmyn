@@ -2,7 +2,7 @@ use std::cell::OnceCell;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, PyCache};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
 use ::redesmyn::common::{init_logging, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
