@@ -1,19 +1,20 @@
-use crate::error::ServiceResult;
+use crate::{do_in, error::ServiceResult};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
-use futures::{channel::oneshot::Canceled, TryFutureExt};
+use futures::{channel::oneshot::Canceled, future::join_all, TryFutureExt};
+use indexmap::IndexMap;
 use lru::LruCache;
 use pyo3::{
-    exceptions::{PyRuntimeError, PyTypeError, PyValueError},
+    exceptions::PyTypeError,
     pyclass, pymethods,
     types::{PyByteArray, PyFunction, PyNone, PyString},
     FromPyObject, IntoPy, Py, PyAny, PyResult, Python,
 };
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     fs,
     future::{self, Future},
     io::Read,
@@ -92,7 +93,7 @@ impl From<DateTime<Utc>> for UpdateTime {
 pub trait ArtifactSpec {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
 
-    fn as_map(&self) -> Result<BTreeMap<String, String>, serde_json::Error> {
+    fn as_map(&self) -> Result<IndexMap<String, String>, serde_json::Error> {
         let mut writer = BytesMut::new().writer();
         serde_json::to_writer(&mut writer, self.spec().as_ref())?;
         serde_json::from_reader(writer.into_inner().reader())
@@ -104,7 +105,7 @@ pub trait ArtifactSpec {
         Ok(key)
     }
 
-    fn as_path(&self) -> Result<PathBuf, serde_json::Error> {
+    fn as_path(&self, template: PathTemplate) -> Result<PathBuf, serde_json::Error> {
         let path = self.as_map()?.values().collect();
         Ok(path)
     }
@@ -119,10 +120,7 @@ impl Serialize for dyn ArtifactSpec {
 impl std::fmt::Display for dyn ArtifactSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let map = self.as_map().map_err(|_| fmt::Error::default())?;
-        let display = map
-            .into_iter()
-            .map(|(k, v)| [k, v].join("="))
-            .fold("".to_string(), |display, part| [display.to_string(), part].join(", "));
+        let display = map.into_iter().map(|(k, v)| [k, v].join("=")).collect::<Vec<_>>().join(", ");
         f.write_str(display.as_str())
     }
 }
@@ -265,16 +263,17 @@ impl FetchAs {
 }
 
 enum Command {
-    UpdateEntry(BoxedSpec, FetchAs),
+    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Result<RefreshState, CacheError>>),
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
     GetEntry(CacheKey, oneshot::Sender<CacheResult<Py<PyAny>>>),
+    ListEntries(oneshot::Sender<IndexMap<String, String>>),
 }
 
 impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Command::*;
         match self {
-            UpdateEntry(spec, _) => f.write_fmt(format_args!(
+            UpdateEntry(spec, _, _) => f.write_fmt(format_args!(
                 "<UpdateEntry: spec = {}>",
                 serde_json::to_string(spec.spec().as_ref())
                     .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
@@ -285,13 +284,18 @@ impl std::fmt::Debug for Command {
                 serde_json::to_string(spec.spec().as_ref())
                     .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
             )),
+            ListEntries(_) => f.write_str("<ListEntries>"),
         }
     }
 }
 
 impl Command {
-    fn update_entry(spec: impl ArtifactSpec + Send + Sync + 'static, fetch_as: FetchAs) -> Command {
-        Command::UpdateEntry(Box::new(spec), fetch_as)
+    fn update_entry(
+        spec: impl ArtifactSpec + Send + Sync + 'static,
+        fetch_as: FetchAs,
+    ) -> (Command, oneshot::Receiver<CacheResult<RefreshState>>) {
+        let (tx, rx) = oneshot::channel::<CacheResult<RefreshState>>();
+        (Command::UpdateEntry(Box::new(spec), fetch_as, tx), rx)
     }
 
     fn insert_entry(
@@ -308,22 +312,39 @@ impl Command {
         let cmd = Command::GetEntry(key, tx);
         (cmd, rx)
     }
+
+    fn list_entries() -> (Command, oneshot::Receiver<IndexMap<String, String>>) {
+        let (tx, rx) = oneshot::channel::<IndexMap<String, String>>();
+        let cmd = Command::ListEntries(tx);
+        (cmd, rx)
+    }
 }
 
 pub type CacheKey = String;
 
 struct TaskFlow {
-    config: Arc<RefreshConfig>,
+    // config: RefreshConfig,
     handle: JoinHandle<Result<(), CacheError>>,
 }
 
-#[derive(Debug)]
 struct RefreshConfig {
     spec: BoxedSpec,
     last_updated: Option<DateTime<Utc>>,
     tx: Arc<mpsc::Sender<Command>>,
     client: Arc<ArtifactsClient>,
     fetch_as: FetchAs,
+    tx_result: OnceCell<oneshot::Sender<CacheResult<RefreshState>>>,
+}
+
+impl std::fmt::Display for RefreshConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        //
+        let key = self.spec.as_key().map_err(|_| fmt::Error::default())?;
+        f.write_fmt(format_args!(
+            "<[RefreshConfig] `spec='{}'`, `last_updated={:#?}`>",
+            key, self.last_updated
+        ))
+    }
 }
 
 impl RefreshConfig {
@@ -333,8 +354,16 @@ impl RefreshConfig {
         client: Arc<ArtifactsClient>,
         tx: Arc<mpsc::Sender<Command>>,
         fetch_as: FetchAs,
+        tx_result: oneshot::Sender<CacheResult<RefreshState>>,
     ) -> RefreshConfig {
-        RefreshConfig { spec, last_updated, tx, client, fetch_as }
+        RefreshConfig {
+            spec,
+            last_updated,
+            tx,
+            client,
+            fetch_as,
+            tx_result: OnceCell::new_with(Some(tx_result)),
+        }
     }
 }
 
@@ -369,9 +398,10 @@ impl Transition<RefreshState> for RefreshState {
             RefreshState::FetchingData(state) => Ok(RefreshState::UpdatingCache(
                 <UpdatingCache as Transition<FetchingData>>::from(state, config).await?,
             )),
-            RefreshState::UpdatingCache(state) => {
-                Ok(RefreshState::Done(state.task.await.map(|_| Utc::now())?))
-            }
+            RefreshState::UpdatingCache(state) => match state.task.await? {
+                Ok(_) => Ok(RefreshState::Done(Utc::now())),
+                Err(err) => Err(err),
+            },
             RefreshState::Done(next_update) => {
                 let state = PendingFetch::new(next_update.into())?;
                 Ok(RefreshState::PendingFetch(state))
@@ -442,11 +472,27 @@ impl Transition<PendingFetch> for FetchingData {
         state: PendingFetch,
         config: Arc<RefreshConfig>,
     ) -> Result<FetchingData, CacheError> {
-        state.task.await?;
+        match state.task.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                error!(
+                    "Successfully joined `PendingFetch` task for key `{}` but the task failed: {}",
+                    config.spec.as_key().unwrap_or("<Unknown key>".into()),
+                    err
+                )
+            }
+            Err(_) => {
+                error!(
+                    "Failed to join `PendingFetch` task for key {}",
+                    config.spec.as_key().unwrap_or("<Unknown key>".into())
+                )
+            }
+        };
         let RefreshConfig { client, spec, .. } = &config.as_ref();
-
         let container = FetchAs::new_like(&config.fetch_as);
-        let fut = client.fetch(spec.as_path()?, container).into_future();
+        let args = spec.as_map()?;
+        let path = config.client.substitute(args)?;
+        let fut = client.fetch(path.into(), container).into_future();
         let task = tokio::spawn(async move { fut.await });
         Ok(FetchingData { task })
     }
@@ -463,10 +509,9 @@ impl Transition<FetchingData> for UpdatingCache {
             let msg = "Failed to receive artifact data from `RefreshTask<FetchingData>`";
             return Err(CacheError::from(msg));
         };
-        let (tx, rx) = oneshot::channel::<Result<(), CacheError>>();
-        let cmd = Command::InsertEntry(config.spec.as_key()?.clone(), data, tx);
-        config.tx.send(cmd).await?;
 
+        let (cmd, rx) = Command::insert_entry(config.spec.as_key()?, data);
+        config.tx.send(cmd).await?;
         let task = tokio::spawn(async move {
             match rx.await {
                 Ok(res) => res,
@@ -480,31 +525,41 @@ impl Transition<FetchingData> for UpdatingCache {
 #[derive(Display)]
 enum ModelEntry {
     Empty,
-    Ready(Py<PyAny>),
-    InUse(oneshot::Receiver<Py<PyAny>>),
-    Refreshing(Option<Py<PyAny>>),
+    Ready(Py<PyAny>, Option<DateTime<Utc>>),
+    InUse(oneshot::Receiver<Py<PyAny>>, Option<DateTime<Utc>>),
+    Refreshing(Option<Py<PyAny>>, Option<DateTime<Utc>>),
 }
 
 impl ModelEntry {
+    fn last_updated(&self) -> Option<&DateTime<Utc>> {
+        use ModelEntry::*;
+        match self {
+            Empty => None,
+            Ready(_, last_updated) | InUse(_, last_updated) | Refreshing(_, last_updated) => {
+                last_updated.as_ref()
+            }
+        }
+    }
+
     fn borrow(self) -> CacheResult<((oneshot::Sender<Py<PyAny>>, Py<PyAny>), ModelEntry)> {
         use ModelEntry::*;
         let (tx, rx) = oneshot::channel();
         match self {
-            Ready(model) => Ok(((tx, model), InUse(rx))),
-            Refreshing(Some(model)) => Ok(((tx, model), InUse(rx))),
+            Ready(model, last_updated) => Ok(((tx, model), InUse(rx, last_updated))),
+            Refreshing(Some(model), last_updated) => Ok(((tx, model), InUse(rx, last_updated))),
             // TODO: Wait for refresh
-            Refreshing(None) => Err(CacheError::EmptyEntryError),
+            Refreshing(None, _) => Err(CacheError::EmptyEntryError),
             Empty => Err(CacheError::EmptyEntryError),
-            InUse(_) => Err(CacheError::InUseError),
+            InUse(_, _) => Err(CacheError::InUseError),
         }
     }
 
     fn refreshing(entry: ModelEntry) -> CacheResult<ModelEntry> {
         use ModelEntry::*;
         match entry {
-            Empty => Ok((Refreshing(None))),
-            Ready(model) => Ok(Refreshing(Some(model))),
-            Refreshing(Some(model)) => Ok(Refreshing(Some(model))),
+            Empty => Ok((Refreshing(None, None))),
+            Ready(model, last_updated) => Ok(Refreshing(Some(model), last_updated)),
+            Refreshing(Some(model), last_updated) => Ok(Refreshing(Some(model), last_updated)),
             entry => Err(CacheError::from(format!(
                 "Failed to update model entry from previous entry state `{}`",
                 entry
@@ -576,6 +631,9 @@ impl Cache {
             rx,
             self.pre_fetch_all,
         );
+        if let Err(err) = self.tx.set(tx.into()) {
+            error!("Failed to set Cache tx: {}", err)
+        };
         self.task
             .set(tokio::spawn(fut_task))
             .map_err(|_| CacheError::from("Cannot start already running Cache"))
@@ -607,36 +665,58 @@ impl Cache {
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
             let paths_by_spec = client.list(None).await;
-            for (spec, path) in paths_by_spec {
-                info!(
-                    "Found artifact for spec `{}` at path `{}`",
-                    &spec as &dyn ArtifactSpec,
-                    path.display()
-                );
-                let cmd = Command::update_entry(spec.clone(), FetchAs::Uri(None));
-                if let Err(_) = tx_cmd.send(cmd).await {
-                    warn!("Failed to send update entry command for spec: {:#?}", spec);
+            let rxs = paths_by_spec
+                .iter()
+                .map(|(spec, path)| {
+                    info!(
+                        "Found artifact for spec `{}` at path `{}`",
+                        &spec.as_key().unwrap_or("<Error deriving key from spec>".into()),
+                        path.display()
+                    );
+                    let (cmd, rx_result) = Command::update_entry(spec.clone(), FetchAs::Uri(None));
+                    let cloned_tx_cmd = tx_cmd.clone();
+                    let error_msg =
+                        format!("Failed to send update entry command for spec: {:#?}", spec);
+                    tokio::spawn(async move {
+                        let fut_update_entry = cloned_tx_cmd.send(cmd);
+                        if let Err(_) = fut_update_entry.await {
+                            warn!(error_msg);
+                        };
+                        rx_result.await
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let (cmd, rx) = Command::list_entries();
+            let _ = tx_cmd.send(cmd).await;
+            let _fut_list_entries = tokio::spawn(async move {
+                join_all(rxs).await;
+                let Ok(entries) = rx.await else {
+                    error!("Failed to receive `ListEntries` result");
+                    return;
                 };
-            }
+                info!("Model cache contains entries: {:#?}", entries)
+            });
         }
 
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
             match msg {
-                Command::UpdateEntry(spec, fetch_as) => {
+                Command::UpdateEntry(spec, fetch_as, tx_result) => {
                     let key = spec.as_key()?;
-                    let (last_updated, model_entry) = match model_cache.pop(&key) {
-                        Some((taskflow, model)) => (taskflow.config.last_updated, model),
-                        None => (None, ModelEntry::Empty),
+                    let model_entry = match model_cache.pop(&key) {
+                        Some((taskflow, model_entry)) => model_entry,
+                        None => ModelEntry::Empty,
                     };
                     let config = RefreshConfig::new(
                         spec,
-                        last_updated,
+                        model_entry.last_updated().cloned(),
                         client.clone(),
                         tx_cmd.clone(),
                         fetch_as,
+                        tx_result,
                     );
-                    let taskflow = match Self::spawn_taskflow(config.into()) {
+                    let taskflow = match Self::run_taskflow(config.into()) {
                         Ok(taskflow) => {
                             info!("Initiated refresh taskflow for artifact key `{}`", key);
                             taskflow
@@ -665,16 +745,29 @@ impl Cache {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
                     //       Furthermore, we need to use a concurrent hashmap, or something like it, to lock access
                     //       to individual keys while we are updating the respective models.
-                    if let Err(err) =
-                        Self::insert_entry(&client, &mut model_cache, key.clone(), data, tx)
-                    {
-                        error!("Failed to load and insert model for key {}: {}", key, err)
+                    let result = Self::insert_entry(&client, &mut model_cache, key.clone(), data);
+                    match &result {
+                        Ok(_) => {
+                            info!("Successfully inserted refreshed model entry for key `{}`", key);
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to load or insert refreshed model entry for key `{}`: {}",
+                                key, err
+                            )
+                        }
+                    };
+
+                    if let Err(_) = tx.send(result) {
+                        error!(
+                            "Failed to return result of `InsertEntry` command to original issuer"
+                        );
                     };
                 }
                 Command::GetEntry(key, tx) => {
                     info!("Fetching model entry for key: '{}'", key);
                     let result_send = match model_cache.get(&key) {
-                        Some((_, ModelEntry::Ready(model))) => tx.send(Ok(model.clone())),
+                        Some((_, ModelEntry::Ready(model, _))) => tx.send(Ok(model.clone())),
                         // TODO: Make errors more specific
                         None => {
                             warn!("No entry for key {}", key);
@@ -686,34 +779,106 @@ impl Cache {
                         warn!("Failed to send response");
                     };
                 }
+                Command::ListEntries(tx) => {
+                    let models_by_key = model_cache
+                        .iter()
+                        .map(|(key, (_, entry))| {
+                            use ModelEntry::*;
+                            let key = key.clone();
+                            match entry {
+                                InUse(_, None) => (
+                                    key,
+                                    "<In use, (never updated -- this shouldn't happen!)>"
+                                        .to_string(),
+                                ),
+                                InUse(_, Some(last_updated)) => {
+                                    (key, format!("<In use, (last updated {})>", last_updated))
+                                }
+                                Refreshing(Some(model), Some(last_updated)) => {
+                                    let model_str = match Python::with_gil(|py| {
+                                        model.call_method0(py, "__str__")?.extract::<String>(py)
+                                    }) {
+                                        Ok(model_str) => model_str,
+                                        Err(_) => {
+                                            "<Failed to call `__str__` for model entry>".into()
+                                        }
+                                    };
+                                    (
+                                        key,
+                                        format!(
+                                            "<Refreshing, {}>, (last updated {})",
+                                            model_str, last_updated
+                                        ),
+                                    )
+                                }
+                                Refreshing(_, _) =>
+                                    (key, "<Refreshing, either no model or no last updated -- this shouldn't happen".into()),
+                                Ready(model, Some(last_updated)) => {
+                                    //
+                                    let model_str = match Python::with_gil(|py| {
+                                        model.call_method0(py, "__str__")?.extract::<String>(py)
+                                    }) {
+                                        Ok(model_str) => model_str,
+                                        Err(_) => {
+                                            "<Failed to call `__str__` for model entry>".into()
+                                        }
+                                    };
+                                    (key, format!("<Ready, {}, (last updated {})>", model_str, last_updated))
+                                }
+                                Ready(model, None) => {
+                                    let model_str = match Python::with_gil(|py| {
+                                        model.call_method0(py, "__str__")?.extract::<String>(py)
+                                    }) {
+                                        Ok(model_str) => model_str,
+                                        Err(_) => {
+                                            "<Failed to call `__str__` for model entry>".into()
+                                        }
+                                    };
+                                    (key, format!("<Ready, {}, (never updated -- this shouldn't happen!)>", model_str))
+                                }
+                                Emtpy => (key, "<Empty>".to_string()),
+                            }
+                        })
+                        .collect();
+                    tx.send(models_by_key);
+                }
             }
         }
     }
 
-    fn spawn_taskflow(config: Arc<RefreshConfig>) -> Result<TaskFlow, CacheError> {
+    fn run_taskflow(mut config: RefreshConfig) -> Result<TaskFlow, CacheError> {
         // The following does not refresh the cache entry directly, but rather spawns a new task
         // to handle data fetching for the given key and tracks the task's association with said key.
         // self.refresh(key).await;
         //
         // Will need to get the che entry, lock the key, get last updated, pass everything to `refresh_entry`
-        let _config = config.clone();
+        // let _config = config.clone();
 
         let key = config.spec.as_key()?;
         let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
             let start = PendingFetch::new(UpdateTime::Now)?;
             let mut state = <RefreshState as From<PendingFetch>>::from(start);
+            let tx_result = (&mut config).tx_result.take();
 
+            let cloneable_config = Arc::new(config);
             // THIS IS WHY WE NEED ASYNC ITERATORS
-            let end = loop {
+            let result = loop {
                 // Pre-compute error message to avoid borrow issues later in loop body
                 let err_msg = format!("Failed to transition from `{}`", state);
-                let next = <RefreshState as Transition<RefreshState>>::from(state, _config.clone());
+                let next = <RefreshState as Transition<RefreshState>>::from(
+                    state,
+                    cloneable_config.clone(),
+                );
                 match next.await {
                     Ok(RefreshState::Done(last_updated)) => {
+                        info!("Finished cache update taskflow for key {} at {}", key, last_updated);
                         break Ok(RefreshState::Done(last_updated));
                     }
                     Ok(next) => {
-                        info!("Entering taskflow state `{}` for key `{}`", next, key);
+                        info!(
+                            "Successfully transitioned to taskflow state `{}` for key `{}`",
+                            next, key
+                        );
                         state = next;
                     }
                     Err(err) => {
@@ -721,48 +886,62 @@ impl Cache {
                         break Err(err);
                     }
                 }
-            }?;
+            };
 
-            info!("Finished cache update taskflow for key {}", key);
+            do_in!(|| {
+                if let Err(_) = tx_result?.send(result) {
+                    warn!("Failed to send result to original command issuer");
+                };
+            });
+
             Ok(())
         });
 
-        Ok(TaskFlow { config, handle })
+        Ok(TaskFlow { handle })
     }
 
+    #[instrument(skip(client, cache, data))]
     fn insert_entry(
         client: &ArtifactsClient,
         cache: &mut LruCache<CacheKey, (TaskFlow, ModelEntry)>,
         key: CacheKey,
         data: FetchAs,
-        tx: oneshot::Sender<Result<(), CacheError>>,
     ) -> Result<(), CacheError> {
-        let result = match (client.load_model(data), cache.pop(&key)) {
+        info!("Attempting to load and insert model entry");
+        match (client.load_model(data), cache.pop(&key)) {
             // Successfully refreshed an existing model entry
             (Ok(new_model), Some((taskflow, model_entry))) => {
+                let model_str = Python::with_gil(|py| {
+                    new_model.call_method0(py, "__str__")?.extract::<String>(py)
+                })
+                .unwrap_or("<Error obtaining string representation>".to_string());
+                info!("Successfully loaded model: `{}`", model_str);
                 match model_entry {
                     // We're trying to update a model for which a refresh has not been initiated
-                    ModelEntry::Ready(old_model) => {
+                    ModelEntry::Ready(old_model, _) => {
                         // info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
                         Err(CacheError::from(format!(
                             "Tried to update model entry {:#?} at key {} without properly initiating refresh taskflow",
                             old_model, key
                         )))
                     }
-                    ModelEntry::Refreshing(old_model) => {
+                    ModelEntry::Refreshing(old_model, last_updated) => {
                         info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
-                        cache.put(key, (taskflow, ModelEntry::Ready(new_model)));
+                        cache.put(key, (taskflow, ModelEntry::Ready(new_model, last_updated)));
                         Ok(())
                     }
-                    ModelEntry::InUse(rx) => {
+                    ModelEntry::InUse(rx, last_updated) => {
                         // TODO: Await return of model
-                        cache.put(key, (taskflow, ModelEntry::Ready(new_model)));
+                        cache.put(key, (taskflow, ModelEntry::Ready(new_model, last_updated)));
                         Ok(())
                     }
-                    ModelEntry::Empty => Err(CacheError::from(format!(
-                        "Tried to update empty model entry at key {} without properly initiating refresh taskflow",
-                        key
-                    ))),
+                    ModelEntry::Empty => {
+                        let msg = format!(
+                            "Tried to update empty model entry at key {} without properly initiating refresh taskflow",
+                            key
+                        );
+                        Err(CacheError::from(msg))
+                    }
                 }
             }
             (Ok(model), None) => {
@@ -770,15 +949,10 @@ impl Cache {
                 let msg = "Trying to replace model without taskflow";
                 Err(CacheError::from(msg))
             }
-            (Err(err), _) => Err(err.into()),
-        };
-        match tx.send(result) {
-            Err(Err(err)) => return Err(err),
-            Err(Ok(())) => {
-                let msg = "Successfully fetched and loaded model but failed to communicate result to refresh task";
-                return Err(CacheError::from(msg));
+            (Err(err), _) => {
+                error!("Failed to load model: {}", err);
+                Err(err.into())
             }
-            _ => Ok(()),
         }
     }
 
@@ -842,67 +1016,67 @@ impl From<&str> for CacheError {
 
 pub type CacheResult<T> = Result<T, CacheError>;
 
-#[pyclass]
-#[derive(Debug)]
-pub struct PyCache {
-    pub cache: Arc<Cache>,
-}
+// #[pyclass]
+// #[derive(Debug)]
+// pub struct PyCache {
+//     pub cache: Arc<Cache>,
+// }
 
-#[pymethods]
-impl PyCache {
-    #[new]
-    fn new(
-        client_spec: ClientSpec,
-        load_model: &PyFunction,
-        max_size: Option<usize>,
-        cron_expr: Option<String>,
-        max_age_seconds: Option<u32>,
-        pre_fetch_all: Option<bool>,
-    ) -> PyResult<PyCache> {
-        let schedule: Option<Schedule> = match (cron_expr, max_age_seconds) {
-            (Some(expr), None) => Some(
-                cron::Schedule::from_str(expr.as_str())
-                    .map_err(|err| PyValueError::new_err(err.to_string()))?
-                    .into(),
-            ),
-            (None, Some(seconds)) => Some(seconds.into()),
-            (None, None) => None,
-            (Some(_), Some(_)) => {
-                let msg = "Specify *at most* one of either `cron_expr` or `max_age_seconds`.";
-                return Err(PyValueError::new_err(msg));
-            }
-        };
+// #[pymethods]
+// impl PyCache {
+//     #[new]
+//     fn new(
+//         client_spec: ClientSpec,
+//         load_model: &PyFunction,
+//         max_size: Option<usize>,
+//         cron_expr: Option<String>,
+//         max_age_seconds: Option<u32>,
+//         pre_fetch_all: Option<bool>,
+//     ) -> PyResult<PyCache> {
+//         let schedule: Option<Schedule> = match (cron_expr, max_age_seconds) {
+//             (Some(expr), None) => Some(
+//                 cron::Schedule::from_str(expr.as_str())
+//                     .map_err(|err| PyValueError::new_err(err.to_string()))?
+//                     .into(),
+//             ),
+//             (None, Some(seconds)) => Some(seconds.into()),
+//             (None, None) => None,
+//             (Some(_), Some(_)) => {
+//                 let msg = "Specify *at most* one of either `cron_expr` or `max_age_seconds`.";
+//                 return Err(PyValueError::new_err(msg));
+//             }
+//         };
 
-        Ok(PyCache {
-            cache: Cache::new(
-                client_spec.to_client(load_model.into()),
-                max_size,
-                schedule,
-                pre_fetch_all,
-            )
-            .into(),
-        })
-    }
+//         Ok(PyCache {
+//             cache: Cache::new(
+//                 client_spec.to_client(load_model.into()),
+//                 max_size,
+//                 schedule,
+//                 pre_fetch_all,
+//             )
+//             .into(),
+//         })
+//     }
 
-    #[pyo3(signature = (**kwargs))]
-    fn get<'py>(
-        &'py self,
-        py: Python<'py>,
-        kwargs: Option<BTreeMap<String, String>>,
-    ) -> PyResult<&'py PyAny> {
-        let spec = kwargs.unwrap_or_default();
-        let key = spec.as_key().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-        let (cmd, rx) = Command::get_entry(key);
-        let _ = self.cache.try_send(cmd);
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            match rx.await {
-                Ok(Ok(model)) => Ok(model),
-                Ok(Err(err)) => Err(PyRuntimeError::new_err(err.to_string())),
-                Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
-            }
-        })
-    }
-}
+//     #[pyo3(signature = (**kwargs))]
+//     fn get<'py>(
+//         &'py self,
+//         py: Python<'py>,
+//         kwargs: Option<BTreeMap<String, String>>,
+//     ) -> PyResult<&'py PyAny> {
+//         let spec = kwargs.unwrap_or_default();
+//         let key = spec.as_key().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+//         let (cmd, rx) = Command::get_entry(key);
+//         let _ = self.cache.try_send(cmd);
+//         pyo3_asyncio::tokio::future_into_py(py, async move {
+//             match rx.await {
+//                 Ok(Ok(model)) => Ok(model),
+//                 Ok(Err(err)) => Err(PyRuntimeError::new_err(err.to_string())),
+//                 Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
+//             }
+//         })
+//     }
+// }
 
 #[derive(FromPyObject)]
 enum ClientSpec {
@@ -923,12 +1097,14 @@ impl ClientSpec {
 }
 
 trait Client: Send + Sync + 'static {
-    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String>;
+    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String>;
+
+    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String>;
 
     fn list(
         &self,
         path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>>;
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
 
     fn fetch_uri(
         &self,
@@ -962,7 +1138,9 @@ impl PathTemplate {
             .split("/")
             .filter_map(|part| {
                 if part.starts_with("{") && part.ends_with("}") {
-                    Some(PathComponent::Identifier(part.to_string()))
+                    let n_chars = part.len();
+                    let identifier: String = part.chars().skip(1).take(n_chars - 2).collect();
+                    Some(PathComponent::Identifier(identifier))
                 } else if part != "" {
                     Some(PathComponent::Fixed(part.to_string()))
                 } else {
@@ -972,7 +1150,7 @@ impl PathTemplate {
             .collect()
     }
 
-    fn parse(&self, path: &PathBuf) -> BTreeMap<String, String> {
+    fn parse(&self, path: &PathBuf) -> IndexMap<String, String> {
         let mut base_parts: VecDeque<_> = self.base.iter().collect();
         let rel_path: PathBuf = path
             .into_iter()
@@ -991,6 +1169,30 @@ impl PathTemplate {
             .zip(rel_path.into_iter().filter_map(|part| part.to_str().map(str::to_string)))
             .collect()
     }
+
+    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
+        self.components()
+            .iter()
+            .try_fold(None, |path: Option<String>, component| {
+                let next_path_component = match component {
+                    PathComponent::Fixed(dir_name) => dir_name,
+                    PathComponent::Identifier(identifier) => {
+                        args.get(identifier).ok_or_else(|| {
+                            CacheError::from(format!(
+                                "Substitution identifier `{}` is not present in the provided args",
+                                identifier
+                            ))
+                        })?
+                    }
+                };
+                let path = match path {
+                    None => next_path_component.to_string(),
+                    Some(path) => vec![path, next_path_component.to_string()].join("/"),
+                };
+                CacheResult::<Option<String>>::Ok(Some(path))
+            })?
+            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))
+    }
 }
 
 #[pyclass]
@@ -1001,7 +1203,7 @@ pub struct FsClient {
 }
 
 impl FsClient {
-    pub fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+    pub fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
         self.path_template.parse(path)
     }
 
@@ -1068,9 +1270,15 @@ impl ArtifactsClient {
 }
 
 impl Client for ArtifactsClient {
-    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
         match self {
             ArtifactsClient::FsClient { client, .. } => client.parse_path(path),
+        }
+    }
+
+    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
+        match self {
+            ArtifactsClient::FsClient { client, .. } => client.substitute(args),
         }
     }
 
@@ -1088,7 +1296,7 @@ impl Client for ArtifactsClient {
     fn list(
         &self,
         path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
         use ArtifactsClient::*;
         match self {
             FsClient { client, .. } => client.list(path),
@@ -1097,9 +1305,9 @@ impl Client for ArtifactsClient {
 }
 
 fn _list(
-    mut paths_by_spec: Vec<(BTreeMap<String, String>, PathBuf)>,
+    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
     mut remaining_components: VecDeque<PathComponent>,
-) -> Vec<(BTreeMap<String, String>, PathBuf)> {
+) -> Vec<(IndexMap<String, String>, PathBuf)> {
     match remaining_components.pop_front() {
         Some(PathComponent::Fixed(dir_name)) => {
             paths_by_spec.iter_mut().for_each(|(_, ref mut path)| {
@@ -1136,15 +1344,19 @@ fn _list(
 }
 
 impl Client for FsClient {
-    fn parse_path(&self, path: &PathBuf) -> BTreeMap<String, String> {
+    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
+        self.path_template.substitute(args)
+    }
+
+    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
         self.parse_path(path)
     }
 
     fn list(
         &self,
         path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(BTreeMap<String, String>, PathBuf)>> + Send>> {
-        let spec = BTreeMap::<String, String>::default();
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
+        let spec = IndexMap::<String, String>::default();
         let paths_by_spec = _list(
             [(spec, path.unwrap_or(&self.base_path).clone())].into(),
             self.path_template.components(),
