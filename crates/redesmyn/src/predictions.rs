@@ -3,6 +3,7 @@ use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::server::ResourceFactory;
 use crate::{config_methods, metrics, validate_param};
+use indexmap::IndexMap;
 use redesmyn_macros::metric_instrument;
 use tokio::sync::mpsc::error::SendError;
 
@@ -48,6 +49,7 @@ where
     T: Send + Sync + Debug + for<'de> Deserialize<'de> + 'static,
     R: Relation<Serialized = T> + Send + Sync + 'static,
 {
+    #[instrument(skip_all)]
     fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>> {
         let (tx_abort, rx_abort) = oneshot::channel::<()>();
 
@@ -381,7 +383,8 @@ where
 {
     metrics!(RequestCount: Count = 1);
 
-    let spec: BTreeMap<String, String> =
+    // TODO: Does `match_info` guarantee preservation of identifier order?
+    let spec: IndexMap<String, String> =
         req.match_info().iter().map(|(key, val)| (key.to_string(), val.to_string())).collect();
 
     let (tx, rx) = oneshot::channel();

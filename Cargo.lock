@@ -1012,6 +1012,7 @@ checksum = "168fb715dda47215e360912c096649d23d58bf392ac62f73919e831745e40f26"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
 ]
 
 [[package]]
@@ -2085,6 +2086,7 @@ dependencies = [
  "erased-serde",
  "futures",
  "heapless",
+ "indexmap",
  "lru",
  "polars",
  "pyo3",
@@ -2260,6 +2262,7 @@ version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12dc5c46daa8e9fdf4f5e71b6cf9a53f2487da0e86e55808e2d35539666497dd"
 dependencies = [
+ "indexmap",
  "itoa",
  "ryu",
  "serde",

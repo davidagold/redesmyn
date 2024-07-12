@@ -13,8 +13,10 @@ actix-web = { workspace = true }
 bytes = { workspace = true }
 cron = { workspace = true }
 chrono = { workspace = true, default-features = false }
+erased-serde = "0.4.4"
 futures = { workspace = true }
 heapless = "0.8.0"
+indexmap = { workspace = true, features = ["serde"] }
 lru = { workspace = true }
 polars = { features = [
     "lazy",
@@ -24,8 +26,8 @@ polars = { features = [
 pyo3 = { workspace = true }
 pyo3-asyncio = { workspace = true, features = ["attributes", "tokio-runtime"] }
 pyo3-polars = { workspace = true }
-serde = { features = ["derive"], workspace = true }
-serde_json = { workspace = true, features = ["raw_value"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["raw_value", "indexmap"] }
 strum = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
@@ -35,4 +37,3 @@ tracing-subscriber = { features = ["json", "env-filter"], workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 
 redesmyn-macros = { workspace = true }
-erased-serde = "0.4.4"

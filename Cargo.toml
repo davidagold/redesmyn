@@ -18,17 +18,21 @@ bytes = "1.6.0"
 chrono = { version = "0.4.38", default-features = false }
 cron = "0.12.1"
 futures = { version = "0.3.30", default-features = false }
+indexmap = { version = "2.2.6", features = ["serde"] }
 lru = "0.12.3"
 polars = { version = "0.37.0", features = [
     "lazy",
     "dtype-struct",
     "partition_by",
 ] }
-pyo3 = { version = "0.20.2", features = ["auto-initialize"]}
-pyo3-asyncio = { version = "0.20.0", features = ["attributes", "tokio-runtime"] }
+pyo3 = { version = "0.20.2", features = ["auto-initialize"] }
+pyo3-asyncio = { version = "0.20.0", features = [
+    "attributes",
+    "tokio-runtime",
+] }
 pyo3-polars = "0.11.3"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["raw_value"] }
+serde_json = { version = "1.0", features = ["raw_value", "indexmap"] }
 strum = { version = "0.26.2", features = ["derive"] }
 tempfile = "3.10.1"
 thiserror = "1.0.57"
