@@ -96,7 +96,7 @@ impl PyHandler {
     }
 
     pub fn invoke(&self, py: Python<'_>, model: Py<PyAny>, df: PyDataFrame) -> PyResult<PyObject> {
-        self.handler.call(py, (df,), None)
+        self.handler.call(py, (model, df), None)
     }
 }
 

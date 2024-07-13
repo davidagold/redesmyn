@@ -36,7 +36,7 @@ use tokio::{
     },
     task::{JoinError, JoinHandle},
 };
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, info_span, instrument, span, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
@@ -87,6 +87,13 @@ enum UpdateTime {
 impl From<DateTime<Utc>> for UpdateTime {
     fn from(dt: DateTime<Utc>) -> Self {
         Self::DateTime(dt)
+    }
+}
+
+fn __str__(obj: &Py<PyAny>) -> String {
+    match Python::with_gil(|py| obj.call_method0(py, "__str__")?.extract::<String>(py)) {
+        Ok(model_str) => model_str,
+        Err(_) => "<Failure calling `__str__` for Python object>".into(),
     }
 }
 
@@ -522,12 +529,47 @@ impl Transition<FetchingData> for UpdatingCache {
     }
 }
 
-#[derive(Display)]
 enum ModelEntry {
     Empty,
     Ready(Py<PyAny>, Option<DateTime<Utc>>),
     InUse(oneshot::Receiver<Py<PyAny>>, Option<DateTime<Utc>>),
     Refreshing(Option<Py<PyAny>>, Option<DateTime<Utc>>),
+}
+
+impl std::fmt::Display for ModelEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ModelEntry::*;
+        let formatted = match self {
+            InUse(_, None) => "<In use, (never updated -- this shouldn't happen!)>".to_string(),
+            InUse(_, Some(last_updated)) => format!("<In use, (last updated {})>", last_updated),
+            Refreshing(Some(model), Some(last_updated)) => {
+                let model_str = __str__(model);
+                format!("<Refreshing, {}>, (last updated {})", model_str, last_updated)
+            }
+            Refreshing(None, None) => "<Refreshing, no model, (never updated)>".into(),
+            Refreshing(Some(model), None) => {
+                format!("<Refreshing, {}, (never updated)>", __str__(model))
+            }
+            Refreshing(None, Some(last_updated)) => {
+                format!("<Refreshing, no model, (last updated {} -- what??)>", last_updated)
+            }
+            Ready(model, Some(last_updated)) => {
+                let model_str = __str__(model);
+                format!("<Ready, {}, (last updated {})>", model_str, last_updated)
+            }
+            Ready(model, None) => {
+                let model_str = match Python::with_gil(|py| {
+                    model.call_method0(py, "__str__")?.extract::<String>(py)
+                }) {
+                    Ok(model_str) => model_str,
+                    Err(_) => "<Failed to call `__str__` for model entry>".into(),
+                };
+                format!("<Ready, {}, (never updated -- this shouldn't happen!)>", model_str)
+            }
+            Empty => "<Empty>".to_string(),
+        };
+        f.write_str(formatted.as_str())
+    }
 }
 
 impl ModelEntry {
@@ -604,6 +646,12 @@ impl CacheHandle {
     }
 }
 
+fn list_entries(
+    model_cache: &LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)>,
+) -> IndexMap<String, String> {
+    model_cache.iter().map(|(key, (_, entry))| (key.clone(), format!("{}", entry))).collect()
+}
+
 impl Cache {
     pub fn new(
         client: ArtifactsClient,
@@ -654,7 +702,7 @@ impl Cache {
         mut rx_cmd: mpsc::Receiver<Command>,
         pre_fetch_all: Option<bool>,
     ) -> Result<(), CacheError> {
-        let mut model_cache: LruCache<CacheKey, (TaskFlow, ModelEntry)> =
+        let mut model_cache: LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size).unwrap());
 
         info!(
@@ -705,7 +753,8 @@ impl Cache {
                 Command::UpdateEntry(spec, fetch_as, tx_result) => {
                     let key = spec.as_key()?;
                     let model_entry = match model_cache.pop(&key) {
-                        Some((taskflow, model_entry)) => model_entry,
+                        // TODO: What if there is an extant TaskFlow?
+                        Some((_taskflow, model_entry)) => model_entry,
                         None => ModelEntry::Empty,
                     };
                     let config = RefreshConfig::new(
@@ -716,6 +765,7 @@ impl Cache {
                         fetch_as,
                         tx_result,
                     );
+
                     let taskflow = match Self::run_taskflow(config.into()) {
                         Ok(taskflow) => {
                             info!("Initiated refresh taskflow for artifact key `{}`", key);
@@ -739,7 +789,7 @@ impl Cache {
                             continue;
                         }
                     };
-                    model_cache.put(key, (taskflow, entry));
+                    model_cache.put(key, (Some(taskflow), entry));
                 }
                 Command::InsertEntry(key, data, tx) => {
                     // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
@@ -765,6 +815,10 @@ impl Cache {
                     };
                 }
                 Command::GetEntry(key, tx) => {
+                    let span = info_span!("get_entry");
+                    let _entered = span.enter();
+                    let models_by_key = list_entries(&model_cache);
+                    info!("models: {:#?}", models_by_key);
                     info!("Fetching model entry for key: '{}'", key);
                     let result_send = match model_cache.get(&key) {
                         Some((_, ModelEntry::Ready(model, _))) => tx.send(Ok(model.clone())),
@@ -780,66 +834,7 @@ impl Cache {
                     };
                 }
                 Command::ListEntries(tx) => {
-                    let models_by_key = model_cache
-                        .iter()
-                        .map(|(key, (_, entry))| {
-                            use ModelEntry::*;
-                            let key = key.clone();
-                            match entry {
-                                InUse(_, None) => (
-                                    key,
-                                    "<In use, (never updated -- this shouldn't happen!)>"
-                                        .to_string(),
-                                ),
-                                InUse(_, Some(last_updated)) => {
-                                    (key, format!("<In use, (last updated {})>", last_updated))
-                                }
-                                Refreshing(Some(model), Some(last_updated)) => {
-                                    let model_str = match Python::with_gil(|py| {
-                                        model.call_method0(py, "__str__")?.extract::<String>(py)
-                                    }) {
-                                        Ok(model_str) => model_str,
-                                        Err(_) => {
-                                            "<Failed to call `__str__` for model entry>".into()
-                                        }
-                                    };
-                                    (
-                                        key,
-                                        format!(
-                                            "<Refreshing, {}>, (last updated {})",
-                                            model_str, last_updated
-                                        ),
-                                    )
-                                }
-                                Refreshing(_, _) =>
-                                    (key, "<Refreshing, either no model or no last updated -- this shouldn't happen".into()),
-                                Ready(model, Some(last_updated)) => {
-                                    //
-                                    let model_str = match Python::with_gil(|py| {
-                                        model.call_method0(py, "__str__")?.extract::<String>(py)
-                                    }) {
-                                        Ok(model_str) => model_str,
-                                        Err(_) => {
-                                            "<Failed to call `__str__` for model entry>".into()
-                                        }
-                                    };
-                                    (key, format!("<Ready, {}, (last updated {})>", model_str, last_updated))
-                                }
-                                Ready(model, None) => {
-                                    let model_str = match Python::with_gil(|py| {
-                                        model.call_method0(py, "__str__")?.extract::<String>(py)
-                                    }) {
-                                        Ok(model_str) => model_str,
-                                        Err(_) => {
-                                            "<Failed to call `__str__` for model entry>".into()
-                                        }
-                                    };
-                                    (key, format!("<Ready, {}, (never updated -- this shouldn't happen!)>", model_str))
-                                }
-                                Emtpy => (key, "<Empty>".to_string()),
-                            }
-                        })
-                        .collect();
+                    let models_by_key = list_entries(&model_cache);
                     tx.send(models_by_key);
                 }
             }
@@ -903,7 +898,7 @@ impl Cache {
     #[instrument(skip(client, cache, data))]
     fn insert_entry(
         client: &ArtifactsClient,
-        cache: &mut LruCache<CacheKey, (TaskFlow, ModelEntry)>,
+        cache: &mut LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)>,
         key: CacheKey,
         data: FetchAs,
     ) -> Result<(), CacheError> {
@@ -925,9 +920,21 @@ impl Cache {
                             old_model, key
                         )))
                     }
-                    ModelEntry::Refreshing(old_model, last_updated) => {
-                        info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
-                        cache.put(key, (taskflow, ModelEntry::Ready(new_model, last_updated)));
+                    ModelEntry::Refreshing(old_model, last_updated_prev) => {
+                        let new_model_str = __str__(&new_model);
+                        let last_updated = Utc::now();
+                        cache.put(
+                            key.clone(),
+                            (taskflow, ModelEntry::Ready(new_model, Some(last_updated.clone()))),
+                        );
+                        info!(
+                            %key,
+                            timestamp = Utc::now().to_string(),
+                            "Replaced model `{:#?}` with {} (previously updated {})",
+                            old_model,
+                            new_model_str,
+                            last_updated_prev.map(|dt|dt.to_string()).unwrap_or("never".into())
+                        );
                         Ok(())
                     }
                     ModelEntry::InUse(rx, last_updated) => {
@@ -944,8 +951,13 @@ impl Cache {
                     }
                 }
             }
-            (Ok(model), None) => {
+            (Ok(new_model), None) => {
                 // TODO: Handle this case better.
+                // let last_updated = Utc::now();
+                // cache.put(
+                //     key.clone(),
+                //     (None, ModelEntry::Ready(new_model, Some(last_updated.clone()))),
+                // );
                 let msg = "Trying to replace model without taskflow";
                 Err(CacheError::from(msg))
             }
