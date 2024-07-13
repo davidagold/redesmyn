@@ -15,9 +15,6 @@ from redesmyn.py_redesmyn import LogConfig
 
 LogConfig(path=Path("./logs/run.txt")).init()
 mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
-# arg_parser = ArgumentParser()
-# arg_parser.add_argument("run_id", type=str)
-# args = arg_parser.parse_args()
 
 
 @endpoint(
@@ -25,14 +22,12 @@ mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
     batch_max_delay_ms=10,
     batch_max_size=64,
     cache_config=afs.CacheConfig(
-        client=afs.FsClient(base_path=Path(__file__).parent, path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model"),
+        client=afs.FsClient(
+            base_path=Path(__file__).parent,
+            path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model"
+        ),
         load_model=lambda *args: SepalLengthPredictor(*args),
         spec=SepalLengthPredictorSpec,
-        # client=afs.FsClient(fetch_as=afs.FetchAs.Uri),
-        # TODO: Conceptually, this field makes more sense as part of the client (also, this shouldn't be an S3 path)
-        # path=afs.path("s3://model-bucket/{model_version}/"),
-        # spec=VersionedModelSpec,
-        # refresh=afs.Cron(schedule="0 * * * * *"),
     ),
 )
 def handle(model: SepalLengthPredictor, records_df: Input.DataFrame) -> Output.DataFrame:
