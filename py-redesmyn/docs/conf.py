@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from typing import List
 
 dir_docs = Path(__file__).parent
 dir_package = dir_docs.parent
@@ -32,6 +33,15 @@ maximum_signature_line_length = 88
 # Extensions
 
 # autosummary
+def excluded_attributes() -> List[str]:
+    return [
+        "model_computed_fields",
+        "model_config",
+        "model_fields",
+        "model_extra",
+        "model_fields_set",
+    ]
+
 
 autosummary_filename_map = {
     "redesmyn.service.Endpoint": "Endpoint.rst",
@@ -40,26 +50,32 @@ autosummary_filename_map = {
 autosummary_context = {
     "decorators": ["redesmyn.service.endpoint", "redesmyn.artifacts.artifact_spec"],
     "special": {"redesmyn.schema.Schema": ["DataFrame"]},
-    "show_inheritance": ["redesmyn.artifacts.ModelCache", "redesmyn.artifacts.ArtifactSpec"],
+    "show_inheritance": [
+        "redesmyn.artifacts.ArtifactSpec",
+        "redesmyn.artifacts.LatestKey",
+        "redesmyn.artifacts.CacheConfig",
+        "redesmyn.artifacts.Cron",
+        "redesmyn.artifacts.PathTemplate",
+    ],
     "no_inherited_members": {
         "redesmyn.artifacts.ArtifactSpec": ["BaseModel"],
         "redesmyn.artifacts.LatestKey": ["BaseModel"],
+        "redesmyn.artifacts.CacheConfig": ["BaseModel"],
+        "redesmyn.artifacts.Cron": ["BaseModel"],
+        "redesmyn.artifacts.PathTemplate": ["Path"],
     },
     "exclude_attributes": {
-        "redesmyn.artifacts.ArtifactSpec": [
-            "model_computed_fields",
-            "model_config",
-            "model_fields",
-            "model_extra",
-            "model_fields_set",
-        ],
-        "redesmyn.artifacts.LatestKey": [
-            "model_computed_fields",
-            "model_config",
-            "model_fields",
-            "model_extra",
-            "model_fields_set",
-        ],
+        "redesmyn.artifacts.ArtifactSpec": excluded_attributes(),
+        "redesmyn.artifacts.LatestKey": excluded_attributes(),
+        "redesmyn.artifacts.CacheConfig": excluded_attributes(),
+        "redesmyn.artifacts.Cron": excluded_attributes(),
+        "redesmyn.artifacts.PathTemplate": [
+            "braceidpattern",
+            "delimiter",
+            "flags",
+            "idpattern",
+            "pattern",
+        ]
     },
 }
 
