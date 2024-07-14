@@ -884,22 +884,19 @@ impl Cache {
     ) -> Result<(), CacheError> {
         info!("Attempting to load and insert model entry");
         match (client.load_model(data), cache.pop(&key)) {
-            // Successfully refreshed an existing model entry
             (Ok(new_model), Some((taskflow, model_entry))) => {
                 let model_str = Python::with_gil(|py| {
                     new_model.call_method0(py, "__str__")?.extract::<String>(py)
                 })
                 .unwrap_or("<Error obtaining string representation>".to_string());
                 info!("Successfully loaded model: `{}`", model_str);
+                // We expect `model_entry` to be in the `Refreshing` state
                 match model_entry {
                     // We're trying to update a model for which a refresh has not been initiated
-                    ModelEntry::Ready(old_model, _) => {
-                        // info!(%key, timestamp = Utc::now().to_string(), "Replacing model {:#?}", old_model);
-                        Err(CacheError::from(format!(
-                            "Tried to update model entry {:#?} at key {} without properly initiating refresh taskflow",
-                            old_model, key
-                        )))
-                    }
+                    ModelEntry::Ready(old_model, _) => Err(CacheError::from(format!(
+                        "Tried to update model entry {:#?} at key {} without properly initiating refresh taskflow",
+                        old_model, key
+                    ))),
                     ModelEntry::Refreshing(old_model, last_updated_prev) => {
                         let new_model_str = __str__(&new_model);
                         let last_updated = Utc::now();
