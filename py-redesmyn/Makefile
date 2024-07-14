@@ -3,29 +3,28 @@ SHELL := /bin/bash
 .PHONY: install develop build test docs clean-docs
 
 
-install:
-	poetry install --directory py-redesmyn --with dev --no-root
-
-
 FLAGS ?=
 MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
 
+
+install:
+	@poetry install --with dev --no-root
+
 develop:
-	@poetry run --directory py-redesmyn maturin develop $(MATURIN_OPTIONS) $(FLAGS)
+	@poetry run maturin develop $(MATURIN_OPTIONS) $(FLAGS)
 
 test:
-	@poetry run --directory py-redesmyn python -m pytest py-redesmyn/tests
+	@poetry run python -m pytest py-redesmyn/tests
 
 build:
-	@poetry run --directory py-redesmyn maturin build $(MATURIN_OPTIONS) $(FLAGS)
+	@poetry run maturin build $(MATURIN_OPTIONS) $(FLAGS)
 
 docs: clean-docs
-	@poetry run --directory py-redesmyn sphinx-build -M html ./py-redesmyn/docs/src ./py-redesmyn/docs/build \
-		-c ./py-redesmyn/docs -vv
+	@poetry run sphinx-build -M html ./docs/src ./docs/build -c ./docs -vv
 
 clean-docs:
-	@rm -rf py-redesmyn/docs/src/api/
-	@rm -rf py-redesmyn/docs/src/**/api/
-	@rm -rf py-redesmyn/docs/build/*
+	@rm -rf docs/src/api/
+	@rm -rf docs/src/**/api/
+	@rm -rf docs/build/*
