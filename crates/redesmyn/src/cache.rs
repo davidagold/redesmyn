@@ -197,8 +197,6 @@ impl Uri {
 enum FetchAs {
     Uri(Option<Uri>),
     Bytes(Option<BytesMut>),
-    // Utf8String(Option<String>),
-    // TmpFile(Option<tokio::fs::File>),
 }
 
 impl IntoPy<PyResult<Py<PyAny>>> for FetchAs {
@@ -233,9 +231,6 @@ impl Clone for FetchAs {
         match self {
             Uri(maybe_uri) => FetchAs::Uri(maybe_uri.clone()),
             Bytes(maybe_bytes) => FetchAs::Bytes(maybe_bytes.clone()),
-            // Utf8String(maybe_s) => FetchAs::Utf8String(maybe_s.clone()),
-            // Not exactly sure what to do with this one.
-            // TmpFile(_) => FetchAs::TmpFile(None),
         }
     }
 }
@@ -263,8 +258,6 @@ impl FetchAs {
             })),
             &FetchAs::Uri(None) => FetchAs::Uri(Some(Uri::default())),
             &FetchAs::Bytes(_) => FetchAs::Bytes(Some(BytesMut::new())),
-            // &FetchAs::Utf8String(_) => FetchAs::Utf8String(Some(String::new())),
-            // &FetchAs::TmpFile(_) => FetchAs::TmpFile(None),
         }
     }
 }
@@ -330,7 +323,6 @@ impl Command {
 pub type CacheKey = String;
 
 struct TaskFlow {
-    // config: RefreshConfig,
     handle: JoinHandle<Result<(), CacheError>>,
 }
 
@@ -345,7 +337,6 @@ struct RefreshConfig {
 
 impl std::fmt::Display for RefreshConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        //
         let key = self.spec.as_key().map_err(|_| fmt::Error::default())?;
         f.write_fmt(format_args!(
             "<[RefreshConfig] `spec='{}'`, `last_updated={:#?}`>",
@@ -792,9 +783,6 @@ impl Cache {
                     model_cache.put(key, (Some(taskflow), entry));
                 }
                 Command::InsertEntry(key, data, tx) => {
-                    // TODO: It's a little strange to include the refresh task flow and the model in the same cache entry.
-                    //       Furthermore, we need to use a concurrent hashmap, or something like it, to lock access
-                    //       to individual keys while we are updating the respective models.
                     let result = Self::insert_entry(&client, &mut model_cache, key.clone(), data);
                     match &result {
                         Ok(_) => {
@@ -842,13 +830,6 @@ impl Cache {
     }
 
     fn run_taskflow(mut config: RefreshConfig) -> Result<TaskFlow, CacheError> {
-        // The following does not refresh the cache entry directly, but rather spawns a new task
-        // to handle data fetching for the given key and tracks the task's association with said key.
-        // self.refresh(key).await;
-        //
-        // Will need to get the che entry, lock the key, get last updated, pass everything to `refresh_entry`
-        // let _config = config.clone();
-
         let key = config.spec.as_key()?;
         let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
             let start = PendingFetch::new(UpdateTime::Now)?;
@@ -856,9 +837,8 @@ impl Cache {
             let tx_result = (&mut config).tx_result.take();
 
             let cloneable_config = Arc::new(config);
-            // THIS IS WHY WE NEED ASYNC ITERATORS
             let result = loop {
-                // Pre-compute error message to avoid borrow issues later in loop body
+                // Precompute error message to avoid borrow issues later in loop body
                 let err_msg = format!("Failed to transition from `{}`", state);
                 let next = <RefreshState as Transition<RefreshState>>::from(
                     state,
@@ -951,13 +931,9 @@ impl Cache {
                     }
                 }
             }
-            (Ok(new_model), None) => {
-                // TODO: Handle this case better.
-                // let last_updated = Utc::now();
-                // cache.put(
-                //     key.clone(),
-                //     (None, ModelEntry::Ready(new_model, Some(last_updated.clone()))),
-                // );
+            (Ok(_new_model), None) => {
+                // We should not reach this state because initiating a refresh taskflow
+                // puts the `TaskFlow` struct in the cache entry.
                 let msg = "Trying to replace model without taskflow";
                 Err(CacheError::from(msg))
             }
@@ -968,6 +944,7 @@ impl Cache {
         }
     }
 
+    // TODO: We may remove this later because so far the `Cache` API is handled through the `CacheHandle`
     fn try_send(&self, command: Command) -> Result<(), CacheError> {
         self.tx
             .get()
@@ -1028,89 +1005,7 @@ impl From<&str> for CacheError {
 
 pub type CacheResult<T> = Result<T, CacheError>;
 
-// #[pyclass]
-// #[derive(Debug)]
-// pub struct PyCache {
-//     pub cache: Arc<Cache>,
-// }
-
-// #[pymethods]
-// impl PyCache {
-//     #[new]
-//     fn new(
-//         client_spec: ClientSpec,
-//         load_model: &PyFunction,
-//         max_size: Option<usize>,
-//         cron_expr: Option<String>,
-//         max_age_seconds: Option<u32>,
-//         pre_fetch_all: Option<bool>,
-//     ) -> PyResult<PyCache> {
-//         let schedule: Option<Schedule> = match (cron_expr, max_age_seconds) {
-//             (Some(expr), None) => Some(
-//                 cron::Schedule::from_str(expr.as_str())
-//                     .map_err(|err| PyValueError::new_err(err.to_string()))?
-//                     .into(),
-//             ),
-//             (None, Some(seconds)) => Some(seconds.into()),
-//             (None, None) => None,
-//             (Some(_), Some(_)) => {
-//                 let msg = "Specify *at most* one of either `cron_expr` or `max_age_seconds`.";
-//                 return Err(PyValueError::new_err(msg));
-//             }
-//         };
-
-//         Ok(PyCache {
-//             cache: Cache::new(
-//                 client_spec.to_client(load_model.into()),
-//                 max_size,
-//                 schedule,
-//                 pre_fetch_all,
-//             )
-//             .into(),
-//         })
-//     }
-
-//     #[pyo3(signature = (**kwargs))]
-//     fn get<'py>(
-//         &'py self,
-//         py: Python<'py>,
-//         kwargs: Option<BTreeMap<String, String>>,
-//     ) -> PyResult<&'py PyAny> {
-//         let spec = kwargs.unwrap_or_default();
-//         let key = spec.as_key().map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-//         let (cmd, rx) = Command::get_entry(key);
-//         let _ = self.cache.try_send(cmd);
-//         pyo3_asyncio::tokio::future_into_py(py, async move {
-//             match rx.await {
-//                 Ok(Ok(model)) => Ok(model),
-//                 Ok(Err(err)) => Err(PyRuntimeError::new_err(err.to_string())),
-//                 Err(err) => Err(PyRuntimeError::new_err(err.to_string())),
-//             }
-//         })
-//     }
-// }
-
-#[derive(FromPyObject)]
-enum ClientSpec {
-    FsClient { protocol: String, base_path: PathBuf, path_template: String },
-}
-
-impl ClientSpec {
-    fn to_client(self, load_model: Py<PyFunction>) -> ArtifactsClient {
-        match self {
-            ClientSpec::FsClient { protocol, base_path, path_template } => {
-                ArtifactsClient::FsClient {
-                    client: FsClient::new(base_path, path_template),
-                    load_model,
-                }
-            }
-        }
-    }
-}
-
 trait Client: Send + Sync + 'static {
-    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String>;
-
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String>;
 
     fn list(
@@ -1215,10 +1110,6 @@ pub struct FsClient {
 }
 
 impl FsClient {
-    pub fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
-        self.path_template.parse(path)
-    }
-
     pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
         FsClient {
             // TODO: Remove redundant `base_path` field somewhere
@@ -1282,12 +1173,6 @@ impl ArtifactsClient {
 }
 
 impl Client for ArtifactsClient {
-    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
-        match self {
-            ArtifactsClient::FsClient { client, .. } => client.parse_path(path),
-        }
-    }
-
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
         match self {
             ArtifactsClient::FsClient { client, .. } => client.substitute(args),
@@ -1358,10 +1243,6 @@ fn _list(
 impl Client for FsClient {
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
         self.path_template.substitute(args)
-    }
-
-    fn parse_path(&self, path: &PathBuf) -> IndexMap<String, String> {
-        self.parse_path(path)
     }
 
     fn list(
