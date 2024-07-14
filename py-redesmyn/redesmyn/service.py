@@ -1,38 +1,46 @@
 import inspect
 from asyncio import Future
 from itertools import islice
-from typing import Callable, List, Self, Tuple, Type, get_args
+from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
 
 import polars as pl
 from more_itertools import first, one
 
+from redesmyn.artifacts import ArtifactSpec, CacheConfig
 from redesmyn.py_redesmyn import PyEndpoint, PyServer
 from redesmyn.schema import Schema
+from redesmyn.py_redesmyn import Cache
 
 
 def extract_schema(annotation: Type) -> pl.Struct:
-    schema_cls = one(
-        e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema)
-    )
+    schema_cls = one(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
     return schema_cls.to_struct_type()
 
 
 def get_signature(f: Callable) -> Tuple[pl.Struct, pl.Struct]:
     s = inspect.signature(f)
+    print(f"{list(get_args(t.annotation) for t in s.parameters.values())}")
     param_df = one(
         param
         for param in s.parameters.values()
-        if issubclass(first(get_args(param.annotation)), pl.DataFrame)
+        if (
+            len((type_args := get_args(param.annotation))) > 0
+            and issubclass(first(type_args), pl.DataFrame)
+        )
     )
     return (extract_schema(param_df.annotation), extract_schema(s.return_annotation))
 
 
-class Endpoint:
+M = TypeVar("M")
+
+
+class Endpoint(Generic[M]):
     def __init__(
         self,
-        handler: Callable[..., pl.DataFrame],
+        handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
+        cache_config: CacheConfig[M],
         batch_max_delay_ms: int,
         batch_max_size: int,
     ) -> None:
@@ -44,21 +52,24 @@ class Endpoint:
             batch_max_size=batch_max_size,
             handler=handler,
         )
+        self._cache_config = cache_config
 
-    def __call__(self, *args, **kawrgs) -> pl.DataFrame:
-        return self._handler(*args, **kawrgs)
+    def __call__(self, model: M, records: pl.DataFrame, **kwargs) -> pl.DataFrame:
+        return self._handler(model, records)
 
 
 def endpoint(
     path: str,
+    cache_config: CacheConfig[M],
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
-) -> Callable[[Callable], Endpoint]:
-    def wrapper(handler: Callable) -> Endpoint:
+) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
+    def wrapper(handler: Callable[[M, pl.DataFrame], pl.DataFrame]) -> Endpoint:
         return Endpoint(
             handler=handler,
             signature=get_signature(handler),
             path=path,
+            cache_config=cache_config,
             batch_max_delay_ms=batch_max_delay_ms,
             batch_max_size=batch_max_size,
         )
@@ -103,7 +114,7 @@ class Server:
             server.register(handler)
         """
         self._endpoints.append(endpoint)
-        self._pyserver.register(endpoint._pyendpoint)
+        self._pyserver.register(endpoint._pyendpoint, endpoint._cache_config)
         return self
 
     def serve(self) -> Future:

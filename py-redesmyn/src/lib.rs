@@ -1,17 +1,19 @@
+use std::cell::OnceCell;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use ::redesmyn::common::{Wrap, LogConfig};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
+use ::redesmyn::common::{init_logging, LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use pyo3::exceptions::{PyRuntimeError, PyTypeError};
-use pyo3::intern;
-
 use ::redesmyn::server::Server;
-use polars::prelude::*;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
-
+use tracing::{error, info};
+use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[pyclass]
 #[repr(transparent)]
@@ -81,7 +83,7 @@ impl PyEndpoint {
 #[pyclass]
 #[repr(transparent)]
 struct PyServer {
-    server: Server,
+    server: OnceCell<Server>,
 }
 
 #[pymethods]
@@ -91,21 +93,84 @@ impl PyServer {
         let mut server = Server::default();
         let mut path: PathBuf = ["logs", "this_run"].iter().collect();
         path.set_extension("txt");
-        server.log_config(LogConfig::File(path));
-        PyServer { server }
+        server.log_config(RsLogConfig::File(path));
+        let cell = OnceCell::new();
+        cell.set(server);
+        PyServer { server: cell }
     }
 
-    pub fn register(&mut self, endpoint: PyEndpoint) -> PyResult<()> {
-        let service = BatchPredictor::<String, Schema>::new(endpoint.config);
-        self.server.register(service);
+    pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
+        let cache = match Python::with_gil(|py| -> PyResult<_> {
+            let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
+            let load_model: Py<_> =
+                cache_config.getattr(py, "load_model")?.downcast::<PyFunction>(py)?.into();
+            let client = ArtifactsClient::FsClient { client: fs_client, load_model };
+            Ok(Cache::new(client, None, None, Some(true)))
+        }) {
+            Ok(cache) => {
+                info!("Successfully initialized model cache {}", cache);
+                cache
+            }
+            Err(err) => {
+                error!("Failed to initialize model cache: {}", err);
+                return Err(err);
+            }
+        };
+        let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
+        self.server
+            .get_mut()
+            .ok_or_else(|| {
+                ServiceError::from(
+                    "Cannot register a service with a server that is already running",
+                )
+            })?
+            .register(service);
         Ok(())
     }
 
     pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&'py PyAny> {
-        let mut server = self.server.clone();
+        // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
+        //       server to the future. For one, we should keep a handle.
+        let mut server = self.server.take().ok_or_else(|| {
+            PyRuntimeError::new_err("Cannot start server that has previously  been started")
+        })?;
         pyo3_asyncio::tokio::future_into_py(py, async move {
             server.serve()?.await.map_err(PyRuntimeError::new_err)
         })
+    }
+}
+
+#[pyclass]
+#[derive(Default)]
+struct LogConfig {
+    config: OnceCell<RsLogConfig>,
+}
+
+#[pymethods]
+impl LogConfig {
+    #[new]
+    fn __new__(path: Py<PyAny>) -> PyResult<LogConfig> {
+        let config = LogConfig::default();
+        Python::with_gil(|py| {
+            config
+                .config
+                .set(RsLogConfig::File(path.extract::<PathBuf>(py)?))
+                .map_err(|_| PyRuntimeError::new_err("Failed to set log config"))?;
+            PyResult::Ok(())
+        })?;
+        Ok(config)
+    }
+
+    fn init(&mut self) -> PyResult<()> {
+        let config = self
+            .config
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("Failed to take log config."))?;
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(config.layer())
+            .init();
+        Ok(())
     }
 }
 
@@ -115,6 +180,9 @@ fn redesmyn(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySchema>().unwrap();
     m.add_class::<PyServer>().unwrap();
     m.add_class::<PyEndpoint>().unwrap();
+    m.add_class::<Cache>().unwrap();
+    m.add_class::<FsClient>().unwrap();
+    m.add_class::<LogConfig>().unwrap();
 
     Ok(())
 }

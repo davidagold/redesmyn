@@ -1,6 +1,6 @@
 > redes-man -- An adviser, a counselor. [[quod.lib.umich.edu]](https://quod.lib.umich.edu/m/middle-english-dictionary/dictionary/MED36316)
 
-# Redesmyn: serve ML model predictions with Python and Rust
+## Redesmyn: Build ML inference servers with Python and Rust
 
 Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML inference and data processing in Python and Rust:
 * **Dual language**: Core Redesmyn functionality is written in Rust for safety and performance and exposed through interoperable Python and Rust APIs.

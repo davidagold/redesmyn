@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use polars::prelude::PolarsError;
-use pyo3::{exceptions::PyRuntimeError, prelude::PyErr};
+use pyo3::{exceptions::PyRuntimeError, prelude::PyErr, PyDowncastError};
 use std::env::VarError;
 use tokio::{
     sync::{mpsc::error::SendError, oneshot::error::RecvError},
@@ -59,6 +59,20 @@ impl From<PyErr> for ServiceError {
         Self::PredictionError(err.into())
     }
 }
+
+impl From<String> for ServiceError {
+    fn from(s: String) -> Self {
+        ServiceError::Error(s)
+    }
+}
+
+impl From<&str> for ServiceError {
+    fn from(s: &str) -> Self {
+        ServiceError::Error(s.to_string())
+    }
+}
+
+pub type ServiceResult<T> = Result<T, ServiceError>;
 
 #[derive(Error, Debug)]
 pub enum PredictionError {

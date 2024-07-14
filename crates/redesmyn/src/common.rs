@@ -1,9 +1,10 @@
 pub(crate) type Sized128String = heapless::String<128>;
+use crate::metrics::{EmfInterest, EmfMetrics};
+use serde::Serialize;
 use std::{fs::File, io, path::PathBuf};
-
-// pub(crate) type Sized256String = heapless::String<256>;
-// use tracing::{error, info};
-use tracing_subscriber::{layer::Layer, registry::LookupSpan};
+use tracing_subscriber::{
+    self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
+};
 
 #[derive(Debug, Clone, Default)]
 pub enum LogConfig {
@@ -28,6 +29,14 @@ impl LogConfig {
             }
         }
     }
+}
+
+pub fn init_logging(log_config: LogConfig) {
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env())
+        .with(log_config.layer().with_filter(EmfInterest::Never))
+        .with(EmfMetrics::new(10, "./metrics.log".into()))
+        .init();
 }
 
 #[macro_export]
@@ -67,7 +76,26 @@ impl<T> Wrap<T> {
         &self.0
     }
 
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
     pub fn inner_mut<'a>(&'a mut self) -> &'a mut T {
         &mut self.0
+    }
+}
+
+impl<T> From<T> for Wrap<T> {
+    fn from(value: T) -> Self {
+        Wrap(value)
+    }
+}
+
+impl<T: Serialize> Serialize for Wrap<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner().serialize(serializer)
     }
 }

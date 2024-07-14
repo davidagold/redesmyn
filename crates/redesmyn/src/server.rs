@@ -1,7 +1,5 @@
 use crate::common::LogConfig;
-use crate::metrics::{EmfInterest, EmfMetrics};
-use crate::predictions::{HandlerArgs, Service};
-use crate::schema::Schema;
+use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
 
 use super::error::ServiceError;
 use super::schema::Relation;
@@ -9,26 +7,21 @@ use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
 use pyo3::{PyResult, Python};
 use serde::Deserialize;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::env;
-use tokio::{signal, task::JoinHandle};
+use tokio::signal;
 use tracing::instrument;
 use tracing::{error, info};
-use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
-trait ResourceFactory: Sync + Send {
-    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError>;
+pub(crate) trait ResourceFactory: Sync + Send {
+    fn new_resource(&mut self) -> Result<Resource, ServiceError>;
 
     fn clone_boxed(&self) -> Box<dyn ResourceFactory>;
-
-    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError>;
 }
 
-pub(crate) struct BoxedResourceFactory(Box<dyn ResourceFactory>, String);
-
-impl Clone for BoxedResourceFactory {
+impl Clone for Box<dyn ResourceFactory> {
     fn clone(&self) -> Self {
-        BoxedResourceFactory(self.0.clone_boxed(), self.1.clone())
+        self.clone_boxed()
     }
 }
 
@@ -40,11 +33,10 @@ where
     S::H: Handler<HandlerArgs<S::R, S::T>, Output = O>,
     O: Responder + 'static,
 {
-    fn new_resource(&mut self, path: &str) -> Result<Resource, ServiceError> {
+    fn new_resource(&mut self) -> Result<Resource, ServiceError> {
         let handler = self.get_handler_fn();
-        let resource = web::resource(path)
-            .app_data(web::Data::<Self>::new(self.clone()))
-            .app_data(web::Data::<Schema>::new(self.get_schema()))
+        let resource = web::resource(self.path())
+            .app_data(web::Data::<EndpointHandle<S::T, S::R>>::new(self.handle()?))
             .route(web::post().to(handler));
         Ok(resource)
     }
@@ -52,31 +44,13 @@ where
     fn clone_boxed(&self) -> Box<dyn ResourceFactory> {
         Box::new(self.clone())
     }
-
-    fn start_service(&mut self) -> Result<JoinHandle<()>, ServiceError> {
-        self.run()
-    }
 }
 
 #[derive(Default)]
 pub struct Server {
-    pub(crate) factories: VecDeque<BoxedResourceFactory>,
+    pub(crate) services_by_path: BTreeMap<String, Box<dyn ServiceCore + Send + 'static>>,
     pythonpath: Vec<String>,
     config_log: LogConfig,
-}
-
-impl Clone for Server {
-    fn clone(&self) -> Self {
-        let mut server = Server::default();
-        for factory in self.factories.iter() {
-            server.factories.push_back(factory.clone());
-        }
-        for path in self.pythonpath.iter() {
-            server.pythonpath.push(path.clone());
-        }
-        server.log_config(self.config_log.clone());
-        server
-    }
 }
 
 impl Server {
@@ -92,31 +66,21 @@ impl Server {
 impl Server {
     pub fn register<S, O>(&mut self, service: S) -> &Self
     where
-        S: Service + Clone + Sync + Send + 'static,
+        S: Service + Sync + Send + 'static,
         S::T: Sync + Send + for<'de> Deserialize<'de> + 'static,
         S::R: Relation<Serialized = S::T> + Sync + Send + 'static,
         S::H: Handler<HandlerArgs<S::R, S::T>, Output = O> + Sync + Send,
         O: Responder + 'static,
     {
-        info!("Registering endpoint with path: ...");
-        let path = service.get_path();
-        self.factories.push_back(BoxedResourceFactory(Box::new(service), path));
+        info!("Registering endpoint with path: {}", service.path());
+        let path = service.path();
+        self.services_by_path.insert(path, Box::new(service));
+        info!("n services: {}", self.services_by_path.len());
         self
     }
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        println!("Log config: {:#?}", self.config_log);
-
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(self.config_log.layer().with_filter(EmfInterest::Never))
-            .with(EmfMetrics::new(10, "./metrics.log".into()))
-            .init();
-
-        let available_parallelism = std::thread::available_parallelism()?;
-        info!(%available_parallelism);
-
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
             Err(err) => {
@@ -124,8 +88,7 @@ impl Server {
                 return Err(ServiceError::IoError(err));
             }
         };
-        println!("Starting `main` from directory {}", pwd.to_str().unwrap());
-        tracing::info!("Starting `main` from directory {}", pwd.to_str().unwrap());
+        tracing::info!("Starting server from directory {}", pwd.to_str().unwrap());
 
         pyo3::prepare_freethreaded_python();
         if let Err(err) = Python::with_gil(|py| {
@@ -150,16 +113,32 @@ impl Server {
             return Err(err.into());
         };
 
-        // Start the services before moving
-        let mut factories = self.factories.clone();
-        for factory in factories.iter_mut() {
-            factory.0.start_service()?;
-        }
+        // The `factory` argument to `HttpServer::new()` is invoked for each worker,
+        // hence we must start the services before moving them into the `factory` closure
+        // to avoid creating a separate long-running prediction task for each worker.
+
+        // TODO: Handle failures
+        info!("n services: {}", self.services_by_path.len());
+        let handles: VecDeque<Box<dyn ResourceFactory>> = self
+            .services_by_path
+            .iter_mut()
+            .filter_map(|(_, service)| match service.start() {
+                Ok(factory) => {
+                    info!("Successfully started service with path `{}`", service.path());
+                    Some(factory)
+                }
+                Err(err) => {
+                    error!("Failed to start service with path `{}`: {}", service.path(), err);
+                    None
+                }
+            })
+            .collect();
+
         let http_server = HttpServer::new(move || {
-            match factories.clone().into_iter().try_fold(
+            match handles.clone().into_iter().try_fold(
                 actix_web::App::new(),
-                |app, mut factory| {
-                    let resource = factory.0.new_resource(&factory.1)?;
+                |app, mut boxed_factory| {
+                    let resource = boxed_factory.new_resource()?;
                     Result::<actix_web::App<_>, ServiceError>::Ok(app.service(resource))
                 },
             ) {

@@ -33,6 +33,7 @@
 
    .. autosummary::
       :toctree: api/
+      :template: autosummary/function.rst
    {% for item in functions %}
       {{ item }}
    {%- endfor %}
