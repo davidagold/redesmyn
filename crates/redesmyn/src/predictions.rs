@@ -362,12 +362,6 @@ where
 
     fn schema(&self) -> Arc<Schema> {
         self.schema.clone()
-        // TODO: Return ref instead of Arc?
-        // self.schema.as_ref()
-    }
-
-    async fn model_from_spec(&self, spec: &impl ArtifactSpec) -> CacheResult<Py<PyAny>> {
-        self.cache_handle.get(&spec.as_key()?).await
     }
 }
 
@@ -440,17 +434,15 @@ where
         Self::T: Sync + Send + 'static,
         Self::R: Relation<Serialized = Self::T> + Sync + Send + 'static,
     {
-        {
-            Ok(EndpointHandle {
-                tx: self.tx.clone().into(),
-                schema: self.get_schema().into(),
-                cache_handle: self
-                    .cache()
-                    .handle()
-                    .map_err(|err| ServiceError::from(err.to_string()))?,
-                path: self.get_path(),
-            })
-        }
+        Ok(EndpointHandle {
+            tx: self.tx.clone().into(),
+            schema: self.get_schema().into(),
+            cache_handle: self
+                .cache()
+                .handle()
+                .map_err(|err| ServiceError::from(err.to_string()))?,
+            path: self.get_path(),
+        })
     }
 }
 
