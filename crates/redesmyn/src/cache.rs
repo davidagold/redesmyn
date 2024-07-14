@@ -1192,14 +1192,10 @@ fn _list(
 ) -> Vec<(IndexMap<String, String>, PathBuf)> {
     match remaining_components.pop_front() {
         Some(PathComponent::Fixed(dir_name)) => {
-            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| {
-                //
-                path.push(dir_name.clone())
-            });
+            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
             _list(paths_by_spec, remaining_components)
         }
         Some(PathComponent::Identifier(identifier)) => {
-            //
             _list(
                 paths_by_spec
                     .into_iter()
