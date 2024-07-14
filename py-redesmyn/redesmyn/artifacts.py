@@ -31,6 +31,7 @@ from cachetools import LRUCache
 from more_itertools import filter_map, first, only
 from pydantic import BaseModel, ConfigDict, create_model, model_validator
 from pydantic.fields import FieldInfo
+
 from redesmyn.py_redesmyn import Cache as Cache
 from redesmyn.py_redesmyn import FsClient as FsClient
 
@@ -116,7 +117,7 @@ class ArtifactSpec(BaseModel, Generic[M]):
     """A `Pydantic <https://docs.pydantic.dev/latest/>`_ `BaseModel` subclass for declaring and validating artifact specifications.
 
     Requests made to a :class:`redesmyn.service.Endpoint` may include URL parameters to specify
-    which variant of a model to apply to the requesst payload. We use subclasses
+    which variant of a model to apply to the request payload. We use subclasses
     of `ArtifactSpec` to validate URL parameters of a requestsed endpoint.
     The fields of an `ArtifactSpec` correspond one-to-one with both the endpoint's
     path parameters and the storage location's path parameters. An endpoint declaring
