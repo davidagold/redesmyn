@@ -534,8 +534,7 @@ impl std::fmt::Display for ModelEntry {
             InUse(_, None) => "<In use, (never updated -- this shouldn't happen!)>".to_string(),
             InUse(_, Some(last_updated)) => format!("<In use, (last updated {})>", last_updated),
             Refreshing(Some(model), Some(last_updated)) => {
-                let model_str = __str__(model);
-                format!("<Refreshing, {}>, (last updated {})", model_str, last_updated)
+                format!("<Refreshing, {}>, (last updated {})", __str__(model), last_updated)
             }
             Refreshing(None, None) => "<Refreshing, no model, (never updated)>".into(),
             Refreshing(Some(model), None) => {
@@ -545,17 +544,10 @@ impl std::fmt::Display for ModelEntry {
                 format!("<Refreshing, no model, (last updated {} -- what??)>", last_updated)
             }
             Ready(model, Some(last_updated)) => {
-                let model_str = __str__(model);
-                format!("<Ready, {}, (last updated {})>", model_str, last_updated)
+                format!("<Ready, {}, (last updated {})>", __str__(model), last_updated)
             }
             Ready(model, None) => {
-                let model_str = match Python::with_gil(|py| {
-                    model.call_method0(py, "__str__")?.extract::<String>(py)
-                }) {
-                    Ok(model_str) => model_str,
-                    Err(_) => "<Failed to call `__str__` for model entry>".into(),
-                };
-                format!("<Ready, {}, (never updated -- this shouldn't happen!)>", model_str)
+                format!("<Ready, {}, (never updated -- this shouldn't happen!)>", __str__(model))
             }
             Empty => "<Empty>".to_string(),
         };
@@ -885,11 +877,7 @@ impl Cache {
         info!("Attempting to load and insert model entry");
         match (client.load_model(data), cache.pop(&key)) {
             (Ok(new_model), Some((taskflow, model_entry))) => {
-                let model_str = Python::with_gil(|py| {
-                    new_model.call_method0(py, "__str__")?.extract::<String>(py)
-                })
-                .unwrap_or("<Error obtaining string representation>".to_string());
-                info!("Successfully loaded model: `{}`", model_str);
+                info!("Successfully loaded model: `{}`", __str__(&new_model));
                 // We expect `model_entry` to be in the `Refreshing` state
                 match model_entry {
                     // We're trying to update a model for which a refresh has not been initiated
