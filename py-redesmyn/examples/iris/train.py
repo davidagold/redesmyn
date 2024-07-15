@@ -1,19 +1,18 @@
 import logging
-from io import FileIO
 import os
+from io import FileIO
 from pathlib import Path
-from typing import cast, Optional
+from typing import Optional, cast
 
 import mlflow
 import polars as pl
+from common import load_irises, project_dir
 from redesmyn.artifacts import ArtifactSpec
 from redesmyn.schema import Schema
 from sklearn.compose import ColumnTransformer
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
-
-from common import load_irises, project_dir
 
 
 class Input(Schema):
@@ -47,9 +46,7 @@ class SepalLengthPredictor:
             remainder="drop",
         )
         regressor = Lasso(alpha=0.001)
-        return Pipeline(
-            steps=[("preprocessor", preprocessor), ("regressor", regressor)]
-        )
+        return Pipeline(steps=[("preprocessor", preprocessor), ("regressor", regressor)])
 
     @classmethod
     def fit(cls, df: pl.DataFrame, pipeline: Optional[Pipeline] = None) -> Pipeline:
@@ -62,8 +59,9 @@ class SepalLengthPredictor:
         )
         return predictions
 
+
 class SepalLengthPredictorSpec(ArtifactSpec[SepalLengthPredictor]):
-    # model_version: str
+    run_id: str
     model_id: str
 
     @classmethod
