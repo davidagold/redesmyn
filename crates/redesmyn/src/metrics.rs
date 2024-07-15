@@ -4,7 +4,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{common::Wrap, do_in};
+use crate::{
+    common::{consume_and_log_err, Wrap},
+    do_in,
+};
 use serde::{self, Serialize, Serializer};
 use serde_json::{Number, Value};
 use strum::IntoStaticStr;
@@ -225,7 +228,7 @@ impl EmfMetrics {
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::new(0, 1_000_000 * max_delay_ms)).await;
-            tx_timeout.send(());
+            consume_and_log_err(tx_timeout.send(()));
         });
 
         loop {
@@ -315,7 +318,7 @@ impl<S: Subscriber> Filter<S> for EmfInterest {
     fn enabled(
         &self,
         meta: &tracing::Metadata<'_>,
-        ctx: &tracing_subscriber::layer::Context<'_, S>,
+        _ctx: &tracing_subscriber::layer::Context<'_, S>,
     ) -> bool {
         for f in meta.fields() {
             if let Some((prefix, _)) = f.name().split_once(".") {
@@ -372,9 +375,8 @@ fn record_if_metric(metrics: &mut MetricsMapping, field: &Field, value: Value) {
         // The actual metric is recorded in a separate field,
         // so we do not need to insert the value into `metrics` here.
         Value::String(maybe_unit) => match key.rsplit_once(".Unit") {
-            Some(_) => {
-                // TODO: Handle unit declaration
-            }
+            // TODO: Handle unit declaration
+            Some(_) => {}
             // Metrics cannot be strings.
             None => (),
         },

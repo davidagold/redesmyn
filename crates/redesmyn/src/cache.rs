@@ -1,16 +1,16 @@
-use crate::{do_in, error::ServiceResult};
+use crate::{common::consume_and_log_err, do_in, error::ServiceResult};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
-use futures::{channel::oneshot::Canceled, future::join_all, TryFutureExt};
+use futures::{future::join_all, TryFutureExt};
 use indexmap::IndexMap;
 use lru::LruCache;
 use pyo3::{
     exceptions::PyTypeError,
     pyclass, pymethods,
     types::{PyByteArray, PyFunction, PyNone, PyString},
-    FromPyObject, IntoPy, Py, PyAny, PyResult, Python,
+    IntoPy, Py, PyAny, PyResult, Python,
 };
 use serde::Serialize;
 use std::{
@@ -36,7 +36,7 @@ use tokio::{
     },
     task::{JoinError, JoinHandle},
 };
-use tracing::{error, info, info_span, instrument, span, warn};
+use tracing::{error, info, info_span, instrument, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
@@ -110,11 +110,6 @@ pub trait ArtifactSpec {
         let parts = self.as_map()?.into_iter().map(|(k, v)| [k, v].join("="));
         let key = parts.collect::<Vec<_>>().join("/");
         Ok(key)
-    }
-
-    fn as_path(&self, template: PathTemplate) -> Result<PathBuf, serde_json::Error> {
-        let path = self.as_map()?.values().collect();
-        Ok(path)
     }
 }
 
@@ -203,17 +198,19 @@ impl IntoPy<PyResult<Py<PyAny>>> for FetchAs {
     fn into_py(self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match self {
             FetchAs::Uri(Some(Uri::Path(Some(path)))) => {
-                let res: &PyAny = match path.to_str() {
-                    Some(path_str) => PyString::new(py, path_str).into(),
-                    None => PyNone::get(py).into(),
+                let res: Py<PyAny> = match path.to_str() {
+                    Some(path_str) => PyString::new_bound(py, path_str).as_any().clone().unbind(),
+                    None => PyNone::get_bound(py).as_any().clone().unbind(),
                 };
-                Ok(res.into())
+                Ok(res)
             }
-            FetchAs::Uri(Some(Uri::Id { id: Some(id), .. })) => Ok(PyString::new(py, &id).into()),
+            FetchAs::Uri(Some(Uri::Id { id: Some(id), .. })) => {
+                Ok(PyString::new_bound(py, &id).as_any().clone().unbind())
+            }
             FetchAs::Bytes(Some(bytes)) => {
                 let mut buf = Vec::<u8>::new();
-                bytes.reader().read_to_end(&mut buf);
-                Ok(PyByteArray::new(py, buf.as_slice()).into())
+                consume_and_log_err(bytes.reader().read_to_end(&mut buf));
+                Ok(PyByteArray::new_bound(py, buf.as_slice()).into())
             }
             FetchAs::Uri(Some(Uri::Id { id: None, .. }))
             | FetchAs::Uri(Some(Uri::Path(None)))
@@ -582,7 +579,7 @@ impl ModelEntry {
     fn refreshing(entry: ModelEntry) -> CacheResult<ModelEntry> {
         use ModelEntry::*;
         match entry {
-            Empty => Ok((Refreshing(None, None))),
+            Empty => Ok(Refreshing(None, None)),
             Ready(model, last_updated) => Ok(Refreshing(Some(model), last_updated)),
             Refreshing(Some(model), last_updated) => Ok(Refreshing(Some(model), last_updated)),
             entry => Err(CacheError::from(format!(
@@ -1014,7 +1011,7 @@ trait Client: Send + Sync + 'static {
 }
 
 #[derive(Clone, Debug)]
-struct PathTemplate {
+pub struct PathTemplate {
     template: String,
     base: PathBuf,
 }
@@ -1151,7 +1148,7 @@ impl ArtifactsClient {
     fn load_model(&self, data: FetchAs) -> PyResult<Py<PyAny>> {
         match self {
             Self::FsClient { load_model, .. } => {
-                Python::with_gil(|py| load_model.call(py, (data.into_py(py)?,), None))
+                Python::with_gil(|py| load_model.call_bound(py, (data.into_py(py)?,), None))
             }
         }
     }

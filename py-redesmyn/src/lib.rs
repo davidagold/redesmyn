@@ -2,7 +2,7 @@ use std::cell::OnceCell;
 use std::path::PathBuf;
 
 use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
-use ::redesmyn::common::{LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
@@ -97,7 +97,7 @@ impl PyServer {
         path.set_extension("txt");
         server.log_config(RsLogConfig::File(path));
         let cell = OnceCell::new();
-        cell.set(server);
+        consume_and_log_err(cell.set(server));
         PyServer { server: cell }
     }
 
