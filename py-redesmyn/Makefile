@@ -4,7 +4,7 @@ SHELL := /bin/bash
 
 
 FLAGS ?=
-MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
+MATURIN_OPTIONS = -m Cargo.toml \
 	--strip \
 	--target-dir target/py-redesmyn
 
