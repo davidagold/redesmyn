@@ -19,7 +19,7 @@ defaults:
         shell: bash
 
 jobs:
-    deploy:
+    build-deploy:
         environment:
             name: github-pages
             url: ${{ steps.deployment.outputs.page_url }}
@@ -33,8 +33,12 @@ jobs:
               with:
                   python-version: "3.11"
 
+            - name: Install Poetry
+              run: python3 -m pip install -U poetry
+
             - name: Install Python dependencies
-              run: python3 -m pip install -U poetry && (cd py-redesmyn && make install)
+              working-directory: py-redesmyn
+              run: make install
 
             - run: echo "VIRTUAL_ENV=$(poetry env info --directory py-redesmyn --path)" >> "$GITHUB_ENV"
 
@@ -48,7 +52,8 @@ jobs:
                   sccache: "true"
 
             - name: Generate documentation
-              run: (cd py-redesmyn && make docs)
+              working-directory: py-redesmyn
+              run: make docs
 
             - name: Configure pages
               uses: actions/configure-pages@v5
