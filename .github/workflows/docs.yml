@@ -1,63 +1,63 @@
 name: GitHub Pages
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+    push:
+        branches: [main, dg/fix-doc-gh-workflow]
+    workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+    contents: read
+    pages: write
+    id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+    group: "pages"
+    cancel-in-progress: false
 
 defaults:
-  run:
-    shell: bash
+    run:
+        shell: bash
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    deploy:
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
 
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+            - name: Install Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: python3 -m pip install -U pipenv && make install-py
+            - name: Install Python dependencies
+              run: python3 -m pip install -U poetry && (cd py-redesmyn && make install)
 
-      - run: echo "VIRTUAL_ENV=$(pipenv --venv)" >> "$GITHUB_ENV"
+            - run: echo "VIRTUAL_ENV=$(poetry env --directory py-redesmyn info --path)" >> "$GITHUB_ENV"
 
-      - name: Build Python package
-        uses: PyO3/maturin-action@v1
-        with:
-          command: develop
-          container: 'off'
-          rust-toolchain: nightly
-          args: --target-dir dist -m py-redesmyn/Cargo.toml
-          sccache: 'true'
+            - name: Build Python package
+              uses: PyO3/maturin-action@v1
+              with:
+                  command: develop
+                  container: "off"
+                  rust-toolchain: nightly
+                  args: --target-dir dist -m py-redesmyn/Cargo.toml
+                  sccache: "true"
 
-      - name: Generate documentation
-        run: make docs-py
+            - name: Generate documentation
+              run: (cd py-redesmyn && make docs)
 
-      - name: Configure pages
-        uses: actions/configure-pages@v5
+            - name: Configure pages
+              uses: actions/configure-pages@v5
 
-      - name: Upload artifacts
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: py-redesmyn/docs/build/html
+            - name: Upload artifacts
+              uses: actions/upload-pages-artifact@v3
+              with:
+                  path: py-redesmyn/docs/build/html
 
-      - name: Deploy pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+            - name: Deploy pages
+              id: deployment
+              uses: actions/deploy-pages@v4
