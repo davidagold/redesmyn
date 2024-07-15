@@ -15,10 +15,10 @@ crate-type = ["cdylib"]
 [dependencies]
 futures-util = "0.3.30"
 polars = { workspace = true }
-polars-core = "0.38.1"
-pyo3 = { workspace = true }
-pyo3-asyncio = { workspace = true, features = ["attributes", "tokio-runtime"] }
-redesmyn = { workspace = true }
+polars-core = "0.41.0"
+pyo3 = { workspace = true, features = ["experimental-async"] }
 serde = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+redesmyn = { workspace = true }

@@ -1,11 +1,10 @@
-use crate::cache::{ArtifactSpec, BoxedSpec, Cache, CacheHandle, CacheKey, CacheResult};
+use crate::cache::{BoxedSpec, Cache, CacheHandle, CacheKey};
 use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::server::ResourceFactory;
 use crate::{config_methods, metrics, validate_param};
 use indexmap::IndexMap;
 use redesmyn_macros::metric_instrument;
-use tokio::sync::mpsc::error::SendError;
 
 use super::error::ServiceError;
 use super::schema::{Relation, Schema};
@@ -25,7 +24,6 @@ use tokio::{
         mpsc,
         oneshot::{self, Sender},
     },
-    task::JoinHandle,
     time::Instant,
 };
 use tracing::{error, info, instrument, warn};
@@ -38,7 +36,7 @@ pub struct PredictionResponse {
     predictions: Vec<Option<f64>>,
 }
 
-pub(crate) trait ServiceCore {
+pub trait ServiceCore {
     fn start(&mut self) -> ServiceResult<Box<dyn ResourceFactory>>;
 
     fn path(&self) -> String;
@@ -287,7 +285,7 @@ where
                 // TODO: Handle errors! Because this runs in a separate blocking thread whose result
                 //       we don't join, we cannot delegate sending failures to the caller.
                 error!("{err}");
-                Python::with_gil(|py| match err.traceback(py) {
+                Python::with_gil(|py| match err.traceback_bound(py) {
                     Some(traceback) => println!("{:#?}", traceback),
                     None => println!("No traceback."),
                 });

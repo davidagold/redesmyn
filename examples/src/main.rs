@@ -1,6 +1,6 @@
 use cron;
 use polars::datatypes::DataType;
-use pyo3::{types::PyFunction, Py, Python};
+use pyo3::{prelude::*, types::PyFunction, Py, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
     common::{init_logging, LogConfig},
@@ -8,31 +8,21 @@ use redesmyn::{
     error::ServiceError,
     handler::PySpec,
     predictions::BatchPredictor,
-    schema::{Relation, Schema},
+    schema::Schema,
     server::Server,
 };
 use std::{env::current_exe, str::FromStr};
-use tracing::info;
-
-// #[derive(Debug, Deserialize, Relation)]
-// pub struct ToyRecord {
-//     a: f64,
-//     b: f64,
-// }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
-    // let schema = <ToyRecord as Relation>::schema(None).unwrap();
-
     init_logging(LogConfig::default());
 
     let mut schema = Schema::default();
     schema.add_field("a", DataType::Float64);
     schema.add_field("b", DataType::Float64);
 
-    // let service = BatchPredictor::<String, ToyRecord>::new(schema)
     let load_model: Py<PyFunction> = Python::with_gil(|py| {
-        py.import("mlflow")?
+        py.import_bound("mlflow")?
             .getattr("sklearn")?
             .getattr("load_model")?
             .extract::<Py<PyFunction>>()

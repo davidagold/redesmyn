@@ -5,7 +5,7 @@ use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
-use pyo3::{PyResult, Python};
+use pyo3::{prelude::*, PyResult, Python};
 use serde::Deserialize;
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
@@ -53,6 +53,17 @@ pub struct Server {
     config_log: LogConfig,
 }
 
+impl std::fmt::Debug for Server {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n_services = self.services_by_path.len();
+        let n_pythonpath_entries = self.pythonpath.len();
+        f.write_fmt(format_args!(
+            "<Server, [{} services; {} entries in PYTHONPATH>",
+            n_services, n_pythonpath_entries
+        ))
+    }
+}
+
 impl Server {
     pub fn push_pythonpath(&mut self, path: &str) {
         self.pythonpath.push(path.to_string());
@@ -92,7 +103,7 @@ impl Server {
 
         pyo3::prepare_freethreaded_python();
         if let Err(err) = Python::with_gil(|py| {
-            let sys = py.import("sys")?;
+            let sys = py.import_bound("sys")?;
             let version = sys.getattr("version")?.extract::<String>()?;
             tracing::info!("Found Python version: {}", version);
 

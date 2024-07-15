@@ -1,7 +1,8 @@
 pub(crate) type Sized128String = heapless::String<128>;
 use crate::metrics::{EmfInterest, EmfMetrics};
 use serde::Serialize;
-use std::{fs::File, io, path::PathBuf};
+use std::{error::Error, fmt::Debug, fs::File, io, path::PathBuf};
+use tracing::error;
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
 };
@@ -97,5 +98,14 @@ impl<T: Serialize> Serialize for Wrap<T> {
         S: serde::Serializer,
     {
         self.inner().serialize(serializer)
+    }
+}
+
+pub fn consume_and_log_err<T, E>(result: Result<T, E>)
+where
+    E: Debug,
+{
+    if let Err(err) = result {
+        error!("Result of operation failed: {:#?}", err)
     }
 }

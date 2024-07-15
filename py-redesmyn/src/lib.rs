@@ -1,9 +1,8 @@
 use std::cell::OnceCell;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
-use ::redesmyn::common::{init_logging, LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
@@ -29,7 +28,10 @@ impl PySchema {
     }
 
     #[classmethod]
-    pub fn from_struct_type(_cls: &PyType, struct_type: &PyAny) -> PyResult<Self> {
+    pub fn from_struct_type(
+        _cls: &Bound<'_, PyType>,
+        struct_type: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
         match struct_type.extract::<Wrap<Schema>>() {
             Ok(wrapped) => Ok(PySchema { schema: wrapped.0 }),
             Err(err) => Err(err),
@@ -55,7 +57,7 @@ impl PyEndpoint {
     pub fn __new__(
         signature: (Wrap<Schema>, Wrap<Schema>),
         path: String,
-        handler: &PyFunction,
+        handler: &Bound<'_, PyFunction>,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
     ) -> Self {
@@ -64,7 +66,7 @@ impl PyEndpoint {
             path,
             batch_max_delay_ms,
             batch_max_size,
-            handler_config: HandlerConfig::Function(handler.into()),
+            handler_config: HandlerConfig::Function(handler.clone().unbind()),
             handler: Some(Handler::Python(handler.into())),
         };
         let (schema_in, schema_out) = signature;
@@ -95,15 +97,18 @@ impl PyServer {
         path.set_extension("txt");
         server.log_config(RsLogConfig::File(path));
         let cell = OnceCell::new();
-        cell.set(server);
+        consume_and_log_err(cell.set(server));
         PyServer { server: cell }
     }
 
     pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
         let cache = match Python::with_gil(|py| -> PyResult<_> {
             let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
-            let load_model: Py<_> =
-                cache_config.getattr(py, "load_model")?.downcast::<PyFunction>(py)?.into();
+            let load_model: Py<_> = cache_config
+                .getattr(py, "load_model")?
+                .downcast_bound::<PyFunction>(py)?
+                .clone()
+                .unbind();
             let client = ArtifactsClient::FsClient { client: fs_client, load_model };
             Ok(Cache::new(client, None, None, Some(true)))
         }) {
@@ -128,15 +133,13 @@ impl PyServer {
         Ok(())
     }
 
-    pub fn serve<'py>(&'py mut self, py: Python<'py>) -> PyResult<&'py PyAny> {
+    pub async fn serve<'py>(&'py mut self) -> PyResult<()> {
         // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
         //       server to the future. For one, we should keep a handle.
         let mut server = self.server.take().ok_or_else(|| {
             PyRuntimeError::new_err("Cannot start server that has previously  been started")
         })?;
-        pyo3_asyncio::tokio::future_into_py(py, async move {
-            server.serve()?.await.map_err(PyRuntimeError::new_err)
-        })
+        server.serve()?.await.map_err(PyRuntimeError::new_err)
     }
 }
 
@@ -176,7 +179,7 @@ impl LogConfig {
 
 #[pymodule]
 #[pyo3(name = "py_redesmyn")]
-fn redesmyn(_py: Python, m: &PyModule) -> PyResult<()> {
+fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySchema>().unwrap();
     m.add_class::<PyServer>().unwrap();
     m.add_class::<PyEndpoint>().unwrap();

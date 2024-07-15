@@ -53,20 +53,20 @@ pub struct PyHandler {
     pub handler: Py<PyFunction>,
 }
 
-impl From<&PyFunction> for PyHandler {
-    fn from(handler: &PyFunction) -> Self {
-        PyHandler { handler: handler.into() }
+impl From<&Bound<'_, PyFunction>> for PyHandler {
+    fn from(handler: &Bound<'_, PyFunction>) -> Self {
+        PyHandler { handler: handler.clone().unbind() }
     }
 }
 
 impl PyHandler {
-    fn get_func(spec: &PySpec, obj: &PyAny) -> PyResult<Py<PyFunction>> {
+    fn get_func(spec: &PySpec, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyFunction>> {
         let method_name = validate_param!(&spec, method);
         let handler = obj.getattr(method_name.as_str()).inspect_err(|err| {
             error!("Failed to read handler function `{method_name}`: {err}");
         })?;
 
-        match handler.get_type().name()? {
+        match handler.get_type().name()?.as_ref() {
             "function" => handler.extract(),
             // TODO: What if the Python `Endpoint` is configured differently from the native endpoint?
             "Endpoint" => handler.getattr("_handler")?.extract(),
@@ -81,13 +81,13 @@ impl PyHandler {
             HandlerConfig::PySpec(spec) => Python::with_gil(|py| {
                 info!("Importing Python handler with spec {:?}", spec);
                 let module_name = validate_param!(&spec, module);
-                let module = py.import(module_name.as_str()).inspect_err(|err| {
+                let module = py.import_bound(module_name.as_str()).inspect_err(|err| {
                     error!("Failed to import handler module `{module_name}`: {err}")
                 })?;
                 let obj = spec.obj.as_ref().map(|obj_name| module.getattr(obj_name.as_str()));
                 match obj {
-                    Some(obj) => Self::get_func(spec, obj?),
-                    None => Self::get_func(spec, module),
+                    Some(obj) => Self::get_func(spec, &obj?),
+                    None => Self::get_func(spec, &module),
                 }
             })?,
             HandlerConfig::Function(func) => func.clone(),
@@ -96,7 +96,7 @@ impl PyHandler {
     }
 
     pub fn invoke(&self, py: Python<'_>, model: Py<PyAny>, df: PyDataFrame) -> PyResult<PyObject> {
-        self.handler.call(py, (model, df), None)
+        self.handler.call_bound(py, (model, df), None)
     }
 }
 
