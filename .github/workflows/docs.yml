@@ -36,7 +36,7 @@ jobs:
             - name: Install Python dependencies
               run: python3 -m pip install -U poetry && (cd py-redesmyn && make install)
 
-            - run: echo "VIRTUAL_ENV=$(poetry env --directory py-redesmyn info --path)" >> "$GITHUB_ENV"
+            - run: echo "VIRTUAL_ENV=$(poetry env info --directory py-redesmyn --path)" >> "$GITHUB_ENV"
 
             - name: Build Python package
               uses: PyO3/maturin-action@v1
