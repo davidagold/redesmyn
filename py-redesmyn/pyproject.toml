@@ -6,9 +6,10 @@ authors = ["David Gold <david.gold.a@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.11"
-polars = "^0.20.30"
-more-itertools = "^10.2.0"
+annotated-types = "^0.7.0"
 cachetools = "^5.3.3"
+more-itertools = "^10.2.0"
+polars = "^0.20.30"
 pydantic = "^2.7.2"
 setuptools = "^70.0.0"
 
@@ -21,6 +22,7 @@ pytest = "^8.2.1"
 sphinx = "^7.3.7"
 pydata-sphinx-theme = "^0.15.3"
 ruff = "^0.5.2"
+toml = "^0.10.2"
 
 [tool.poetry.group.notebook.dependencies]
 ipykernel = "^6.29.4"
