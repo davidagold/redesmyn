@@ -1,7 +1,7 @@
 pub(crate) type Sized128String = heapless::String<128>;
 use crate::metrics::{EmfInterest, EmfMetrics};
 use serde::Serialize;
-use std::{error::Error, fmt::Debug, fs::File, io, path::PathBuf};
+use std::{fmt::Debug, fs::File, io, path::PathBuf};
 use tracing::error;
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
