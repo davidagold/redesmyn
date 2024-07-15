@@ -37,10 +37,11 @@ jobs:
               run: python3 -m pip install -U poetry
 
             - name: Install Python dependencies
-              working-directory: py-redesmyn
+              working-directory: ./py-redesmyn
               run: make install
 
-            - run: echo "VIRTUAL_ENV=$(poetry env info --directory py-redesmyn --path)" >> "$GITHUB_ENV"
+            - name: Set `VIRTUAL_ENV`
+              run: echo "VIRTUAL_ENV=$(poetry env info --directory py-redesmyn --path)" >> "$GITHUB_ENV"
 
             - name: Build Python package
               uses: PyO3/maturin-action@v1
@@ -52,7 +53,7 @@ jobs:
                   sccache: "true"
 
             - name: Generate documentation
-              working-directory: py-redesmyn
+              working-directory: ./py-redesmyn
               run: make docs
 
             - name: Configure pages
