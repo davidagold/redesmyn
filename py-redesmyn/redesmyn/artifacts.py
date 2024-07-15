@@ -36,6 +36,7 @@ from redesmyn.py_redesmyn import Cache as Cache
 from redesmyn.py_redesmyn import FsClient as FsClient
 
 
+# TODO: We may remove this, as it is largely obviated by the Rust implementation
 class PathTemplate(Template):
     delimiter = ""
     idpattern = r"(?a: )"
@@ -221,6 +222,7 @@ class ArtifactSpec(BaseModel, Generic[M]):
     #     `load_model` in `CacheConfig` when they pass an `ArtifactSpec` to `spec`, which should be
     #     optional in cases where a model is not parametrized.)
     def load_model(cls, loadable: str | Path | bytes | FileIO) -> M:
+        """Method by which a model cache loads a serialized model into the present application."""
         pass
 
     @staticmethod
@@ -304,12 +306,26 @@ class FetchAs(Enum):
 
 
 class Cron(BaseModel):
+    """A cron schedule."""
+
     schedule: str
 
 
 class CacheConfig(BaseModel, Generic[M]):
+    # NOTE: We require the user to specify a model cache for an endpoint via a `CacheConfig`
+    #       because `PyServer.register` both (i) requires a reference or `Py` smart pointer to its argument,
+    #       and (ii) we must pass an `Arc<Cache>` to the endpoint we initialize in `register`.
+    #       Since we do not implement `Clone` for `Cache`, unless we have a way to obtain an `Arc<Cache>`
+    #       from a `Py<Cache>` (which seems as though it should be possible in theory), the easiest way to
+    #       accommodate both of these requirements is to ask the user to pass a config from which we create the
+    #       `Cache` itself.
+    """Configures the model cache to be used for a given `Endpoint`."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     client: FsClient
+    """The client by which the cache will retrieve model artifacts."""
     load_model: Callable[..., M]
+    """The method by which the cache will load the model artifact into the present application."""
     spec: Type[ArtifactSpec[M]]
+    """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
