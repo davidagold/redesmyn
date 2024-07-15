@@ -958,8 +958,8 @@ pub enum CacheError {
     SendCommandError(#[from] SendError<Command>),
     #[error("Failed to send command: {0}")]
     TrySendCommandError(#[from] TrySendError<Command>),
-    #[error("CacheError: Failed to receive response (channel closed)")]
-    ReceiveResponseError(#[from] Canceled),
+    // #[error("CacheError: Failed to receive response (channel closed)")]
+    // ReceiveResponseError(#[from] Canceled),
     #[error("Error while awaiting step: {0}")]
     JoinError(#[from] JoinError),
     #[error("Error serializing `ArtifactSpec`: {0}")]

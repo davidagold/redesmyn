@@ -218,7 +218,8 @@ impl FromPyObject<'_> for Wrap<Schema> {
             let field_name = field.getattr(intern!(py, "name"))?.extract::<&str>()?;
             let dtype = field.getattr("dtype")?;
 
-            let dtype = dtype.get_type().name().and_then(get_dtype_from_name)?;
+            let dtype =
+                dtype.get_type().name().and_then(|name| get_dtype_from_name(name.as_ref()))?;
             schema.add_field(field_name, dtype);
         }
 
