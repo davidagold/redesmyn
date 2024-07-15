@@ -215,21 +215,16 @@ class ArtifactSpec(BaseModel, Generic[M]):
 
     @classmethod
     @abstractmethod
+    # TODO: Some open questions:
+    #   - Should we parametrize the type of `loadable` and make this union the upper bound?
+    #   - If we declare this an `abstractmethod`, we thereby preclude users from (non-redundantly) specifying
+    #     `load_model` in `CacheConfig` when they pass an `ArtifactSpec` to `spec`, which should be
+    #     optional in cases where a model is not parametrized.)
     def load_model(cls, loadable: str | Path | bytes | FileIO) -> M:
         pass
 
-    @classmethod
-    def from_path_template(cls, path: str | PathTemplate, spec_name: str) -> Type["ArtifactSpec[M]"]:
-        param_ids = (
-            path.get_identifiers()
-            if isinstance(path, PathTemplate)
-            else PathTemplate(path).get_identifiers()
-        )
-        params = {k: (Optional[str], None) for k in param_ids}
-        return create_model(spec_name, __base__=(ArtifactSpec, Generic[M]), **params)  # type: ignore
-
     @staticmethod
-    def generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec[M]"]:
+    def _generate_subclass(base: Type[BaseModel]) -> Type["ArtifactSpec[M]"]:
         def is_latest_key(key_field_tuple: Tuple[str, FieldInfo]) -> Optional[str]:
             key, field = key_field_tuple
             key_cls = only(
@@ -248,15 +243,6 @@ class ArtifactSpec(BaseModel, Generic[M]):
         )
         spec.latest_key = latest_key
         return spec
-
-    def __truediv__(self, other: str) -> EndpointPath:
-        return self.as_url_params() / other
-
-    def __rtruediv__(self, other: str) -> EndpointPath:
-        return other / self.as_url_params()
-
-    def as_url_params(self) -> EndpointPath:
-        return EndpointPath(parts=[f"{{{f}}}" for f in self.model_fields])
 
 
 def artifact_spec(
@@ -296,7 +282,7 @@ def artifact_spec(
     """
 
     def wrapper(cls: Type[BaseModel]) -> Type[ArtifactSpec]:
-        spec = ArtifactSpec.generate_subclass(cls)
+        spec = ArtifactSpec._generate_subclass(cls)
         spec.latest_key = spec.latest_key or latest_key
 
         if not cache_path:
@@ -315,8 +301,6 @@ def artifact_spec(
 class FetchAs(Enum):
     Uri = "URI"
     Bytes = "BYTES"
-    Utf8String = "STRING"
-    TmpFile = "TMP_FILE"
 
 
 class Cron(BaseModel):
