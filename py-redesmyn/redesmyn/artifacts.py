@@ -47,33 +47,6 @@ def path(path: str) -> PathTemplate:
     return PathTemplate(path)
 
 
-class EndpointPath:
-    def __init__(self, parts: Iterable[str] = [], query: Dict[str, type] = {}) -> None:
-        self.parts: List[str] = list(parts)
-        self.query = query
-
-    def __truediv__(self, other: str) -> "EndpointPath":
-        return EndpointPath(parts=[*self.parts, other], query=self.query)
-
-    def __rtruediv__(self, other: str) -> "EndpointPath":
-        return EndpointPath(parts=[other, *self.parts], query=self.query)
-
-    def __str__(self):
-        return self.path
-
-    def __repr__(self) -> str:
-        query_params = "&".join(f"{k}=<{v.__name__}>" for k, v in self.query.items())
-        debug_path = f"{self.path}?{query_params}"
-        return f"EndpointPath('{debug_path}')"
-
-    @property
-    def path(self) -> str:
-        return "/".join(self.parts)
-
-    def with_query_params(self, **query_params: type):
-        self.query = self.query | query_params
-
-
 K = TypeVar("K", bound=Union[SupportsLt, SupportsGt])
 
 
