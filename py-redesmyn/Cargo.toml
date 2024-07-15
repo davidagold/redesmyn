@@ -16,7 +16,10 @@ crate-type = ["cdylib"]
 futures-util = "0.3.30"
 polars = { workspace = true }
 polars-core = "0.41.0"
-pyo3 = { workspace = true, features = ["experimental-async"] }
+pyo3 = { workspace = true, features = [
+    "experimental-async",
+    "extension-module",
+] }
 serde = { workspace = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
