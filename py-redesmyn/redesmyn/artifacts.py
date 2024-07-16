@@ -34,6 +34,7 @@ from pydantic.fields import FieldInfo
 
 from redesmyn.py_redesmyn import Cache as Cache
 from redesmyn.py_redesmyn import FsClient as FsClient
+from redesmyn.py_redesmyn import PreFetch as PreFetch
 
 
 # TODO: We may remove this, as it is largely obviated by the Rust implementation
@@ -307,6 +308,9 @@ class CacheConfig(BaseModel, Generic[M]):
     """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
     max_size: Optional[int]
     """The maximum number of models to be stored in the cache."""
-    schedule: Optional[Cron]
+    schedule: Optional[Cron] = None
     """A cron schedule specifying the frequency of cache entry refreshes."""
-    interval: Optional[timedelta]
+    interval: Optional[timedelta] = None
+    """A fixed duration for which the cache waits between cache entry updates."""
+    pre_fetch: PreFetch = PreFetch.None
+    """Specification of which models, if any, to pre-fetch when initializing model cache."""

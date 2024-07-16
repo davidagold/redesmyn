@@ -431,6 +431,13 @@ impl ModelEntry {
 }
 
 #[pyclass]
+pub enum PreFetch {
+    None,
+    All,
+    AllLatest,
+}
+
+#[pyclass]
 #[derive(Debug)]
 pub struct Cache {
     client: Arc<ArtifactsClient>,

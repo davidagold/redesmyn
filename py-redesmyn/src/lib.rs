@@ -1,4 +1,4 @@
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, Schedule};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, PreFetch, Schedule};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
@@ -220,6 +220,6 @@ fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
     m.add_class::<LogConfig>().unwrap();
-
+    m.add_class::<PreFetch>().unwrap();
     Ok(())
 }
