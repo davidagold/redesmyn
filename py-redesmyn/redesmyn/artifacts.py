@@ -306,7 +306,7 @@ class CacheConfig(BaseModel, Generic[M]):
     """The method by which the cache will load the model artifact into the present application."""
     spec: Type[ArtifactSpec[M]]
     """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
-    max_size: Optional[int]
+    max_size: Optional[int] = None
     """The maximum number of models to be stored in the cache."""
     schedule: Optional[Cron] = None
     """A cron schedule specifying the frequency of cache entry refreshes."""
