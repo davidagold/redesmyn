@@ -1,4 +1,5 @@
 #![feature(impl_trait_in_assoc_type)]
+pub mod artifacts;
 pub mod cache;
 pub mod common;
 pub mod error;
