@@ -1,6 +1,6 @@
 use crate::{
     artifacts::{ArtifactSpec, BoxedSpec, FetchAs, Uri},
-    common::{build_runtime, TOKIO_RUNTIME},
+    common::{build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
     error::ServiceResult,
 };
@@ -660,7 +660,7 @@ impl Cache {
                 }
                 Command::ListEntries(tx) => {
                     let models_by_key = list_entries(&model_cache);
-                    tx.send(models_by_key);
+                    consume_and_log_err(tx.send(models_by_key));
                 }
             }
         }
