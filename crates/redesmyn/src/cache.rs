@@ -82,7 +82,7 @@ impl From<u32> for Schedule {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Display)]
 enum UpdateTime {
     Never,
     DateTime(DateTime<Utc>),
@@ -103,7 +103,12 @@ fn __str__(obj: &Py<PyAny>) -> String {
 }
 
 enum Command {
-    UpdateEntry(BoxedSpec, FetchAs, oneshot::Sender<Result<RefreshState, CacheError>>),
+    UpdateEntry {
+        spec: BoxedSpec,
+        fetch_as: FetchAs,
+        next_update: UpdateTime,
+        tx_result: Option<oneshot::Sender<Result<RefreshState, CacheError>>>,
+    },
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
     GetEntry(CacheKey, oneshot::Sender<CacheResult<Py<PyAny>>>),
     ListEntries(oneshot::Sender<IndexMap<String, String>>),
@@ -113,7 +118,7 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Command::*;
         match self {
-            UpdateEntry(spec, _, _) => f.write_fmt(format_args!(
+            UpdateEntry { spec, .. } => f.write_fmt(format_args!(
                 "<UpdateEntry: spec = {}>",
                 serde_json::to_string(spec.spec().as_ref())
                     .unwrap_or("<Failure displaying `ArtifactSpec`>".into())
@@ -133,9 +138,15 @@ impl Command {
     fn update_entry(
         spec: impl ArtifactSpec + Send + Sync + 'static,
         fetch_as: FetchAs,
-    ) -> (Command, oneshot::Receiver<CacheResult<RefreshState>>) {
-        let (tx, rx) = oneshot::channel::<CacheResult<RefreshState>>();
-        (Command::UpdateEntry(Box::new(spec), fetch_as, tx), rx)
+        next_update: UpdateTime,
+        tx_result: Option<oneshot::Sender<CacheResult<RefreshState>>>,
+    ) -> Command {
+        Command::UpdateEntry {
+            spec: Box::new(spec),
+            fetch_as,
+            next_update,
+            tx_result,
+        }
     }
 
     fn insert_entry(
@@ -168,11 +179,14 @@ struct TaskFlow {
 
 struct RefreshConfig {
     spec: BoxedSpec,
+    // TODO: Unify typing in these fields?
     last_updated: Option<DateTime<Utc>>,
+    next_update: UpdateTime,
     tx: Arc<mpsc::Sender<Command>>,
     client: Arc<ArtifactsClient>,
     fetch_as: FetchAs,
     tx_result: OnceCell<oneshot::Sender<CacheResult<RefreshState>>>,
+    schedule: Arc<Schedule>,
 }
 
 impl std::fmt::Display for RefreshConfig {
@@ -189,18 +203,22 @@ impl RefreshConfig {
     fn new(
         spec: BoxedSpec,
         last_updated: Option<DateTime<Utc>>,
+        next_update: UpdateTime,
         client: Arc<ArtifactsClient>,
         tx: Arc<mpsc::Sender<Command>>,
         fetch_as: FetchAs,
-        tx_result: oneshot::Sender<CacheResult<RefreshState>>,
+        tx_result: Option<oneshot::Sender<CacheResult<RefreshState>>>,
+        schedule: Arc<Schedule>,
     ) -> RefreshConfig {
         RefreshConfig {
             spec,
             last_updated,
+            next_update,
             tx,
             client,
             fetch_as,
-            tx_result: OnceCell::new_with(Some(tx_result)),
+            tx_result: OnceCell::new_with(tx_result),
+            schedule,
         }
     }
 }
@@ -211,6 +229,12 @@ enum RefreshState {
     FetchingData(FetchingData),
     UpdatingCache(UpdatingCache),
     Done(DateTime<Utc>),
+}
+
+impl std::fmt::Debug for RefreshState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("{}", self))
+    }
 }
 
 trait Transition<F: Send>
@@ -450,7 +474,7 @@ pub enum PreFetch {
 #[derive(Debug)]
 pub struct Cache {
     client: Arc<ArtifactsClient>,
-    schedule: Schedule,
+    schedule: Arc<Schedule>,
     max_size: Option<usize>,
     pre_fetch_all: Option<bool>,
     tx: OnceCell<Arc<mpsc::Sender<Command>>>,
@@ -497,7 +521,7 @@ impl Cache {
     ) -> Cache {
         Cache {
             client: client.into(),
-            schedule: schedule.unwrap_or_default(),
+            schedule: schedule.unwrap_or_default().into(),
             max_size,
             pre_fetch_all,
             tx: OnceCell::<Arc<mpsc::Sender<Command>>>::default(),
@@ -515,6 +539,7 @@ impl Cache {
             tx.clone().into(),
             rx,
             self.pre_fetch_all,
+            self.schedule.clone(),
         );
         if let Err(err) = self.tx.set(tx.into()) {
             error!("Failed to set Cache tx: {}", err)
@@ -538,6 +563,7 @@ impl Cache {
         tx_cmd: Arc<mpsc::Sender<Command>>,
         mut rx_cmd: mpsc::Receiver<Command>,
         pre_fetch_all: Option<bool>,
+        schedule: Arc<Schedule>,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size).unwrap());
@@ -558,7 +584,13 @@ impl Cache {
                         &spec.as_key().unwrap_or("<Error deriving key from spec>".into()),
                         path.display()
                     );
-                    let (cmd, rx_result) = Command::update_entry(spec.clone(), FetchAs::Uri(None));
+                    let (tx_result, rx_result) = oneshot::channel::<CacheResult<RefreshState>>();
+                    let cmd = Command::update_entry(
+                        spec.clone(),
+                        FetchAs::Uri(None),
+                        UpdateTime::Now,
+                        Some(tx_result),
+                    );
                     let cloned_tx_cmd = tx_cmd.clone();
                     let error_msg =
                         format!("Failed to send update entry command for spec: {:#?}", spec);
@@ -587,7 +619,7 @@ impl Cache {
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
             match msg {
-                Command::UpdateEntry(spec, fetch_as, tx_result) => {
+                Command::UpdateEntry { spec, fetch_as, next_update, tx_result } => {
                     let key = spec.as_key()?;
                     let model_entry = match model_cache.pop(&key) {
                         // TODO: What if there is an extant TaskFlow?
@@ -597,10 +629,12 @@ impl Cache {
                     let config = RefreshConfig::new(
                         spec,
                         model_entry.last_updated().cloned(),
+                        next_update,
                         client.clone(),
                         tx_cmd.clone(),
                         fetch_as,
                         tx_result,
+                        schedule.clone(),
                     );
 
                     let taskflow = match Self::run_taskflow(config.into()) {
@@ -675,10 +709,11 @@ impl Cache {
         }
     }
 
+    #[instrument(skip_all)]
     fn run_taskflow(mut config: RefreshConfig) -> Result<TaskFlow, CacheError> {
         let key = config.spec.as_key()?;
         let handle: JoinHandle<Result<(), CacheError>> = tokio::spawn(async move {
-            let start = PendingFetch::new(UpdateTime::Now)?;
+            let start = PendingFetch::new(config.next_update.clone())?;
             let mut state = <RefreshState as From<PendingFetch>>::from(start);
             let tx_result = (&mut config).tx_result.take();
 
@@ -703,18 +738,41 @@ impl Cache {
                         state = next;
                     }
                     Err(err) => {
-                        error!("{}: {}", err_msg, err);
-                        break Err(err);
+                        break Err(CacheError::from(format!("{}: {}", err_msg, err)));
                     }
                 }
             };
 
-            do_in!(|| {
-                if let Err(_) = tx_result?.send(result) {
-                    warn!("Failed to send result to original command issuer");
-                };
-            });
+            match (result.as_ref(), cloneable_config.schedule.as_ref()) {
+                (Ok(&RefreshState::Done(_)), &Schedule::Off) => {}
+                (Ok(&RefreshState::Done(last_updated)), schedule) => {
+                    let next_update = schedule.next_update(&Some(last_updated));
+                    let Ok(spec) = cloneable_config.spec.as_map() else {
+                        do_in!(|| { consume_and_log_err(tx_result?.send(result)) });
+                        return Ok(());
+                    };
+                    let cmd = Command::update_entry(
+                        spec,
+                        FetchAs::new_like(&cloneable_config.fetch_as),
+                        next_update.clone(),
+                        None,
+                    );
+                    match cloneable_config.tx.send(cmd).await {
+                        Ok(_) => {
+                            info!("Scheduled next refresh for key `{}` at {}", key, next_update)
+                        }
+                        Err(err) => {
+                            error!("Failed to schedule next refresh for key `{}`: {}", key, err)
+                        }
+                    };
+                }
+                (Ok(_), _) => unreachable!(),
+                (Err(err), _) => {
+                    error!("Cache update for key `{}` failed: {}", key, err)
+                }
+            }
 
+            do_in!(|| { consume_and_log_err(tx_result?.send(result)) });
             Ok(())
         });
 

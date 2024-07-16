@@ -56,7 +56,7 @@ impl<T: Serialize> ArtifactSpec for T {
     }
 }
 
-pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync>;
+pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync + 'static>;
 
 #[derive(Clone)]
 pub(crate) enum Uri {
