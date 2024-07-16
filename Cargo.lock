@@ -1859,6 +1859,8 @@ dependencies = [
 name = "py-redesmyn"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "cron",
  "futures-util",
  "polars",
  "polars-core",
@@ -1877,6 +1879,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a5e00b96a521718e08e03b1a622f01c8a8deb50719335de3f60b3b3950f069d8"
 dependencies = [
  "cfg-if",
+ "chrono",
  "indoc",
  "libc",
  "memoffset",

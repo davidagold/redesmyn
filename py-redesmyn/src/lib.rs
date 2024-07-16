@@ -1,17 +1,19 @@
-use std::cell::OnceCell;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, Schedule};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use ::redesmyn::server::Server;
+
+use chrono::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyFunction, PyType};
+use std::cell::OnceCell;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::OnceLock;
 use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
@@ -105,13 +107,33 @@ impl PyServer {
     pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
         let cache = match Python::with_gil(|py| -> PyResult<_> {
             let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
+            // TODO: More concise way to express this pattern
             let load_model: Py<_> = cache_config
                 .getattr(py, "load_model")?
                 .downcast_bound::<PyFunction>(py)?
                 .clone()
                 .unbind();
+            let schedule = cache_config
+                .getattr(py, "schedule")?
+                .call_method0(py, "as_str")?
+                .extract::<String>(py)
+                .map(|schedule| cron::Schedule::from_str(schedule.as_str()))?
+                .ok();
+            let interval = cache_config.getattr(py, "interval")?.extract::<Duration>(py).ok();
+            let sched = match (schedule, interval) {
+                (Some(cron_schedule), None) => Some(Schedule::Cron(cron_schedule)),
+                (None, Some(duration)) => Some(Schedule::Interval(duration)),
+                (None, None) => None,
+                _ => {
+                    return Err(PyRuntimeError::new_err(
+                        "At most one of `schedule` or `interval` may be specified",
+                    ));
+                }
+            };
+            let max_size: Option<usize> = cache_config.getattr(py, "max_size")?.extract(py).ok();
+
             let client = ArtifactsClient::FsClient { client: fs_client, load_model };
-            Ok(Cache::new(client, None, None, Some(true)))
+            Ok(Cache::new(client, max_size, sched, Some(true)))
         }) {
             Ok(cache) => {
                 info!("Successfully initialized model cache {}", cache);
@@ -144,7 +166,7 @@ impl PyServer {
         // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
         //       server to the future. For one, we should keep a handle.
         let mut server = self.server.take().ok_or_else(|| {
-            PyRuntimeError::new_err("Cannot start server that has previously  been started")
+            PyRuntimeError::new_err("Cannot start server that has previously been started")
         })?;
         runtime
             .spawn(async move { server.serve()?.await.map_err(PyRuntimeError::new_err) })
