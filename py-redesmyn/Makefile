@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: install develop build test docs clean-docs
+.PHONY: install sync-deps develop build build-release test docs clean-docs
 
 MATURIN_FLAGS ?=
 MATURIN_OPTIONS = -m Cargo.toml \
@@ -12,20 +12,20 @@ MATURIN_OPTIONS = -m Cargo.toml \
 install:
 	@poetry install --with dev --no-root
 
+sync-deps:
+	@poetry run python -m bin.sync_dependencies
+
 develop: sync-deps
 	@poetry run maturin develop $(MATURIN_OPTIONS)
-
-test:
-	@poetry run python -m pytest py-redesmyn/tests
-
-sync-deps:
-	poetry run python -m bin.sync_dependencies
 
 build: sync-deps
 	poetry run maturin build $(MATURIN_OPTIONS)
 
 build-release:
 	@make build MATURIN_FLAGS=--release
+
+test:
+	@poetry run python -m pytest py-redesmyn/tests
 
 docs: clean-docs
 	@poetry run sphinx-build -M html ./docs/src ./docs/build -c ./docs -vv
