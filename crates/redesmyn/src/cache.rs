@@ -1,4 +1,8 @@
-use crate::{common::consume_and_log_err, do_in, error::ServiceResult};
+use crate::{
+    common::{build_runtime, consume_and_log_err, TOKIO_RUNTIME},
+    do_in,
+    error::ServiceResult,
+};
 use bytes::{Buf, BufMut, BytesMut};
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
@@ -650,6 +654,7 @@ impl Cache {
     }
 
     pub fn run(&self) -> CacheResult<()> {
+        let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
         let max_size = self.max_size.unwrap_or(DEFAULT_CACHE_SIZE);
         let (tx, rx) = mpsc::channel::<Command>(max_size);
         let fut_task = Cache::task(
@@ -663,7 +668,7 @@ impl Cache {
             error!("Failed to set Cache tx: {}", err)
         };
         self.task
-            .set(tokio::spawn(fut_task))
+            .set(runtime.spawn(fut_task))
             .map_err(|_| CacheError::from("Cannot start already running Cache"))
     }
 

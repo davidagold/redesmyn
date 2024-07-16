@@ -1,7 +1,7 @@
 pub(crate) type Sized128String = heapless::String<128>;
 use crate::metrics::{EmfInterest, EmfMetrics};
 use serde::Serialize;
-use std::{fmt::Debug, fs::File, io, path::PathBuf};
+use std::{fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
 use tracing::error;
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
@@ -108,4 +108,13 @@ where
     if let Err(err) = result {
         error!("Result of operation failed: {:#?}", err)
     }
+}
+
+pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+pub(crate) fn build_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to initialize Tokio Runtime.")
 }

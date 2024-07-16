@@ -1,4 +1,4 @@
-use crate::common::LogConfig;
+use crate::common::{build_runtime, LogConfig, TOKIO_RUNTIME};
 use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
 
 use super::error::ServiceError;
@@ -92,6 +92,7 @@ impl Server {
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
+        let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
         let pwd = match env::current_dir() {
             Ok(pwd) => pwd,
             Err(err) => {
@@ -162,7 +163,7 @@ impl Server {
         info!("Starting server...");
         let server = http_server.bind("127.0.0.1:8080")?.run();
         let server_handle = server.handle();
-        tokio::spawn(async move { await_shutdown(server_handle).await });
+        runtime.spawn(async move { await_shutdown(server_handle).await });
         Ok(server)
     }
 }

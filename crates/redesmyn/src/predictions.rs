@@ -1,4 +1,5 @@
 use crate::cache::{BoxedSpec, Cache, CacheHandle, CacheKey};
+use crate::common::{build_runtime, TOKIO_RUNTIME};
 use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::server::ResourceFactory;
@@ -64,7 +65,7 @@ where
             self.cache.handle().map_err(|err| ServiceError::from(err.to_string()))?;
 
         // TODO: Keep reference to this `JoinHandle`
-        let handle = tokio::spawn(async move {
+        let handle = TOKIO_RUNTIME.get_or_init(build_runtime).spawn(async move {
             tokio::spawn(async move {
                 BatchPredictor::<T, R>::task(rx, rx_abort, config, cache_handle).await
             });

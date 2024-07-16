@@ -1865,6 +1865,7 @@ dependencies = [
  "pyo3",
  "redesmyn",
  "serde",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
