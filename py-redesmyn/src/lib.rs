@@ -1,4 +1,4 @@
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, PreFetch, Schedule};
+use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, Schedule};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
@@ -104,53 +104,44 @@ impl PyServer {
         PyServer { server: cell }
     }
 
-    pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
-        let cache = match Python::with_gil(|py| -> PyResult<_> {
-            let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
-            // TODO: More concise way to express this pattern
-            let load_model: Py<_> = cache_config
-                .getattr(py, "load_model")?
-                .downcast_bound::<PyFunction>(py)?
-                .clone()
-                .unbind();
-            let schedule = cache_config
-                .getattr(py, "schedule")?
-                .call_method0(py, "as_str")?
-                .extract::<String>(py)
-                .map(|schedule| cron::Schedule::from_str(schedule.as_str()))?
-                .ok();
-            let interval = cache_config.getattr(py, "interval")?.extract::<Duration>(py).ok();
-            let sched = match (schedule, interval) {
-                (Some(cron_schedule), None) => Some(Schedule::Cron(cron_schedule)),
-                (None, Some(duration)) => Some(Schedule::Interval(duration)),
-                (None, None) => None,
-                _ => {
-                    return Err(PyRuntimeError::new_err(
-                        "At most one of `schedule` or `interval` may be specified",
-                    ));
-                }
-            };
-            let max_size: Option<usize> = cache_config.getattr(py, "max_size")?.extract(py).ok();
-
-            let client = ArtifactsClient::FsClient { client: fs_client, load_model };
-            Ok(Cache::new(client, max_size, sched, Some(true)))
-        }) {
-            Ok(cache) => {
-                info!("Successfully initialized model cache {}", cache);
-                cache
-            }
-            Err(err) => {
-                error!("Failed to initialize model cache: {}", err);
-                return Err(err);
+    pub fn register(
+        &mut self,
+        endpoint: PyEndpoint,
+        cache_config: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
+        let load_model: Py<_> =
+            cache_config.getattr("load_model")?.downcast::<PyFunction>()?.clone().unbind();
+        let schedule = cache_config.getattr("schedule").ok().and_then(|obj| {
+            (!obj.is_none()).then(|| {
+                let sched_str = obj.call_method0("as_str").ok()?.extract::<String>().ok();
+                cron::Schedule::from_str(sched_str?.as_str()).ok()
+            })?
+        });
+        let interval = cache_config
+            .getattr("interval")
+            .ok()
+            .and_then(|obj| (!obj.is_none()).then(|| obj.extract::<Duration>().ok())?);
+        let sched = match (schedule, interval) {
+            (Some(cron_schedule), None) => Some(Schedule::Cron(cron_schedule)),
+            (None, Some(duration)) => Some(Schedule::Interval(duration)),
+            (None, None) => None,
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "At most one of `schedule` or `interval` may be specified",
+                ));
             }
         };
+        let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
+        let client = ArtifactsClient::FsClient { client: fs_client, load_model };
+        let cache = Cache::new(client, max_size, sched, Some(true));
+
         let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
         self.server
             .get_mut()
             .ok_or_else(|| {
-                ServiceError::from(
-                    "Cannot register a service with a server that is already running",
-                )
+                let msg = "Cannot register a service with a server that is already running";
+                ServiceError::from(msg)
             })?
             .register(service);
         Ok(())
@@ -220,6 +211,5 @@ fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
     m.add_class::<LogConfig>().unwrap();
-    m.add_class::<PreFetch>().unwrap();
     Ok(())
 }
