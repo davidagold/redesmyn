@@ -2,7 +2,7 @@ use crate::{
     artifacts::{ArtifactSpec, BoxedSpec, FetchAs, Uri},
     common::{build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
-    error::ServiceResult,
+    error::{ServiceError, ServiceResult},
 };
 use bytes::BytesMut;
 use chrono::{DateTime, Duration, Utc};
@@ -44,6 +44,7 @@ const DEFAULT_CACHE_SIZE: usize = 128;
 
 #[derive(Clone, Debug)]
 pub enum Schedule {
+    Off,
     Cron(cron::Schedule),
     Interval(Duration),
 }
@@ -58,6 +59,7 @@ impl Schedule {
                 UpdateTime::DateTime(*dt_last_updated + *max_wait)
             }
             (Schedule::Interval(_), None) => UpdateTime::Now,
+            (Schedule::Off, _) => UpdateTime::Never,
         };
         next_update.into()
     }
@@ -82,6 +84,7 @@ impl From<u32> for Schedule {
 
 #[derive(Clone)]
 enum UpdateTime {
+    Never,
     DateTime(DateTime<Utc>),
     Now,
 }
@@ -237,9 +240,10 @@ impl Transition<RefreshState> for RefreshState {
                 Ok(_) => Ok(RefreshState::Done(Utc::now())),
                 Err(err) => Err(err),
             },
-            RefreshState::Done(next_update) => {
-                let state = PendingFetch::new(next_update.into())?;
-                Ok(RefreshState::PendingFetch(state))
+            RefreshState::Done(_) => {
+                // let state = PendingFetch::new(next_update.into())?;
+                // Ok(RefreshState::PendingFetch(state))
+                Err(CacheError::from("Cannot transition from `Done` state"))
             }
         }
     }
@@ -264,6 +268,11 @@ impl PendingFetch {
                     tokio::time::sleep(wait_duration).await;
                     ServiceResult::Ok(())
                 })
+            }
+            // TODO: Conceptually it is wrong to error here but we do so for expediency in developing
+            //       the schedule-based refresh functionality.
+            UpdateTime::Never => {
+                Box::pin(async { Err(ServiceError::from("Will not update".to_string())) })
             }
         };
         let state = PendingFetch {
