@@ -1,4 +1,5 @@
-use crate::cache::{BoxedSpec, Cache, CacheHandle, CacheKey};
+use crate::artifacts::BoxedSpec;
+use crate::cache::{Cache, CacheHandle, CacheKey};
 use crate::common::{build_runtime, TOKIO_RUNTIME};
 use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
