@@ -1,5 +1,6 @@
 use std::cell::OnceCell;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
@@ -134,14 +135,25 @@ impl PyServer {
     }
 
     pub async fn serve<'py>(&'py mut self) -> PyResult<()> {
+        let runtime = TOKIO_RUNTIME.get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to initialize Tokio Runtime.")
+        });
         // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
         //       server to the future. For one, we should keep a handle.
         let mut server = self.server.take().ok_or_else(|| {
             PyRuntimeError::new_err("Cannot start server that has previously  been started")
         })?;
-        server.serve()?.await.map_err(PyRuntimeError::new_err)
+        runtime
+            .spawn(async move { server.serve()?.await.map_err(PyRuntimeError::new_err) })
+            .await
+            .map_err(|err| PyRuntimeError::new_err(err.to_string()))?
     }
 }
+
+static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 #[pyclass]
 #[derive(Default)]
