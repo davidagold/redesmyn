@@ -2,8 +2,9 @@ SHELL := /bin/bash
 
 .PHONY: install sync-deps develop build build-release test docs clean-docs
 
+FP_CARGO_TOML ?= ./Cargo.toml
 MATURIN_FLAGS ?=
-MATURIN_OPTIONS = -m Cargo.toml \
+MATURIN_OPTIONS = -m $(FP_CARGO_TOML) \
 	$(MATURIN_FLAGS) \
 	--strip \
 	--target-dir ./target/py-redesmyn
