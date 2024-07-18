@@ -900,7 +900,7 @@ trait Client: Send + Sync + 'static {
 
     fn list(
         &self,
-        path: Option<&PathBuf>,
+        base_path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
 
     fn fetch_uri(
@@ -1082,11 +1082,11 @@ impl Client for ArtifactsClient {
 
     fn list(
         &self,
-        path: Option<&PathBuf>,
+        base_path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
         use ArtifactsClient::*;
         match self {
-            FsClient { client, .. } => client.list(path),
+            FsClient { client, .. } => client.list(base_path),
         }
     }
 }
@@ -1101,26 +1101,21 @@ fn _list(
             _list(paths_by_spec, remaining_components)
         }
         Some(PathComponent::Identifier(identifier)) => {
-            _list(
-                paths_by_spec
-                    .into_iter()
-                    .filter_map(|(spec, path)| {
-                        //
-                        Some(((spec, path.clone()), fs::read_dir(path).ok()?))
+            let updated_paths_by_spec = paths_by_spec
+                .into_iter()
+                .filter_map(|(spec, path)| Some(((spec, path.clone()), fs::read_dir(path).ok()?)))
+                .flat_map(|((spec, path), dir)| {
+                    let cloned_identifier = identifier.clone();
+                    dir.filter_map(move |entry| {
+                        let name = entry.ok()?.file_name().to_string_lossy().to_string();
+                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
+                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
+                        cloned_path.push(name);
+                        Some((cloned_spec, cloned_path))
                     })
-                    .flat_map(|((spec, path), dir)| {
-                        let cloned_identifier = identifier.clone();
-                        dir.filter_map(move |entry| {
-                            let name = entry.ok()?.file_name().to_string_lossy().to_string();
-                            let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
-                            cloned_spec.insert(cloned_identifier.clone(), name.clone());
-                            cloned_path.push(name);
-                            Some((cloned_spec, cloned_path))
-                        })
-                    })
-                    .collect(),
-                remaining_components,
-            )
+                })
+                .collect();
+            _list(updated_paths_by_spec, remaining_components)
         }
         None => paths_by_spec,
     }
@@ -1133,11 +1128,11 @@ impl Client for FsClient {
 
     fn list(
         &self,
-        path: Option<&PathBuf>,
+        base_path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
         let spec = IndexMap::<String, String>::default();
         let paths_by_spec = _list(
-            [(spec, path.unwrap_or(&self.base_path).clone())].into(),
+            [(spec, base_path.unwrap_or(&self.base_path).clone())].into(),
             self.path_template.components(),
         );
         Box::pin(future::ready(paths_by_spec))
