@@ -16,7 +16,7 @@ build:
 	@poetry run maturin build $(MATURIN_OPTIONS)
 
 serve:
-	RUST_LOG=debug RUST_BACKTRACE=1 poetry run python -m serve
+	RUST_LOG=debug poetry run python -m serve
 
 predict:
 	poetry run python -m predict
