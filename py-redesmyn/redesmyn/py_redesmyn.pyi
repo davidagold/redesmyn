@@ -38,8 +38,3 @@ class Cache:
 class LogConfig:
     def __new__(cls, path: Path) -> Self: ...
     def init(self): ...
-
-class PreFetch:
-    None
-    All
-    AllLatest
