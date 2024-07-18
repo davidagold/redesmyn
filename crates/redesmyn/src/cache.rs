@@ -357,10 +357,8 @@ impl Transition<PendingFetch> for FetchingData {
             }
         };
         let RefreshConfig { client, spec, .. } = &config.as_ref();
-        let container = FetchAs::new_like(&config.fetch_as);
-        let args = spec.as_map()?;
-        let path = config.client.substitute(args)?;
-        let fut = client.fetch(path.into(), container).into_future();
+        let container = FetchAs::empty_like(&config.fetch_as); // TODO: Maybe we should just take `fetch_as` from the config
+        let fut = client.fetch(Box::new(spec.as_map()?), container).into_future();
         let task = tokio::spawn(async move { fut.await });
         Ok(FetchingData { task })
     }
@@ -746,7 +744,7 @@ impl Cache {
                     };
                     let cmd = Command::update_entry(
                         spec,
-                        FetchAs::new_like(&cloneable_config.fetch_as),
+                        FetchAs::empty_like(&cloneable_config.fetch_as),
                         next_update.clone(),
                         None,
                     );
@@ -903,17 +901,9 @@ trait Client: Send + Sync + 'static {
         base_path: Option<&PathBuf>,
     ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
 
-    fn fetch_uri(
-        &self,
-        path: &PathBuf,
-        uri: Uri,
-    ) -> Pin<Box<dyn Future<Output = Result<Uri, CacheError>> + Send + Sync + 'static>> {
-        Box::pin(future::ready(Ok(uri.parse(path))))
-    }
-
     fn fetch_bytes(
         &self,
-        path: PathBuf,
+        spec: BoxedSpec,
         bytes: BytesMut,
     ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>>;
 }
@@ -1031,24 +1021,25 @@ pub enum ArtifactsClient {
 impl ArtifactsClient {
     fn fetch(
         &self,
-        path: PathBuf,
+        spec: BoxedSpec,
         fetch_as: FetchAs,
     ) -> Pin<Box<dyn Future<Output = Result<FetchAs, CacheError>> + Send + 'static>> {
         // TODO: This may be fine for now but we should wrap in an `Arc``
         let client = self.clone();
         match fetch_as {
-            FetchAs::Uri(Some(uri)) => {
-                Box::pin(client.fetch_uri(&path, uri).and_then(|uri| async { Ok(uri.into()) }))
-            }
-            FetchAs::Bytes(Some(bytes)) => {
-                if !bytes.is_empty() {
-                    return Box::pin(future::ready(Err(CacheError::from("Bytes must be empty"))));
-                };
-                Box::pin(async move { Ok(client.fetch_bytes(path, bytes).await?.into()) })
+            FetchAs::Uri(None) => {
+                let uri = do_in!(|| -> CacheResult<_> {
+                    let args = spec.as_map()?;
+                    let path = self.substitute(args)?;
+                    let uri = Uri::Path(Some(PathBuf::from(path)));
+                    Ok(FetchAs::Uri(Some(uri)))
+                });
+                Box::pin(future::ready(uri))
             }
             FetchAs::Bytes(None) => {
-                Box::pin(async move { Ok(client.fetch_bytes(path, BytesMut::new()).await?.into()) })
+                Box::pin(async move { Ok(client.fetch_bytes(spec, BytesMut::new()).await?.into()) })
             }
+            // TODO: Don't panic, just return Error
             _ => panic!(),
         }
     }
@@ -1071,12 +1062,12 @@ impl Client for ArtifactsClient {
 
     fn fetch_bytes(
         &self,
-        path: PathBuf,
+        spec: BoxedSpec,
         bytes: BytesMut,
     ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>> {
         use ArtifactsClient::*;
         match self {
-            FsClient { client, .. } => client.fetch_bytes(path, bytes),
+            FsClient { client, .. } => client.fetch_bytes(spec, bytes),
         }
     }
 
@@ -1140,11 +1131,13 @@ impl Client for FsClient {
 
     fn fetch_bytes(
         &self,
-        path: PathBuf,
+        spec: BoxedSpec,
         mut bytes: BytesMut,
     ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>> {
+        let path =
+            do_in!(|| -> CacheResult<_> { Ok(PathBuf::from(self.substitute(spec.as_map()?)?)) });
         Box::pin(async move {
-            bytes.extend(tokio::fs::read(path).await?);
+            bytes.extend(tokio::fs::read(path?).await?);
             Ok(bytes)
         })
     }
