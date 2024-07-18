@@ -10,6 +10,7 @@ use pyo3::{
 use serde::Serialize;
 use std::{io::Read, path::PathBuf, sync::Arc};
 use strum::Display;
+use tracing::info;
 
 pub trait ArtifactSpec {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
@@ -96,6 +97,10 @@ impl Uri {
             Uri::Id { extractor: Some(func), id: None } => {
                 let id = func(path.clone());
                 Uri::Id { extractor: None, id: Some(id.clone()) }
+            }
+            Uri::Path(Some(old_path)) => {
+                info!("Received path: {:#?}", old_path);
+                Uri::Path(Some(path.clone()))
             }
             _ => panic!(),
         }
