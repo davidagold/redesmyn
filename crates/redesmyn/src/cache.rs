@@ -692,10 +692,13 @@ impl Cache {
                     info!("Fetching model entry for key: '{}'", key);
                     let result_send = match model_cache.get(&key) {
                         Some((_, ModelEntry::Ready(model, _))) => tx.send(Ok(model.clone())),
-                        // TODO: Make errors more specific
+                        Some((_, ModelEntry::Refreshing(Some(model), _last_updated))) => {
+                            tx.send(Ok(model.clone()))
+                        }
                         None => {
-                            warn!("No entry for key {}", key);
-                            tx.send(Err(CacheError::Error("Failed to obtain model".into())))
+                            let msg = format!("No entry for key {}", key);
+                            warn!(msg);
+                            tx.send(Err(CacheError::Error(msg)))
                         }
                         _ => tx.send(Err(CacheError::Error("Failed to obtain model".into()))),
                     };
