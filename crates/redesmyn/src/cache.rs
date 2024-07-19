@@ -12,9 +12,11 @@ use futures::{future::join_all, TryFutureExt};
 use indexmap::IndexMap;
 use lru::LruCache;
 use pyo3::{
+    exceptions::PyRuntimeError,
+    prelude::*,
     pyclass, pymethods,
-    types::{PyFunction, PyString},
-    IntoPy, Py, PyAny, PyResult, Python,
+    types::{PyDelta, PyFunction, PyString},
+    Bound, IntoPy, Py, PyAny, PyResult, Python,
 };
 use std::{
     collections::VecDeque,
@@ -861,9 +863,36 @@ impl Cache {
 #[pymethods]
 impl Cache {
     #[new]
-    // TODO: Include optional `schedule` and `interval` parameters for entry refresh
-    fn __new__(client: FsClient, load_model: Py<PyFunction>) -> Cache {
-        Cache::new(ArtifactsClient::FsClient { client, load_model }, None, None, Some(true))
+    fn __new__(
+        client: FsClient,
+        load_model: Bound<'_, PyFunction>,
+        max_size: Option<usize>,
+        schedule: Option<Bound<'_, PyAny>>,
+        interval: Option<Bound<'_, PyDelta>>,
+        pre_fetch_all: Option<bool>,
+    ) -> PyResult<Cache> {
+        let cron_sched = schedule.and_then(|obj| {
+            let sched_str = obj.call_method0("as_str").ok()?.extract::<String>().ok()?;
+            cron::Schedule::from_str(sched_str.as_str()).ok()
+        });
+        let duration = interval.and_then(|obj| obj.extract::<Duration>().ok());
+        let schedule = match (cron_sched, duration) {
+            (Some(cron_sched), None) => Some(Schedule::Cron(cron_sched)),
+            (None, Some(duration)) => Some(Schedule::Interval(duration)),
+            (None, None) => None,
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "At most one of `schedule` or `interval` may be specified",
+                ));
+            }
+        };
+        let cache = Cache::new(
+            ArtifactsClient::FsClient { client, load_model: load_model.unbind() },
+            max_size,
+            schedule,
+            pre_fetch_all,
+        );
+        Ok(cache)
     }
 }
 
