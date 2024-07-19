@@ -21,7 +21,7 @@ use std::{
     fs,
     future::{self, Future},
     num::NonZeroUsize,
-    path::PathBuf,
+    path::{Display, PathBuf},
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -82,11 +82,22 @@ impl From<u32> for Schedule {
     }
 }
 
-#[derive(Clone, Display)]
+#[derive(Clone)]
 enum UpdateTime {
     Never,
     DateTime(DateTime<Utc>),
     Now,
+}
+
+impl std::fmt::Display for UpdateTime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let next_update_str = match self {
+            Self::Never => "Never".into(),
+            Self::Now => "Now".into(),
+            Self::DateTime(dt) => dt.to_string(),
+        };
+        f.write_fmt(format_args!("Next update: {}", next_update_str))
+    }
 }
 
 impl From<DateTime<Utc>> for UpdateTime {
