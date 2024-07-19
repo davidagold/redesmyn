@@ -1,10 +1,12 @@
 from asyncio import Future
+from datetime import timedelta
 from pathlib import Path
-from typing import Callable, Generic, Self, Tuple, TypeVar
+from typing import Callable, Generic, Optional, Self, Tuple, TypeVar
 
 import polars as pl
+from pandas._libs.tslibs.timedeltas import Timedelta
 
-from redesmyn.artifacts import CacheConfig
+from redesmyn.artifacts import CacheConfig, Cron
 
 class PySchema:
     def __new__(cls) -> Self: ...
@@ -33,7 +35,15 @@ class FsClient:
 M = TypeVar("M")
 
 class Cache:
-    def __new__(cls, client: FsClient, load_model: Callable[..., M]) -> Self: ...
+    def __new__(
+        cls,
+        client: FsClient,
+        load_model: Callable[..., M],
+        max_size: Optional[int] = None,
+        schedule: Optional[Cron] = None,
+        interval: Optional[timedelta] = None,
+        pre_fetch_all: Optional[bool] = None,
+    ) -> Self: ...
 
 class LogConfig:
     def __new__(cls, path: Path) -> Self: ...
