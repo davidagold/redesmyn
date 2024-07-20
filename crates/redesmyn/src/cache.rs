@@ -277,11 +277,7 @@ impl Transition<RefreshState> for RefreshState {
                 Ok(_) => Ok(RefreshState::Done(Utc::now())),
                 Err(err) => Err(err),
             },
-            RefreshState::Done(_) => {
-                // let state = PendingFetch::new(next_update.into())?;
-                // Ok(RefreshState::PendingFetch(state))
-                Err(CacheError::from("Cannot transition from `Done` state"))
-            }
+            RefreshState::Done(_) => Err(CacheError::from("Cannot transition from `Done` state")),
         }
     }
 }
