@@ -97,7 +97,7 @@ impl PyServer {
         let mut server = Server::default();
         let mut path: PathBuf = ["logs", "this_run"].iter().collect();
         path.set_extension("txt");
-        server.log_config(LogConfig::new(LogOutput::File(path)));
+        server.log_config(LogConfig::new(LogOutput::File(path), None));
         let cell = OnceCell::new();
         consume_and_log_err(cell.set(server));
         PyServer { server: cell }

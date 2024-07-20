@@ -19,11 +19,15 @@ pub enum LogOutput {
 #[derive(Default)]
 pub struct LogConfig {
     output: LogOutput,
+    enable_emf: bool,
 }
 
 impl LogConfig {
-    pub fn new(output: LogOutput) -> Self {
-        LogConfig { output }
+    pub fn new(output: LogOutput, enable_emf: Option<bool>) -> Self {
+        LogConfig {
+            output,
+            enable_emf: enable_emf.unwrap_or(false),
+        }
     }
 
     pub fn layer<S>(&self) -> Box<dyn Layer<S> + Send + Sync + 'static>
@@ -46,27 +50,17 @@ impl LogConfig {
 #[pymethods]
 impl LogConfig {
     #[new]
-    fn __new__(path: &Bound<'_, PyAny>) -> PyResult<LogConfig> {
-        Ok(LogConfig {
-            output: LogOutput::File(path.extract::<PathBuf>()?),
-        })
+    fn __new__(path: &Bound<'_, PyAny>, enable_emf: Option<bool>) -> PyResult<LogConfig> {
+        Ok(LogConfig::new(LogOutput::File(path.extract::<PathBuf>()?), enable_emf))
     }
 
-    fn init(&mut self) -> PyResult<()> {
+    pub fn init(&mut self) -> () {
         tracing_subscriber::registry()
             .with(EnvFilter::from_default_env())
-            .with(self.layer())
+            .with(self.layer().with_filter(EmfInterest::Never))
+            .with(self.enable_emf.then(|| EmfMetrics::new(10, "./metrics.log".into())))
             .init();
-        Ok(())
     }
-}
-
-pub fn init_logging(log_config: LogConfig) {
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(log_config.layer().with_filter(EmfInterest::Never))
-        .with(EmfMetrics::new(10, "./metrics.log".into()))
-        .init();
 }
 
 #[macro_export]

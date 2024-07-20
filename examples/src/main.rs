@@ -3,7 +3,7 @@ use polars::datatypes::DataType;
 use pyo3::{prelude::*, types::PyFunction, Py, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
-    common::{init_logging, LogConfig},
+    common::{LogConfig, LogOutput},
     do_in,
     error::ServiceError,
     handler::PySpec,
@@ -15,7 +15,7 @@ use std::{env::current_exe, str::FromStr};
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
-    init_logging(LogConfig::default());
+    LogConfig::new(LogOutput::Stdout, Some(true)).init();
 
     let mut schema = Schema::default();
     schema.add_field("a", DataType::Float64);
