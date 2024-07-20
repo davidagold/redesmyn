@@ -14,7 +14,6 @@ use std::cell::OnceCell;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::OnceLock;
-use tracing::{error, info};
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[pyclass]
