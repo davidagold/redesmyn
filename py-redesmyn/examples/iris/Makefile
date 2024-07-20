@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: install build serve predict
+.PHONY: install develop build serve predict
 
 VIRTUAL_ENV = $(shell poetry env info --path)
 
