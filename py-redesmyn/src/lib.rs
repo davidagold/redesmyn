@@ -1,4 +1,4 @@
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient, Schedule};
+use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient, Schedule};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
@@ -9,7 +9,7 @@ use ::redesmyn::server::Server;
 use chrono::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyFunction, PyType};
+use pyo3::types::{PyDelta, PyFunction, PyType};
 use std::cell::OnceCell;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -111,29 +111,19 @@ impl PyServer {
         let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
         let load_model: Py<_> =
             cache_config.getattr("load_model")?.downcast::<PyFunction>()?.clone().unbind();
-        let schedule = cache_config.getattr("schedule").ok().and_then(|obj| {
-            (!obj.is_none()).then(|| {
-                let sched_str = obj.call_method0("as_str").ok()?.extract::<String>().ok();
-                cron::Schedule::from_str(sched_str?.as_str()).ok()
-            })?
-        });
+        let schedule = cache_config.getattr("schedule").ok();
         let interval = cache_config
             .getattr("interval")
-            .ok()
-            .and_then(|obj| (!obj.is_none()).then(|| obj.extract::<Duration>().ok())?);
-        let sched = match (schedule, interval) {
-            (Some(cron_schedule), None) => Some(Schedule::Cron(cron_schedule)),
-            (None, Some(duration)) => Some(Schedule::Interval(duration)),
-            (None, None) => None,
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "At most one of `schedule` or `interval` may be specified",
-                ));
-            }
-        };
+            .and_then(|obj| {
+                obj.downcast::<PyDelta>()
+                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+                    .cloned()
+            })
+            .ok();
         let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
         let client = ArtifactsClient::FsClient { client: fs_client, load_model };
-        let cache = Cache::new(client, max_size, sched, Some(true));
+        let cache =
+            Cache::new(client, max_size, validate_schedule(schedule, interval)?, Some(true));
 
         let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
         self.server

@@ -861,6 +861,40 @@ impl Cache {
     }
 }
 
+pub fn validate_schedule(
+    schedule: Option<Bound<'_, PyAny>>,
+    interval: Option<Bound<'_, PyDelta>>,
+) -> PyResult<Option<Schedule>> {
+    let cron_sched = schedule.and_then(|obj| {
+        match do_in!(|| -> PyResult<_> {
+            let sched_str = obj.call_method0("as_str")?.extract::<String>()?;
+            cron::Schedule::from_str(sched_str.as_str())
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+        }) {
+            Ok(cron_sched) => Some(cron_sched),
+            Err(err) => {
+                warn!("Failed to read `schedule` parameter in `Cache.__new__`: {}", err);
+                None
+            }
+        }
+    });
+    let duration = interval.and_then(|obj| match obj.extract::<Duration>() {
+        Ok(duration) => Some(duration),
+        Err(err) => {
+            warn!("Failed to read `interval` parameter in `Cache.__new__`: {}", err);
+            None
+        }
+    });
+    match (cron_sched, duration) {
+        (Some(cron_sched), None) => Ok(Some(Schedule::Cron(cron_sched))),
+        (None, Some(duration)) => Ok(Some(Schedule::Interval(duration))),
+        (None, None) => Ok(None),
+        _ => {
+            Err(PyRuntimeError::new_err("At most one of `schedule` or `interval` may be specified"))
+        }
+    }
+}
+
 #[pymethods]
 impl Cache {
     #[new]
@@ -872,40 +906,10 @@ impl Cache {
         interval: Option<Bound<'_, PyDelta>>,
         pre_fetch_all: Option<bool>,
     ) -> PyResult<Cache> {
-        let cron_sched = schedule.and_then(|obj| {
-            match do_in!(|| -> PyResult<_> {
-                let sched_str = obj.call_method0("as_str")?.extract::<String>()?;
-                cron::Schedule::from_str(sched_str.as_str())
-                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
-            }) {
-                Ok(cron_sched) => Some(cron_sched),
-                Err(err) => {
-                    warn!("Failed to read `schedule` parameter in `Cache.__new__`: {}", err);
-                    None
-                }
-            }
-        });
-        let duration = interval.and_then(|obj| match obj.extract::<Duration>() {
-            Ok(duration) => Some(duration),
-            Err(err) => {
-                warn!("Failed to read `interval` parameter in `Cache.__new__`: {}", err);
-                None
-            }
-        });
-        let schedule = match (cron_sched, duration) {
-            (Some(cron_sched), None) => Some(Schedule::Cron(cron_sched)),
-            (None, Some(duration)) => Some(Schedule::Interval(duration)),
-            (None, None) => None,
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "At most one of `schedule` or `interval` may be specified",
-                ));
-            }
-        };
         let cache = Cache::new(
             ArtifactsClient::FsClient { client, load_model: load_model.unbind() },
             max_size,
-            schedule,
+            validate_schedule(schedule, interval)?,
             pre_fetch_all,
         );
         Ok(cache)
