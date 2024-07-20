@@ -873,10 +873,25 @@ impl Cache {
         pre_fetch_all: Option<bool>,
     ) -> PyResult<Cache> {
         let cron_sched = schedule.and_then(|obj| {
-            let sched_str = obj.call_method0("as_str").ok()?.extract::<String>().ok()?;
-            cron::Schedule::from_str(sched_str.as_str()).ok()
+            match do_in!(|| -> PyResult<_> {
+                let sched_str = obj.call_method0("as_str")?.extract::<String>()?;
+                cron::Schedule::from_str(sched_str.as_str())
+                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+            }) {
+                Ok(cron_sched) => Some(cron_sched),
+                Err(err) => {
+                    warn!("Failed to read `schedule` parameter in `Cache.__new__`: {}", err);
+                    None
+                }
+            }
         });
-        let duration = interval.and_then(|obj| obj.extract::<Duration>().ok());
+        let duration = interval.and_then(|obj| match obj.extract::<Duration>() {
+            Ok(duration) => Some(duration),
+            Err(err) => {
+                warn!("Failed to read `interval` parameter in `Cache.__new__`: {}", err);
+                None
+            }
+        });
         let schedule = match (cron_sched, duration) {
             (Some(cron_sched), None) => Some(Schedule::Cron(cron_sched)),
             (None, Some(duration)) => Some(Schedule::Interval(duration)),
