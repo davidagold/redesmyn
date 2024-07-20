@@ -107,10 +107,6 @@ impl Uri {
     }
 }
 
-// This is a misnomer, since we aren't fetching the URI but rather deriving it from the model spec.
-// Maybe it's OK to leave the treatment of mapping from an artifact spec to the argument of `load_model`
-// unified in the artifact client even if the client itself is not doing work (at least at the moment)
-// to obtain the URI.
 #[derive(Debug, Display)]
 pub(crate) enum FetchAs {
     Uri(Option<Uri>),
