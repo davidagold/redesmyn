@@ -894,6 +894,10 @@ impl Cache {
         );
         Ok(cache)
     }
+
+    fn start(&self) -> PyResult<()> {
+        self.run().map_err(|err| PyRuntimeError::new_err(err.to_string()))
+    }
 }
 
 #[derive(Error, Debug)]
