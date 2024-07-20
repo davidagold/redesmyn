@@ -1,31 +1,32 @@
 SHELL := /bin/bash
 
-.PHONY: install develop build test docs clean-docs
+.PHONY: install sync-deps develop build build-release test docs clean-docs
 
+FP_CARGO_TOML ?= ./Cargo.toml
 MATURIN_FLAGS ?=
-MATURIN_OPTIONS = -m Cargo.toml \
+MATURIN_OPTIONS = -m $(FP_CARGO_TOML) \
 	$(MATURIN_FLAGS) \
 	--strip \
-	--target-dir target/py-redesmyn
+	--target-dir ./target/py-redesmyn
 
 
 install:
 	@poetry install --with dev --no-root
 
-develop:
+sync-deps:
+	@poetry run python -m bin.sync_dependencies
+
+develop: sync-deps
 	@poetry run maturin develop $(MATURIN_OPTIONS)
 
-test:
-	@poetry run python -m pytest py-redesmyn/tests
-
-sync-deps:
-	poetry run python -m bin.sync_dependencies
-
 build: sync-deps
-	@poetry run maturin build $(MATURIN_OPTIONS) $(FLAGS)
+	poetry run maturin build $(MATURIN_OPTIONS)
 
 build-release:
 	@make build MATURIN_FLAGS=--release
+
+test:
+	@RUST_LOG=debug poetry run python -m pytest tests
 
 docs: clean-docs
 	@poetry run sphinx-build -M html ./docs/src ./docs/build -c ./docs -vv

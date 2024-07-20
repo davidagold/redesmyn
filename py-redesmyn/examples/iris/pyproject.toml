@@ -3,7 +3,6 @@ name = "redesmyn-examples-iris"
 version = "0.0.1"
 description = "Example of using Redesmyn to serve a Lasso model trained against the iris dataset."
 authors = ["David Gold <david.gold.a@gmail.com>"]
-readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.11"
@@ -17,6 +16,7 @@ pydantic = "^2.7.3"
 
 [tool.poetry.group.dev.dependencies]
 maturin = "^1.5.1"
+toml = "^0.10.2"
 
 [tool.pyright]
 venvPath = "."

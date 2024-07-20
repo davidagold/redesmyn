@@ -1,5 +1,6 @@
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, List
 
 import toml
@@ -42,7 +43,7 @@ def parse_poetry_dependencies(pyproject: Dict) -> List[str]:
 
 
 if __name__ == "__main__":
-    pyproject_file = "pyproject.toml"
+    pyproject_file = Path(__file__).parent.parent / "pyproject.toml"
     with open(pyproject_file, "r") as f:
         pyproject = defaultdict(dict, toml.load(f))
 

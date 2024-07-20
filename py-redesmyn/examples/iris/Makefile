@@ -1,22 +1,18 @@
 SHELL := /bin/bash
 
-.PHONY: install build run predict
+.PHONY: install develop build serve predict
 
+VIRTUAL_ENV = $(shell poetry env info --path)
 
-PY_PKG_GROUPS ?= packages dev-packages
 
 install:
-	poetry install --with dev
+	poetry install --with dev --no-root
 
-
-FLAGS ?=
-MATURIN_OPTIONS = -m py-redesmyn/Cargo.toml \
-	--strip \
-	--target-dir target/py-redesmyn
+develop: install
+	VIRTUAL_ENV=$(VIRTUAL_ENV) make -f ../../Makefile develop FP_CARGO_TOML=../../Cargo.toml
 
 build:
-	cd ../../.. && poetry run --directory py-redesmyn/examples/iris maturin develop $(MATURIN_OPTIONS) $(FLAGS)
-
+	@poetry run maturin build $(MATURIN_OPTIONS)
 
 serve:
 	RUST_LOG=debug poetry run python -m serve

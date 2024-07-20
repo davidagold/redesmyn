@@ -283,6 +283,9 @@ class Cron(BaseModel):
 
     schedule: str
 
+    def as_str(self) -> str:
+        return self.schedule
+
 
 class CacheConfig(BaseModel, Generic[M]):
     # NOTE: We require the user to specify a model cache for an endpoint via a `CacheConfig`
@@ -302,3 +305,9 @@ class CacheConfig(BaseModel, Generic[M]):
     """The method by which the cache will load the model artifact into the present application."""
     spec: Type[ArtifactSpec[M]]
     """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
+    max_size: Optional[int] = None
+    """The maximum number of models to be stored in the cache."""
+    schedule: Optional[Cron] = None
+    """A cron schedule specifying the frequency of cache entry refreshes."""
+    interval: Optional[timedelta] = None
+    """A fixed duration for which the cache waits between cache entry updates."""

@@ -1,18 +1,19 @@
-use std::cell::OnceCell;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-
-use ::redesmyn::cache::{ArtifactsClient, Cache, FsClient};
+use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient, Schedule};
 use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use ::redesmyn::server::Server;
+
+use chrono::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyFunction, PyType};
-use tracing::{error, info};
+use pyo3::types::{PyDelta, PyFunction, PyType};
+use std::cell::OnceCell;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::OnceLock;
 use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[pyclass]
@@ -102,33 +103,34 @@ impl PyServer {
         PyServer { server: cell }
     }
 
-    pub fn register(&mut self, endpoint: PyEndpoint, cache_config: Py<PyAny>) -> PyResult<()> {
-        let cache = match Python::with_gil(|py| -> PyResult<_> {
-            let fs_client = cache_config.getattr(py, "client")?.extract::<FsClient>(py)?;
-            let load_model: Py<_> = cache_config
-                .getattr(py, "load_model")?
-                .downcast_bound::<PyFunction>(py)?
-                .clone()
-                .unbind();
-            let client = ArtifactsClient::FsClient { client: fs_client, load_model };
-            Ok(Cache::new(client, None, None, Some(true)))
-        }) {
-            Ok(cache) => {
-                info!("Successfully initialized model cache {}", cache);
-                cache
-            }
-            Err(err) => {
-                error!("Failed to initialize model cache: {}", err);
-                return Err(err);
-            }
-        };
+    pub fn register(
+        &mut self,
+        endpoint: PyEndpoint,
+        cache_config: Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
+        let load_model: Py<_> =
+            cache_config.getattr("load_model")?.downcast::<PyFunction>()?.clone().unbind();
+        let schedule = cache_config.getattr("schedule").ok();
+        let interval = cache_config
+            .getattr("interval")
+            .and_then(|obj| {
+                obj.downcast::<PyDelta>()
+                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+                    .cloned()
+            })
+            .ok();
+        let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
+        let client = ArtifactsClient::FsClient { client: fs_client, load_model };
+        let cache =
+            Cache::new(client, max_size, validate_schedule(schedule, interval)?, Some(true));
+
         let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
         self.server
             .get_mut()
             .ok_or_else(|| {
-                ServiceError::from(
-                    "Cannot register a service with a server that is already running",
-                )
+                let msg = "Cannot register a service with a server that is already running";
+                ServiceError::from(msg)
             })?
             .register(service);
         Ok(())
@@ -144,7 +146,7 @@ impl PyServer {
         // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
         //       server to the future. For one, we should keep a handle.
         let mut server = self.server.take().ok_or_else(|| {
-            PyRuntimeError::new_err("Cannot start server that has previously  been started")
+            PyRuntimeError::new_err("Cannot start server that has previously been started")
         })?;
         runtime
             .spawn(async move { server.serve()?.await.map_err(PyRuntimeError::new_err) })
@@ -198,6 +200,5 @@ fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
     m.add_class::<LogConfig>().unwrap();
-
     Ok(())
 }

@@ -14,9 +14,12 @@ crate-type = ["cdylib"]
 
 [dependencies]
 futures-util = "0.3.30"
+cron = { workspace = true }
+chrono = { workspace = true }
 polars = { workspace = true }
 polars-core = "0.41.0"
 pyo3 = { workspace = true, features = [
+    "chrono",
     "experimental-async",
     "extension-module",
 ] }

@@ -10,6 +10,7 @@ use pyo3::{
 use serde::Serialize;
 use std::{io::Read, path::PathBuf, sync::Arc};
 use strum::Display;
+use tracing::info;
 
 pub trait ArtifactSpec {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
@@ -56,7 +57,7 @@ impl<T: Serialize> ArtifactSpec for T {
     }
 }
 
-pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync>;
+pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync + 'static>;
 
 #[derive(Clone)]
 pub(crate) enum Uri {
@@ -96,6 +97,10 @@ impl Uri {
             Uri::Id { extractor: Some(func), id: None } => {
                 let id = func(path.clone());
                 Uri::Id { extractor: None, id: Some(id.clone()) }
+            }
+            Uri::Path(Some(old_path)) => {
+                info!("Received path: {:#?}", old_path);
+                Uri::Path(Some(path.clone()))
             }
             _ => panic!(),
         }
@@ -158,17 +163,10 @@ impl From<BytesMut> for FetchAs {
 }
 
 impl FetchAs {
-    pub(crate) fn new_like(fetch_as: &FetchAs) -> FetchAs {
+    pub(crate) fn empty_like(fetch_as: &FetchAs) -> FetchAs {
         match &fetch_as {
-            &FetchAs::Uri(Some(Uri::Path(_))) => {
-                FetchAs::Uri(Some(Uri::Path(Some(PathBuf::new()))))
-            }
-            &FetchAs::Uri(Some(Uri::Id { extractor, id: _ })) => FetchAs::Uri(Some(Uri::Id {
-                extractor: extractor.clone(),
-                id: Some(String::new()),
-            })),
-            &FetchAs::Uri(None) => FetchAs::Uri(Some(Uri::default())),
-            &FetchAs::Bytes(_) => FetchAs::Bytes(Some(BytesMut::new())),
+            &FetchAs::Uri(_) => FetchAs::Uri(None),
+            &FetchAs::Bytes(_) => FetchAs::Bytes(None),
         }
     }
 }

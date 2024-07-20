@@ -1,17 +1,17 @@
 import asyncio
 import sys
 from argparse import ArgumentParser
+from datetime import timedelta
 from pathlib import Path
 
 import mlflow
 import redesmyn.artifacts as afs
-from sklearn.linear_model import Lasso
 from common import project_dir
+from redesmyn.py_redesmyn import LogConfig
 from redesmyn.service import Server, endpoint
+from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
 from train import Input, Output, SepalLengthPredictor, SepalLengthPredictorSpec
-from redesmyn.py_redesmyn import LogConfig
-
 
 LogConfig(path=Path("./logs/run.txt")).init()
 mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
@@ -24,10 +24,11 @@ mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
     cache_config=afs.CacheConfig(
         client=afs.FsClient(
             base_path=Path(__file__).parent,
-            path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model"
+            path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model",
         ),
         load_model=lambda *args: SepalLengthPredictor(*args),
         spec=SepalLengthPredictorSpec,
+        interval=timedelta(minutes=1),
     ),
 )
 def handle(model: SepalLengthPredictor, records_df: Input.DataFrame) -> Output.DataFrame:
