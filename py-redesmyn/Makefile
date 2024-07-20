@@ -26,7 +26,7 @@ build-release:
 	@make build MATURIN_FLAGS=--release
 
 test:
-	@poetry run python -m pytest py-redesmyn/tests
+	@RUST_LOG=debug poetry run python -m pytest tests
 
 docs: clean-docs
 	@poetry run sphinx-build -M html ./docs/src ./docs/build -c ./docs -vv
