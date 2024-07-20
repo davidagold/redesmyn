@@ -119,7 +119,7 @@ enum Command {
     UpdateEntry {
         spec: BoxedSpec,
         fetch_as: FetchAs,
-        next_update: UpdateTime,
+        update_time: UpdateTime,
         tx_result: Option<oneshot::Sender<Result<RefreshState, CacheError>>>,
     },
     InsertEntry(CacheKey, FetchAs, oneshot::Sender<Result<(), CacheError>>),
@@ -157,7 +157,7 @@ impl Command {
         Command::UpdateEntry {
             spec: Box::new(spec),
             fetch_as,
-            next_update,
+            update_time: next_update,
             tx_result,
         }
     }
@@ -619,7 +619,12 @@ impl Cache {
         loop {
             let Some(msg) = rx_cmd.recv().await else { return Err(CacheError::from("")) };
             match msg {
-                Command::UpdateEntry { spec, fetch_as, next_update, tx_result } => {
+                Command::UpdateEntry {
+                    spec,
+                    fetch_as,
+                    update_time: next_update,
+                    tx_result,
+                } => {
                     let key = spec.as_key()?;
                     let model_entry = match model_cache.pop(&key) {
                         // TODO: What if there is an extant TaskFlow?
