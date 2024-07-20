@@ -1,5 +1,6 @@
 pub(crate) type Sized128String = heapless::String<128>;
 use crate::metrics::{EmfInterest, EmfMetrics};
+use pyo3::{prelude::*, pyclass, pymethods};
 use serde::Serialize;
 use std::{fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
 use tracing::error;
@@ -8,27 +9,55 @@ use tracing_subscriber::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub enum LogConfig {
+pub enum LogOutput {
     #[default]
     Stdout,
     File(PathBuf),
 }
 
+#[pyclass]
+#[derive(Default)]
+pub struct LogConfig {
+    output: LogOutput,
+}
+
 impl LogConfig {
+    pub fn new(output: LogOutput) -> Self {
+        LogConfig { output }
+    }
+
     pub fn layer<S>(&self) -> Box<dyn Layer<S> + Send + Sync + 'static>
     where
         S: tracing::Subscriber,
         for<'a> S: LookupSpan<'a>,
     {
         let layer = tracing_subscriber::fmt::layer().json();
-        match self {
-            LogConfig::Stdout => Box::new(layer.with_writer(io::stdout)),
-            LogConfig::File(path) => {
+        match &self.output {
+            LogOutput::Stdout => Box::new(layer.with_writer(io::stdout)),
+            LogOutput::File(path) => {
                 println!("Creating log file at {}", path.to_string_lossy());
                 let file = File::create(path).expect("Failed to create log file.");
                 Box::new(layer.with_writer(file))
             }
         }
+    }
+}
+
+#[pymethods]
+impl LogConfig {
+    #[new]
+    fn __new__(path: &Bound<'_, PyAny>) -> PyResult<LogConfig> {
+        Ok(LogConfig {
+            output: LogOutput::File(path.extract::<PathBuf>()?),
+        })
+    }
+
+    fn init(&mut self) -> PyResult<()> {
+        tracing_subscriber::registry()
+            .with(EnvFilter::from_default_env())
+            .with(self.layer())
+            .init();
+        Ok(())
     }
 }
 

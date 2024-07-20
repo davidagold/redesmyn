@@ -1,5 +1,5 @@
 use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient, Schedule};
-use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::common::{consume_and_log_err, LogConfig, LogOutput, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
@@ -97,7 +97,7 @@ impl PyServer {
         let mut server = Server::default();
         let mut path: PathBuf = ["logs", "this_run"].iter().collect();
         path.set_extension("txt");
-        server.log_config(RsLogConfig::File(path));
+        server.log_config(LogConfig::new(LogOutput::File(path)));
         let cell = OnceCell::new();
         consume_and_log_err(cell.set(server));
         PyServer { server: cell }
@@ -156,40 +156,6 @@ impl PyServer {
 }
 
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
-#[pyclass]
-#[derive(Default)]
-struct LogConfig {
-    config: OnceCell<RsLogConfig>,
-}
-
-#[pymethods]
-impl LogConfig {
-    #[new]
-    fn __new__(path: Py<PyAny>) -> PyResult<LogConfig> {
-        let config = LogConfig::default();
-        Python::with_gil(|py| {
-            config
-                .config
-                .set(RsLogConfig::File(path.extract::<PathBuf>(py)?))
-                .map_err(|_| PyRuntimeError::new_err("Failed to set log config"))?;
-            PyResult::Ok(())
-        })?;
-        Ok(config)
-    }
-
-    fn init(&mut self) -> PyResult<()> {
-        let config = self
-            .config
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("Failed to take log config."))?;
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(config.layer())
-            .init();
-        Ok(())
-    }
-}
 
 #[pymodule]
 #[pyo3(name = "py_redesmyn")]

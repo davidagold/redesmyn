@@ -279,7 +279,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for EmfMetrics {
             }
         });
 
-        let _ = self.tx.try_send(entry);
+        consume_and_log_err(self.tx.try_send(entry));
     }
 
     fn on_new_span(
