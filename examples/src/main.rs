@@ -1,6 +1,6 @@
 use cron;
 use polars::datatypes::DataType;
-use pyo3::{prelude::*, types::PyFunction, Py, Python};
+use pyo3::{prelude::*, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
     common::{consume_and_log_err, include_python_paths, LogConfig, LogOutput},
@@ -36,20 +36,22 @@ async fn main() -> Result<(), ServiceError> {
         consume_and_log_err(include_python_paths([example_dir.to_str()?]));
     });
 
-    let load_model: Py<PyFunction> = Python::with_gil(|py| {
+    let load_model = Python::with_gil(|py| {
         py.import_bound("model")?
             .getattr("SepalLengthPredictor")?
-            .getattr("load_model")?
-            .extract::<Py<PyFunction>>()
+            .getattr("load_model")
             .map_err(|err| ServiceError::from(err.to_string()))
+            .map(|obj| obj.unbind())
     })?;
 
     let Some(afs_client) = do_in!(|| {
         let models_dir: PathBuf =
-            [base_dir_str.as_str(), "py-redesmyn/examples/iris/models"].iter().collect();
-        // models_dir.push("models");
+            [base_dir_str.as_str(), "py-redesmyn/examples/iris"].iter().collect();
         ArtifactsClient::FsClient {
-            client: FsClient::new(models_dir, "/{model_id}/artifacts/model".into()),
+            client: FsClient::new(
+                models_dir,
+                "/models/mlflow/iris/{run_id}/{model_id}/artifacts/model".into(),
+            ),
             load_model,
         }
     }) else {
