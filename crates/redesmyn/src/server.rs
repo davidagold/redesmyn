@@ -1,11 +1,12 @@
-use crate::common::{build_runtime, LogConfig, TOKIO_RUNTIME};
+use crate::common::{
+    build_runtime, consume_and_log_err, include_python_paths, LogConfig, TOKIO_RUNTIME,
+};
 use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
 
 use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{dev::ServerHandle, web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
-use pyo3::{prelude::*, PyResult, Python};
 use serde::Deserialize;
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
@@ -93,37 +94,14 @@ impl Server {
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
         let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
-        let pwd = match env::current_dir() {
-            Ok(pwd) => pwd,
-            Err(err) => {
-                error!("Failed to get working directory: {err}");
-                return Err(ServiceError::IoError(err));
-            }
-        };
+        let pwd = env::current_dir().map_err(|err| {
+            ServiceError::from(format!("Failed to obtain current working directory: {}", err))
+        })?;
         tracing::info!("Starting server from directory {}", pwd.to_str().unwrap());
 
-        pyo3::prepare_freethreaded_python();
-        if let Err(err) = Python::with_gil(|py| {
-            let sys = py.import_bound("sys")?;
-            let version = sys.getattr("version")?.extract::<String>()?;
-            tracing::info!("Found Python version: {}", version);
-
-            let insert = sys.getattr("path")?.getattr("insert")?;
-            let additional_paths = [&(pwd.to_str().unwrap().to_string())];
-            for path in self.pythonpath.iter().chain(additional_paths) {
-                insert.call((0, path), None)?;
-            }
-
-            let pythonpath = sys.getattr("path")?.extract::<Vec<String>>()?;
-            let str_python_path =
-                serde_json::to_string_pretty(&pythonpath).expect("Failed to serialize `sys.path`.");
-            println!("Found Python path: {str_python_path}");
-            info!(pythonpath = format!("{}", str_python_path.as_str()));
-            PyResult::<()>::Ok(())
-        }) {
-            error!("{}", format!("Failed to initialize Python process: {err}"));
-            return Err(err.into());
-        };
+        let pythonpaths =
+            self.pythonpath.iter().map(String::as_str).chain(vec![(pwd.to_str().unwrap())]);
+        consume_and_log_err(include_python_paths(pythonpaths));
 
         // The `factory` argument to `HttpServer::new()` is invoked for each worker,
         // hence we must start the services before moving them into the `factory` closure

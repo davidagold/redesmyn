@@ -1,9 +1,12 @@
 pub(crate) type Sized128String = heapless::String<128>;
-use crate::metrics::{EmfInterest, EmfMetrics};
+use crate::{
+    error::{ServiceError, ServiceResult},
+    metrics::{EmfInterest, EmfMetrics},
+};
 use pyo3::{prelude::*, pyclass, pymethods};
 use serde::Serialize;
-use std::{fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
-use tracing::error;
+use std::{env, fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
+use tracing::{error, info};
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
 };
@@ -140,4 +143,28 @@ pub(crate) fn build_runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("Failed to initialize Tokio Runtime.")
+}
+
+pub fn include_python_paths<'path>(
+    paths: impl IntoIterator<Item = &'path str>,
+) -> ServiceResult<()> {
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| {
+        let sys = py.import_bound("sys")?;
+        let version: String = sys.getattr("version")?.extract()?;
+        tracing::info!("Found Python version: {}", version);
+
+        let insert = sys.getattr("path")?.getattr("insert")?;
+        for path in paths.into_iter() {
+            insert.call((0, path), None)?;
+        }
+
+        let pythonpath: Vec<String> = sys.getattr("path")?.extract()?;
+        let str_python_path = serde_json::to_string_pretty(&pythonpath).map_err(|err| {
+            ServiceError::from(format!("Failed to serialize `sys.path`: {}", err))
+        })?;
+        info!(pythonpath = format!("{}", str_python_path.as_str()));
+        PyResult::<()>::Ok(())
+    })
+    .map_err(|err| ServiceError::from(format!("Failed to initialize Python process: {}", err)))
 }
