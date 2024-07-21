@@ -1023,7 +1023,8 @@ impl PathTemplate {
     }
 
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
-        self.components()
+        let path = self
+            .components()
             .iter()
             .try_fold(None, |path: Option<String>, component| {
                 let next_path_component = match component {
@@ -1043,7 +1044,14 @@ impl PathTemplate {
                 };
                 CacheResult::<Option<String>>::Ok(Some(path))
             })?
-            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))
+            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
+
+        Ok([self.base.to_str().ok_or_else(|| CacheError::from("Nope"))?, &path]
+            .into_iter()
+            .collect::<PathBuf>()
+            .to_str()
+            .ok_or_else(|| CacheError::from("Still nope"))?
+            .to_string())
     }
 }
 
