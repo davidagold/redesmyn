@@ -3,7 +3,7 @@ use polars::datatypes::DataType;
 use pyo3::{prelude::*, types::PyFunction, Py, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
-    common::{LogConfig, LogOutput},
+    common::{consume_and_log_err, include_python_paths, LogConfig, LogOutput},
     do_in,
     error::ServiceError,
     handler::PySpec,
@@ -11,28 +11,43 @@ use redesmyn::{
     schema::Schema,
     server::Server,
 };
-use std::{env::current_exe, str::FromStr};
+use std::{env::current_exe, path::PathBuf, str::FromStr};
+use tracing::info;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
     LogConfig::new(LogOutput::Stdout, Some(true)).init();
 
     let mut schema = Schema::default();
-    schema.add_field("a", DataType::Float64);
-    schema.add_field("b", DataType::Float64);
+    schema.add_field("sepal_width", DataType::Float64);
+    schema.add_field("petal_length", DataType::Float64);
+    schema.add_field("petal_width", DataType::Float64);
+
+    let Some(base_dir_str) = do_in!(|| {
+        let exe_dir = current_exe().ok()?;
+        exe_dir.parent()?.parent()?.parent()?.parent()?.to_path_buf().to_str()?.to_string()
+    }) else {
+        return Ok(());
+    };
+    info!("base_dir = {:#?}", base_dir_str);
+    let example_dir: PathBuf = [base_dir_str.as_str(), "examples"].iter().collect();
+
+    do_in!(|| {
+        consume_and_log_err(include_python_paths([example_dir.to_str()?]));
+    });
 
     let load_model: Py<PyFunction> = Python::with_gil(|py| {
-        py.import_bound("mlflow")?
-            .getattr("sklearn")?
+        py.import_bound("model")?
+            .getattr("SepalLengthPredictor")?
             .getattr("load_model")?
             .extract::<Py<PyFunction>>()
             .map_err(|err| ServiceError::from(err.to_string()))
     })?;
 
     let Some(afs_client) = do_in!(|| {
-        let exe_dir = current_exe().ok()?;
-        let mut models_dir = exe_dir.parent()?.parent()?.parent()?.to_path_buf();
-        models_dir.push("models");
+        let models_dir: PathBuf =
+            [base_dir_str.as_str(), "py-redesmyn/examples/iris/models"].iter().collect();
+        // models_dir.push("models");
         ArtifactsClient::FsClient {
             client: FsClient::new(models_dir, "/{model_id}/artifacts/model".into()),
             load_model,
@@ -52,16 +67,16 @@ async fn main() -> Result<(), ServiceError> {
 
     let endpoint = BatchPredictor::<String, Schema>::builder()
         .schema(schema)
-        .path("/predictions/{model_version}")
+        .path("/predictions/{run_id}/{model_id}")
         .cache(cache)
         .batch_max_size(100)
         .batch_max_delay_ms(5)
-        .handler_config(PySpec::new().module("tests.test_server").method("handler").into())
+        .handler_config(PySpec::new().module("model").method("handle").into())
         .build()?;
 
     let mut server = Server::default();
     server.register(endpoint);
-    server.push_pythonpath("./py-redesmyn");
+    server.push_pythonpath("./py-redesmyn/examples/iris");
     server.serve()?.await?;
 
     Ok(())
