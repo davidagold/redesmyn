@@ -12,7 +12,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum HandlerConfig {
     PySpec(PySpec),
-    Function(Py<PyFunction>),
+    Function(Py<PyAny>),
 }
 
 impl From<PySpec> for HandlerConfig {
@@ -21,8 +21,8 @@ impl From<PySpec> for HandlerConfig {
     }
 }
 
-impl From<Py<PyFunction>> for HandlerConfig {
-    fn from(func: Py<PyFunction>) -> Self {
+impl From<Py<PyAny>> for HandlerConfig {
+    fn from(func: Py<PyAny>) -> Self {
         HandlerConfig::Function(func)
     }
 }
@@ -50,17 +50,17 @@ impl PySpec {
 
 #[derive(Clone, Debug)]
 pub struct PyHandler {
-    pub handler: Py<PyFunction>,
+    pub handler: Py<PyAny>,
 }
 
-impl From<&Bound<'_, PyFunction>> for PyHandler {
-    fn from(handler: &Bound<'_, PyFunction>) -> Self {
+impl From<&Bound<'_, PyAny>> for PyHandler {
+    fn from(handler: &Bound<'_, PyAny>) -> Self {
         PyHandler { handler: handler.clone().unbind() }
     }
 }
 
 impl PyHandler {
-    fn get_func(spec: &PySpec, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyFunction>> {
+    fn get_func(spec: &PySpec, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let method_name = validate_param!(&spec, method);
         let handler = obj.getattr(method_name.as_str()).inspect_err(|err| {
             error!("Failed to read handler function `{method_name}`: {err}");
@@ -77,7 +77,7 @@ impl PyHandler {
     }
 
     pub fn try_new(config: &HandlerConfig) -> PyResult<Self> {
-        let handler: Py<PyFunction> = match config {
+        let handler: Py<PyAny> = match config {
             HandlerConfig::PySpec(spec) => Python::with_gil(|py| {
                 info!("Importing Python handler with spec {:?}", spec);
                 let module_name = validate_param!(&spec, module);

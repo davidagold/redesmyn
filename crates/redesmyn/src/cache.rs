@@ -900,7 +900,7 @@ impl Cache {
     #[new]
     fn __new__(
         client: FsClient,
-        load_model: Bound<'_, PyFunction>,
+        load_model: Bound<'_, PyAny>,
         max_size: Option<usize>,
         schedule: Option<Bound<'_, PyAny>>,
         interval: Option<Bound<'_, PyDelta>>,
@@ -1080,7 +1080,7 @@ impl FsClient {
 
 #[derive(Clone, Debug)]
 pub enum ArtifactsClient {
-    FsClient { client: FsClient, load_model: Py<PyFunction> },
+    FsClient { client: FsClient, load_model: Py<PyAny> },
 }
 
 impl ArtifactsClient {

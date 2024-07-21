@@ -59,7 +59,7 @@ impl PyEndpoint {
     pub fn __new__(
         signature: (Wrap<Schema>, Wrap<Schema>),
         path: String,
-        handler: &Bound<'_, PyFunction>,
+        handler: &Bound<'_, PyAny>,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
     ) -> Self {
@@ -109,8 +109,7 @@ impl PyServer {
         cache_config: Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
-        let load_model: Py<_> =
-            cache_config.getattr("load_model")?.downcast::<PyFunction>()?.clone().unbind();
+        let load_model: Py<_> = cache_config.getattr("load_model")?.clone().unbind();
         let schedule = cache_config.getattr("schedule").ok();
         let interval = cache_config
             .getattr("interval")
