@@ -5,7 +5,7 @@ use crate::{
 };
 use pyo3::{prelude::*, pyclass, pymethods};
 use serde::Serialize;
-use std::{env, fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
+use std::{fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
 use tracing::{error, info};
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
