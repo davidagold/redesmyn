@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    common::{consume_and_log_err, Wrap},
+    common::{build_runtime, consume_and_log_err, Wrap, TOKIO_RUNTIME},
     do_in,
 };
 use serde::{self, Serialize, Serializer};
@@ -205,7 +205,8 @@ impl EmfMetrics {
         S: Subscriber + for<'a> LookupSpan<'a>,
     {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<MetricsEntry>(512);
-        let task = tokio::spawn(async move {
+        let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
+        let task = runtime.spawn(async move {
             info!("Creating metrics log file `{}`", fp);
             let mut file = File::create(fp.as_str()).await.unwrap();
             loop {
