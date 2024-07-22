@@ -1,6 +1,5 @@
-use crate::common::{
-    build_runtime, consume_and_log_err, include_python_paths, LogConfig, TOKIO_RUNTIME,
-};
+use crate::common::{build_runtime, consume_and_log_err, include_python_paths, TOKIO_RUNTIME};
+use crate::logging::LogConfig;
 use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
 
 use super::error::ServiceError;

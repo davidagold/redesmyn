@@ -3,10 +3,11 @@ use polars::datatypes::DataType;
 use pyo3::{prelude::*, Python};
 use redesmyn::{
     cache::{ArtifactsClient, Cache, FsClient, Schedule},
-    common::{consume_and_log_err, include_python_paths, LogConfig, LogOutput},
+    common::{consume_and_log_err, include_python_paths},
     do_in,
     error::ServiceError,
     handler::PySpec,
+    logging::{LogConfig, LogOutput},
     predictions::BatchPredictor,
     schema::Schema,
     server::Server,

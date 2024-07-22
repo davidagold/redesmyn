@@ -1,20 +1,18 @@
-use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient, Schedule};
-use ::redesmyn::common::{consume_and_log_err, LogConfig, LogOutput, Wrap};
+use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient};
+use ::redesmyn::common::{consume_and_log_err, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
+use ::redesmyn::logging::{LogConfig, LogOutput};
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use ::redesmyn::server::Server;
 
-use chrono::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDelta, PyFunction, PyType};
+use pyo3::types::{PyDelta, PyType};
 use std::cell::OnceCell;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::OnceLock;
-use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
 
 #[pyclass]
 #[repr(transparent)]
