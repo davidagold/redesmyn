@@ -90,7 +90,6 @@ impl LogConfig {
                 None => None,
             })
             .init();
-        println!("Initialized logging with main output `{}`", self.output);
         info!("Initialized logging with main output `{}`", self.output);
     }
 
