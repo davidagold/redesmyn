@@ -13,7 +13,7 @@ from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
 from train import Input, Output, SepalLengthPredictor, SepalLengthPredictorSpec
 
-LogConfig(path=Path("./logs/run.txt")).init()
+LogConfig(path=Path("./logs/run.txt"), emf_path=Path("./logs/metrics.txt")).init()
 mlflow.set_tracking_uri(project_dir() / "models/mlflow/iris")
 
 
