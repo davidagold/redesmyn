@@ -1047,11 +1047,11 @@ impl PathTemplate {
             .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
 
         // Return the absolute rather than relative path
-        Ok([self.base.to_str().ok_or_else(|| CacheError::from("Nope"))?, &path]
-            .into_iter()
-            .collect::<PathBuf>()
+        let mut abs_path = self.base.clone();
+        abs_path.push(path);
+        Ok(abs_path
             .to_str()
-            .ok_or_else(|| CacheError::from("Still nope"))?
+            .ok_or_else(|| CacheError::from(format!("Failed to stringify path {:#?}", abs_path)))?
             .to_string())
     }
 }
