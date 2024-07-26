@@ -1,23 +1,20 @@
-use crate::{
-    common::consume_and_log_err,
-    metrics::{EmfInterest, EmfMetrics, EmfOutput},
-};
-use pyo3::{
-    prelude::*,
-    pyclass, pymethods,
-    types::{PyDict, PyTuple},
-};
+use crate::metrics::{EmfInterest, EmfMetrics, EmfOutput};
+use pyo3::{prelude::*, pyclass, pymethods};
 use std::{
     fmt::{Debug, Display},
     fs::File,
     io,
     path::PathBuf,
 };
-use tracing::{info, subscriber::DefaultGuard};
+use tracing::info;
 use tracing_subscriber::{
     self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
 };
 
+/// `LogOutput` configures the primary logging output for the application.
+/// Logs can be written either to STDOUT by initializing a `LogOutput::Stdout`
+/// or to a file by initializing a `LogOutput::File(path: PathBuf)`,
+/// where `path` is the path of the file to which to write.
 #[derive(Debug, Clone, Default)]
 pub enum LogOutput {
     #[default]
@@ -35,6 +32,10 @@ impl Display for LogOutput {
     }
 }
 
+/// `LogConfig` configures all logging output for the application.
+/// This includes specifications for the primary logging output (via `LogOutput`)
+/// as well as specification of the optional Amazon Web Services (AWS) Embedded Metrics Format (EMF) metrics
+/// (via `EmfOutput`).
 #[pyclass]
 #[derive(Default)]
 pub struct LogConfig {
@@ -43,10 +44,12 @@ pub struct LogConfig {
 }
 
 impl LogConfig {
+    /// Instantiate a new `LogOutput` specification.
     pub fn new(output: LogOutput, emf_output: Option<EmfOutput>) -> Self {
         LogConfig { output, emf_output }
     }
 
+    /// Produce a `tracing_subscriber::layer::Layer` from the present `LogConfig`.
     pub fn layer<S>(&self) -> Box<dyn Layer<S> + Send + Sync + 'static>
     where
         S: tracing::Subscriber,

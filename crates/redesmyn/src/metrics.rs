@@ -194,11 +194,13 @@ impl MetricsEntry {
     }
 }
 
+/// `EmfOutput` configures the optional logging of AWS EMF metrics.
 pub enum EmfOutput {
     File(PathBuf),
 }
 
 impl EmfOutput {
+    /// Instantiate a new `EmfOutput` configuration specifying the type of output to which to write EMF metrics.
     pub fn new(path: PathBuf) -> Self {
         EmfOutput::File(path)
     }
