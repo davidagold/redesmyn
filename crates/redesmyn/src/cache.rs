@@ -1046,7 +1046,6 @@ impl PathTemplate {
             })?
             .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
 
-        // Return the absolute rather than relative path
         let mut abs_path = self.base.clone();
         abs_path.push(path);
         Ok(abs_path
