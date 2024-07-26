@@ -5,7 +5,7 @@ use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::logging::LogConfig;
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use ::redesmyn::server::{Server, , ServerHandle};
+use ::redesmyn::server::{Server, ServerHandle};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
