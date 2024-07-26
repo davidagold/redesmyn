@@ -1,18 +1,16 @@
 use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient};
-use ::redesmyn::common::{consume_and_log_err, Wrap};
+use ::redesmyn::common::Wrap;
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
-use ::redesmyn::logging::{LogConfig, LogOutput};
+use ::redesmyn::logging::LogConfig;
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use ::redesmyn::server::Server;
+use ::redesmyn::server::{Server, , ServerHandle};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDelta, PyType};
-use std::cell::OnceCell;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 #[pyclass]
 #[repr(transparent)]
@@ -83,22 +81,21 @@ impl PyEndpoint {
 }
 
 #[pyclass]
-#[repr(transparent)]
 struct PyServer {
-    server: OnceCell<Server>,
+    server: OnceLock<Server>,
+    handle: Arc<ServerHandle>,
 }
 
 #[pymethods]
 impl PyServer {
     #[new]
     pub fn __new__() -> Self {
-        let mut server = Server::default();
-        let mut path: PathBuf = ["logs", "this_run"].iter().collect();
-        path.set_extension("txt");
-        server.log_config(LogConfig::new(LogOutput::File(path), None));
-        let cell = OnceCell::new();
-        consume_and_log_err(cell.set(server));
-        PyServer { server: cell }
+        let server = Server::new(None);
+        let handle = server.handle();
+        PyServer {
+            server: OnceLock::from(server),
+            handle: handle.into(),
+        }
     }
 
     pub fn register(
@@ -150,6 +147,14 @@ impl PyServer {
             .await
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?
     }
+
+    pub fn handle(&self) -> PyResult<ServerHandle> {
+        Ok(self
+            .server
+            .get()
+            .ok_or_else(|| PyRuntimeError::new_err("Failed to obtain `Server`"))?
+            .handle())
+    }
 }
 
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -163,5 +168,6 @@ fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
     m.add_class::<LogConfig>().unwrap();
+    m.add_class::<ServerHandle>().unwrap();
     Ok(())
 }
