@@ -92,21 +92,4 @@ impl LogConfig {
             .init();
         info!("Initialized logging with main output `{}`", self.output);
     }
-
-    // #[pyo3(signature = (func, *args, **kwargs))]
-    // pub fn do_as_default(
-    //     &self,
-    //     func: &Bound<'_, PyAny>,
-    //     args: &Bound<'_, PyTuple>,
-    //     kwargs: Option<&Bound<'_, PyDict>>,
-    // ) -> PyResult<()> {
-    //     let _ = tracing_subscriber::registry()
-    //         .with(EnvFilter::from_default_env())
-    //         .with(self.layer().with_filter(EmfInterest::Never))
-    //         .with(self.enable_emf.then(|| EmfMetrics::new(10, "./metrics.log".into())))
-    //         .set_default();
-
-    //     func.call(args, kwargs)?;
-    //     Ok(())
-    // }
 }
