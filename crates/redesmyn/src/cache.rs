@@ -1046,6 +1046,7 @@ impl PathTemplate {
             })?
             .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
 
+        // Return the absolute rather than relative path
         Ok([self.base.to_str().ok_or_else(|| CacheError::from("Nope"))?, &path]
             .into_iter()
             .collect::<PathBuf>()
