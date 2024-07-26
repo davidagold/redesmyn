@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::Not,
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -190,6 +191,16 @@ impl MetricsEntry {
     fn dimension_pairs<'a>(&'a self) -> Vec<DimensionPair> {
         // TODO: Avoid cloning.
         self.dimensions.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+}
+
+pub enum EmfOutput {
+    File(PathBuf),
+}
+
+impl EmfOutput {
+    pub fn new(path: PathBuf) -> Self {
+        EmfOutput::File(path)
     }
 }
 
