@@ -1,17 +1,25 @@
-use crate::common::{build_runtime, LogConfig, TOKIO_RUNTIME};
+use crate::common::{build_runtime, consume_and_log_err, include_python_paths, TOKIO_RUNTIME};
+use crate::error::ServiceResult;
+use crate::logging::LogConfig;
 use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
+use crate::{config_methods, do_in};
 
 use super::error::ServiceError;
 use super::schema::Relation;
-use actix_web::{dev::ServerHandle, web, HttpServer};
+use actix_web::{web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
-use pyo3::{prelude::*, PyResult, Python};
+use pyo3::{pyclass, pymethods, PyResult};
 use serde::Deserialize;
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
-use tokio::signal;
-use tracing::instrument;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
+use tokio::{select, signal};
 use tracing::{error, info};
+use tracing::{instrument, warn};
 
 pub(crate) trait ResourceFactory: Sync + Send {
     fn new_resource(&mut self) -> Result<Resource, ServiceError>;
@@ -46,11 +54,23 @@ where
     }
 }
 
-#[derive(Default)]
+pub enum ServerCommand {
+    SetInternalHandle {
+        handle: actix_web::dev::ServerHandle,
+        tx: oneshot::Sender<ServiceResult<()>>,
+    },
+    Stop {
+        graceful: Option<bool>,
+        tx: oneshot::Sender<ServiceResult<()>>,
+    },
+}
+
 pub struct Server {
-    pub(crate) services_by_path: BTreeMap<String, Box<dyn ServiceCore + Send + 'static>>,
+    pub(crate) services_by_path: BTreeMap<String, Box<dyn ServiceCore + Send + Sync + 'static>>,
+    // TODO: Consolidate Python-related functionality away from particular constructs
     pythonpath: Vec<String>,
-    config_log: LogConfig,
+    tx_cmd: Arc<mpsc::Sender<ServerCommand>>,
+    task: JoinHandle<ServiceResult<()>>,
 }
 
 impl std::fmt::Debug for Server {
@@ -65,12 +85,20 @@ impl std::fmt::Debug for Server {
 }
 
 impl Server {
-    pub fn push_pythonpath(&mut self, path: &str) {
-        self.pythonpath.push(path.to_string());
+    pub fn new(pythonpath: Option<Vec<String>>) -> Server {
+        let (tx_cmd, rx_cmd) = mpsc::channel(512);
+        let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
+        let task = runtime.spawn(Server::task(rx_cmd));
+        Server {
+            services_by_path: BTreeMap::default(),
+            pythonpath: pythonpath.unwrap_or_default(),
+            task,
+            tx_cmd: tx_cmd.into(),
+        }
     }
 
-    pub fn log_config(&mut self, config: LogConfig) {
-        self.config_log = config;
+    pub fn push_pythonpath(&mut self, path: &str) {
+        self.pythonpath.push(path.to_string());
     }
 }
 
@@ -92,38 +120,14 @@ impl Server {
 
     #[instrument(skip_all)]
     pub fn serve(&mut self) -> Result<actix_web::dev::Server, ServiceError> {
-        let runtime = TOKIO_RUNTIME.get_or_init(build_runtime);
-        let pwd = match env::current_dir() {
-            Ok(pwd) => pwd,
-            Err(err) => {
-                error!("Failed to get working directory: {err}");
-                return Err(ServiceError::IoError(err));
-            }
-        };
+        let pwd = env::current_dir().map_err(|err| {
+            ServiceError::from(format!("Failed to obtain current working directory: {}", err))
+        })?;
         tracing::info!("Starting server from directory {}", pwd.to_str().unwrap());
 
-        pyo3::prepare_freethreaded_python();
-        if let Err(err) = Python::with_gil(|py| {
-            let sys = py.import_bound("sys")?;
-            let version = sys.getattr("version")?.extract::<String>()?;
-            tracing::info!("Found Python version: {}", version);
-
-            let insert = sys.getattr("path")?.getattr("insert")?;
-            let additional_paths = [&(pwd.to_str().unwrap().to_string())];
-            for path in self.pythonpath.iter().chain(additional_paths) {
-                insert.call((0, path), None)?;
-            }
-
-            let pythonpath = sys.getattr("path")?.extract::<Vec<String>>()?;
-            let str_python_path =
-                serde_json::to_string_pretty(&pythonpath).expect("Failed to serialize `sys.path`.");
-            println!("Found Python path: {str_python_path}");
-            info!(pythonpath = format!("{}", str_python_path.as_str()));
-            PyResult::<()>::Ok(())
-        }) {
-            error!("{}", format!("Failed to initialize Python process: {err}"));
-            return Err(err.into());
-        };
+        let pythonpaths =
+            self.pythonpath.iter().map(String::as_str).chain(vec![(pwd.to_str().unwrap())]);
+        consume_and_log_err(include_python_paths(pythonpaths));
 
         // The `factory` argument to `HttpServer::new()` is invoked for each worker,
         // hence we must start the services before moving them into the `factory` closure
@@ -162,14 +166,77 @@ impl Server {
 
         info!("Starting server...");
         let server = http_server.bind("127.0.0.1:8080")?.run();
-        let server_handle = server.handle();
-        runtime.spawn(async move { await_shutdown(server_handle).await });
+        let (tx, rx) = oneshot::channel();
+        let cmd = ServerCommand::SetInternalHandle { handle: server.handle(), tx };
+        consume_and_log_err(self.tx_cmd.try_send(cmd));
+
         Ok(server)
+    }
+
+    async fn task(mut rx_cmd: mpsc::Receiver<ServerCommand>) -> ServiceResult<()> {
+        let server_handle = OnceCell::<actix_web::dev::ServerHandle>::new();
+        loop {
+            select! {
+                _ = signal::ctrl_c() => {
+                    tracing::info!("Received shutdown signal.");
+                    match server_handle.get() {
+                        Some(handle) => {
+                            handle.stop(true).await;
+                        }
+                        None => {
+                            warn!("Failed to obtain server handle");
+                            break Err(ServiceError::from("Failed to shut down gracefully"))
+                        }
+                    }
+                    break Ok(())
+                },
+                cmd = rx_cmd.recv() => {
+                    match cmd {
+                        Some(ServerCommand::Stop{ tx, graceful }) => {
+                            tracing::info!("Received shutdown request.");
+                            match server_handle.get() {
+                                Some(handle) => {
+                                    handle.stop(graceful.unwrap_or(true)).await;
+                                    consume_and_log_err(tx.send(Ok(())));
+                                }
+                                None => {
+                                    let err_msg = "Failed to shut down gracefully: Failed to obtain server handle";
+                                    warn!(err_msg);
+                                    consume_and_log_err(tx.send(Err(ServiceError::from(err_msg))));
+                                    break Err(ServiceError::from(err_msg));
+                                }
+                            }
+                            break Ok(())
+                        }
+                        Some(ServerCommand::SetInternalHandle { handle, .. }) => {
+                            consume_and_log_err(server_handle.set(handle));
+                        }
+                        None => {
+                            break Ok(())
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn handle(&self) -> ServerHandle {
+        ServerHandle { tx_cmd: self.tx_cmd.clone() }
     }
 }
 
-async fn await_shutdown(server_handle: ServerHandle) {
-    let _ = signal::ctrl_c().await;
-    tracing::info!("Received shutdown signal.");
-    server_handle.stop(true).await;
+#[pyclass]
+pub struct ServerHandle {
+    tx_cmd: Arc<mpsc::Sender<ServerCommand>>,
+}
+
+#[pymethods]
+impl ServerHandle {
+    pub async fn stop(&self, graceful: Option<bool>) -> ServiceResult<()> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = ServerCommand::Stop { graceful, tx };
+        let result_send_cmd = self.tx_cmd.send(cmd).await;
+        consume_and_log_err(result_send_cmd);
+        rx.await?
+    }
 }

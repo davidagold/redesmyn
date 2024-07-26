@@ -900,7 +900,7 @@ impl Cache {
     #[new]
     fn __new__(
         client: FsClient,
-        load_model: Bound<'_, PyFunction>,
+        load_model: Bound<'_, PyAny>,
         max_size: Option<usize>,
         schedule: Option<Bound<'_, PyAny>>,
         interval: Option<Bound<'_, PyDelta>>,
@@ -1023,7 +1023,8 @@ impl PathTemplate {
     }
 
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
-        self.components()
+        let path = self
+            .components()
             .iter()
             .try_fold(None, |path: Option<String>, component| {
                 let next_path_component = match component {
@@ -1043,7 +1044,14 @@ impl PathTemplate {
                 };
                 CacheResult::<Option<String>>::Ok(Some(path))
             })?
-            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))
+            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
+
+        let mut abs_path = self.base.clone();
+        abs_path.push(path);
+        Ok(abs_path
+            .to_str()
+            .ok_or_else(|| CacheError::from(format!("Failed to stringify path {:#?}", abs_path)))?
+            .to_string())
     }
 }
 
@@ -1080,7 +1088,7 @@ impl FsClient {
 
 #[derive(Clone, Debug)]
 pub enum ArtifactsClient {
-    FsClient { client: FsClient, load_model: Py<PyFunction> },
+    FsClient { client: FsClient, load_model: Py<PyAny> },
 }
 
 impl ArtifactsClient {

@@ -152,7 +152,6 @@ class TestCache:
     def test_schedule(self):
         log_dir = Path(__file__).parent / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        LogConfig(path=log_dir / "test.txt").init()
 
         refresh_interval_seconds = 2
         cache = afs.Cache(

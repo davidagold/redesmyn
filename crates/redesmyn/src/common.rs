@@ -1,44 +1,9 @@
 pub(crate) type Sized128String = heapless::String<128>;
-use crate::metrics::{EmfInterest, EmfMetrics};
+use crate::error::{ServiceError, ServiceResult};
+use pyo3::prelude::*;
 use serde::Serialize;
-use std::{fmt::Debug, fs::File, io, path::PathBuf, sync::OnceLock};
-use tracing::error;
-use tracing_subscriber::{
-    self, layer::Layer, layer::SubscriberExt, prelude::*, registry::LookupSpan, EnvFilter,
-};
-
-#[derive(Debug, Clone, Default)]
-pub enum LogConfig {
-    #[default]
-    Stdout,
-    File(PathBuf),
-}
-
-impl LogConfig {
-    pub fn layer<S>(&self) -> Box<dyn Layer<S> + Send + Sync + 'static>
-    where
-        S: tracing::Subscriber,
-        for<'a> S: LookupSpan<'a>,
-    {
-        let layer = tracing_subscriber::fmt::layer().json();
-        match self {
-            LogConfig::Stdout => Box::new(layer.with_writer(io::stdout)),
-            LogConfig::File(path) => {
-                println!("Creating log file at {}", path.to_string_lossy());
-                let file = File::create(path).expect("Failed to create log file.");
-                Box::new(layer.with_writer(file))
-            }
-        }
-    }
-}
-
-pub fn init_logging(log_config: LogConfig) {
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(log_config.layer().with_filter(EmfInterest::Never))
-        .with(EmfMetrics::new(10, "./metrics.log".into()))
-        .init();
-}
+use std::{fmt::Debug, sync::OnceLock};
+use tracing::{error, info};
 
 #[macro_export]
 macro_rules! do_in {
@@ -117,4 +82,28 @@ pub(crate) fn build_runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("Failed to initialize Tokio Runtime.")
+}
+
+pub fn include_python_paths<'path>(
+    paths: impl IntoIterator<Item = &'path str>,
+) -> ServiceResult<()> {
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| {
+        let sys = py.import_bound("sys")?;
+        let version: String = sys.getattr("version")?.extract()?;
+        tracing::info!("Found Python version: {}", version);
+
+        let insert = sys.getattr("path")?.getattr("insert")?;
+        for path in paths.into_iter() {
+            insert.call((0, path), None)?;
+        }
+
+        let pythonpath: Vec<String> = sys.getattr("path")?.extract()?;
+        let str_python_path = serde_json::to_string_pretty(&pythonpath).map_err(|err| {
+            ServiceError::from(format!("Failed to serialize `sys.path`: {}", err))
+        })?;
+        info!(pythonpath = format!("{}", str_python_path.as_str()));
+        PyResult::<()>::Ok(())
+    })
+    .map_err(|err| ServiceError::from(format!("Failed to initialize Python process: {}", err)))
 }

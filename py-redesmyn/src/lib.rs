@@ -1,20 +1,16 @@
-use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient, Schedule};
-use ::redesmyn::common::{consume_and_log_err, LogConfig as RsLogConfig, Wrap};
+use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient};
+use ::redesmyn::common::Wrap;
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
+use ::redesmyn::logging::LogConfig;
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
-use ::redesmyn::server::Server;
+use ::redesmyn::server::{Server, ServerHandle};
 
-use chrono::Duration;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDelta, PyFunction, PyType};
-use std::cell::OnceCell;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::OnceLock;
-use tracing_subscriber::{self, layer::SubscriberExt, prelude::*, EnvFilter};
+use pyo3::types::{PyDelta, PyType};
+use std::sync::{Arc, OnceLock};
 
 #[pyclass]
 #[repr(transparent)]
@@ -59,7 +55,7 @@ impl PyEndpoint {
     pub fn __new__(
         signature: (Wrap<Schema>, Wrap<Schema>),
         path: String,
-        handler: &Bound<'_, PyFunction>,
+        handler: &Bound<'_, PyAny>,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
     ) -> Self {
@@ -85,22 +81,21 @@ impl PyEndpoint {
 }
 
 #[pyclass]
-#[repr(transparent)]
 struct PyServer {
-    server: OnceCell<Server>,
+    server: OnceLock<Server>,
+    handle: Arc<ServerHandle>,
 }
 
 #[pymethods]
 impl PyServer {
     #[new]
     pub fn __new__() -> Self {
-        let mut server = Server::default();
-        let mut path: PathBuf = ["logs", "this_run"].iter().collect();
-        path.set_extension("txt");
-        server.log_config(RsLogConfig::File(path));
-        let cell = OnceCell::new();
-        consume_and_log_err(cell.set(server));
-        PyServer { server: cell }
+        let server = Server::new(None);
+        let handle = server.handle();
+        PyServer {
+            server: OnceLock::from(server),
+            handle: handle.into(),
+        }
     }
 
     pub fn register(
@@ -109,8 +104,7 @@ impl PyServer {
         cache_config: Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
-        let load_model: Py<_> =
-            cache_config.getattr("load_model")?.downcast::<PyFunction>()?.clone().unbind();
+        let load_model: Py<_> = cache_config.getattr("load_model")?.clone().unbind();
         let schedule = cache_config.getattr("schedule").ok();
         let interval = cache_config
             .getattr("interval")
@@ -153,43 +147,17 @@ impl PyServer {
             .await
             .map_err(|err| PyRuntimeError::new_err(err.to_string()))?
     }
+
+    pub fn handle(&self) -> PyResult<ServerHandle> {
+        Ok(self
+            .server
+            .get()
+            .ok_or_else(|| PyRuntimeError::new_err("Failed to obtain `Server`"))?
+            .handle())
+    }
 }
 
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
-#[pyclass]
-#[derive(Default)]
-struct LogConfig {
-    config: OnceCell<RsLogConfig>,
-}
-
-#[pymethods]
-impl LogConfig {
-    #[new]
-    fn __new__(path: Py<PyAny>) -> PyResult<LogConfig> {
-        let config = LogConfig::default();
-        Python::with_gil(|py| {
-            config
-                .config
-                .set(RsLogConfig::File(path.extract::<PathBuf>(py)?))
-                .map_err(|_| PyRuntimeError::new_err("Failed to set log config"))?;
-            PyResult::Ok(())
-        })?;
-        Ok(config)
-    }
-
-    fn init(&mut self) -> PyResult<()> {
-        let config = self
-            .config
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("Failed to take log config."))?;
-        tracing_subscriber::registry()
-            .with(EnvFilter::from_default_env())
-            .with(config.layer())
-            .init();
-        Ok(())
-    }
-}
 
 #[pymodule]
 #[pyo3(name = "py_redesmyn")]
@@ -200,5 +168,6 @@ fn redesmyn(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Cache>().unwrap();
     m.add_class::<FsClient>().unwrap();
     m.add_class::<LogConfig>().unwrap();
+    m.add_class::<ServerHandle>().unwrap();
     Ok(())
 }

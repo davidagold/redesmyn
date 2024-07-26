@@ -5,11 +5,11 @@ from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
 
 import polars as pl
 from more_itertools import first, one
+from typing_extensions import Coroutine
 
 from redesmyn.artifacts import ArtifactSpec, CacheConfig
-from redesmyn.py_redesmyn import PyEndpoint, PyServer
+from redesmyn.py_redesmyn import Cache, PyEndpoint, PyServer, ServerHandle
 from redesmyn.schema import Schema
-from redesmyn.py_redesmyn import Cache
 
 
 def extract_schema(annotation: Type) -> pl.Struct:
@@ -91,6 +91,7 @@ class Server:
 
     def __init__(self) -> None:
         self._pyserver: PyServer = PyServer()
+        self._handle: ServerHandle = self._pyserver.handle()
         self._endpoints: List[Endpoint] = []
 
     def register(self, endpoint: Endpoint) -> Self:
@@ -117,7 +118,7 @@ class Server:
         self._pyserver.register(endpoint._pyendpoint, endpoint._cache_config)
         return self
 
-    def serve(self) -> Future:
+    async def serve(self) -> Coroutine:
         """Run the present `Server`.
 
         ..  code-block:: python
@@ -134,7 +135,10 @@ class Server:
 
             asyncio.run(main())
         """
-        return self._pyserver.serve()
+        return await self._pyserver.serve()
+
+    async def stop(self, graceful: bool = True) -> Coroutine:
+        return await self._handle.stop(graceful=graceful)
 
     def __repr__(self) -> str:
         tab = " " * 4
