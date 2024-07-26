@@ -8,6 +8,7 @@ use redesmyn::{
     error::ServiceError,
     handler::PySpec,
     logging::{LogConfig, LogOutput},
+    metrics::EmfOutput,
     predictions::BatchPredictor,
     schema::Schema,
     server::Server,
@@ -17,13 +18,6 @@ use tracing::info;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() -> Result<(), ServiceError> {
-    LogConfig::new(LogOutput::Stdout, Some(true)).init();
-
-    let mut schema = Schema::default();
-    schema.add_field("sepal_width", DataType::Float64);
-    schema.add_field("petal_length", DataType::Float64);
-    schema.add_field("petal_width", DataType::Float64);
-
     let Some(base_dir_str) = do_in!(|| {
         let exe_dir = current_exe().ok()?;
         exe_dir.parent()?.parent()?.parent()?.parent()?.to_path_buf().to_str()?.to_string()
@@ -32,6 +26,19 @@ async fn main() -> Result<(), ServiceError> {
     };
     info!("base_dir = {:#?}", base_dir_str);
     let example_dir: PathBuf = [base_dir_str.as_str(), "examples"].iter().collect();
+
+    do_in!(|| {
+        LogConfig::new(
+            LogOutput::Stdout,
+            Some(EmfOutput::new([example_dir.to_str()?, "logs/metrics.log"].iter().collect())),
+        )
+        .init();
+    });
+
+    let mut schema = Schema::default();
+    schema.add_field("sepal_width", DataType::Float64);
+    schema.add_field("petal_length", DataType::Float64);
+    schema.add_field("petal_width", DataType::Float64);
 
     do_in!(|| {
         consume_and_log_err(include_python_paths([example_dir.to_str()?]));
@@ -77,7 +84,7 @@ async fn main() -> Result<(), ServiceError> {
         .handler_config(PySpec::new().module("model").method("handle").into())
         .build()?;
 
-    let mut server = Server::default();
+    let mut server = Server::new(None);
     server.register(endpoint);
     server.push_pythonpath("./py-redesmyn/examples/iris");
     server.serve()?.await?;
