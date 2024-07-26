@@ -49,8 +49,15 @@ class Cache:
 
 class LogConfig:
     def __new__(cls, path: Path, emf_path: Optional[Path] = None) -> Self: ...
+    """`LogConfig` configures logging output for the application.
+
+    Redesmyn applications write to two logging output files: a primary logging output file,
+    specified via the `path` parameter, and an optional Amazon Web Services (AWS)
+    Embedded Metrics Format (EMF) output file, specified via the `emf_path` parameter.
+    """
+
     def init(self): ...
-    def do_as_default(self, func, *args, **kwargs) -> None: ...
+    """Initialize logging for the present application using this logging configuration."""
 
 class ServerHandle:
     def stop(self, graceful: Optional[bool]) -> Future: ...
