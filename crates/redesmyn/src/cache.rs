@@ -196,7 +196,7 @@ struct RefreshConfig {
     last_updated: Option<DateTime<Utc>>,
     next_update: UpdateTime,
     tx: Arc<mpsc::Sender<Command>>,
-    client: Arc<ArtifactsClient>,
+    client: Arc<dyn Client>,
     fetch_as: FetchAs,
     tx_result: OnceCell<oneshot::Sender<CacheResult<RefreshState>>>,
     schedule: Arc<Schedule>,
@@ -217,7 +217,7 @@ impl RefreshConfig {
         spec: BoxedSpec,
         last_updated: Option<DateTime<Utc>>,
         next_update: UpdateTime,
-        client: Arc<ArtifactsClient>,
+        client: Arc<dyn Client>,
         tx: Arc<mpsc::Sender<Command>>,
         fetch_as: FetchAs,
         tx_result: Option<oneshot::Sender<CacheResult<RefreshState>>>,
@@ -365,10 +365,11 @@ impl Transition<PendingFetch> for FetchingData {
                 )
             }
         };
-        let RefreshConfig { client, spec, .. } = &config.as_ref();
-        let container = FetchAs::empty_like(&config.fetch_as); // TODO: Maybe we should just take `fetch_as` from the config
-        let fut = client.fetch(Box::new(spec.as_map()?), container).into_future();
-        let task = tokio::spawn(async move { fut.await });
+
+        let task = tokio::spawn(async move {
+            let container = FetchAs::empty_like(&config.fetch_as); // TODO: Maybe we should just take `fetch_as` from the config
+            config.client.fetch(Box::new(config.spec.as_map()?), container).into_future().await
+        });
         Ok(FetchingData { task })
     }
 }
@@ -473,12 +474,13 @@ impl ModelEntry {
 #[pyclass]
 #[derive(Debug)]
 pub struct Cache {
-    client: Arc<ArtifactsClient>,
+    client: Arc<dyn Client>,
     schedule: Arc<Schedule>,
     max_size: Option<usize>,
     pre_fetch_all: Option<bool>,
     tx: OnceCell<Arc<mpsc::Sender<Command>>>,
     task: OnceCell<JoinHandle<Result<(), CacheError>>>,
+    load_model: Py<PyAny>,
 }
 
 impl std::fmt::Display for Cache {
@@ -514,18 +516,20 @@ fn list_entries(
 
 impl Cache {
     pub fn new(
-        client: ArtifactsClient,
+        client: impl Client + 'static,
         max_size: Option<usize>,
         schedule: Option<Schedule>,
         pre_fetch_all: Option<bool>,
+        load_model: Py<PyAny>,
     ) -> Cache {
         Cache {
-            client: client.into(),
+            client: Arc::from(client),
             schedule: schedule.unwrap_or_default().into(),
             max_size,
             pre_fetch_all,
             tx: OnceCell::<Arc<mpsc::Sender<Command>>>::default(),
             task: OnceCell::<JoinHandle<Result<(), CacheError>>>::default(),
+            load_model,
         }
     }
 
@@ -540,6 +544,7 @@ impl Cache {
             rx,
             self.pre_fetch_all,
             self.schedule.clone(),
+            self.load_model.clone(),
         );
         if let Err(err) = self.tx.set(tx.into()) {
             error!("Failed to set Cache tx: {}", err)
@@ -558,12 +563,13 @@ impl Cache {
 
     #[instrument(skip_all)]
     async fn task(
-        client: Arc<ArtifactsClient>,
+        client: Arc<dyn Client>,
         max_size: usize,
         tx_cmd: Arc<mpsc::Sender<Command>>,
         mut rx_cmd: mpsc::Receiver<Command>,
         pre_fetch_all: Option<bool>,
         schedule: Arc<Schedule>,
+        load_model: Py<PyAny>,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size).unwrap());
@@ -668,7 +674,8 @@ impl Cache {
                     model_cache.put(key, (Some(taskflow), entry));
                 }
                 Command::InsertEntry(key, data, tx) => {
-                    let result = Self::insert_entry(&client, &mut model_cache, key.clone(), data);
+                    let result =
+                        Self::insert_entry(&mut model_cache, key.clone(), data, &load_model);
                     match &result {
                         Ok(_) => {
                             info!("Successfully inserted refreshed model entry for key `{}`", key);
@@ -787,15 +794,16 @@ impl Cache {
         Ok(TaskFlow { handle })
     }
 
-    #[instrument(skip(client, cache, data))]
+    #[instrument(skip(cache, data, load_fn))]
     fn insert_entry(
-        client: &ArtifactsClient,
         cache: &mut LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)>,
         key: CacheKey,
         data: FetchAs,
+        load_fn: &Py<PyAny>,
     ) -> Result<(), CacheError> {
         info!("Attempting to load and insert model entry");
-        match (client.load_model(data), cache.pop(&key)) {
+        let model = Python::with_gil(|py| load_fn.call_bound(py, (data.into_py(py)?,), None));
+        match (model, cache.pop(&key)) {
             (Ok(new_model), Some((taskflow, model_entry))) => {
                 info!("Successfully loaded model: `{}`", __str__(&new_model));
                 // We expect `model_entry` to be in the `Refreshing` state
@@ -899,6 +907,7 @@ pub fn validate_schedule(
 impl Cache {
     #[new]
     fn __new__(
+        // TODO: Figure out how to accept a generic `impl Client` argument, e.g. wrapper struct over `Arc<dyn Client>`
         client: FsClient,
         load_model: Bound<'_, PyAny>,
         max_size: Option<usize>,
@@ -907,10 +916,11 @@ impl Cache {
         pre_fetch_all: Option<bool>,
     ) -> PyResult<Cache> {
         let cache = Cache::new(
-            ArtifactsClient::FsClient { client, load_model: load_model.unbind() },
+            client,
             max_size,
             validate_schedule(schedule, interval)?,
             pre_fetch_all,
+            load_model.unbind(),
         );
         Ok(cache)
     }
@@ -958,7 +968,7 @@ impl From<&str> for CacheError {
 
 pub type CacheResult<T> = Result<T, CacheError>;
 
-trait Client: Send + Sync + 'static {
+trait Client: std::fmt::Debug + Send + Sync {
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String>;
 
     fn list(
@@ -971,6 +981,30 @@ trait Client: Send + Sync + 'static {
         spec: BoxedSpec,
         bytes: BytesMut,
     ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>>;
+
+    fn fetch<'this>(
+        &'this self,
+        spec: BoxedSpec,
+        fetch_as: FetchAs,
+    ) -> Pin<Box<dyn Future<Output = Result<FetchAs, CacheError>> + Send + 'this>> {
+        // TODO: This may be fine for now but we should wrap in an `Arc``
+        match fetch_as {
+            FetchAs::Uri(None) => {
+                let uri = do_in!(|| -> CacheResult<_> {
+                    let args = spec.as_map()?;
+                    let path = self.substitute(args)?;
+                    let uri = Uri::Path(Some(PathBuf::from(path)));
+                    Ok(FetchAs::Uri(Some(uri)))
+                });
+                Box::pin(future::ready(uri))
+            }
+            FetchAs::Bytes(None) => {
+                Box::pin(async move { Ok(self.fetch_bytes(spec, BytesMut::new()).await?.into()) })
+            }
+            // TODO: Don't panic, just return Error
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1083,75 +1117,6 @@ impl FsClient {
             );
             Ok(client)
         })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ArtifactsClient {
-    FsClient { client: FsClient, load_model: Py<PyAny> },
-}
-
-impl ArtifactsClient {
-    fn fetch(
-        &self,
-        spec: BoxedSpec,
-        fetch_as: FetchAs,
-    ) -> Pin<Box<dyn Future<Output = Result<FetchAs, CacheError>> + Send + 'static>> {
-        // TODO: This may be fine for now but we should wrap in an `Arc``
-        let client = self.clone();
-        match fetch_as {
-            FetchAs::Uri(None) => {
-                let uri = do_in!(|| -> CacheResult<_> {
-                    let args = spec.as_map()?;
-                    let path = self.substitute(args)?;
-                    let uri = Uri::Path(Some(PathBuf::from(path)));
-                    Ok(FetchAs::Uri(Some(uri)))
-                });
-                Box::pin(future::ready(uri))
-            }
-            FetchAs::Bytes(None) => {
-                Box::pin(async move { Ok(client.fetch_bytes(spec, BytesMut::new()).await?.into()) })
-            }
-            // TODO: Don't panic, just return Error
-            _ => panic!(),
-        }
-    }
-
-    fn load_model(&self, data: FetchAs) -> PyResult<Py<PyAny>> {
-        match self {
-            Self::FsClient { load_model, .. } => {
-                Python::with_gil(|py| load_model.call_bound(py, (data.into_py(py)?,), None))
-            }
-        }
-    }
-}
-
-impl Client for ArtifactsClient {
-    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
-        match self {
-            ArtifactsClient::FsClient { client, .. } => client.substitute(args),
-        }
-    }
-
-    fn fetch_bytes(
-        &self,
-        spec: BoxedSpec,
-        bytes: BytesMut,
-    ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>> {
-        use ArtifactsClient::*;
-        match self {
-            FsClient { client, .. } => client.fetch_bytes(spec, bytes),
-        }
-    }
-
-    fn list(
-        &self,
-        base_path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
-        use ArtifactsClient::*;
-        match self {
-            FsClient { client, .. } => client.list(base_path),
-        }
     }
 }
 
