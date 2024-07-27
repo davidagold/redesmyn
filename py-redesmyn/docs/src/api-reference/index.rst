@@ -8,3 +8,4 @@ API Reference
    redesmyn.schema
    redesmyn.artifacts
    redesmyn.service
+   redesmyn.logging
