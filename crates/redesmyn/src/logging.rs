@@ -1,3 +1,5 @@
+//! The `logging` module includes constructs that specify how a Redesmyn application logs
+//! messages and metrics.
 use crate::metrics::{EmfInterest, EmfMetrics, EmfOutput};
 use pyo3::{prelude::*, pyclass, pymethods};
 use std::{
@@ -81,6 +83,14 @@ impl LogConfig {
         Ok(LogConfig::new(LogOutput::File(path.extract::<PathBuf>()?), emf_output))
     }
 
+    /// Initializes logging using the given `LogConfig` configuration.
+    ///
+    /// Primary logging output will be written to whichever output is specified via the
+    /// `output: LogOutput` field. This logging cannot be disabled but can be surfaced according
+    /// to log level filters set via `RUST_LOG`.
+    ///
+    /// If enabled via the `emf_output: Option<EmfOutput>` field, AWS EMF metrics will be written
+    /// to the destination so specified.
     pub fn init(&self) -> () {
         println!("Initializing logging");
         tracing_subscriber::registry()
