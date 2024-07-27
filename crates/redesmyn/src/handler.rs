@@ -1,4 +1,3 @@
-use pyo3::types::PyFunction;
 use pyo3::{exceptions::PyTypeError, prelude::*};
 use pyo3_polars::PyDataFrame;
 use tracing::{error, info};

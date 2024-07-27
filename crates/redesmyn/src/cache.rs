@@ -15,7 +15,7 @@ use pyo3::{
     exceptions::PyRuntimeError,
     prelude::*,
     pyclass, pymethods,
-    types::{PyDelta, PyFunction, PyString},
+    types::{PyDelta, PyString},
     Bound, IntoPy, Py, PyAny, PyResult, Python,
 };
 use std::{
@@ -23,7 +23,7 @@ use std::{
     fs,
     future::{self, Future},
     num::NonZeroUsize,
-    path::{Display, PathBuf},
+    path::PathBuf,
     pin::Pin,
     str::FromStr,
     sync::Arc,
