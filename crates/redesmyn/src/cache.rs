@@ -1120,41 +1120,6 @@ impl FsClient {
     }
 }
 
-// impl ArtifactsClient {
-//     fn fetch(
-//         &self,
-//         spec: BoxedSpec,
-//         fetch_as: FetchAs,
-//     ) -> Pin<Box<dyn Future<Output = Result<FetchAs, CacheError>> + Send + 'static>> {
-//         // TODO: This may be fine for now but we should wrap in an `Arc``
-//         let client = self.clone();
-//         match fetch_as {
-//             FetchAs::Uri(None) => {
-//                 let uri = do_in!(|| -> CacheResult<_> {
-//                     let args = spec.as_map()?;
-//                     let path = self.substitute(args)?;
-//                     let uri = Uri::Path(Some(PathBuf::from(path)));
-//                     Ok(FetchAs::Uri(Some(uri)))
-//                 });
-//                 Box::pin(future::ready(uri))
-//             }
-//             FetchAs::Bytes(None) => {
-//                 Box::pin(async move { Ok(client.fetch_bytes(spec, BytesMut::new()).await?.into()) })
-//             }
-//             // TODO: Don't panic, just return Error
-//             _ => panic!(),
-//         }
-//     }
-
-//     fn load_model(&self, data: FetchAs) -> PyResult<Py<PyAny>> {
-//         match self {
-//             Self::FsClient { load_model, .. } => {
-//                 Python::with_gil(|py| load_model.call_bound(py, (data.into_py(py)?,), None))
-//             }
-//         }
-//     }
-// }
-
 fn _list(
     mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
     mut remaining_components: VecDeque<PathComponent>,
