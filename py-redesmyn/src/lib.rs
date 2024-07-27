@@ -1,4 +1,4 @@
-use ::redesmyn::cache::{validate_schedule, ArtifactsClient, Cache, FsClient};
+use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
 use ::redesmyn::common::Wrap;
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
@@ -115,9 +115,13 @@ impl PyServer {
             })
             .ok();
         let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
-        let client = ArtifactsClient::FsClient { client: fs_client, load_model };
-        let cache =
-            Cache::new(client, max_size, validate_schedule(schedule, interval)?, Some(true));
+        let cache = Cache::new(
+            fs_client,
+            max_size,
+            validate_schedule(schedule, interval)?,
+            Some(true),
+            load_model,
+        );
 
         let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
         self.server

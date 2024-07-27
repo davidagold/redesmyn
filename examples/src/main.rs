@@ -2,7 +2,7 @@ use cron;
 use polars::datatypes::DataType;
 use pyo3::{prelude::*, Python};
 use redesmyn::{
-    cache::{ArtifactsClient, Cache, FsClient, Schedule},
+    cache::{Cache, FsClient, Schedule},
     common::{consume_and_log_err, include_python_paths},
     do_in,
     error::ServiceError,
@@ -55,13 +55,7 @@ async fn main() -> Result<(), ServiceError> {
     let Some(afs_client) = do_in!(|| {
         let models_dir: PathBuf =
             [base_dir_str.as_str(), "py-redesmyn/examples/iris"].iter().collect();
-        ArtifactsClient::FsClient {
-            client: FsClient::new(
-                models_dir,
-                "/models/mlflow/iris/{run_id}/{model_id}/artifacts/model".into(),
-            ),
-            load_model,
-        }
+        FsClient::new(models_dir, "/models/mlflow/iris/{run_id}/{model_id}/artifacts/model".into())
     }) else {
         return Ok(());
     };
@@ -73,6 +67,7 @@ async fn main() -> Result<(), ServiceError> {
                 .map_err(|err| ServiceError::from(err.to_string()))?,
         )),
         Some(true),
+        load_model,
     );
 
     let endpoint = BatchPredictor::<String, Schema>::builder()

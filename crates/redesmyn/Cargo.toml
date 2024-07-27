@@ -23,7 +23,7 @@ polars = { features = [
     "dtype-struct",
     "partition_by",
 ], workspace = true }
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["experimental-async"] }
 pyo3-polars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value", "indexmap"] }
