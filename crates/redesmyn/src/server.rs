@@ -1,20 +1,17 @@
 use crate::common::{build_runtime, consume_and_log_err, include_python_paths, TOKIO_RUNTIME};
 use crate::error::ServiceResult;
-use crate::logging::LogConfig;
 use crate::predictions::{EndpointHandle, HandlerArgs, Service, ServiceCore};
-use crate::{config_methods, do_in};
 
 use super::error::ServiceError;
 use super::schema::Relation;
 use actix_web::{web, HttpServer};
 use actix_web::{Handler, Resource, Responder};
-use pyo3::{pyclass, pymethods, PyResult};
+use pyo3::{pyclass, pymethods};
 use serde::Deserialize;
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
-use std::sync::mpsc::channel;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::{select, signal};

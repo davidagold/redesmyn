@@ -206,7 +206,6 @@ impl EmfOutput {
     }
 }
 
-#[derive(Debug)]
 pub struct EmfMetrics {
     tx: Sender<MetricsEntry>,
     task: JoinHandle<Result<(), ServiceError>>,

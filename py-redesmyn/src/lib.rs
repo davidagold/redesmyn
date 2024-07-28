@@ -42,7 +42,6 @@ impl PySchema {
 }
 
 #[pyclass]
-#[derive(Clone)]
 struct PyEndpoint {
     signature: (Schema, Schema),
     config: ServiceConfig,
@@ -100,7 +99,7 @@ impl PyServer {
 
     pub fn register(
         &mut self,
-        endpoint: PyEndpoint,
+        endpoint: &PyEndpoint,
         cache_config: Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
@@ -123,7 +122,7 @@ impl PyServer {
             load_model,
         );
 
-        let service = BatchPredictor::<String, Schema>::new(endpoint.config, cache.into());
+        let service = BatchPredictor::<String, Schema>::new(endpoint.config.clone(), cache.into());
         self.server
             .get_mut()
             .ok_or_else(|| {

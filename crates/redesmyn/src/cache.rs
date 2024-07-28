@@ -115,7 +115,7 @@ fn __str__(obj: &Py<PyAny>) -> String {
     }
 }
 
-enum Command {
+pub enum Command {
     UpdateEntry {
         spec: BoxedSpec,
         fetch_as: FetchAs,
@@ -968,7 +968,7 @@ impl From<&str> for CacheError {
 
 pub type CacheResult<T> = Result<T, CacheError>;
 
-trait Client: std::fmt::Debug + Send + Sync {
+pub trait Client: std::fmt::Debug + Send + Sync {
     fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String>;
 
     fn list(

@@ -60,7 +60,7 @@ impl<T: Serialize> ArtifactSpec for T {
 pub type BoxedSpec = Box<dyn ArtifactSpec + Send + Sync + 'static>;
 
 #[derive(Clone)]
-pub(crate) enum Uri {
+pub enum Uri {
     Path(Option<PathBuf>),
     Id { extractor: Option<Arc<dyn Fn(PathBuf) -> String + Send + Sync>>, id: Option<String> },
 }
@@ -108,7 +108,7 @@ impl Uri {
 }
 
 #[derive(Debug, Display)]
-pub(crate) enum FetchAs {
+pub enum FetchAs {
     Uri(Option<Uri>),
     Bytes(Option<BytesMut>),
 }
