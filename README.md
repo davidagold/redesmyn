@@ -11,6 +11,9 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 * **Asynchronous model cache**: Manage model caching and async updating via an integrated cache that maps URL parameters to model variants.
 * **Observability**: Redesmyn applications can be configured to emit collated AWS EMF metrics log messages.
 
+
+To illustrate, the snippet below instantiates and runs a Redesmyn `Server` whose single `Endpoint` is managed by an inference handler that receives
+batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`.
 ```python
 import asyncio
 
