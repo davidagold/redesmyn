@@ -2,6 +2,8 @@ use crate::common::consume_and_log_err;
 
 use bytes::{Buf, BufMut, BytesMut};
 use indexmap::IndexMap;
+use pyo3::types::{PyAnyMethods, PyIterator};
+use pyo3::Bound;
 use pyo3::{
     exceptions::PyTypeError,
     types::{PyByteArray, PyNone, PyString},
@@ -12,7 +14,24 @@ use std::{io::Read, path::PathBuf, sync::Arc};
 use strum::Display;
 use tracing::info;
 
-pub trait ArtifactSpec {
+pub trait Pydantic {
+    fn fields(&self) -> PyResult<Vec<String>>;
+}
+
+impl<'bound> Pydantic for &Bound<'bound, PyAny> {
+    fn fields(&self) -> PyResult<Vec<String>> {
+        let mut keys_iter = self
+            .call_method0("model_fields")?
+            .call_method0("keys")?
+            .downcast_into::<PyIterator>()?;
+        keys_iter.try_fold(Vec::<String>::with_capacity(self.len()?), |mut fields, f| {
+            fields.push(f?.extract()?);
+            Ok(fields)
+        })
+    }
+}
+
+pub trait ArtifactSpec: Send + Sync {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize>;
 
     fn as_map(&self) -> Result<IndexMap<String, String>, serde_json::Error> {
@@ -42,7 +61,7 @@ impl std::fmt::Display for dyn ArtifactSpec {
     }
 }
 
-impl std::fmt::Debug for dyn ArtifactSpec + Send + Sync {
+impl std::fmt::Debug for dyn ArtifactSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "<impl ArtifactSpec, fields: {{ {:#?} }}>",
@@ -51,7 +70,7 @@ impl std::fmt::Debug for dyn ArtifactSpec + Send + Sync {
     }
 }
 
-impl<T: Serialize> ArtifactSpec for T {
+impl<T: Serialize + Send + Sync> ArtifactSpec for T {
     fn spec(&self) -> Box<&dyn erased_serde::Serialize> {
         Box::new(self as &dyn erased_serde::Serialize)
     }
