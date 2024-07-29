@@ -102,7 +102,7 @@ impl PyServer {
         endpoint: &PyEndpoint,
         cache_config: Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let fs_client = cache_config.getattr("client")?.extract::<FsClient>()?;
+        let fs_client: FsClient = cache_config.getattr("client")?.extract::<FsClient>()?;
         let load_model: Py<_> = cache_config.getattr("load_model")?.clone().unbind();
         let schedule = cache_config.getattr("schedule").ok();
         let interval = cache_config
@@ -114,11 +114,12 @@ impl PyServer {
             })
             .ok();
         let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
+        let pre_fetch_all: bool = cache_config.getattr("pre_fetch_all")?.extract()?;
         let cache = Cache::new(
             fs_client,
             max_size,
             validate_schedule(schedule, interval)?,
-            Some(true),
+            Some(pre_fetch_all),
             load_model,
         );
 

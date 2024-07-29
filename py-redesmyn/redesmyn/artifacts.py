@@ -301,12 +301,14 @@ class CacheConfig(BaseModel, Generic[M]):
 
     client: FsClient
     """The client by which the cache will retrieve model artifacts."""
-    load_model: Callable[..., M]
+    load_model: Callable[..., M]  # TODO: Better argument typing
     """The method by which the cache will load the model artifact into the present application."""
     spec: Optional[Type[ArtifactSpec[M]]] = None
     """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
-    max_size: Optional[int] = None
+    max_size: Optional[int] = None  # TODO: Should default to actual default max size
     """The maximum number of models to be stored in the cache."""
+    pre_fetch_all: bool = True
+    """Whether to pre-fetch all available latest model parametrizations when the cache first starts."""
     schedule: Optional[Cron] = None
     """A cron schedule specifying the frequency of cache entry refreshes."""
     interval: Optional[timedelta] = None
