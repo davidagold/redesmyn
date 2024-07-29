@@ -910,6 +910,7 @@ impl Cache {
         // TODO: Figure out how to accept a generic `impl Client` argument, e.g. wrapper struct over `Arc<dyn Client>`
         client: FsClient,
         load_model: Bound<'_, PyAny>,
+        spec: Option<Bound<'_, PyAny>>,
         max_size: Option<usize>,
         schedule: Option<Bound<'_, PyAny>>,
         interval: Option<Bound<'_, PyDelta>>,
