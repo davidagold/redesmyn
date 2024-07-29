@@ -303,7 +303,7 @@ class CacheConfig(BaseModel, Generic[M]):
     """The client by which the cache will retrieve model artifacts."""
     load_model: Callable[..., M]
     """The method by which the cache will load the model artifact into the present application."""
-    spec: Type[ArtifactSpec[M]]
+    spec: Optional[Type[ArtifactSpec[M]]] = None
     """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
     max_size: Optional[int] = None
     """The maximum number of models to be stored in the cache."""
