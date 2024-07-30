@@ -1,5 +1,5 @@
 use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
-use ::redesmyn::common::Wrap;
+use ::redesmyn::common::{OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::{Handler, HandlerConfig};
 use ::redesmyn::logging::LogConfig;
@@ -50,13 +50,23 @@ struct PyEndpoint {
 #[pymethods]
 impl PyEndpoint {
     #[new]
-    #[pyo3(signature = (signature, path, handler, batch_max_delay_ms = 10, batch_max_size = 64))]
+    #[pyo3(
+        signature = (
+            signature,
+            path,
+            handler,
+            batch_max_delay_ms = 10,
+            batch_max_size = 64,
+            validate_artifact_params = false
+        )
+    )]
     pub fn __new__(
         signature: (Wrap<Schema>, Wrap<Schema>),
         path: String,
         handler: &Bound<'_, PyAny>,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
+        validate_artifact_params: bool,
     ) -> Self {
         let config = ServiceConfig {
             schema: signature.0.clone().into(),
@@ -65,6 +75,7 @@ impl PyEndpoint {
             batch_max_size,
             handler_config: HandlerConfig::Function(handler.clone().unbind()),
             handler: Some(Handler::Python(handler.into())),
+            validate_artifact_params,
         };
         let (schema_in, schema_out) = signature;
         PyEndpoint {
@@ -115,12 +126,17 @@ impl PyServer {
             .ok();
         let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
         let pre_fetch_all: bool = cache_config.getattr("pre_fetch_all")?.extract()?;
+        let artifact_spec = cache_config
+            .getattr("spec")
+            .ok_or_log_err()
+            .and_then(|obj| (!obj.is_none()).then_some(obj.unbind()));
         let cache = Cache::new(
             fs_client,
             max_size,
             validate_schedule(schedule, interval)?,
             Some(pre_fetch_all),
             load_model,
+            artifact_spec,
         );
 
         let service = BatchPredictor::<String, Schema>::new(endpoint.config.clone(), cache.into());
@@ -141,7 +157,7 @@ impl PyServer {
                 .build()
                 .expect("Failed to initialize Tokio Runtime.")
         });
-        // TODO: Need to gaurd against any potentially untoward consequences of passing ownership of the
+        // TODO: Need to guard against any potentially untoward consequences of passing ownership of the
         //       server to the future. For one, we should keep a handle.
         let mut server = self.server.take().ok_or_else(|| {
             PyRuntimeError::new_err("Cannot start server that has previously been started")

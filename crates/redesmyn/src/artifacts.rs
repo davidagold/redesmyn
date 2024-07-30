@@ -1,9 +1,9 @@
-use crate::common::consume_and_log_err;
+use crate::common::{__Str__, consume_and_log_err};
 
 use bytes::{Buf, BufMut, BytesMut};
 use indexmap::IndexMap;
-use pyo3::types::{PyAnyMethods, PyIterator};
-use pyo3::Bound;
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::types::{IntoPyDict, PyAnyMethods, PyIterator};
 use pyo3::{
     exceptions::PyTypeError,
     types::{PyByteArray, PyNone, PyString},
@@ -14,19 +14,40 @@ use std::{io::Read, path::PathBuf, sync::Arc};
 use strum::Display;
 use tracing::info;
 
-pub trait Pydantic {
+pub trait Pydantic: __Str__ + Send + Sync {
     fn fields(&self) -> PyResult<Vec<String>>;
+
+    fn validate(&self, data: &IndexMap<String, String>) -> PyResult<Py<PyAny>>;
 }
 
-impl<'bound> Pydantic for &Bound<'bound, PyAny> {
+impl std::fmt::Debug for dyn Pydantic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.__str__().as_str())
+    }
+}
+
+impl<'bound> Pydantic for Py<PyAny> {
     fn fields(&self) -> PyResult<Vec<String>> {
-        let mut keys_iter = self
-            .call_method0("model_fields")?
-            .call_method0("keys")?
-            .downcast_into::<PyIterator>()?;
-        keys_iter.try_fold(Vec::<String>::with_capacity(self.len()?), |mut fields, f| {
-            fields.push(f?.extract()?);
-            Ok(fields)
+        Python::with_gil(|py| -> PyResult<_> {
+            let mut keys_iter = self
+                .bind(py)
+                .call_method0("model_fields")?
+                .call_method0("keys")?
+                .downcast_into::<PyIterator>()
+                .map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
+            keys_iter.try_fold(
+                Vec::<String>::with_capacity(self.bind(py).len()?),
+                |mut fields, f| {
+                    fields.push(f?.extract()?);
+                    Ok(fields)
+                },
+            )
+        })
+    }
+
+    fn validate(&self, data: &IndexMap<String, String>) -> PyResult<Py<PyAny>> {
+        Python::with_gil(|py| {
+            self.call_method_bound(py, "model_validate", (data.into_py_dict_bound(py),), None)
         })
     }
 }

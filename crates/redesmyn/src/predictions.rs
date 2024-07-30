@@ -115,6 +115,7 @@ pub struct ServiceConfig {
     pub batch_max_size: usize,
     pub handler_config: HandlerConfig,
     pub handler: Option<Handler>,
+    pub validate_artifact_params: bool,
 }
 
 impl ServiceConfig {
@@ -132,6 +133,7 @@ pub struct EndpointBuilder<T, R> {
     batch_max_size: Option<usize>,
     handler_config: Option<HandlerConfig>,
     cache: Option<Arc<Cache>>,
+    validate_artifact_params: Option<bool>,
     _phantom: (PhantomData<T>, PhantomData<R>),
 }
 
@@ -144,6 +146,7 @@ impl<T, R> Default for EndpointBuilder<T, R> {
             batch_max_size: Some(64),
             handler_config: None,
             cache: None,
+            validate_artifact_params: Some(false),
             _phantom: (PhantomData, PhantomData),
         }
     }
@@ -160,7 +163,8 @@ where
         batch_max_delay_ms: u32,
         batch_max_size: usize,
         handler_config: HandlerConfig,
-        cache: Cache
+        cache: Cache,
+        validate_artifact_params: bool
     }
 
     pub fn build(self) -> Result<BatchPredictor<T, R>, ServiceError> {
@@ -171,6 +175,7 @@ where
             batch_max_size: validate_param!(&self, batch_max_size),
             handler_config: validate_param!(&self, handler_config),
             handler: None,
+            validate_artifact_params: validate_param!(&self, validate_artifact_params),
         };
         Ok(BatchPredictor::<T, R>::new(config, self.cache.unwrap()))
     }
@@ -317,8 +322,10 @@ where
     schema: Arc<Schema>,
     cache_handle: CacheHandle,
     path: String,
+    endpoint_config: ServiceConfig,
 }
 
+// We include this implementation so as not to impose `T: Clone`, `R: Clone`
 impl<T, R> Clone for EndpointHandle<T, R>
 where
     T: Send,
@@ -330,6 +337,7 @@ where
             schema: self.schema.clone(),
             cache_handle: self.cache_handle.clone(),
             path: self.path.clone(),
+            endpoint_config: self.endpoint_config.clone(),
         }
     }
 }
@@ -342,6 +350,7 @@ where
     fn new_resource(&mut self) -> Result<actix_web::Resource, ServiceError> {
         let resource = web::resource(self.path.clone())
             .app_data(web::Data::<EndpointHandle<T, R>>::new(self.clone()))
+            .app_data(web::Data::<ServiceConfig>::new(self.endpoint_config.clone()))
             .route(web::post().to(invoke::<T, R>));
         Ok(resource)
     }
@@ -370,6 +379,7 @@ pub async fn invoke<T, R>(
     req: HttpRequest,
     records: web::Json<Vec<T>>,
     service_handle: web::Data<EndpointHandle<T, R>>,
+    endpoint_config: web::Data<ServiceConfig>,
 ) -> impl Responder
 where
     T: Send + std::fmt::Debug,
@@ -381,6 +391,12 @@ where
     let spec: IndexMap<String, String> =
         req.match_info().iter().map(|(key, val)| (key.to_string(), val.to_string())).collect();
 
+    if endpoint_config.validate_artifact_params {
+        if let Some(Err(err)) = service_handle.cache_handle.validate(&spec) {
+            // TODO: Should return 4xx
+            return HttpResponse::InternalServerError().body(err.to_string());
+        }
+    };
     let (tx, rx) = oneshot::channel();
     let job = PredictionJob::<T, R>::new(
         records.into_inner(),
@@ -400,7 +416,7 @@ where
 }
 
 pub(crate) type HandlerArgs<R, T> =
-    (HttpRequest, web::Json<Vec<T>>, web::Data<EndpointHandle<T, R>>);
+    (HttpRequest, web::Json<Vec<T>>, web::Data<EndpointHandle<T, R>>, web::Data<ServiceConfig>);
 
 impl<T, R> Service for BatchPredictor<T, R>
 where
@@ -442,6 +458,7 @@ where
                 .handle()
                 .map_err(|err| ServiceError::from(err.to_string()))?,
             path: self.get_path(),
+            endpoint_config: self.config.clone(),
         })
     }
 }
