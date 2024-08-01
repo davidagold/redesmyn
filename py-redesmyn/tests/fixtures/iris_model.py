@@ -9,6 +9,7 @@ from typing import Optional, cast
 import mlflow
 import polars as pl
 import redesmyn.artifacts as afs
+from pydantic import Field, field_validator
 from redesmyn.py_redesmyn import LogConfig
 from redesmyn.schema import Schema
 from redesmyn.service import Endpoint, Server, endpoint
@@ -64,7 +65,7 @@ class SepalLengthPredictor:
 
 
 class SepalLengthPredictorSpec(afs.ArtifactSpec[SepalLengthPredictor]):
-    run_id: str
+    run_id: str = Field(pattern=r"^\d+$")
     model_id: str
 
     @classmethod
@@ -72,7 +73,7 @@ class SepalLengthPredictorSpec(afs.ArtifactSpec[SepalLengthPredictor]):
         return SepalLengthPredictor(cast(str, loadable))
 
 
-def get_handle() -> Endpoint:
+def get_handle(**kwargs) -> Endpoint:
     @endpoint(
         path="/predictions/{run_id}/{model_id}",
         batch_max_delay_ms=10,
@@ -85,6 +86,7 @@ def get_handle() -> Endpoint:
             load_model=lambda *args: SepalLengthPredictor(*args),
             spec=SepalLengthPredictorSpec,
         ),
+        **kwargs,
     )
     def handle(model: SepalLengthPredictor, records_df: Input.DataFrame) -> Output.DataFrame:
         return model.include_predictions(records_df=records_df)
