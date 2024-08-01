@@ -44,8 +44,9 @@ use tracing::{error, info, info_span, instrument, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Schedule {
+    #[default]
     Off,
     Cron(cron::Schedule),
     Interval(Duration),
@@ -64,12 +65,6 @@ impl Schedule {
             (Schedule::Off, _) => UpdateTime::Never,
         };
         next_update.into()
-    }
-}
-
-impl Default for Schedule {
-    fn default() -> Self {
-        Schedule::Cron(cron::Schedule::from_str("0 0 0 * * *").unwrap())
     }
 }
 
