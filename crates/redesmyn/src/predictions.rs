@@ -393,8 +393,8 @@ where
 
     if endpoint_config.validate_artifact_params {
         if let Some(Err(err)) = service_handle.cache_handle.validate(&spec) {
-            // TODO: Should return 4xx
-            return HttpResponse::InternalServerError().body(err.to_string());
+            info!("Invalid request parameters: {}", err);
+            return HttpResponse::UnprocessableEntity().body(err.to_string());
         }
     };
     let (tx, rx) = oneshot::channel();
