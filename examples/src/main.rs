@@ -68,6 +68,7 @@ async fn main() -> Result<(), ServiceError> {
         )),
         Some(true),
         load_model,
+        None,
     );
 
     let endpoint = BatchPredictor::<String, Schema>::builder()

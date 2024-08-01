@@ -43,6 +43,7 @@ class Endpoint(Generic[M]):
         cache_config: CacheConfig[M],
         batch_max_delay_ms: int,
         batch_max_size: int,
+        validate_artifact_params: bool = False,
     ) -> None:
         self._handler = handler
         self._pyendpoint = PyEndpoint(
@@ -51,6 +52,7 @@ class Endpoint(Generic[M]):
             batch_max_delay_ms=batch_max_delay_ms,
             batch_max_size=batch_max_size,
             handler=handler,
+            validate_artifact_params=validate_artifact_params,
         )
         self._cache_config = cache_config
 
@@ -63,6 +65,7 @@ def endpoint(
     cache_config: CacheConfig[M],
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
+    validate_artifact_params: bool = False,
 ) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
     def wrapper(handler: Callable[[M, pl.DataFrame], pl.DataFrame]) -> Endpoint:
         return Endpoint(
@@ -72,6 +75,7 @@ def endpoint(
             cache_config=cache_config,
             batch_max_delay_ms=batch_max_delay_ms,
             batch_max_size=batch_max_size,
+            validate_artifact_params=validate_artifact_params,
         )
 
     return wrapper

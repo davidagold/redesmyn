@@ -107,3 +107,41 @@ pub fn include_python_paths<'path>(
     })
     .map_err(|err| ServiceError::from(format!("Failed to initialize Python process: {}", err)))
 }
+
+pub trait __Str__ {
+    fn __str__(&self) -> String;
+}
+
+impl __Str__ for Py<PyAny> {
+    fn __str__(&self) -> String {
+        Python::with_gil(|py| self.call_method0(py, "__str__")?.extract::<String>(py))
+            .unwrap_or("<Failure calling `__str__` for Python object>".into())
+    }
+}
+
+impl<'py> __Str__ for Bound<'py, PyAny> {
+    fn __str__(&self) -> String {
+        do_in!(|| -> PyResult<_> { self.call_method0("__str__")?.extract::<String>() })
+            .unwrap_or("<Failure calling `__str__` for Python object>".into())
+    }
+}
+
+pub trait OkOrLogErr {
+    type Mapped;
+
+    fn ok_or_log_err(self) -> Self::Mapped;
+}
+
+impl<T, E: Debug> OkOrLogErr for Result<T, E> {
+    type Mapped = Option<T>;
+
+    fn ok_or_log_err(self) -> Self::Mapped {
+        match self {
+            Ok(val) => Some(val),
+            Err(err) => {
+                error!("Result not OK: {:#?}", err);
+                None
+            }
+        }
+    }
+}

@@ -21,7 +21,8 @@ class PyEndpoint:
         path: str,
         handler: Callable,
         batch_max_delay_ms: int = 10,
-        batch_max_size: int = 32,
+        batch_max_size: int = 64,
+        validate_artifact_params: bool = False,
     ) -> "PyEndpoint": ...
 
 class PyServer:

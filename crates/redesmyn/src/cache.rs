@@ -1,6 +1,6 @@
 use crate::{
-    artifacts::{ArtifactSpec, BoxedSpec, FetchAs, Uri},
-    common::{build_runtime, consume_and_log_err, TOKIO_RUNTIME},
+    artifacts::{ArtifactSpec, BoxedSpec, FetchAs, Pydantic, Uri},
+    common::{__Str__, build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
     error::{ServiceError, ServiceResult},
 };
@@ -44,8 +44,9 @@ use tracing::{error, info, info_span, instrument, warn};
 
 const DEFAULT_CACHE_SIZE: usize = 128;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum Schedule {
+    #[default]
     Off,
     Cron(cron::Schedule),
     Interval(Duration),
@@ -64,12 +65,6 @@ impl Schedule {
             (Schedule::Off, _) => UpdateTime::Never,
         };
         next_update.into()
-    }
-}
-
-impl Default for Schedule {
-    fn default() -> Self {
-        Schedule::Cron(cron::Schedule::from_str("0 0 0 * * *").unwrap())
     }
 }
 
@@ -105,13 +100,6 @@ impl std::fmt::Display for UpdateTime {
 impl From<DateTime<Utc>> for UpdateTime {
     fn from(dt: DateTime<Utc>) -> Self {
         Self::DateTime(dt)
-    }
-}
-
-fn __str__(obj: &Py<PyAny>) -> String {
-    match Python::with_gil(|py| obj.call_method0(py, "__str__")?.extract::<String>(py)) {
-        Ok(model_str) => model_str,
-        Err(_) => "<Failure calling `__str__` for Python object>".into(),
     }
 }
 
@@ -412,20 +400,20 @@ impl std::fmt::Display for ModelEntry {
             InUse(_, None) => "<In use, (never updated -- this shouldn't happen!)>".to_string(),
             InUse(_, Some(last_updated)) => format!("<In use, (last updated {})>", last_updated),
             Refreshing(Some(model), Some(last_updated)) => {
-                format!("<Refreshing, {}>, (last updated {})", __str__(model), last_updated)
+                format!("<Refreshing, {}>, (last updated {})", model.__str__(), last_updated)
             }
             Refreshing(None, None) => "<Refreshing, no model, (never updated)>".into(),
             Refreshing(Some(model), None) => {
-                format!("<Refreshing, {}, (never updated)>", __str__(model))
+                format!("<Refreshing, {}, (never updated)>", model.__str__())
             }
             Refreshing(None, Some(last_updated)) => {
                 format!("<Refreshing, no model, (last updated {} -- what??)>", last_updated)
             }
             Ready(model, Some(last_updated)) => {
-                format!("<Ready, {}, (last updated {})>", __str__(model), last_updated)
+                format!("<Ready, {}, (last updated {})>", model.__str__(), last_updated)
             }
             Ready(model, None) => {
-                format!("<Ready, {}, (never updated -- this shouldn't happen!)>", __str__(model))
+                format!("<Ready, {}, (never updated -- this shouldn't happen!)>", model.__str__())
             }
             Empty => "<Empty>".to_string(),
         };
@@ -481,6 +469,7 @@ pub struct Cache {
     tx: OnceCell<Arc<mpsc::Sender<Command>>>,
     task: OnceCell<JoinHandle<Result<(), CacheError>>>,
     load_model: Py<PyAny>,
+    artifact_spec: Option<Arc<dyn Pydantic>>,
 }
 
 impl std::fmt::Display for Cache {
@@ -492,6 +481,7 @@ impl std::fmt::Display for Cache {
 #[derive(Clone)]
 pub struct CacheHandle {
     tx: Arc<mpsc::Sender<Command>>,
+    artifact_spec: Option<Arc<dyn Pydantic>>,
 }
 
 impl CacheHandle {
@@ -505,6 +495,13 @@ impl CacheHandle {
             }
             Ok(Ok(model)) => Ok(model),
         }
+    }
+
+    pub fn validate(
+        &self,
+        artifact_params: &IndexMap<String, String>,
+    ) -> Option<CacheResult<Py<PyAny>>> {
+        Some(self.artifact_spec.as_ref()?.validate(artifact_params).map_err(CacheError::from))
     }
 }
 
@@ -521,6 +518,7 @@ impl Cache {
         schedule: Option<Schedule>,
         pre_fetch_all: Option<bool>,
         load_model: Py<PyAny>,
+        artifact_spec: Option<Py<PyAny>>,
     ) -> Cache {
         Cache {
             client: Arc::from(client),
@@ -530,6 +528,7 @@ impl Cache {
             tx: OnceCell::<Arc<mpsc::Sender<Command>>>::default(),
             task: OnceCell::<JoinHandle<Result<(), CacheError>>>::default(),
             load_model,
+            artifact_spec: artifact_spec.map(|spec| -> Arc<dyn Pydantic> { Arc::new(spec) }),
         }
     }
 
@@ -558,7 +557,10 @@ impl Cache {
         let tx = self.tx.get().clone().ok_or_else(|| {
             CacheError::from("Cannot obtain handle for Cache that has not yet been started")
         })?;
-        Ok(CacheHandle { tx: tx.clone() })
+        Ok(CacheHandle {
+            tx: tx.clone(),
+            artifact_spec: self.artifact_spec.clone(),
+        })
     }
 
     #[instrument(skip_all)]
@@ -805,7 +807,7 @@ impl Cache {
         let model = Python::with_gil(|py| load_fn.call_bound(py, (data.into_py(py)?,), None));
         match (model, cache.pop(&key)) {
             (Ok(new_model), Some((taskflow, model_entry))) => {
-                info!("Successfully loaded model: `{}`", __str__(&new_model));
+                info!("Successfully loaded model: `{}`", &new_model.__str__());
                 // We expect `model_entry` to be in the `Refreshing` state
                 match model_entry {
                     // We're trying to update a model for which a refresh has not been initiated
@@ -814,7 +816,7 @@ impl Cache {
                         old_model, key
                     ))),
                     ModelEntry::Refreshing(old_model, last_updated_prev) => {
-                        let new_model_str = __str__(&new_model);
+                        let new_model_str = &new_model.__str__();
                         let last_updated = Utc::now();
                         cache.put(
                             key.clone(),
@@ -915,15 +917,16 @@ impl Cache {
         schedule: Option<Bound<'_, PyAny>>,
         interval: Option<Bound<'_, PyDelta>>,
         pre_fetch_all: Option<bool>,
+        artifact_spec: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Cache> {
-        let cache = Cache::new(
+        Ok(Cache::new(
             client,
             max_size,
             validate_schedule(schedule, interval)?,
             pre_fetch_all,
             load_model.unbind(),
-        );
-        Ok(cache)
+            artifact_spec.map(|obj| obj.unbind()),
+        ))
     }
 
     fn start(&self) -> PyResult<()> {
