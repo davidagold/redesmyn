@@ -20,6 +20,7 @@ batched inference requests as a Polars DataFrame and accesses a cached `sklearn`
 import asyncio
 
 import mlflow
+import polars as pl
 import redesmyn.artifacts as afs
 import redesmyn.service as svc
 from sklearn.pipeline import Pipeline
@@ -37,7 +38,7 @@ from sklearn.pipeline import Pipeline
         load_model=mlflow.sklearn.load_model,
     ),
 )
-def handle(model: Pipeline, records_df: DataFrame) -> DataFrame:
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
     return model.predict(X=records_df)
 
 
@@ -51,24 +52,22 @@ asyncio.run(main())
 ```
 
 
-## `Endpoint`s
+## `Endpoint`
 
 A Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server with `Endpoint`s that serve `POST` requests containing records against which to conduct inference.
 Just like a regular HTTP server, each such `Endpoint` is associated with a path, which can be configured in the specification of the `Endpoint` handler:
 
 ```python
-
 model = mlflow.sklearn.load_model(model_uri=...)
 
 @svc.endpoint(path="/predictions/iris")
-def handle(records_df: DataFrame) -> DataFrame:
+def handle(records_df: pl.DataFrame) -> pl.DataFrame:
     return model.predict(X=records_df)
-
 ```
 
 The `path` parameter can be anything you want.
 As demonstrated in the introductory [example](#example) above, paths support URL parameters, which designate model parametrizations.
-We'll discuss how to use such functionality in the [model parametrizations section](#model-parametrizations) below.
+We'll discuss how to use such functionality in the [model parametrizations and cache section](#model-parametrizations-and-cache) below.
 
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
 Redesmyn takes care of deserializing incoming requests into Polars rows and batching the latter into a `DataFrame`.
@@ -82,9 +81,41 @@ You can modify the batching behavior with the following parameters:
     batch_max_delay_ms=10,
     batch_max_size=64,
 )
-def handle(records_df: DataFrame) -> DataFrame:
+def handle(records_df: pl.DataFrame) -> pl.DataFrame:
     ...
 ```
 
 
-## Model Parametrizations
+## Model parametrizations and `Cache`
+
+Often we wish to deploy many models indexed by some set of parametrizations.
+For instance, we may train a different model for a subset of ISO 3166-2 codes and a general fallback model for the parent ISO 3166-1 code.
+You can configure a Redesmyn endpoint to accept URL parameters that correspond to those that index distinct models and to pass its respective handler the appropriate model from a model `Cache`.
+The `Cache` itself is in turn configured to retrieve models -- for instance, from a local filestore or a remote object store -- according to such parametrizations.
+URL-based model parametrizations and model `Cache` functionality go hand in hand, so we'll explore them simultaneously in the example below.
+
+```python
+@svc.endpoint(
+    path="/predictions/transaction/{iso_3166_1}/{iso_3166_2}/",
+    cache_config=afs.CacheConfig(
+        client=afs.FsClient(
+            base_path=Path(__file__).parent / "models/mlflow/transaction",
+            path_template="/{iso_3166_1}/{iso_3166_2}/artifacts/model",
+        ),
+        load_model=mlflow.sklearn.load_model,
+    ),
+)
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
+    return model.predict(X=records_df)
+```
+
+
+### `Cache` updates
+
+
+
+## `ArtifactSpec`
+
+
+
+## `Server`
