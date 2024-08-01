@@ -68,7 +68,6 @@ async def predict_then_stop(server: Server, irises: pl.DataFrame):
 
 class TestLogging:
     async def _serve_and_predict(self, server: Server, irises: pl.DataFrame):
-        loop = asyncio.get_running_loop()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(server.serve())
             tg.create_task(predict_then_stop(server, irises))
