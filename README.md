@@ -11,7 +11,7 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 * **Asynchronous model cache**: Manage model caching and async updating via an integrated cache that maps URL parameters to model variants.
 * **Observability**: Redesmyn applications can be configured to emit collated AWS EMF metrics log messages.
 
-### Example
+### Example [intro-example] ###
 
 To illustrate, the snippet below instantiates and runs a Redesmyn `Server` whose single `Endpoint` is managed by an inference handler that receives
 batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`.
@@ -59,11 +59,15 @@ Just like a regular HTTP server, each such `Endpoint` is associated with a path,
 
 model = mlflow.sklearn.load_model(model_uri=...)
 
-@svc.endpoint(path="/predictions/iris/{run_id}/{model_id}")
+@svc.endpoint(path="/predictions/iris")
 def handle(records_df: DataFrame) -> DataFrame:
     return model.predict(X=records_df)
 
 ```
+
+The `path` parameter can be anything you want.
+As demonstrated in the introductory [example](#intro-example) above, paths support URL parameters, which designate model parametrizations.
+We'll discuss how to use such functionality in the [model parametrizations section](#model-parametrizations) below.
 
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
 Redesmyn takes care of deserializing incoming requests into Polars rows and batching the latter into a `DataFrame`.
@@ -73,10 +77,13 @@ You can modify the batching behavior with the following parameters:
 
 ```python
 @svc.endpoint(
-    path="/predictions/iris/{run_id}/{model_id}",
+    path="/predictions/iris",
     batch_max_delay_ms=10,
     batch_max_size=64,
 )
-def handle(model: Pipeline, records_df: DataFrame) -> DataFrame:
+def handle(records_df: DataFrame) -> DataFrame:
     ...
 ```
+
+
+## Model Parametrizations
