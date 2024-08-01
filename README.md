@@ -50,7 +50,7 @@ asyncio.run(main())
 ```
 
 
-## Endpoints
+## `Endpoint`s
 
 A Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server with `Endpoint`s that serve `POST` requests containing records against which to conduct inference.
 Just like a regular HTTP server, each such `Endpoint` is associated with a path, which can be configured in the specification of the `Endpoint` handler:
@@ -68,3 +68,15 @@ def handle(records_df: DataFrame) -> DataFrame:
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
 Redesmyn takes care of deserializing incoming requests into Polars rows and batching the latter into a `DataFrame`.
 Thanks to Polars' use of Arrow and PyO3, the Rust-based server functionality and Python-based inference functionality are interoperable with zero IPC or copying of data.
+
+You can modify the batching behavior with the following parameters:
+
+```python
+@svc.endpoint(
+    path="/predictions/iris/{run_id}/{model_id}",
+    batch_max_delay_ms=10,
+    batch_max_size=64,
+)
+def handle(model: Pipeline, records_df: DataFrame) -> DataFrame:
+    ...
+```
