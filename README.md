@@ -11,10 +11,11 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 * **Asynchronous model cache**: Manage model caching and async updating via an integrated cache that maps URL parameters to model variants.
 * **Observability**: Redesmyn applications can be configured to emit collated AWS EMF metrics log messages.
 
-### Example [intro-example] ###
+### Example
 
 To illustrate, the snippet below instantiates and runs a Redesmyn `Server` whose single `Endpoint` is managed by an inference handler that receives
-batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`.
+batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`:
+
 ```python
 import asyncio
 
@@ -66,7 +67,7 @@ def handle(records_df: DataFrame) -> DataFrame:
 ```
 
 The `path` parameter can be anything you want.
-As demonstrated in the introductory [example](#intro-example) above, paths support URL parameters, which designate model parametrizations.
+As demonstrated in the introductory [example](#example) above, paths support URL parameters, which designate model parametrizations.
 We'll discuss how to use such functionality in the [model parametrizations section](#model-parametrizations) below.
 
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
