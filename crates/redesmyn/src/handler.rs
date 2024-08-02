@@ -47,6 +47,7 @@ impl PySpec {
     }
 }
 
+// TODO: Remove this indirection (https://github.com/davidagold/redesmyn/issues/75)
 #[derive(Clone, Debug)]
 pub struct PyHandler {
     pub handler: Py<PyAny>,
@@ -94,8 +95,17 @@ impl PyHandler {
         Ok(PyHandler { handler })
     }
 
-    pub fn invoke(&self, py: Python<'_>, model: Py<PyAny>, df: PyDataFrame) -> PyResult<PyObject> {
-        self.handler.call_bound(py, (model, df), None)
+    pub fn invoke(
+        &self,
+        py: Python<'_>,
+        model: Option<Py<PyAny>>,
+        df: PyDataFrame,
+    ) -> PyResult<PyObject> {
+        match model {
+            // NOTE: See https://github.com/davidagold/redesmyn/issues/74
+            Some(model) => self.handler.call_bound(py, (model, df), None),
+            None => self.handler.call_bound(py, (df,), None),
+        }
     }
 }
 
@@ -109,8 +119,8 @@ impl Handler {
     pub fn invoke(
         &self,
         df: PyDataFrame,
-        model: Py<PyAny>,
-        py: Option<Python<'_>>,
+        model: Option<Py<PyAny>>,
+        py: Option<Python<'_>>, // Why??
     ) -> Result<PyObject, ServiceError> {
         match self {
             Handler::Python(pyhandler) => {
