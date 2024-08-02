@@ -54,7 +54,8 @@ asyncio.run(main())
 
 ## `Endpoint`
 
-A Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server with `Endpoint`s that serve `POST` requests containing records against which to conduct inference.
+A Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server.
+To handle incoming inference requests, we must first register an `Endpoint`.
 Just like a regular HTTP server, each such `Endpoint` is associated with a path, which can be configured in the specification of the `Endpoint` handler:
 
 ```python
@@ -65,8 +66,8 @@ def handle(records_df: pl.DataFrame) -> pl.DataFrame:
     return model.predict(X=records_df)
 ```
 
-The `path` parameter can be anything you want.
-As demonstrated in the introductory [example](#example) above, paths support URL parameters, which designate model parametrizations.
+The `path` parameter is customizable.
+As demonstrated in the introductory [example](#example) above, paths also support URL parameters, which designate model parametrizations.
 We'll discuss how to use such functionality in the [model parametrizations and cache section](#model-parametrizations-and-cache) below.
 
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
