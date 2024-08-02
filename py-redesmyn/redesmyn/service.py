@@ -1,7 +1,7 @@
 import inspect
 from asyncio import Future
 from itertools import islice
-from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
+from typing import Callable, Generic, List, Optional, Self, Tuple, Type, TypeVar, get_args
 
 import polars as pl
 from more_itertools import first, one
@@ -40,7 +40,7 @@ class Endpoint(Generic[M]):
         handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
-        cache_config: CacheConfig[M],
+        cache_config: Optional[CacheConfig[M]],
         batch_max_delay_ms: int,
         batch_max_size: int,
         validate_artifact_params: bool = False,
@@ -62,7 +62,7 @@ class Endpoint(Generic[M]):
 
 def endpoint(
     path: str,
-    cache_config: CacheConfig[M],
+    cache_config: Optional[CacheConfig[M]] = None,
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
     validate_artifact_params: bool = False,
