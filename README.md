@@ -54,9 +54,8 @@ asyncio.run(main())
 
 ## `Endpoint`
 
-A Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server.
 To handle incoming inference requests, we must first register an `Endpoint`.
-Just like a regular HTTP server, each such `Endpoint` is associated with a path, which can be configured in the specification of the `Endpoint` handler:
+As a Redesmyn server is just an [Actix](https://actix.rs/docs/) HTTP server, each such `Endpoint` is associated with a path that can be configured in the specification of the `Endpoint` handler:
 
 ```python
 model = mlflow.sklearn.load_model(model_uri=...)
