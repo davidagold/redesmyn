@@ -92,6 +92,7 @@ Often we wish to deploy many models indexed by some set of parametrizations.
 For instance, we may train a different model for a subset of ISO 3166-2 codes and a general fallback model for the parent ISO 3166-1 code.
 You can configure a Redesmyn endpoint to accept URL parameters that correspond to those that index distinct models and to pass its respective handler the appropriate model from a model `Cache`.
 The `Cache` itself is in turn configured to retrieve models -- for instance, from a local filestore or a remote object store -- according to such parametrizations.
+
 URL-based model parametrizations and model `Cache` functionality go hand in hand, so we'll explore them simultaneously.
 In the following example, we specify both an `Endpoint` whose path contains URL parameters `ios_3166_1` and `iso_3166_2`
 as well as an `FsClient` (file system client) whose `path_template` contains the same parameters.
