@@ -91,6 +91,15 @@ def endpoint(
     Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]
     | Callable[[Callable[[pl.DataFrame], pl.DataFrame]], Endpoint]
 ):
+    """Declare an :py:class:`Endpoint` through this convenience decorator.
+
+    If `cache_config: CacheConfig[M]` is included, the handler is expected to have signature `(M, pl.DataFrame) -> pl.DataFrame`
+    and will be passed both the model appropriate to the respective request parameters
+    as well as the batched input `DataFrame`.
+    If `cache_config` is omitted, the handler is expected to have signature `(pl.DataFrame) -> pl.DataFrame`
+    and will be passed only the batched input `DataFrame`.
+    """
+
     def wrapper(handler: Callable[..., pl.DataFrame]) -> Endpoint:
         return Endpoint(
             handler=handler,
