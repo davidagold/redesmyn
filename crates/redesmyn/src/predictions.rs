@@ -259,7 +259,7 @@ where
             let batches_by_key = batch_jobs_by_key(jobs);
             for (key, batch) in batches_by_key.into_iter() {
                 let config = config.clone();
-                let model = if let Some(ref handle) = cache_handle {
+                let model = if let Some(handle) = &cache_handle {
                     match handle.get(&key).await {
                         Ok(model) => Some(model),
                         Err(err) => {
