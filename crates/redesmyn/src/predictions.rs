@@ -464,8 +464,7 @@ where
         Ok(EndpointHandle {
             tx: self.tx.clone().into(),
             schema: self.get_schema().into(),
-            cache_handle: self.cache().and_then(|cache| cache.handle().ok_or_log_err()),
-            // .map_err(|err| ServiceError::from(err.to_string()))?,
+            cache_handle: self.cache().and_then(|cache| cache.handle().ok_or_log_err()), // TODO: Consider failing fast here
             path: self.get_path(),
             endpoint_config: self.config.clone(),
         })
