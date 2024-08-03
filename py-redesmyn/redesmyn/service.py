@@ -73,8 +73,8 @@ def endpoint(
 @overload
 def endpoint(
     path: str,
-    *,
     cache_config: CacheConfig[M],
+    *,
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
     validate_artifact_params: bool = False,
@@ -83,7 +83,6 @@ def endpoint(
 
 def endpoint(
     path: str,
-    *,
     cache_config: Optional[CacheConfig[M]] = None,
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
