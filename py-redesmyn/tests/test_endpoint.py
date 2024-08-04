@@ -16,14 +16,13 @@ from redesmyn.py_redesmyn import LogConfig
 from redesmyn.service import Server, endpoint
 from sklearn.utils.discovery import itemgetter
 
+from tests.common import DIR_PYREDESMYN, DIR_TESTS
 from tests.fixtures.iris_model import Input, Output, SepalLengthPredictor, get_handle
-
-PROJECT_DIR = Path(__file__).parent.parent
 
 
 @pytest.fixture()
 def irises() -> pl.DataFrame:
-    return pl.read_csv(PROJECT_DIR / "examples/iris/data/iris.csv")
+    return pl.read_csv(DIR_PYREDESMYN / "examples/iris/data/iris.csv")
 
 
 async def request_prediction(
@@ -93,8 +92,8 @@ class TestEndpoint:
     def test_unparametrized_handler(self, irises: pl.DataFrame):
         model = SepalLengthPredictor(
             model_uri=(
-                PROJECT_DIR
-                / "examples/iris/models/mlflow/iris/903683212157180428/000449a650df4e36844626e647d15664/artifacts/model"
+                DIR_TESTS
+                / "fixtures/models/mlflow/iris/903683212157180428/000449a650df4e36844626e647d15664/artifacts/model"
             ).as_posix()
         )
 

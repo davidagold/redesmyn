@@ -17,6 +17,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from tests.common import DIR_PYREDESMYN, DIR_TESTS
 
 
 class Input(Schema):
@@ -80,8 +81,8 @@ def get_handle(**kwargs) -> Endpoint:
         batch_max_size=64,
         cache_config=afs.CacheConfig(
             client=afs.FsClient(
-                base_path=Path(__file__).parent.parent.parent / "examples/iris",
-                path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model",
+                base_path=DIR_TESTS / "fixtures/models/mlflow/iris",
+                path_template="/{run_id}/{model_id}/artifacts/model",
             ),
             load_model=lambda *args: SepalLengthPredictor(*args),
             spec=SepalLengthPredictorSpec,
