@@ -26,4 +26,5 @@ jobs:
           rust-toolchain: nightly
           args: --target-dir dist -m py-redesmyn/Cargo.toml
           sccache: "true"
-      - run: make -f ./py-redesmyn/Makefile test
+      - working-directory: ./py-redesmyn
+        run: make test
