@@ -1,0 +1,29 @@
+name: Redesmyn Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  Build-Test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -m pip install -U poetry
+      - working-directory: ./py-redesmyn
+        run: make install
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: echo "VIRTUAL_ENV=$(pwd)/$(poetry env info --directory py-redesmyn --path)" >> "$GITHUB_ENV"
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: develop
+          container: "off"
+          rust-toolchain: nightly
+          args: --target-dir dist -m py-redesmyn/Cargo.toml
+          sccache: "true"
+      - run: make -f ./py-redesmyn/Makefile tests
