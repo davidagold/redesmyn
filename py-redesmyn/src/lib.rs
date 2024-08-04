@@ -111,33 +111,38 @@ impl PyServer {
     pub fn register(
         &mut self,
         endpoint: &PyEndpoint,
-        cache_config: Bound<'_, PyAny>,
+        cache_config: Option<Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let fs_client: FsClient = cache_config.getattr("client")?.extract::<FsClient>()?;
-        let load_model: Py<_> = cache_config.getattr("load_model")?.clone().unbind();
-        let schedule = cache_config.getattr("schedule").ok();
-        let interval = cache_config
-            .getattr("interval")
-            .and_then(|obj| {
-                obj.downcast::<PyDelta>()
-                    .map_err(|err| PyRuntimeError::new_err(err.to_string()))
-                    .cloned()
-            })
-            .ok();
-        let max_size: Option<usize> = cache_config.getattr("max_size")?.extract().ok();
-        let pre_fetch_all: bool = cache_config.getattr("pre_fetch_all")?.extract()?;
-        let artifact_spec = cache_config
-            .getattr("spec")
-            .ok_or_log_err()
-            .and_then(|obj| (!obj.is_none()).then_some(obj.unbind()));
-        let cache = Cache::new(
-            fs_client,
-            max_size,
-            validate_schedule(schedule, interval)?,
-            Some(pre_fetch_all),
-            load_model,
-            artifact_spec,
-        );
+        let cache = match cache_config {
+            None => None,
+            Some(config) => {
+                let fs_client: FsClient = config.getattr("client")?.extract::<FsClient>()?;
+                let load_model: Py<_> = config.getattr("load_model")?.clone().unbind();
+                let schedule = config.getattr("schedule").ok();
+                let interval = config
+                    .getattr("interval")
+                    .and_then(|obj| {
+                        obj.downcast::<PyDelta>()
+                            .map_err(|err| PyRuntimeError::new_err(err.to_string()))
+                            .cloned()
+                    })
+                    .ok();
+                let max_size: Option<usize> = config.getattr("max_size")?.extract().ok();
+                let pre_fetch_all: bool = config.getattr("pre_fetch_all")?.extract()?;
+                let artifact_spec = config
+                    .getattr("spec")
+                    .ok_or_log_err()
+                    .and_then(|obj| (!obj.is_none()).then_some(obj.unbind()));
+                Some(Cache::new(
+                    fs_client,
+                    max_size,
+                    validate_schedule(schedule, interval)?,
+                    Some(pre_fetch_all),
+                    load_model,
+                    artifact_spec,
+                ))
+            }
+        };
 
         let service = BatchPredictor::<String, Schema>::new(endpoint.config.clone(), cache.into());
         self.server

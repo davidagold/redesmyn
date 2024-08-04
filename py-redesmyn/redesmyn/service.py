@@ -1,7 +1,7 @@
 import inspect
 from asyncio import Future
 from itertools import islice
-from typing import Callable, Generic, List, Self, Tuple, Type, TypeVar, get_args
+from typing import Callable, Generic, List, Optional, Self, Tuple, Type, TypeVar, get_args, overload
 
 import polars as pl
 from more_itertools import first, one
@@ -40,7 +40,7 @@ class Endpoint(Generic[M]):
         handler: Callable[[M, pl.DataFrame], pl.DataFrame],
         signature: Tuple[pl.Struct, pl.Struct],
         path: str,
-        cache_config: CacheConfig[M],
+        cache_config: Optional[CacheConfig[M]],
         batch_max_delay_ms: int,
         batch_max_size: int,
         validate_artifact_params: bool = False,
@@ -60,14 +60,47 @@ class Endpoint(Generic[M]):
         return self._handler(model, records)
 
 
+@overload
 def endpoint(
     path: str,
-    cache_config: CacheConfig[M],
+    *,
     batch_max_delay_ms: int = 10,
     batch_max_size: int = 32,
     validate_artifact_params: bool = False,
-) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]:
-    def wrapper(handler: Callable[[M, pl.DataFrame], pl.DataFrame]) -> Endpoint:
+) -> Callable[[Callable[[pl.DataFrame], pl.DataFrame]], Endpoint]: ...
+
+
+@overload
+def endpoint(
+    path: str,
+    cache_config: CacheConfig[M],
+    *,
+    batch_max_delay_ms: int = 10,
+    batch_max_size: int = 32,
+    validate_artifact_params: bool = False,
+) -> Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]: ...
+
+
+def endpoint(
+    path: str,
+    cache_config: Optional[CacheConfig[M]] = None,
+    batch_max_delay_ms: int = 10,
+    batch_max_size: int = 32,
+    validate_artifact_params: bool = False,
+) -> (
+    Callable[[Callable[[M, pl.DataFrame], pl.DataFrame]], Endpoint]
+    | Callable[[Callable[[pl.DataFrame], pl.DataFrame]], Endpoint]
+):
+    """Declare an :py:class:`Endpoint` through this convenience decorator.
+
+    If `cache_config: CacheConfig[M]` is included, the handler is expected to have signature `(M, pl.DataFrame) -> pl.DataFrame`
+    and will be passed both the model appropriate to the respective request parameters
+    as well as the batched input `DataFrame`.
+    If `cache_config` is omitted, the handler is expected to have signature `(pl.DataFrame) -> pl.DataFrame`
+    and will be passed only the batched input `DataFrame`.
+    """
+
+    def wrapper(handler: Callable[..., pl.DataFrame]) -> Endpoint:
         return Endpoint(
             handler=handler,
             signature=get_signature(handler),

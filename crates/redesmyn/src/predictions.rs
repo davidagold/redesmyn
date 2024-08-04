@@ -1,6 +1,6 @@
 use crate::artifacts::BoxedSpec;
 use crate::cache::{Cache, CacheHandle, CacheKey};
-use crate::common::{build_runtime, TOKIO_RUNTIME};
+use crate::common::{build_runtime, OkOrLogErr, TOKIO_RUNTIME};
 use crate::error::ServiceResult;
 use crate::handler::{Handler, HandlerConfig, PyHandler};
 use crate::server::ResourceFactory;
@@ -61,9 +61,12 @@ where
         let mut config = self.config.clone();
         config.try_init_handler()?;
 
-        self.cache().run().map_err(|err| ServiceError::from(err.to_string()))?;
-        let cache_handle =
-            self.cache.handle().map_err(|err| ServiceError::from(err.to_string()))?;
+        let cache_handle = if let Some(cache) = self.cache() {
+            cache.run().map_err(|err| ServiceError::from(err.to_string()))?;
+            cache.handle().map_err(|err| ServiceError::from(err.to_string())).ok_or_log_err()
+        } else {
+            None
+        };
 
         // TODO: Keep reference to this `JoinHandle`
         let handle = TOKIO_RUNTIME.get_or_init(build_runtime).spawn(async move {
@@ -93,7 +96,7 @@ pub trait Service: ServiceCore + Sized {
 
     fn get_handler_fn(&self) -> Self::H;
 
-    fn cache(&self) -> &Cache;
+    fn cache(&self) -> Option<&Cache>;
 
     fn handle(&self) -> ServiceResult<EndpointHandle<Self::T, Self::R>>
     where
@@ -132,7 +135,7 @@ pub struct EndpointBuilder<T, R> {
     batch_max_delay_ms: Option<u32>,
     batch_max_size: Option<usize>,
     handler_config: Option<HandlerConfig>,
-    cache: Option<Arc<Cache>>,
+    cache: Option<Cache>,
     validate_artifact_params: Option<bool>,
     _phantom: (PhantomData<T>, PhantomData<R>),
 }
@@ -177,7 +180,7 @@ where
             handler: None,
             validate_artifact_params: validate_param!(&self, validate_artifact_params),
         };
-        Ok(BatchPredictor::<T, R>::new(config, self.cache.unwrap()))
+        Ok(BatchPredictor::<T, R>::new(config, self.cache))
     }
 }
 
@@ -191,7 +194,7 @@ where
     rx: Option<mpsc::Receiver<PredictionJob<T, R>>>,
     // TODO: Include `RefCell<JoinHandle>` for task
     state: EndpointState,
-    cache: Arc<Cache>,
+    cache: Option<Arc<Cache>>,
 }
 
 impl<T, R> BatchPredictor<T, R>
@@ -208,7 +211,7 @@ where
         self
     }
 
-    pub fn new(config: ServiceConfig, cache: Arc<Cache>) -> BatchPredictor<T, R> {
+    pub fn new(config: ServiceConfig, cache: Option<Cache>) -> BatchPredictor<T, R> {
         let (tx, rx) = mpsc::channel(1024);
 
         BatchPredictor {
@@ -216,7 +219,7 @@ where
             rx: Some(rx),
             config,
             state: EndpointState::Ready,
-            cache,
+            cache: cache.map(Arc::from),
         }
     }
 
@@ -225,7 +228,7 @@ where
         mut rx: mpsc::Receiver<PredictionJob<T, R>>,
         mut rx_abort: oneshot::Receiver<()>,
         config: ServiceConfig,
-        cache_handle: CacheHandle,
+        cache_handle: Option<CacheHandle>,
     ) {
         println!("Starting predict task with config: {:#?}", &config);
         let ServiceConfig { batch_max_delay_ms, batch_max_size, .. } = config.clone();
@@ -256,12 +259,16 @@ where
             let batches_by_key = batch_jobs_by_key(jobs);
             for (key, batch) in batches_by_key.into_iter() {
                 let config = config.clone();
-                let model = match cache_handle.get(&key).await {
-                    Ok(model) => model,
-                    Err(err) => {
-                        warn!("Failed to load model for spec with key '{}': {}", key, err);
-                        continue;
+                let model = if let Some(handle) = &cache_handle {
+                    match handle.get(&key).await {
+                        Ok(model) => Some(model),
+                        Err(err) => {
+                            warn!("Failed to load model for spec with key '{}': {}", key, err);
+                            continue;
+                        }
                     }
+                } else {
+                    None
                 };
                 tokio::task::spawn_blocking(move || Self::predict_batch(batch, config, model));
             }
@@ -272,7 +279,7 @@ where
     fn predict_batch(
         mut batch: BatchJob<R>,
         config: ServiceConfig,
-        model: Py<PyAny>,
+        model: Option<Py<PyAny>>,
     ) -> Result<(), ServiceError> {
         info!(batch_size = batch.len(), "Running batch predict.");
         let df_batch = batch.swap_df(None)?.unwrap();
@@ -320,7 +327,7 @@ where
 {
     tx: Arc<mpsc::Sender<PredictionJob<T, R>>>,
     schema: Arc<Schema>,
-    cache_handle: CacheHandle,
+    cache_handle: Option<CacheHandle>,
     path: String,
     endpoint_config: ServiceConfig,
 }
@@ -392,7 +399,14 @@ where
         req.match_info().iter().map(|(key, val)| (key.to_string(), val.to_string())).collect();
 
     if endpoint_config.validate_artifact_params {
-        if let Some(Err(err)) = service_handle.cache_handle.validate(&spec) {
+        let Some(cache_handle) = &service_handle.cache_handle else {
+            error!(
+                "Artifact parameter validation is enabled but endpoint has no handle to its cache"
+            );
+            return HttpResponse::InternalServerError()
+                .body("The request parameters could not be validated");
+        };
+        if let Some(Err(err)) = cache_handle.validate(&spec) {
             info!("Invalid request parameters: {}", err);
             return HttpResponse::UnprocessableEntity().body(err.to_string());
         }
@@ -441,8 +455,8 @@ where
         invoke::<Self::T, Self::R>
     }
 
-    fn cache(&self) -> &Cache {
-        &self.cache
+    fn cache(&self) -> Option<&Cache> {
+        self.cache.as_deref()
     }
 
     fn handle(&self) -> ServiceResult<EndpointHandle<Self::T, Self::R>>
@@ -453,10 +467,7 @@ where
         Ok(EndpointHandle {
             tx: self.tx.clone().into(),
             schema: self.get_schema().into(),
-            cache_handle: self
-                .cache()
-                .handle()
-                .map_err(|err| ServiceError::from(err.to_string()))?,
+            cache_handle: self.cache().and_then(|cache| cache.handle().ok_or_log_err()), // TODO: Consider failing fast here
             path: self.get_path(),
             endpoint_config: self.config.clone(),
         })
