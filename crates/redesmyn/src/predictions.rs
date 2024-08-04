@@ -400,6 +400,9 @@ where
 
     if endpoint_config.validate_artifact_params {
         let Some(cache_handle) = &service_handle.cache_handle else {
+            error!(
+                "Artifact parameter validation is enabled but endpoint has no handle to its cache"
+            );
             return HttpResponse::InternalServerError()
                 .body("The request parameters could not be validated");
         };
