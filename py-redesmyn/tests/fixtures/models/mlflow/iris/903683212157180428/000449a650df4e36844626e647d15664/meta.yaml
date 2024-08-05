@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/davidgold/Projects/redesmyn/py-redesmyn/examples/iris/models/mlflow/iris/903683212157180428/000449a650df4e36844626e647d15664/artifacts
+end_time: 1717000552616
+entry_point_name: ''
+experiment_id: '903683212157180428'
+lifecycle_stage: active
+run_id: 000449a650df4e36844626e647d15664
+run_name: unique-hare-599
+run_uuid: 000449a650df4e36844626e647d15664
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1717000551650
+status: 3
+tags: []
+user_id: davidgold

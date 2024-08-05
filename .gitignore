@@ -5,9 +5,10 @@
 
 py-redesmyn/docs/src/**/api
 py-redesmyn/docs/build
-!py-redesmyn/examples/iris/data/iris.csv
 data
+!py-redesmyn/examples/iris/data/iris.csv
 */**/.venv
 */**/logs
 */**/*.log
 */**/models
+!py-redesmyn/tests/fixtures/models/

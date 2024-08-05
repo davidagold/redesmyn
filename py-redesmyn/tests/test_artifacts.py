@@ -22,6 +22,8 @@ from pydantic import (
 from redesmyn import artifacts as afs
 from redesmyn.py_redesmyn import LogConfig
 
+from tests.common import DIR_TESTS
+
 
 class RegionalModel:
     _load_timestamps_by_uri: DefaultDict[str, List[datetime]] = defaultdict(list)
@@ -150,14 +152,11 @@ class RegionalModelSpec(afs.ArtifactSpec[None]):
 
 class TestCache:
     def test_schedule(self):
-        log_dir = Path(__file__).parent / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-
         refresh_interval_seconds = 2
         cache = afs.Cache(
             client=afs.FsClient(
-                base_path=Path(__file__).parent / "fixtures",
-                path_template="models/{iso_3166_1}/{iso_3166_2}",
+                base_path=DIR_TESTS / "fixtures/models/dummy/regional",
+                path_template="/{iso_3166_1}/{iso_3166_2}",
             ),
             load_model=lambda x: RegionalModel.load(x),
             interval=timedelta(seconds=refresh_interval_seconds),
@@ -166,7 +165,7 @@ class TestCache:
         cache.start()
         time.sleep(5)
 
-        expected_uris = ["models/us/us-ca"]
+        expected_uris = [(DIR_TESTS / "fixtures/models/dummy/regional/us/us-ca").as_posix()]
         for uri in expected_uris:
             assert uri in RegionalModel._load_timestamps_by_uri
             assert len(RegionalModel._load_timestamps_by_uri[uri]) >= 2
