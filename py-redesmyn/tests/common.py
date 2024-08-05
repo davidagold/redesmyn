@@ -15,7 +15,7 @@ DIR_PROJECT = DIR_PYREDESMYN.parent
 
 
 async def retry(
-    coro: Coroutine,
+    coro_fn: Callable[[], Coroutine],
     retryable: List[Type[Exception]],
     exp_backoff_coef_ms: int = 1000,
     max_num_attempts: int = 3,
@@ -23,6 +23,7 @@ async def retry(
     num_attempts = 0
     while num_attempts <= max_num_attempts:
         num_attempts += 1
+        coro = coro_fn()
         try:
             return await coro
         except Exception as e:
@@ -49,7 +50,7 @@ async def request_prediction(
 
 async def serve_and_predict(
     server: svc.Server,
-    tasks: Callable[..., List[Coroutine]],
+    tasks: Callable[..., List[Callable[[], Coroutine]]],
     irises: pl.DataFrame,
     response_by_id: Dict[str, Dict],
 ):
