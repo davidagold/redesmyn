@@ -16,41 +16,9 @@ from redesmyn.py_redesmyn import LogConfig
 from redesmyn.service import Server, endpoint
 from sklearn.utils.discovery import itemgetter
 
-from tests.common import DIR_PYREDESMYN, DIR_TESTS
+from tests.common import DIR_PYREDESMYN, DIR_TESTS, request_prediction, serve_and_predict
+from tests.fixtures.common import irises
 from tests.fixtures.iris_model import Input, Output, SepalLengthPredictor, get_handle
-
-
-@pytest.fixture()
-def irises() -> pl.DataFrame:
-    return pl.read_csv(DIR_PYREDESMYN / "examples/iris/data/iris.csv")
-
-
-async def request_prediction(
-    session: aiohttp.ClientSession,
-    url: str,
-    data: Dict,
-    callback: Optional[Callable[..., Coroutine]] = None,
-):
-    resp = await session.post(url, json=[json.dumps(data)])
-    record = {"http_status_code": resp.status, "body": await resp.text()}
-    if callback:
-        await callback(record)
-
-
-async def serve_and_predict(
-    server: Server,
-    tasks: Callable[..., List[Coroutine]],
-    irises: pl.DataFrame,
-    response_by_id: Dict[str, Dict],
-):
-    data = first(list(irises.iter_rows(named=True)))
-    async with aiohttp.ClientSession() as session:
-        async with asyncio.TaskGroup() as server_tg:
-            server_tg.create_task(server.serve())
-            async with asyncio.TaskGroup() as inner_tg:
-                [inner_tg.create_task(t) for t in tasks(session=session, data=data)]
-
-            server_tg.create_task(server.stop())
 
 
 class TestEndpoint:
@@ -105,7 +73,7 @@ class TestEndpoint:
 
         def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Coroutine]:
             async def callback(record: Dict, req_id: int):
-                record["run_id"] = req_id
+                record["request_id"] = req_id
                 response_by_id[req_id] = record
 
             return [
@@ -122,7 +90,6 @@ class TestEndpoint:
             server=server, tasks=tasks, irises=irises, response_by_id=response_by_id
         )
         asyncio.run(coro)
-        print(response_by_id)
         assert all(r["http_status_code"] == 200 for r in response_by_id.values())
         assert all(
             all(type(pred) == float for pred in body["predictions"])
