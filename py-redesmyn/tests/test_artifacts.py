@@ -22,6 +22,8 @@ from pydantic import (
 from redesmyn import artifacts as afs
 from redesmyn.py_redesmyn import LogConfig
 
+from tests.common import DIR_TESTS
+
 
 class RegionalModel:
     _load_timestamps_by_uri: DefaultDict[str, List[datetime]] = defaultdict(list)
@@ -166,7 +168,7 @@ class TestCache:
         cache.start()
         time.sleep(5)
 
-        expected_uris = ["models/us/us-ca"]
+        expected_uris = [(DIR_TESTS / "fixtures/models/us/us-ca").as_posix()]
         for uri in expected_uris:
             assert uri in RegionalModel._load_timestamps_by_uri
             assert len(RegionalModel._load_timestamps_by_uri[uri]) >= 2
