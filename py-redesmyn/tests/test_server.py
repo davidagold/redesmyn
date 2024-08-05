@@ -52,13 +52,13 @@ def test_handles_invalid_cache(irises: pl.DataFrame):
 
     response_by_id = {}
 
-    def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Coroutine]:
+    def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[[], Coroutine]]:
         async def callback(record: Dict, req_id: int):
             record["request_id"] = req_id
             response_by_id[req_id] = record
 
         return [
-            request_prediction(
+            lambda: request_prediction(
                 url="http://localhost:8080/predictions/903683212157180428/000449a650df4e36844626e647d15664",
                 session=session,
                 data=data,

@@ -31,7 +31,7 @@ class TestEndpoint:
             record["run_id"] = run_id
             response_by_run_id[run_id] = record
 
-        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Coroutine]:
+        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[..., Coroutine]]:
             def task(run_id, stop: bool = False):
                 return request_prediction(
                     session=session,
@@ -41,8 +41,8 @@ class TestEndpoint:
                 )
 
             return [
-                task(run_id="903683212157180428"),
-                task(run_id="invalid_run_id", stop=True),
+                lambda: task(run_id="903683212157180428"),
+                lambda: task(run_id="invalid_run_id", stop=True),
             ]
 
         coro = serve_and_predict(
@@ -71,13 +71,13 @@ class TestEndpoint:
         server.register(handle)
         response_by_id = {}
 
-        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Coroutine]:
+        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[..., Coroutine]]:
             async def callback(record: Dict, req_id: int):
                 record["request_id"] = req_id
                 response_by_id[req_id] = record
 
             return [
-                request_prediction(
+                lambda: request_prediction(
                     url="http://localhost:8080/predictions/iris",
                     session=session,
                     data=data,
