@@ -81,7 +81,6 @@ async fn main() -> Result<(), ServiceError> {
         .cache(cache)
         .batch_max_size(100)
         .batch_max_delay_ms(5)
-        // .handler_config(PySpec::new().module("model").method("handle").into())
         .handler(handler)
         .build()?;
 
