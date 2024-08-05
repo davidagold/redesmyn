@@ -6,7 +6,7 @@ use redesmyn::{
     common::{consume_and_log_err, include_python_paths},
     do_in,
     error::ServiceError,
-    handler::PySpec,
+    handler::Handler,
     logging::{LogConfig, LogOutput},
     metrics::EmfOutput,
     predictions::BatchPredictor,
@@ -71,13 +71,18 @@ async fn main() -> Result<(), ServiceError> {
         None,
     );
 
+    let handler = Handler::try_from(
+        Python::with_gil(|py| PyResult::Ok(py.import_bound("model")?.getattr("handle")?.unbind()))
+            .map_err(ServiceError::from)?,
+    )?;
     let endpoint = BatchPredictor::<String, Schema>::builder()
         .schema(schema)
         .path("/predictions/{run_id}/{model_id}")
         .cache(cache)
         .batch_max_size(100)
         .batch_max_delay_ms(5)
-        .handler_config(PySpec::new().module("model").method("handle").into())
+        // .handler_config(PySpec::new().module("model").method("handle").into())
+        .handler(handler)
         .build()?;
 
     let mut server = Server::new(None);

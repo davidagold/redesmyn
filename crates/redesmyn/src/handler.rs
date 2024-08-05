@@ -1,135 +1,59 @@
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::prelude::*;
 use pyo3_polars::PyDataFrame;
-use tracing::{error, info};
 
-use crate::{
-    config_methods,
-    error::{PredictionError, ServiceError},
-    validate_param,
-};
-
-#[derive(Clone, Debug)]
-pub enum HandlerConfig {
-    PySpec(PySpec),
-    Function(Py<PyAny>),
-}
-
-impl From<PySpec> for HandlerConfig {
-    fn from(spec: PySpec) -> Self {
-        HandlerConfig::PySpec(spec)
-    }
-}
-
-impl From<Py<PyAny>> for HandlerConfig {
-    fn from(func: Py<PyAny>) -> Self {
-        HandlerConfig::Function(func)
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct PySpec {
-    module: Option<String>,
-    class: Option<String>,
-    obj: Option<String>,
-    method: Option<String>,
-}
-
-impl PySpec {
-    config_methods! {
-        module: &str,
-        class: &str,
-        obj: &str,
-        method: &str
-    }
-
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-// TODO: Remove this indirection (https://github.com/davidagold/redesmyn/issues/75)
-#[derive(Clone, Debug)]
-pub struct PyHandler {
-    pub handler: Py<PyAny>,
-}
-
-impl From<&Bound<'_, PyAny>> for PyHandler {
-    fn from(handler: &Bound<'_, PyAny>) -> Self {
-        PyHandler { handler: handler.clone().unbind() }
-    }
-}
-
-impl PyHandler {
-    fn get_func(spec: &PySpec, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let method_name = validate_param!(&spec, method);
-        let handler = obj.getattr(method_name.as_str()).inspect_err(|err| {
-            error!("Failed to read handler function `{method_name}`: {err}");
-        })?;
-
-        match handler.get_type().name()?.as_ref() {
-            "function" => handler.extract(),
-            // TODO: What if the Python `Endpoint` is configured differently from the native endpoint?
-            "Endpoint" => handler.getattr("_handler")?.extract(),
-            name => Err(PyTypeError::new_err(format!(
-                "Object of type `{name}` cannot be used as handler."
-            ))),
-        }
-    }
-
-    pub fn try_new(config: &HandlerConfig) -> PyResult<Self> {
-        let handler: Py<PyAny> = match config {
-            HandlerConfig::PySpec(spec) => Python::with_gil(|py| {
-                info!("Importing Python handler with spec {:?}", spec);
-                let module_name = validate_param!(&spec, module);
-                let module = py.import_bound(module_name.as_str()).inspect_err(|err| {
-                    error!("Failed to import handler module `{module_name}`: {err}")
-                })?;
-                let obj = spec.obj.as_ref().map(|obj_name| module.getattr(obj_name.as_str()));
-                match obj {
-                    Some(obj) => Self::get_func(spec, &obj?),
-                    None => Self::get_func(spec, &module),
-                }
-            })?,
-            HandlerConfig::Function(func) => func.clone(),
-        };
-        Ok(PyHandler { handler })
-    }
-
-    pub fn invoke(
-        &self,
-        py: Python<'_>,
-        model: Option<Py<PyAny>>,
-        df: PyDataFrame,
-    ) -> PyResult<PyObject> {
-        match model {
-            // NOTE: See https://github.com/davidagold/redesmyn/issues/74
-            Some(model) => self.handler.call_bound(py, (model, df), None),
-            None => self.handler.call_bound(py, (df,), None),
-        }
-    }
-}
+use crate::{common::__Str__, error::ServiceError};
 
 #[derive(Clone, Debug)]
 pub enum Handler {
     Rust,
-    Python(PyHandler),
+    Python(Py<PyAny>),
+}
+
+impl std::fmt::Display for Handler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str_repr = match self {
+            Self::Rust => unimplemented!(),
+            Self::Python(handler) => handler.__str__(),
+        };
+        f.write_str(str_repr.as_str())
+    }
+}
+
+impl TryFrom<Py<PyAny>> for Handler {
+    type Error = ServiceError;
+
+    fn try_from(obj: Py<PyAny>) -> Result<Self, Self::Error> {
+        Python::with_gil(|py| match obj.bind(py).is_callable() {
+            true => Ok(Handler::Python(obj)),
+            false => Err(ServiceError::from(format!(
+                "Object of type {} is not callable",
+                obj.bind(py).get_type().__str__()
+            ))),
+        })
+    }
 }
 
 impl Handler {
-    pub fn invoke(
+    /// Invoke the specified handler function with Python arguments determined by the endpoint configuration.
+    /// If the endpoint is configured to use a model cache, this function passes arguments of Python signature
+    /// `(M, polars.DataFrame)`, where `M` is the parameter of the cache's respective `ArtifactSpec`.
+    /// If the endpoint is configured not to use a model cache, this function passes arguments of Python signature
+    /// `(polars.DataFrame)`.
+    pub(crate) fn invoke(
         &self,
         df: PyDataFrame,
         model: Option<Py<PyAny>>,
-        py: Option<Python<'_>>, // Why??
     ) -> Result<PyObject, ServiceError> {
         match self {
-            Handler::Python(pyhandler) => {
-                let err = || {
-                    PredictionError::Error(
-                        "Cannot invoke Python handler without GIL guard.".to_string(),
-                    )
-                };
-                pyhandler.invoke(py.ok_or_else(err)?, model, df).map_err(|err| err.into())
+            Handler::Python(handler_fn) => {
+                Python::with_gil(|py| {
+                    let result = match model {
+                        // NOTE: See https://github.com/davidagold/redesmyn/issues/74
+                        Some(model) => handler_fn.call_bound(py, (model, df), None),
+                        None => handler_fn.call_bound(py, (df,), None),
+                    };
+                    result.map_err(ServiceError::from)
+                })
             }
             Handler::Rust => todo!(),
         }

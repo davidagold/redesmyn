@@ -2,7 +2,7 @@ use crate::artifacts::BoxedSpec;
 use crate::cache::{Cache, CacheHandle, CacheKey};
 use crate::common::{build_runtime, OkOrLogErr, TOKIO_RUNTIME};
 use crate::error::ServiceResult;
-use crate::handler::{Handler, HandlerConfig, PyHandler};
+use crate::handler::Handler;
 use crate::server::ResourceFactory;
 use crate::{config_methods, metrics, validate_param};
 use indexmap::IndexMap;
@@ -59,7 +59,6 @@ where
         };
 
         let mut config = self.config.clone();
-        config.try_init_handler()?;
 
         let cache_handle = if let Some(cache) = self.cache() {
             cache.run().map_err(|err| ServiceError::from(err.to_string()))?;
@@ -116,16 +115,8 @@ pub struct ServiceConfig {
     pub path: String,
     pub batch_max_delay_ms: u32,
     pub batch_max_size: usize,
-    pub handler_config: HandlerConfig,
-    pub handler: Option<Handler>,
+    pub handler: Handler,
     pub validate_artifact_params: bool,
-}
-
-impl ServiceConfig {
-    fn try_init_handler(&mut self) -> Result<&Self, ServiceError> {
-        self.handler = Some(Handler::Python(PyHandler::try_new(&self.handler_config)?));
-        Ok(self)
-    }
 }
 
 #[derive(Debug)]
@@ -134,7 +125,7 @@ pub struct EndpointBuilder<T, R> {
     path: Option<String>,
     batch_max_delay_ms: Option<u32>,
     batch_max_size: Option<usize>,
-    handler_config: Option<HandlerConfig>,
+    handler: Option<Handler>,
     cache: Option<Cache>,
     validate_artifact_params: Option<bool>,
     _phantom: (PhantomData<T>, PhantomData<R>),
@@ -147,7 +138,7 @@ impl<T, R> Default for EndpointBuilder<T, R> {
             path: None,
             batch_max_delay_ms: Some(5),
             batch_max_size: Some(64),
-            handler_config: None,
+            handler: None,
             cache: None,
             validate_artifact_params: Some(false),
             _phantom: (PhantomData, PhantomData),
@@ -165,7 +156,7 @@ where
         path: &str,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
-        handler_config: HandlerConfig,
+        handler: Handler,
         cache: Cache,
         validate_artifact_params: bool
     }
@@ -176,8 +167,7 @@ where
             path: validate_param!(&self, path),
             batch_max_delay_ms: validate_param!(&self, batch_max_delay_ms),
             batch_max_size: validate_param!(&self, batch_max_size),
-            handler_config: validate_param!(&self, handler_config),
-            handler: None,
+            handler: validate_param!(&self, handler),
             validate_artifact_params: validate_param!(&self, validate_artifact_params),
         };
         Ok(BatchPredictor::<T, R>::new(config, self.cache))
@@ -286,10 +276,9 @@ where
         let df_results = match Python::with_gil(|py| {
             config
                 .handler
-                .ok_or_else(|| ServiceError::Error("Handler not initialized".to_string()))?
-                .invoke(PyDataFrame(df_batch), model, Some(py))
+                .invoke(PyDataFrame(df_batch), model)
                 .inspect_err(|err| {
-                    error!("Failed to call handler function `{:#?}`: {err}", config.handler_config);
+                    error!("Failed to call handler function `{}`: {err}", config.handler);
                 })?
                 .extract::<PyDataFrame>(py)
                 .map(|pydf| -> DataFrame { pydf.into() })
