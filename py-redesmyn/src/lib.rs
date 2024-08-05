@@ -1,7 +1,7 @@
 use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
 use ::redesmyn::common::{OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
-use ::redesmyn::handler::{Handler, HandlerConfig};
+use ::redesmyn::handler::Handler;
 use ::redesmyn::logging::LogConfig;
 use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
 use ::redesmyn::schema::Schema;
@@ -73,8 +73,7 @@ impl PyEndpoint {
             path,
             batch_max_delay_ms,
             batch_max_size,
-            handler_config: HandlerConfig::Function(handler.clone().unbind()),
-            handler: Some(Handler::Python(handler.into())),
+            handler: Handler::Python(handler.clone().unbind()),
             validate_artifact_params,
         };
         let (schema_in, schema_out) = signature;
