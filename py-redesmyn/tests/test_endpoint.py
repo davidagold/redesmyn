@@ -44,15 +44,13 @@ async def serve_and_predict(
     response_by_id: Dict[str, Dict],
 ):
     data = first(list(irises.iter_rows(named=True)))
-    session = aiohttp.ClientSession()
-    async with asyncio.TaskGroup() as server_tg:
-        server_tg.create_task(server.serve())
-        async with asyncio.TaskGroup() as inner_tg:
-            [inner_tg.create_task(t) for t in tasks(session=session, data=data)]
+    async with aiohttp.ClientSession() as session:
+        async with asyncio.TaskGroup() as server_tg:
+            server_tg.create_task(server.serve())
+            async with asyncio.TaskGroup() as inner_tg:
+                [inner_tg.create_task(t) for t in tasks(session=session, data=data)]
 
-        server_tg.create_task(server.stop())
-
-    await session.close()
+            server_tg.create_task(server.stop())
 
 
 class TestEndpoint:
