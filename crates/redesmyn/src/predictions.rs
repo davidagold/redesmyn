@@ -58,8 +58,6 @@ where
                 .into();
         };
 
-        let mut config = self.config.clone();
-
         let cache_handle = if let Some(cache) = self.cache() {
             cache.run().map_err(|err| ServiceError::from(err.to_string()))?;
             cache.handle().map_err(|err| ServiceError::from(err.to_string())).ok_or_log_err()
@@ -67,6 +65,7 @@ where
             None
         };
 
+        let config = self.config.clone();
         // TODO: Keep reference to this `JoinHandle`
         let handle = TOKIO_RUNTIME.get_or_init(build_runtime).spawn(async move {
             tokio::spawn(async move {
