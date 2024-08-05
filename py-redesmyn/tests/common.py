@@ -15,6 +15,7 @@ DIR_PROJECT = DIR_PYREDESMYN.parent
 
 
 async def retry(
+    # NOTE: `Coroutine` objects cannot be reused, so we require a function that produces a `Coroutine`
     coro_fn: Callable[[], Coroutine],
     retryable: List[Type[Exception]],
     exp_backoff_coef_ms: int = 1000,
