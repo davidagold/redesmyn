@@ -145,3 +145,7 @@ impl<T, E: Debug> OkOrLogErr for Result<T, E> {
         }
     }
 }
+
+pub fn from_optional<'py, T: FromPyObject<'py>>(obj: Bound<'py, PyAny>) -> Option<T> {
+    if !obj.is_none() { obj.extract::<T>().ok_or_log_err() } else { None }
+}
