@@ -1,5 +1,5 @@
 use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
-use ::redesmyn::common::{OkOrLogErr, Wrap};
+use ::redesmyn::common::{from_optional, OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::Handler;
 use ::redesmyn::logging::LogConfig;
@@ -43,7 +43,7 @@ impl PySchema {
 
 #[pyclass]
 struct PyEndpoint {
-    signature: (Schema, Schema),
+    signature: (Option<Schema>, Option<Schema>),
     config: ServiceConfig,
 }
 
@@ -61,24 +61,26 @@ impl PyEndpoint {
         )
     )]
     pub fn __new__(
-        signature: (Wrap<Schema>, Wrap<Schema>),
+        signature: (Bound<'_, PyAny>, Bound<'_, PyAny>),
         path: String,
         handler: &Bound<'_, PyAny>,
         batch_max_delay_ms: u32,
         batch_max_size: usize,
         validate_artifact_params: bool,
     ) -> Self {
+        let schema_in = from_optional::<Schema>(signature.0);
+        let schema_out = from_optional::<Schema>(signature.1);
+
         let config = ServiceConfig {
-            schema: signature.0.clone().into(),
+            schema: from_optional::<Schema>(schema_in),
             path,
             batch_max_delay_ms,
             batch_max_size,
             handler: Handler::Python(handler.clone().unbind()),
             validate_artifact_params,
         };
-        let (schema_in, schema_out) = signature;
         PyEndpoint {
-            signature: (schema_in.0, schema_out.0),
+            signature: (schema_in, schema_out),
             config,
         }
     }

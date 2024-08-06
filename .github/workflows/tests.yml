@@ -24,7 +24,7 @@ jobs:
           command: develop
           container: "off"
           rust-toolchain: nightly
-          args: --target-dir dist -m py-redesmyn/Cargo.toml
+        args: --target-dir dist -m py-redesmyn/Cargo.toml
           sccache: "true"
       - working-directory: ./py-redesmyn
         run: make test

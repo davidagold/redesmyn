@@ -1,6 +1,7 @@
-use crate::common::{Sized128String, Wrap};
+use crate::common::{OkOrLogErr, Sized128String, Wrap};
 use crate::error::ServiceError;
 use heapless::{self, FnvIndexMap};
+use indexmap::IndexMap;
 use polars::{
     datatypes::{AnyValue, DataType},
     frame::DataFrame,
@@ -13,6 +14,7 @@ use serde::{
     Deserializer,
 };
 use serde_json::Value;
+use tracing::error;
 
 pub trait Relation {
     type Serialized;
@@ -104,6 +106,25 @@ impl Schema {
             index,
         });
         self
+    }
+
+    pub fn parse_untyped(records: Vec<String>, schema: &Schema) -> Result<DataFrame, ServiceError> {
+        // Deserialize directly into `columns` with custom `DeserializeSeed` impl
+        let columns = IndexMap::<String, Vec<f64>>::new();
+        for record_str in records {
+            let record = match serde_json::from_str::<IndexMap<String, f64>>(record_str.as_str()) {
+                Ok(record) => record,
+                Err(err) => {
+                    error!("Failed to deserialize record `{record_str}`: {err}");
+                    continue;
+                }
+            };
+            for (key, val) in record.into_iter() {
+                columns.entry(key).or_insert_with(|| Vec::new()).push(val);
+            }
+        }
+
+        ()
     }
 }
 
@@ -203,7 +224,7 @@ impl From<Wrap<Schema>> for Schema {
     }
 }
 
-impl FromPyObject<'_> for Wrap<Schema> {
+impl FromPyObject<'_> for Schema {
     fn extract(ob: &'_ PyAny) -> PyResult<Self> {
         let py = ob.py();
         let name = ob.get_type().name()?;
@@ -223,7 +244,8 @@ impl FromPyObject<'_> for Wrap<Schema> {
             schema.add_field(field_name, dtype);
         }
 
-        Ok(Wrap(schema))
+        // Ok(Wrap(schema))
+        Ok(schema)
     }
 }
 
