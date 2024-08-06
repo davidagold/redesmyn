@@ -21,6 +21,38 @@ from tests.fixtures.common import irises
 from tests.fixtures.iris_model import Input, Output, SepalLengthPredictor, get_handle
 
 
+def test_undertyped_handler_signature(irises: pl.DataFrame):
+    # https://github.com/davidagold/redesmyn/issues/77
+    @endpoint(path="/path/to/endpoint")
+    def handle(df: pl.DataFrame) -> pl.DataFrame:
+        return df.with_columns(prediction=1.0)
+
+    server = Server()
+    server.register(handle)
+    response_by_run_id = {}
+
+    async def callback(record, run_id: int):
+        record["run_id"] = run_id
+        response_by_run_id[run_id] = record
+
+    def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[[], Coroutine]]:
+        return [
+            lambda: request_prediction(
+                url="http://localhost:8080/path/to/endpoint",
+                session=session,
+                data=data,
+                callback=lambda record: callback(record=record, run_id=i),
+            )
+            for i in range(10)
+        ]
+
+    coro = serve_and_predict(
+        server=server, irises=irises, tasks=tasks, response_by_id=response_by_run_id
+    )
+    asyncio.run(coro)
+    assert all(r["http_status_code"] == 200 for r in response_by_run_id.values())
+
+
 class TestEndpoint:
     def test_validates_artifact_params(self, irises: pl.DataFrame):
         server = Server()
@@ -31,7 +63,7 @@ class TestEndpoint:
             record["run_id"] = run_id
             response_by_run_id[run_id] = record
 
-        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[..., Coroutine]]:
+        def tasks(session: aiohttp.ClientSession, data: Dict) -> List[Callable[[], Coroutine]]:
             def task(run_id, stop: bool = False):
                 return request_prediction(
                     session=session,
