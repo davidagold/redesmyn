@@ -252,7 +252,6 @@ impl FromPyObject<'_> for Schema {
             schema.add_field(field_name, dtype);
         }
 
-        // Ok(Wrap(schema))
         Ok(schema)
     }
 }
