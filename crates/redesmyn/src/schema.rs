@@ -113,27 +113,6 @@ impl Schema {
         });
         self
     }
-
-    // pub fn parse_untyped(records: Vec<String>) -> ServiceResult<DataFrame> {
-    //     // TODO: Deserialize directly into `columns` with custom `DeserializeSeed` impl
-    //     let mut columns = IndexMap::<String, Vec<f64>>::new();
-    //     for record_str in records {
-    //         let record = match serde_json::from_str::<IndexMap<String, f64>>(record_str.as_str()) {
-    //             Ok(record) => record,
-    //             Err(err) => {
-    //                 error!("Failed to deserialize record `{record_str}`: {err}");
-    //                 continue;
-    //             }
-    //         };
-    //         for (key, val) in record.into_iter() {
-    //             columns.entry(key).or_insert_with(|| Vec::new()).push(val);
-    //         }
-    //     }
-    //     DataFrame::new(
-    //         columns.into_iter().map(|(field, col)| Series::new(field.as_str(), col)).collect(),
-    //     )
-    //     .map_err(ServiceError::from)
-    // }
 }
 
 impl Relation for Schema {
