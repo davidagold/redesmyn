@@ -630,7 +630,7 @@ where
             return Err(ServiceError::Error(msg));
         };
         let n_records = records.len();
-        let mut df = R::parse(records, &self.schema)?;
+        let mut df = R::parse(records, self.schema.as_ref())?;
         let col_job_id =
             Series::from_iter(repeat(self.id.to_string()).take(n_records)).with_name("job_id");
         match df.with_column(col_job_id) {

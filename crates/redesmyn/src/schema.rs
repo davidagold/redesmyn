@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use crate::common::{OkOrLogErr, Sized128String, Wrap};
-use crate::error::ServiceError;
+use crate::error::{ServiceError, ServiceResult};
 use heapless::{self, FnvIndexMap};
 use indexmap::IndexMap;
+use polars::prelude::NamedFrom;
 use polars::{
     datatypes::{AnyValue, DataType},
     frame::DataFrame,
@@ -21,7 +24,10 @@ pub trait Relation {
 
     fn schema(rel: Option<&Self>) -> Option<Schema>;
 
-    fn parse(records: Vec<Self::Serialized>, schema: &Schema) -> Result<DataFrame, ServiceError>
+    fn parse(
+        records: Vec<Self::Serialized>,
+        schema: Option<&Arc<Schema>>,
+    ) -> Result<DataFrame, ServiceError>
     where
         Self: Sized;
 }
@@ -108,24 +114,26 @@ impl Schema {
         self
     }
 
-    pub fn parse_untyped(records: Vec<String>, schema: &Schema) -> Result<DataFrame, ServiceError> {
-        // Deserialize directly into `columns` with custom `DeserializeSeed` impl
-        let columns = IndexMap::<String, Vec<f64>>::new();
-        for record_str in records {
-            let record = match serde_json::from_str::<IndexMap<String, f64>>(record_str.as_str()) {
-                Ok(record) => record,
-                Err(err) => {
-                    error!("Failed to deserialize record `{record_str}`: {err}");
-                    continue;
-                }
-            };
-            for (key, val) in record.into_iter() {
-                columns.entry(key).or_insert_with(|| Vec::new()).push(val);
-            }
-        }
-
-        ()
-    }
+    // pub fn parse_untyped(records: Vec<String>) -> ServiceResult<DataFrame> {
+    //     // TODO: Deserialize directly into `columns` with custom `DeserializeSeed` impl
+    //     let mut columns = IndexMap::<String, Vec<f64>>::new();
+    //     for record_str in records {
+    //         let record = match serde_json::from_str::<IndexMap<String, f64>>(record_str.as_str()) {
+    //             Ok(record) => record,
+    //             Err(err) => {
+    //                 error!("Failed to deserialize record `{record_str}`: {err}");
+    //                 continue;
+    //             }
+    //         };
+    //         for (key, val) in record.into_iter() {
+    //             columns.entry(key).or_insert_with(|| Vec::new()).push(val);
+    //         }
+    //     }
+    //     DataFrame::new(
+    //         columns.into_iter().map(|(field, col)| Series::new(field.as_str(), col)).collect(),
+    //     )
+    //     .map_err(ServiceError::from)
+    // }
 }
 
 impl Relation for Schema {
@@ -137,39 +145,60 @@ impl Relation for Schema {
 
     fn parse(
         records: Vec<<Self as Relation>::Serialized>,
-        schema: &Schema,
+        schema: Option<&Arc<Schema>>,
     ) -> Result<DataFrame, ServiceError>
     where
         Self: Sized,
     {
-        let series = records
-            .iter()
-            .fold(schema.columns(None), |mut columns, record| {
-                let mut de = serde_json::Deserializer::from_str(record);
-                // TODO: Handle
-                let _ = ColumnsWrapper(&mut columns).deserialize(&mut de);
-                columns
-            })
-            .into_iter()
-            .filter_map(|(_, col)| {
-                // TODO: Handle better.
-                let dtype = &col.field.data_type.clone();
-                match Series::from_any_values_and_dtype(
-                    &col.field.name,
-                    &col.raw_values,
-                    dtype,
-                    true,
-                ) {
-                    Ok(series) => Some(series),
-                    Err(err) => {
-                        println!("Error; {err}");
-                        None
+        if let Some(schema) = schema {
+            let series = records
+                .iter()
+                .fold(schema.columns(None), |mut columns, record| {
+                    let mut de = serde_json::Deserializer::from_str(record);
+                    // TODO: Handle
+                    let _ = ColumnsWrapper(&mut columns).deserialize(&mut de);
+                    columns
+                })
+                .into_iter()
+                .filter_map(|(_, col)| {
+                    // TODO: Handle better.
+                    let dtype = &col.field.data_type.clone();
+                    match Series::from_any_values_and_dtype(
+                        &col.field.name,
+                        &col.raw_values,
+                        dtype,
+                        true,
+                    ) {
+                        Ok(series) => Some(series),
+                        Err(err) => {
+                            println!("Error; {err}");
+                            None
+                        }
                     }
-                }
-            })
-            .collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
 
-        DataFrame::new(series.to_vec()).map_err(Into::into)
+            DataFrame::new(series.to_vec()).map_err(Into::into)
+        } else {
+            let mut columns = IndexMap::<String, Vec<f64>>::new();
+            for record_str in records {
+                let record =
+                    match serde_json::from_str::<IndexMap<String, f64>>(record_str.as_str()) {
+                        Ok(record) => record,
+                        Err(err) => {
+                            error!("Failed to deserialize record `{record_str}`: {err}");
+                            continue;
+                        }
+                    };
+                for (key, val) in record.into_iter() {
+                    columns.entry(key).or_insert_with(|| Vec::new()).push(val);
+                }
+            }
+            DataFrame::new(
+                columns.into_iter().map(|(field, col)| Series::new(field.as_str(), col)).collect(),
+            )
+            .map_err(ServiceError::from)
+        }
     }
 }
 

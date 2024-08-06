@@ -30,8 +30,8 @@ impl PySchema {
         _cls: &Bound<'_, PyType>,
         struct_type: &Bound<'_, PyAny>,
     ) -> PyResult<Self> {
-        match struct_type.extract::<Wrap<Schema>>() {
-            Ok(wrapped) => Ok(PySchema { schema: wrapped.0 }),
+        match struct_type.extract::<Schema>() {
+            Ok(schema) => Ok(PySchema { schema }),
             Err(err) => Err(err),
         }
     }
@@ -72,7 +72,7 @@ impl PyEndpoint {
         let schema_out = from_optional::<Schema>(signature.1);
 
         let config = ServiceConfig {
-            schema: from_optional::<Schema>(schema_in),
+            schema: schema_in.clone(),
             path,
             batch_max_delay_ms,
             batch_max_size,
