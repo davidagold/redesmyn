@@ -17,7 +17,7 @@ class PySchema:
 class PyEndpoint:
     def __new__(
         cls,
-        signature: Tuple[pl.Struct, pl.Struct],
+        signature: Tuple[Optional[pl.Struct], Optional[pl.Struct]],
         path: str,
         handler: Callable,
         batch_max_delay_ms: int = 10,
