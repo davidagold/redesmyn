@@ -13,8 +13,7 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 
 ### Example
 
-To illustrate, the snippet below instantiates and runs a Redesmyn `Server` whose single `Endpoint` is managed by an inference handler that receives
-batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`:
+To illustrate, the following snippet, which is simplified from [this example](https://github.com/davidagold/redesmyn/tree/main/py-redesmyn/examples/iris), instantiates and runs a Redesmyn `Server` whose single `Endpoint` is managed by an inference handler that receives batched inference requests as a Polars DataFrame and accesses a cached `sklearn` model parametrized by `run_id` and `model_id`:
 
 ```python
 import asyncio
@@ -51,6 +50,15 @@ async def main():
 asyncio.run(main())
 ```
 
+If we run the above, we can make requests against the endpoint as follows:
+
+```
+$ curl -X POST -d '["{\"sepal_width\": 3.5, \"petal_length\": 1.4, \"petal_width\": 0.2}"]' \
+    -H 'Content-Type: application/json' \
+    http://localhost:8080/predictions/903683212157180428/000449a650df4e36844626e647d15664
+{"id":"0e1ae8ba-f1fe-42fb-956e-882f222f503f","predictions":[5.014526282601766]}%
+```
+
 
 ## `Endpoint`
 
@@ -85,7 +93,10 @@ def handle(records_df: pl.DataFrame) -> pl.DataFrame:
     ...
 ```
 
+
+
 ## `Schema`
+
 
 
 
