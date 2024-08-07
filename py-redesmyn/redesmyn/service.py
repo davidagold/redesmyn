@@ -5,6 +5,7 @@ from typing import Callable, Generic, List, Optional, Self, Tuple, Type, TypeVar
 
 import polars as pl
 from more_itertools import first, one
+from more_itertools.more import only
 from typing_extensions import Coroutine
 
 from redesmyn.artifacts import ArtifactSpec, CacheConfig
@@ -12,23 +13,30 @@ from redesmyn.py_redesmyn import Cache, PyEndpoint, PyServer, ServerHandle
 from redesmyn.schema import Schema
 
 
-def extract_schema(annotation: Type) -> pl.Struct:
-    schema_cls = one(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
+def extract_schema(annotation: Optional[Type]) -> Optional[pl.Struct]:
+    print(f"{annotation=}")
+    if annotation is None:
+        return None
+    schema_cls = only(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
+    if schema_cls is None:
+        return None
     return schema_cls.to_struct_type()
 
 
-def get_signature(f: Callable) -> Tuple[pl.Struct, pl.Struct]:
-    s = inspect.signature(f)
-    print(f"{list(get_args(t.annotation) for t in s.parameters.values())}")
-    param_df = one(
+def get_signature(f: Callable) -> Tuple[Optional[pl.Struct], Optional[pl.Struct]]:
+    sig = inspect.signature(f)
+    param_df = only(
         param
-        for param in s.parameters.values()
+        for param in sig.parameters.values()
         if (
             len((type_args := get_args(param.annotation))) > 0
             and issubclass(first(type_args), pl.DataFrame)
         )
     )
-    return (extract_schema(param_df.annotation), extract_schema(s.return_annotation))
+    return (
+        extract_schema(param_df.annotation if param_df is not None else None),
+        extract_schema(sig.return_annotation),
+    )
 
 
 M = TypeVar("M")
@@ -38,7 +46,7 @@ class Endpoint(Generic[M]):
     def __init__(
         self,
         handler: Callable[[M, pl.DataFrame], pl.DataFrame],
-        signature: Tuple[pl.Struct, pl.Struct],
+        signature: Tuple[Optional[pl.Struct], Optional[pl.Struct]],
         path: str,
         cache_config: Optional[CacheConfig[M]],
         batch_max_delay_ms: int,

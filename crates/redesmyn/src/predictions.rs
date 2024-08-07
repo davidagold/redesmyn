@@ -88,7 +88,7 @@ pub trait Service: ServiceCore + Sized {
     type T;
     type H;
 
-    fn get_schema(&self) -> Schema;
+    fn get_schema(&self) -> Option<&Schema>;
 
     fn get_path(&self) -> String;
 
@@ -110,7 +110,7 @@ enum EndpointState {
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
-    pub schema: Schema,
+    pub schema: Option<Schema>,
     pub path: String,
     pub batch_max_delay_ms: u32,
     pub batch_max_size: usize,
@@ -162,7 +162,7 @@ where
 
     pub fn build(self) -> Result<BatchPredictor<T, R>, ServiceError> {
         let config = ServiceConfig {
-            schema: validate_param!(&self, schema),
+            schema: self.schema.clone(),
             path: validate_param!(&self, path),
             batch_max_delay_ms: validate_param!(&self, batch_max_delay_ms),
             batch_max_size: validate_param!(&self, batch_max_size),
@@ -314,7 +314,7 @@ where
     R: Relation<Serialized = T>,
 {
     tx: Arc<mpsc::Sender<PredictionJob<T, R>>>,
-    schema: Arc<Schema>,
+    schema: Option<Arc<Schema>>,
     cache_handle: Option<CacheHandle>,
     path: String,
     endpoint_config: ServiceConfig,
@@ -364,7 +364,7 @@ where
         self.tx.send(job).await.map_err(ServiceError::from)
     }
 
-    fn schema(&self) -> Arc<Schema> {
+    fn schema(&self) -> Option<Arc<Schema>> {
         self.schema.clone()
     }
 }
@@ -431,8 +431,8 @@ where
     type H =
         impl actix_web::Handler<HandlerArgs<Self::R, Self::T>, Output = impl Responder + 'static>;
 
-    fn get_schema(&self) -> Schema {
-        self.config.schema.clone()
+    fn get_schema(&self) -> Option<&Schema> {
+        self.config.schema.as_ref()
     }
 
     fn get_path(&self) -> String {
@@ -454,7 +454,7 @@ where
     {
         Ok(EndpointHandle {
             tx: self.tx.clone().into(),
-            schema: self.get_schema().into(),
+            schema: self.get_schema().map(|schema| schema.clone().into()),
             cache_handle: self.cache().and_then(|cache| cache.handle().ok_or_log_err()), // TODO: Consider failing fast here
             path: self.get_path(),
             endpoint_config: self.config.clone(),
@@ -590,7 +590,7 @@ where
     id: Uuid,
     records: Option<Vec<T>>,
     tx: oneshot::Sender<Result<PredictionResponse, ServiceError>>,
-    schema: Arc<Schema>,
+    schema: Option<Arc<Schema>>,
     spec: BoxedSpec,
     phantom: PhantomData<R>,
 }
@@ -603,7 +603,7 @@ where
         records: Vec<T>,
         tx: Sender<Result<PredictionResponse, ServiceError>>,
         // TODO: We can make this a reference
-        schema: Arc<Schema>,
+        schema: Option<Arc<Schema>>,
         spec: BoxedSpec,
     ) -> PredictionJob<T, R>
     where
@@ -630,7 +630,7 @@ where
             return Err(ServiceError::Error(msg));
         };
         let n_records = records.len();
-        let mut df = R::parse(records, &self.schema)?;
+        let mut df = R::parse(records, self.schema.as_ref())?;
         let col_job_id =
             Series::from_iter(repeat(self.id.to_string()).take(n_records)).with_name("job_id");
         match df.with_column(col_job_id) {
