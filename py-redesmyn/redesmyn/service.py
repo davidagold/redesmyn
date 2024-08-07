@@ -14,9 +14,12 @@ from redesmyn.schema import Schema
 
 
 def extract_schema(annotation: Optional[Type]) -> Optional[pl.Struct]:
+    print(f"{annotation=}")
     if annotation is None:
         return None
-    schema_cls = one(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
+    schema_cls = only(e for e in islice(get_args(annotation), 1, None) if issubclass(e, Schema))
+    if schema_cls is None:
+        return None
     return schema_cls.to_struct_type()
 
 
