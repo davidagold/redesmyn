@@ -85,6 +85,9 @@ def handle(records_df: pl.DataFrame) -> pl.DataFrame:
     ...
 ```
 
+## `Schema`
+
+
 
 ## Model parametrizations and `Cache`
 
