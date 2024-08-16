@@ -7,7 +7,7 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
     [strongly-typed Serde parsing](https://docs.rs/serde_json/latest/serde_json/#parsing-json-as-strongly-typed-data-structures) or
     [untyped Serde parsing](https://docs.rs/serde_json/latest/serde_json/#operating-on-untyped-json-values), respectively.
 * **Built on Polars**: Request payloads are parsed into [Polars](https://pola.rs) DataFrames that can be passed to Python inference handlers with zero copy.
-* **Ergonomic API**: Declare service endpoints with customizable paths and parameters and conduct request validation with Pydantic models.
+* **Ergonomic API**: Declare service endpoints with custom, parametrizable paths and conduct request validation with Pydantic models.
 * **Asynchronous model cache**: Manage model caching and async updating via an integrated cache that maps URL parameters to model variants.
 * **Observability**: Redesmyn applications can be configured to emit collated AWS EMF metrics log messages.
 
@@ -77,9 +77,9 @@ The `path` parameter is customizable.
 As demonstrated in the introductory [example](#example) above, paths also support URL parameters, which designate model parametrizations.
 We'll discuss how to use such functionality in the [model parametrizations and cache section](#model-parametrizations-and-cache) below.
 
-The handler function itself is just a Python function that expects a Polars `DataFrame` argument, which contains the present batch of inference requests.
-Redesmyn takes care of deserializing incoming requests into Polars rows and batching the latter into a `DataFrame`.
-Thanks to Polars' use of Arrow and PyO3, the Rust-based server functionality and Python-based inference functionality are interoperable with zero IPC or copying of data.
+The handler function itself is just a Python function that expects a Polars `DataFrame` argument.
+The `DataFrame` contains records from the present batch of inference requests, which Redesmyn deserializes and aggregates for you.
+Thanks to Polars' use of Arrow and PyO3, the Rust-based server functionality and Python-based inference functionality interoperate with zero IPC or copying of data.
 
 You can modify the batching behavior with the following parameters:
 
