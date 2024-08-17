@@ -85,6 +85,7 @@ We'll discuss how to use such functionality in the [model parametrizations and c
 The handler function itself is just a Python function that expects a Polars `DataFrame` argument.
 The `DataFrame` contains records from the present batch of inference requests, which Redesmyn deserializes and aggregates for you.
 Thanks to Polars' use of Arrow and PyO3, the Rust-based server functionality and Python-based inference functionality interoperate with zero IPC or copying of data.
+You can also customize or opt out of Redesmyn's automatic deserialization in favor of receiving the request object directly. [†](https://github.com/davidagold/redesmyn/issues/89)
 
 You can modify the batching behavior with the following parameters:
 
