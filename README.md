@@ -13,7 +13,8 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 
 **NOTE**: Redesmyn is currently in active development targeting a v0.1 release, which is intended as the first iteration officially suitable for public use.
 Some features described in the present README are aspirational and are included to give a sense of our intended direction for Redesmyn.
-Such aspirational features are indicated by a † and GitHub issue reference.
+Such aspirational features are indicated by a "†" and GitHub issue reference.
+You can also follow our progress towards v0.1 on the [v0.1 Project Roadmap](https://github.com/users/davidagold/projects/7/views/1).
 
 ### Example
 
