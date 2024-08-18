@@ -162,8 +162,35 @@ def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
 The above `Endpoint` coordinates with its respective `Cache`, whose configuration is specified by the `CacheConfig`, to pass the appropriate `Pipeline` model to the handler given the requested values of `iso_3166_1` and `iso_3166_2`.
 
 
-### `Cache` updates
+### Scheduling `Cache` entry refreshes
 
+Modeled distributions may change over time, hence it is common to periodically retrain and redeploy models.
+You can configure your model `Cache` to periodically refresh model entries according either to a cron schedule or time interval, thereby ensuring that deployed models are current:
+
+```python
+# This endpoint refreshes its model cache entries every day at midnight
+@svc.endpoint(
+    path="/predictions/iris/{run_id}/{model_id}",
+    cache_config=afs.CacheConfig(
+        ...,
+        schedule=afs.Cron("0 0 * * *")
+    ),
+)
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
+    return model.predict(X=records_df)
+
+
+# This endpoint refreshes its model cache entries every hour
+@svc.endpoint(
+    path="/predictions/iris/{run_id}/{model_id}",
+    cache_config=afs.CacheConfig(
+        ...,
+        interval=timedelta(hours=1)
+    ),
+)
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
+    return model.predict(X=records_df)
+```
 
 
 ## `ArtifactSpec`
