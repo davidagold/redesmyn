@@ -121,7 +121,7 @@ def handle(records_df: Input.DataFrame) -> Output.DataFrame:
 
 ```
 `Schema`, and therefore any descendant, is a subclass of Pydantic's `BaseModel`.
-To indicate that a handler argument or return type annotation is a Polars `DataFrame` expected to conform to a given `Schema` subclass, simply type the object using `Schema.DataFrame` class property as above.
+To indicate that a handler argument or return type annotation is a Polars `DataFrame` expected to conform to a given `Schema` subclass, simply type the object using the `Schema.DataFrame` class property as above.
 This property of `Schema`'s metaclass is equivalent to `Annotated[polars.DataFrame, cls]`, where `cls` is the present `Schema` subclass.
 Thus, annotating a parameter or return type with `Schema.DataFrame` both indicates to type checkers that the object itself is expected to be of type `polars.DataFrame` and enables dynamic inspection of the annotated `DataFrame`'s expected fields.
 
