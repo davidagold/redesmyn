@@ -294,4 +294,4 @@ asyncio.run(main())
 ```
 
 That's it!
-You now have an ML inference service application that you can deploy as you would deploy any other HTTP service, for instance as a containerized service on AWS ECS.
+You now have an ML inference service application that you can deploy as you would any other HTTP service, for instance as a containerized service on AWS ECS.
