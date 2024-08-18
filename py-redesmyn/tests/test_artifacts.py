@@ -64,14 +64,6 @@ class RegionalModelSpec(afs.ArtifactSpec[None]):
     iso3166_2: Iso3166_2
     id: Annotated[int, Ge(0), afs.LatestKey] = Field(default=None)
 
-    # These fields are `ArtifactSpec` class variables.
-    # You can omit and pass them to `artifact_spec` instead.
-    cache_path = afs.path("s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}")
-
-    @classmethod
-    def load_model(cls, loadable: str | Path | bytes | FileIO) -> None:
-        RegionalModel.load(uri=cast(str, loadable))
-
     @field_validator("iso3166_2", mode="before")
     @classmethod
     def validate_iso3166_2(cls, v: str, info: ValidationInfo) -> Iso3166_2:

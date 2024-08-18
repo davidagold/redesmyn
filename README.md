@@ -195,6 +195,72 @@ def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
 
 ## `ArtifactSpec`
 
+When serving predictions from parametrized models, it is common to validate request parameters before attempting to retrieve a model.
+Validating request parameters prior to model retrieval both avoids the cost of deserializing unprocessable records and helps to maintain clarity in logs and metrics.
+You can use the `ArtifactSpec` base class to declare a validation schema for request parameters.
+`ArtifactSpec` is a subclass of Pydantic's `BaseModel` and hence can use all Pydantic validation mechanisms.
+Redesmyn will apply the `ArtifactSpec`'s `model_validate` method to incoming request parameters and return an HTTP 422 response if validation fails.
 
+In the example below, we declare an `ArtifactSpec` with which to validate that ISO 3166-1 and 3166-2 request parameters are valid and supported:
+
+```python
+from typing import Enum
+
+from more_itertools import one
+
+
+class FromString(Enum):
+    """A utility base class for easy enum instantiation from strings."""
+    @classmethod
+    def from_string(cls, v: str) -> Self:
+        return one(variant for variant in cls if variant.value == v)
+
+
+class Iso3166_1(FromString):
+    US = "US"
+    GB = "GB"
+
+
+class Iso3166_2(FromString):
+    US_CA = "US-CA"
+    US_NY = "US-NY"
+    GB_ENG = "GB-ENG"
+    GB_NIR = "GB-NIR"
+
+    def is_subdivision(self, of: Iso3166_1) -> bool:
+        return first(self.value.split("-")) == of.value
+
+
+class FraudulentTransactionModelSpec(afs.ArtifactSpec[Pipeline]):
+    """An `ArtifactSpec` designating a model indexed by ISO 3166-1/3166-2 codes."""
+    iso3166_1: Annotated[Iso3166_1, BeforeValidator(Iso3166_1.from_string)]
+    iso3166_2: Iso3166_2
+
+    @field_validator("iso3166_2", mode="before")
+    @classmethod
+    def validate_iso3166_2(cls, v: str, info: ValidationInfo) -> Iso3166_2:
+        iso3166_1 = info.data.get("iso3166_1")
+        iso3166_2 = Iso3166_2.from_string(v)
+        if not isinstance(iso3166_1, Iso3166_1) or not iso3166_2.is_subdivision(of=iso3166_1):
+            raise ValueError(f"'{iso3166_2} is not a subdivision of {iso3166_1}")
+
+        return iso3166_2
+
+
+@svc.endpoint(
+    path="/predictions/transaction/{iso_3166_1}/{iso_3166_2}/",
+    cache_config=afs.CacheConfig(
+        client=afs.FsClient(
+            base_path=Path(__file__).parent / "models/mlflow/transaction",
+            path_template="/{iso_3166_1}/{iso_3166_2}/artifacts/model",
+        ),
+        spec=FraudulentTransactionModelSpec,
+        load_model=mlflow.sklearn.load_model,
+    ),
+)
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
+    return model.predict(X=records_df)
+
+```
 
 ## `Server`
