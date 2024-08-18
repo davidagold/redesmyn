@@ -13,7 +13,7 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML 
 
 **NOTE**: Redesmyn is currently in active development targeting a v0.1 release, which is intended as the first iteration officially suitable for public use.
 Some features described in the present README are aspirational and are included to give a sense of our intended direction for Redesmyn.
-Such aspirational features are indicated by a "†" and GitHub issue reference.
+Such aspirational features are indicated by a "†" linking to the corresponding GitHub issue.
 You can also follow our progress towards v0.1 on the [v0.1 Project Roadmap](https://github.com/users/davidagold/projects/7/views/1).
 
 ### Example
@@ -100,10 +100,37 @@ def handle(records_df: pl.DataFrame) -> pl.DataFrame:
 ```
 
 
-
 ## `Schema`
 
+You can declare input and output schemas for an `Endpoint` handler function by subclassing the `Schema` class:
 
+```python
+class Input(Schema):
+    sepal_width: pl.Float64
+    petal_length: pl.Float64
+    petal_width: pl.Float64
+
+
+class Output(Schema):
+    sepal_length: pl.Float64
+
+
+@endpoint(path="/predictions/iris")
+def handle(records_df: Input.DataFrame) -> Output.DataFrame:
+    return records_df.select(sepal_length=pl.Series(model.predict(X=records_df)))
+
+```
+`Schema`, and therefore any descendant, is a subclass of Pydantic's `BaseModel`.
+To indicate that a handler argument or return type annotation is a Polars `DataFrame` expected to conform to a given `Schema` subclass, simply type the object using `Schema.DataFrame` class property as above.
+This property of `Schema`'s metaclass is equivalent to `Annotated[polars.DataFrame, cls]`, where `cls` is the present `Schema` subclass.
+Thus, annotating a parameter or return type with `Schema.DataFrame` both indicates to type checkers that the object itself is expected to be of type `polars.DataFrame` and enables dynamic inspection of the annotated `DataFrame`'s expected fields.
+
+There are two primary uses for `Schema.DataFrame` annotations as above:
+1. Hinting which fields are expected during request deserialization:
+If `Schema.DataFrame` annotations such as above are present in the inference handler's signature, Redesmyn will deserialize only those fields specified in the input `Schema` and ignore all others.
+2. Validating incoming prediction requests[†](https://github.com/davidagold/redesmyn/issues/90): You can configure a Redesmyn `Endpoint` to return an HTTP 422 response if either
+(i) an expected field from the `Schema.DataFrame` annotation is missing in a record, or
+(ii) an unexpected field is present.
 
 
 ## Model parametrizations and `Cache`
