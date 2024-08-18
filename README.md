@@ -1,4 +1,4 @@
-## Redesmyn: Build ML inference servers with Python and Rust
+## Redesmyn: Build ML inference services with Python and Rust
 
 Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) enables simple, fast, and fexible development of real-time ML inference services in Python and Rust:
 * **Dual language**: Core Redesmyn functionality is written in Rust for safety and performance and exposed through interoperable Python and Rust APIs.
@@ -123,7 +123,7 @@ def handle(records_df: Input.DataFrame) -> Output.DataFrame:
 `Schema`, and therefore any descendant, is a subclass of Pydantic's `BaseModel`.
 To indicate that a handler argument or return type annotation is a Polars `DataFrame` expected to conform to a given `Schema` subclass, simply type the object using the `Schema.DataFrame` class property as above.
 This property of `Schema`'s metaclass is equivalent to `Annotated[polars.DataFrame, cls]`, where `cls` is the present `Schema` subclass.
-Thus, annotating a parameter or return type with `Schema.DataFrame` both indicates to type checkers that the object itself is expected to be of type `polars.DataFrame` and enables dynamic inspection of the annotated `DataFrame`'s expected fields.
+Thus, annotating a parameter or return type with `Schema.DataFrame` both indicates to type checkers that the object itself is expected to be of type `polars.DataFrame` and enables dynamic inspection of the `DataFrame`'s expected fields.
 
 There are two primary uses for `Schema.DataFrame` annotations as above:
 1. Hinting which fields are expected during request deserialization:
@@ -165,7 +165,7 @@ The above `Endpoint` coordinates with its respective `Cache`, whose configuratio
 ### Scheduling `Cache` entry refreshes
 
 Modeled distributions may change over time, hence it is common to periodically retrain and redeploy models.
-You can configure your model `Cache` to periodically refresh model entries according either to a cron schedule or time interval, thereby ensuring that deployed models are current:
+You can configure your model `Cache` to periodically refresh model entries according to either a cron schedule or a time interval, thereby ensuring that deployed models are current:
 
 ```python
 # This endpoint refreshes its model cache entries every day at midnight
@@ -206,7 +206,7 @@ In the example below, we declare an `ArtifactSpec` with which to validate that I
 ```python
 from typing import Enum
 
-from more_itertools import one
+from more_itertools import first, one
 
 
 class FromString(Enum):
