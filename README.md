@@ -3,7 +3,7 @@
 Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) helps you build services for real-time ML inference in Python and Rust:
 * **Dual language**: Core Redesmyn functionality is written in Rust for safety and performance and exposed through interoperable Python and Rust APIs.
 * **Predict in Python**: Seamlessly integrate prediction handlers written in Python with Rust server frameworks.
-* **Serde deserialization**: Declare inference handler schemas via the Rust `Schema` trait or [Pydantic](https://docs.pydantic.dev/latest/) Python subclasses to use
+* **Serde deserialization**: Declare inference handler schemas via the derivable Rust `Schema` trait or [Pydantic](https://docs.pydantic.dev/latest/) Python subclasses to use
     [strongly-typed Serde parsing](https://docs.rs/serde_json/latest/serde_json/#parsing-json-as-strongly-typed-data-structures) or
     [untyped Serde parsing](https://docs.rs/serde_json/latest/serde_json/#operating-on-untyped-json-values), respectively.
 * **Built on Polars**: Request payloads are parsed into [Polars](https://pola.rs) DataFrames that can be passed to Python inference handlers with zero copy.
@@ -264,3 +264,33 @@ def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
 ```
 
 ## `Server`
+
+To deploy endpoints and serve requests, simply instantiate a `Server`, register the endpoints, and await the `Server.serve` coroutine in an `asyncio` event loop:
+
+```python
+@svc.endpoint(
+    path="/predictions/iris/{run_id}/{model_id}",
+    batch_max_delay_ms=10,
+    batch_max_size=64,
+    cache_config=afs.CacheConfig(
+        client=afs.FsClient(
+            base_path=Path(__file__).parent,
+            path_template="/models/mlflow/iris/{run_id}/{model_id}/artifacts/model",
+        ),
+        load_model=mlflow.sklearn.load_model,
+    ),
+)
+def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
+    return model.predict(X=records_df)
+
+
+async def main():
+    server = svc.Server()
+    server.register(endpoint=handle)
+    await server.serve()
+
+
+asyncio.run(main())
+```
+
+You can deploy this application as you would deploy any other HTTP service, for instance as a containerized service on AWS ECS.
