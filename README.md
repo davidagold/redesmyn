@@ -295,3 +295,13 @@ asyncio.run(main())
 
 That's it!
 You now have an ML inference service application that you can deploy as you would any other HTTP service, for instance as a containerized service on AWS ECS.
+
+
+## Roadmap
+
+- **Leverage subinterpreters to achieve GIL-free concurrency** -- This require [subinterpreter support in PyO3](https://github.com/PyO3/pyo3/issues/3451).
+- **Expand input deserialization options** -- Enable greater flexibility in configuring deserialization ([#89](https://github.com/davidagold/redesmyn/issues/89) and support deserialization into input structures appropriate for vision and language models.
+- **API to derive AWS and other cloud infrastructure provider constructs from service**
+- **Expand metrics/collection regimes**
+- **gRPC support**
+- **Dependency injection for greater handler flexibility/management endpoints**
