@@ -3,7 +3,7 @@ use ::redesmyn::common::{from_optional, OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::Handler;
 use ::redesmyn::logging::LogConfig;
-use ::redesmyn::predictions::{BatchPredictor, ServiceConfig};
+use ::redesmyn::predictions::{Endpoint, ServiceConfig};
 use ::redesmyn::schema::Schema;
 use ::redesmyn::server::{Server, ServerHandle};
 
@@ -145,7 +145,7 @@ impl PyServer {
             }
         };
 
-        let service = BatchPredictor::<String, Schema>::new(endpoint.config.clone(), cache.into());
+        let service = Endpoint::<String, Schema>::new(endpoint.config.clone(), cache.into());
         self.server
             .get_mut()
             .ok_or_else(|| {

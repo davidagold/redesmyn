@@ -9,7 +9,7 @@ use redesmyn::{
     handler::Handler,
     logging::{LogConfig, LogOutput},
     metrics::EmfOutput,
-    predictions::BatchPredictor,
+    predictions::Endpoint,
     schema::Schema,
     server::Server,
 };
@@ -75,7 +75,7 @@ async fn main() -> Result<(), ServiceError> {
         Python::with_gil(|py| PyResult::Ok(py.import_bound("model")?.getattr("handle")?.unbind()))
             .map_err(ServiceError::from)?,
     )?;
-    let endpoint = BatchPredictor::<String, Schema>::builder()
+    let endpoint = Endpoint::<String, Schema>::builder()
         .schema(schema)
         .path("/predictions/{run_id}/{model_id}")
         .cache(cache)

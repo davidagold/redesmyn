@@ -44,7 +44,7 @@ pub trait ServiceCore {
     fn path(&self) -> String;
 }
 
-impl<T, R> ServiceCore for BatchPredictor<T, R>
+impl<T, R> ServiceCore for Endpoint<T, R>
 where
     T: Send + Sync + Debug + for<'de> Deserialize<'de> + 'static,
     R: Relation<Serialized = T> + Send + Sync + 'static,
@@ -69,9 +69,9 @@ where
         // TODO: Keep reference to this `JoinHandle`
         let handle = TOKIO_RUNTIME.get_or_init(build_runtime).spawn(async move {
             tokio::spawn(async move {
-                BatchPredictor::<T, R>::task(rx, rx_abort, config, cache_handle).await
+                Endpoint::<T, R>::task(rx, rx_abort, config, cache_handle).await
             });
-            BatchPredictor::<T, R>::await_shutdown(tx_abort).await
+            Endpoint::<T, R>::await_shutdown(tx_abort).await
         });
 
         self.state = EndpointState::Running;
@@ -160,7 +160,7 @@ where
         validate_artifact_params: bool
     }
 
-    pub fn build(self) -> Result<BatchPredictor<T, R>, ServiceError> {
+    pub fn build(self) -> Result<Endpoint<T, R>, ServiceError> {
         let config = ServiceConfig {
             schema: self.schema.clone(),
             path: validate_param!(&self, path),
@@ -169,12 +169,12 @@ where
             handler: validate_param!(&self, handler),
             validate_artifact_params: validate_param!(&self, validate_artifact_params),
         };
-        Ok(BatchPredictor::<T, R>::new(config, self.cache))
+        Ok(Endpoint::<T, R>::new(config, self.cache))
     }
 }
 
 #[derive(Debug)]
-pub struct BatchPredictor<T, R>
+pub struct Endpoint<T, R>
 where
     R: Relation<Serialized = T>,
 {
@@ -186,7 +186,7 @@ where
     cache: Option<Arc<Cache>>,
 }
 
-impl<T, R> BatchPredictor<T, R>
+impl<T, R> Endpoint<T, R>
 where
     T: Send,
     R: Relation<Serialized = T> + Send + 'static,
@@ -200,10 +200,10 @@ where
         self
     }
 
-    pub fn new(config: ServiceConfig, cache: Option<Cache>) -> BatchPredictor<T, R> {
+    pub fn new(config: ServiceConfig, cache: Option<Cache>) -> Endpoint<T, R> {
         let (tx, rx) = mpsc::channel(1024);
 
-        BatchPredictor {
+        Endpoint {
             tx,
             rx: Some(rx),
             config,
@@ -420,7 +420,7 @@ where
 pub(crate) type HandlerArgs<R, T> =
     (HttpRequest, web::Json<Vec<T>>, web::Data<EndpointHandle<T, R>>, web::Data<ServiceConfig>);
 
-impl<T, R> Service for BatchPredictor<T, R>
+impl<T, R> Service for Endpoint<T, R>
 where
     Self: Sync,
     T: Send + Sync + for<'de> Deserialize<'de> + std::fmt::Debug + 'static,
