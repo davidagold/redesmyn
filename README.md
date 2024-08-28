@@ -299,9 +299,10 @@ You now have an ML inference service application that you can deploy as you woul
 
 ## Roadmap
 
-- **Leverage subinterpreters to achieve GIL-free concurrency** -- This require [subinterpreter support in PyO3](https://github.com/PyO3/pyo3/issues/3451).
+- **Leverage subinterpreters to achieve GIL-free concurrency** -- This requires [subinterpreter support in PyO3](https://github.com/PyO3/pyo3/issues/3451).
 - **Expand input deserialization options** -- Enable greater flexibility in configuring deserialization ([#89](https://github.com/davidagold/redesmyn/issues/89) and support deserialization into input structures appropriate for vision and language models.
-- **API to derive AWS and other cloud infrastructure provider constructs from service**
-- **Expand metrics/collection regimes**
-- **gRPC support**
-- **Dependency injection for greater handler flexibility/management endpoints**
+- **API to derive AWS and other cloud infrastructure provider constructs from service** -- ([#93](https://github.com/davidagold/redesmyn/issues/93)
+- **Expand metrics/collection regimes** -- ([#9](https://github.com/davidagold/redesmyn/issues/9))
+- **gRPC support** -- ([#94](https://github.com/davidagold/redesmyn/issues/94))
+- **Dependency injection for greater handler flexibility/management endpoints** -- ([#95](https://github.com/davidagold/redesmyn/issues/95))
+- **Middleware** -- ([#96](https://github.com/davidagold/redesmyn/issues/96))
