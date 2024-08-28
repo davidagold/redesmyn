@@ -11,6 +11,9 @@ Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) enables simple, fast, and fexible developm
 * **Asynchronous model cache**: Manage model caching and async updating via an integrated cache that maps URL parameters to model variants.
 * **Observability**: Redesmyn applications can be configured to emit collated AWS EMF metrics log messages.
 
+The goal of Redesmyn is to provide a FastAPI-like experience for developing ML inference services backed by efficient, multi-threaded concurrency in as many application layers as possible.
+Please get in touch and/or [file an issue](https://github.com/davidagold/redesmyn/issues) if you identify missing features that you believe would further this objective!
+
 **NOTE**: Redesmyn is currently in active development targeting a v0.1 release, which is intended as the first iteration officially suitable for public use.
 Some features described in the present README are aspirational and are included to give a sense of our intended direction for Redesmyn.
 Such aspirational features are indicated by a "†" linking to the corresponding GitHub issue.
