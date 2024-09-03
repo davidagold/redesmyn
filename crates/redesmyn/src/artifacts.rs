@@ -1,5 +1,6 @@
 use crate::common::{__Str__, consume_and_log_err};
 use crate::do_in;
+use crate::error::{ArtifactsError, ArtifactsResult};
 
 use bytes::{Buf, BufMut, BytesMut};
 use indexmap::IndexMap;
@@ -14,7 +15,6 @@ use pyo3::{pyclass, pymethods};
 use serde::Serialize;
 use std::{collections::VecDeque, future::Future, io::Read, path::PathBuf, pin::Pin, sync::Arc};
 use strum::Display;
-use thiserror::Error;
 use tracing::info;
 
 pub trait Pydantic: __Str__ + Send + Sync {
@@ -253,6 +253,13 @@ pub trait Client: std::fmt::Debug + Send + Sync {
     }
 }
 
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct FsClient {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+}
+
 impl Client for FsClient {
     fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
         self.path_template.substitute(args)
@@ -285,13 +292,6 @@ impl Client for FsClient {
     }
 }
 
-#[pyclass]
-#[derive(Clone, Debug)]
-pub struct FsClient {
-    base_path: PathBuf,
-    path_template: PathTemplate,
-}
-
 impl FsClient {
     pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
         FsClient {
@@ -315,6 +315,8 @@ impl FsClient {
         })
     }
 }
+
+struct S3Client {}
 
 #[derive(Clone, Debug)]
 pub struct PathTemplate {
@@ -431,27 +433,3 @@ fn _list(
         None => paths_by_spec,
     }
 }
-
-#[derive(Error, Debug)]
-pub enum ArtifactsError {
-    #[error("Error: {0}")]
-    Error(String),
-    #[error("SerdeJsonError: {0}")]
-    SerdeJsonError(#[from] serde_json::Error),
-    #[error("SerdeJsonError: {0}")]
-    StdIoError(#[from] std::io::Error),
-}
-
-impl From<String> for ArtifactsError {
-    fn from(err: String) -> Self {
-        ArtifactsError::Error(err)
-    }
-}
-
-impl From<&str> for ArtifactsError {
-    fn from(err: &str) -> Self {
-        ArtifactsError::Error(err.to_string())
-    }
-}
-
-type ArtifactsResult<T> = Result<T, ArtifactsError>;

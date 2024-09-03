@@ -2,7 +2,7 @@ use crate::{
     artifacts::{self, ArtifactSpec, BoxedSpec, Client, FetchAs, FsClient, Pydantic, Uri},
     common::{__Str__, build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
-    error::{ServiceError, ServiceResult},
+    error::{ArtifactsError, ServiceError, ServiceResult},
 };
 use bytes::BytesMut;
 use chrono::{DateTime, Duration, Utc};
@@ -962,7 +962,7 @@ pub enum CacheError {
     #[error("Failed to receive message over oneshot channel")]
     RecvError(#[from] oneshot::error::RecvError),
     #[error("ArtifactsError: {0}")]
-    ArtifactsError(#[from] artifacts::ArtifactsError),
+    ArtifactsError(#[from] ArtifactsError),
 }
 
 impl From<String> for CacheError {

@@ -85,3 +85,27 @@ pub enum PredictionError {
     #[error("Prediction failed during IO: {0}.")]
     IoError(#[from] std::io::Error),
 }
+
+#[derive(Error, Debug)]
+pub enum ArtifactsError {
+    #[error("Error: {0}")]
+    Error(String),
+    #[error("SerdeJsonError: {0}")]
+    SerdeJsonError(#[from] serde_json::Error),
+    #[error("SerdeJsonError: {0}")]
+    StdIoError(#[from] std::io::Error),
+}
+
+impl From<String> for ArtifactsError {
+    fn from(err: String) -> Self {
+        ArtifactsError::Error(err)
+    }
+}
+
+impl From<&str> for ArtifactsError {
+    fn from(err: &str) -> Self {
+        ArtifactsError::Error(err.to_string())
+    }
+}
+
+pub type ArtifactsResult<T> = Result<T, ArtifactsError>;
