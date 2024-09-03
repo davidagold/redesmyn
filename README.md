@@ -200,7 +200,7 @@ Validating request parameters prior to model retrieval both avoids the cost of d
 You can use a Pydantic model to declare a validation schema for request parameters.
 We call such a model class used to validate request parameters an _artifact spec_, or just _spec_ for short.
 As subclasses of Pydantic's `BaseModel`, artifact specs can make use of all Pydantic validation mechanisms.
-By default, if an artifact spec is Redesmyn will apply the spec's `model_validate` method to incoming request parameters and return an HTTP 422 response if validation fails.
+By default, if an artifact spec is included in an endpoint's cache configuration, Redesmyn will apply the spec's `model_validate` method to incoming request parameters and return an HTTP 422 response if validation fails.
 
 In the example below, we declare an artifact spec with which to validate that ISO 3166-1 and 3166-2 request parameters are valid and supported:
 
