@@ -4,13 +4,13 @@ use crate::do_in;
 use bytes::{Buf, BufMut, BytesMut};
 use indexmap::IndexMap;
 use pyo3::exceptions::PyRuntimeError;
-use pyo3::pyclass;
 use pyo3::types::{IntoPyDict, PyAnyMethods, PyIterator};
 use pyo3::{
     exceptions::PyTypeError,
     types::{PyByteArray, PyNone, PyString},
     IntoPy, Py, PyAny, PyResult, Python,
 };
+use pyo3::{pyclass, pymethods};
 use serde::Serialize;
 use std::{collections::VecDeque, future::Future, io::Read, path::PathBuf, pin::Pin, sync::Arc};
 use strum::Display;
@@ -299,6 +299,20 @@ impl FsClient {
             base_path: base_path.clone(),
             path_template: PathTemplate { template: path_template, base: base_path },
         }
+    }
+}
+
+#[pymethods]
+impl FsClient {
+    #[new]
+    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<FsClient> {
+        Python::with_gil(|py| {
+            let client = FsClient::new(
+                base_path.extract::<PathBuf>(py)?,
+                path_template.extract::<String>(py)?,
+            );
+            Ok(client)
+        })
     }
 }
 
