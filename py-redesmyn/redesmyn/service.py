@@ -1,15 +1,14 @@
 import inspect
-from asyncio import Future
 from itertools import islice
 from typing import Callable, Generic, List, Optional, Self, Tuple, Type, TypeVar, get_args, overload
 
 import polars as pl
-from more_itertools import first, one
+from more_itertools import first
 from more_itertools.more import only
 from typing_extensions import Coroutine
 
-from redesmyn.artifacts import ArtifactSpec, CacheConfig
-from redesmyn.py_redesmyn import Cache, PyEndpoint, PyServer, ServerHandle
+from redesmyn.artifacts import CacheConfig
+from redesmyn.py_redesmyn import PyEndpoint, PyServer, ServerHandle
 from redesmyn.schema import Schema
 
 
