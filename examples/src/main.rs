@@ -2,7 +2,8 @@ use cron;
 use polars::datatypes::DataType;
 use pyo3::{prelude::*, Python};
 use redesmyn::{
-    cache::{Cache, FsClient, Schedule},
+    artifacts::FsClient,
+    cache::{Cache, Schedule},
     common::{consume_and_log_err, include_python_paths},
     do_in,
     error::ServiceError,

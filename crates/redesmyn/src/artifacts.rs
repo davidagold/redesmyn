@@ -1,8 +1,10 @@
 use crate::common::{__Str__, consume_and_log_err};
+use crate::do_in;
 
 use bytes::{Buf, BufMut, BytesMut};
 use indexmap::IndexMap;
 use pyo3::exceptions::PyRuntimeError;
+use pyo3::pyclass;
 use pyo3::types::{IntoPyDict, PyAnyMethods, PyIterator};
 use pyo3::{
     exceptions::PyTypeError,
@@ -10,8 +12,9 @@ use pyo3::{
     IntoPy, Py, PyAny, PyResult, Python,
 };
 use serde::Serialize;
-use std::{io::Read, path::PathBuf, sync::Arc};
+use std::{collections::VecDeque, future::Future, io::Read, path::PathBuf, pin::Pin, sync::Arc};
 use strum::Display;
+use thiserror::Error;
 use tracing::info;
 
 pub trait Pydantic: __Str__ + Send + Sync {
@@ -210,3 +213,231 @@ impl FetchAs {
         }
     }
 }
+
+pub trait Client: std::fmt::Debug + Send + Sync {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String>;
+
+    fn list(
+        &self,
+        base_path: Option<&PathBuf>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>>;
+
+    fn fetch<'this>(
+        &'this self,
+        spec: BoxedSpec,
+        fetch_as: FetchAs,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<FetchAs>> + Send + 'this>> {
+        // TODO: This may be fine for now but we should wrap in an `Arc``
+        match fetch_as {
+            FetchAs::Uri(None) => {
+                let uri = do_in!(|| -> ArtifactsResult<_> {
+                    let args = spec.as_map()?;
+                    let path = self.substitute(args)?;
+                    let uri = Uri::Path(Some(PathBuf::from(path)));
+                    Ok(FetchAs::Uri(Some(uri)))
+                });
+                Box::pin(std::future::ready(uri))
+            }
+            FetchAs::Bytes(None) => {
+                Box::pin(async move { Ok(self.fetch_bytes(spec, BytesMut::new()).await?.into()) })
+            }
+            // TODO: Don't panic, just return Error
+            _ => panic!(),
+        }
+    }
+}
+
+impl Client for FsClient {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        self.path_template.substitute(args)
+    }
+
+    fn list(
+        &self,
+        base_path: Option<&PathBuf>,
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
+        let spec = IndexMap::<String, String>::default();
+        let paths_by_spec = _list(
+            [(spec, base_path.unwrap_or(&self.base_path).clone())].into(),
+            self.path_template.components(),
+        );
+        Box::pin(std::future::ready(paths_by_spec))
+    }
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        mut bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>> {
+        let path = do_in!(|| -> ArtifactsResult<_> {
+            Ok(PathBuf::from(self.substitute(spec.as_map()?)?))
+        });
+        Box::pin(async move {
+            bytes.extend(tokio::fs::read(path?).await?);
+            Ok(bytes)
+        })
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct FsClient {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+}
+
+impl FsClient {
+    pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
+        FsClient {
+            // TODO: Remove redundant `base_path` field somewhere
+            base_path: base_path.clone(),
+            path_template: PathTemplate { template: path_template, base: base_path },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PathTemplate {
+    template: String,
+    base: PathBuf,
+}
+
+enum PathComponent {
+    Fixed(String),
+    Identifier(String),
+}
+
+impl PathTemplate {
+    fn components(&self) -> VecDeque<PathComponent> {
+        self.template
+            .split("/")
+            .filter_map(|part| {
+                if part.starts_with("{") && part.ends_with("}") {
+                    let n_chars = part.len();
+                    let identifier: String = part.chars().skip(1).take(n_chars - 2).collect();
+                    Some(PathComponent::Identifier(identifier))
+                } else if part != "" {
+                    Some(PathComponent::Fixed(part.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn parse(&self, path: &PathBuf) -> IndexMap<String, String> {
+        let mut base_parts: VecDeque<_> = self.base.iter().collect();
+        let rel_path: PathBuf = path
+            .into_iter()
+            .skip_while(|&part| {
+                let Some(base_part) = base_parts.pop_front() else { return false };
+                base_part == part
+            })
+            .collect();
+
+        self.components()
+            .into_iter()
+            .filter_map(|part| match part {
+                PathComponent::Fixed(_) => None,
+                PathComponent::Identifier(identifier) => Some(identifier),
+            })
+            .zip(rel_path.into_iter().filter_map(|part| part.to_str().map(str::to_string)))
+            .collect()
+    }
+
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        let path = self
+            .components()
+            .iter()
+            .try_fold(None, |path: Option<String>, component| {
+                let next_path_component = match component {
+                    PathComponent::Fixed(dir_name) => dir_name,
+                    PathComponent::Identifier(identifier) => {
+                        args.get(identifier).ok_or_else(|| {
+                            ArtifactsError::from(format!(
+                                "Substitution identifier `{}` is not present in the provided args",
+                                identifier
+                            ))
+                        })?
+                    }
+                };
+                let path = match path {
+                    None => next_path_component.to_string(),
+                    Some(path) => vec![path, next_path_component.to_string()].join("/"),
+                };
+                ArtifactsResult::<Option<String>>::Ok(Some(path))
+            })?
+            .ok_or_else(|| ArtifactsError::from("Failed to substitute args into path template"))?;
+
+        let mut abs_path = self.base.clone();
+        abs_path.push(path);
+        Ok(abs_path
+            .to_str()
+            .ok_or_else(|| {
+                ArtifactsError::from(format!("Failed to stringify path {:#?}", abs_path))
+            })?
+            .to_string())
+    }
+}
+
+fn _list(
+    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
+    mut remaining_components: VecDeque<PathComponent>,
+) -> Vec<(IndexMap<String, String>, PathBuf)> {
+    match remaining_components.pop_front() {
+        Some(PathComponent::Fixed(dir_name)) => {
+            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
+            _list(paths_by_spec, remaining_components)
+        }
+        Some(PathComponent::Identifier(identifier)) => {
+            let updated_paths_by_spec = paths_by_spec
+                .into_iter()
+                .filter_map(|(spec, path)| {
+                    Some(((spec, path.clone()), std::fs::read_dir(path).ok()?))
+                })
+                .flat_map(|((spec, path), dir)| {
+                    let cloned_identifier = identifier.clone();
+                    dir.filter_map(move |entry| {
+                        let name = entry.ok()?.file_name().to_string_lossy().to_string();
+                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
+                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
+                        cloned_path.push(name);
+                        Some((cloned_spec, cloned_path))
+                    })
+                })
+                .collect();
+            _list(updated_paths_by_spec, remaining_components)
+        }
+        None => paths_by_spec,
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ArtifactsError {
+    #[error("Error: {0}")]
+    Error(String),
+    #[error("SerdeJsonError: {0}")]
+    SerdeJsonError(#[from] serde_json::Error),
+    #[error("SerdeJsonError: {0}")]
+    StdIoError(#[from] std::io::Error),
+}
+
+impl From<String> for ArtifactsError {
+    fn from(err: String) -> Self {
+        ArtifactsError::Error(err)
+    }
+}
+
+impl From<&str> for ArtifactsError {
+    fn from(err: &str) -> Self {
+        ArtifactsError::Error(err.to_string())
+    }
+}
+
+type ArtifactsResult<T> = Result<T, ArtifactsError>;

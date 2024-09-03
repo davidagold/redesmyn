@@ -1,4 +1,5 @@
-use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
+use ::redesmyn::artifacts::FsClient;
+use ::redesmyn::cache::{validate_schedule, Cache};
 use ::redesmyn::common::{from_optional, OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::Handler;
