@@ -7,13 +7,11 @@ from typing import Dict
 from unittest import mock
 
 import aiohttp
-import mlflow
 import polars as pl
 import pytest
-from redesmyn import artifacts as afs
-from redesmyn.py_redesmyn import LogConfig
-from redesmyn.service import Server, endpoint
 
+from redesmyn.py_redesmyn import LogConfig
+from redesmyn.service import Server
 from tests.fixtures.iris_model import get_handle
 
 PROJECT_DIR = Path(__file__).parent.parent

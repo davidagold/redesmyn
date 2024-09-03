@@ -9,7 +9,7 @@ from typing import Optional, cast
 import mlflow
 import polars as pl
 import redesmyn.artifacts as afs
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from redesmyn.py_redesmyn import LogConfig
 from redesmyn.schema import Schema
 from redesmyn.service import Endpoint, Server, endpoint
@@ -65,7 +65,7 @@ class SepalLengthPredictor:
         return predictions
 
 
-class SepalLengthPredictorSpec(afs.ArtifactSpec[SepalLengthPredictor]):
+class SepalLengthPredictorSpec(BaseModel):
     run_id: str = Field(pattern=r"^\d+$")
     model_id: str
 

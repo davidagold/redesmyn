@@ -1,20 +1,28 @@
 [build-system]
-requires = [ "maturin>=1.0,<2.0",]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "redesmyn"
-dependencies = [ "annotated-types>=0.7.0,<1", "cachetools>=5.3.3,<6", "more-itertools>=10.2.0,<11", "polars>=0.20.30,<1", "pydantic>=2.7.2,<3", "setuptools>=70.0.0,<71",]
+version = "0.1.0"
+dependencies = [
+    "annotated-types>=0.7.0,<1",
+    "cachetools>=5.3.3,<6",
+    "more-itertools>=10.2.0,<11",
+    "polars>=0.20.30,<1",
+    "pydantic>=2.7.2,<3",
+    "setuptools>=70.0.0,<71",
+]
 
 [tool.poetry]
 name = "redesmyn"
-version = "0.0.1"
+version = "0.1.0"
 description = "Example of using Redesmyn to serve a Lasso model trained against the iris dataset."
-authors = [ "David Gold <david.gold.a@gmail.com>",]
+authors = ["David Gold <david.gold.a@gmail.com>"]
 
 [tool.maturin]
 module-name = "redesmyn.py_redesmyn"
-features = [ "pyo3/extension-module",]
+features = ["pyo3/extension-module"]
 
 [tool.poetry.dependencies]
 python = ">=3.11"
@@ -33,7 +41,7 @@ aiohttp = "^3.9.5"
 pytest = "^8.2.1"
 sphinx = "^7.3.7"
 pydata-sphinx-theme = "^0.15.3"
-ruff = "^0.5.2"
+ruff = "^0.5.5"
 toml = "^0.10.2"
 
 [tool.poetry.group.notebook.dependencies]
