@@ -1,18 +1,17 @@
-import logging
-import os
 from io import FileIO
 from pathlib import Path
 from typing import Optional, cast
 
 import mlflow
 import polars as pl
+from pydantic import BaseModel
 from common import load_irises, project_dir
-from redesmyn.artifacts import ArtifactSpec
-from redesmyn.schema import Schema
 from sklearn.compose import ColumnTransformer
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.linear_model import Lasso
 from sklearn.pipeline import Pipeline
+
+from redesmyn.schema import Schema
 
 
 class Input(Schema):
@@ -60,7 +59,7 @@ class SepalLengthPredictor:
         return predictions
 
 
-class SepalLengthPredictorSpec(ArtifactSpec[SepalLengthPredictor]):
+class SepalLengthPredictorSpec(BaseModel):
     run_id: str
     model_id: str
 

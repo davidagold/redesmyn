@@ -5,20 +5,22 @@ Artifact specs
 ==============
 
 Requests made to a :class:`redesmyn.service.Endpoint` may include URL parameters to specify
-which variant of a model to apply to the request payload. We use subclasses
-of `ArtifactSpec` to validate URL parameters of a requestsed endpoint.
-The fields of an `ArtifactSpec` correspond one-to-one with both the endpoint's
+which variant of a model to apply to the request payload. You can pass a Pydantic model
+to `CacheConfig.spec` to designate use of the model for request URL parameter validation.
+Such a Pydantic model is known as an *artifact spec*, or *spec* for short.
+
+The fields of an artifact spec correspond one-to-one with both the endpoint's
 path parameters and the storage location's path parameters. An endpoint declaring
-use of a given `ArtifactSpec` will apply the latter's `BaseModel.model_validate`
+use of a given artifact spec via the cache will apply the spec's `BaseModel.model_validate`
 method to the requested URL's path parameters to ensure that the specification
 of the requested model is valid.
 
-An `ArtifactSpec` may designate one field to serve as a *latest key*.
-A request to an endpoint whose associated `ArtifactSpec` declares a latest key
+An artifact spec may designate one field to serve as a *latest key*.
+A request to an endpoint whose associated spec declares a latest key
 may either include a specific value for this field or specify `latest` in the
 path component. See :class:`LatestKey` for more information.
 
-Since an `ArtifactSpec` derives from `pydantic.BaseModel`, it can include any
+Since an artifact spec derives from `pydantic.BaseModel`, it can include any
 validation mechanism available to the latter. In the following example,
 we use Pydantic validator `annotations <https://docs.pydantic.dev/latest/concepts/validators/#annotated-validators>`_
 and `decorators <https://docs.pydantic.dev/latest/concepts/validators/#field-validators>`_
@@ -36,7 +38,7 @@ codes and *may either* include a model ID *or* request the latest model via `lat
     import mlflow
     from annotated_types import Ge
     from more_itertools import first, one
-    from pydantic import BeforeValidator, Field, ValidationInfo, field_validator
+    from pydantic import BaseModel, BeforeValidator, Field, ValidationInfo, field_validator
     from redesmyn import artifacts as afs
 
 
@@ -61,15 +63,10 @@ codes and *may either* include a model ID *or* request the latest model via `lat
             return first(self.value.split("-")) == of.value
 
 
-    class RegionalModelSpec(afs.ArtifactSpec):
+    class RegionalModelSpec(BaseModel):
         iso3166_1: Annotated[Iso3166_1, BeforeValidator(Iso3166_1.from_string)]
         iso3166_2: Iso3166_2
         id: Annotated[Optional[int], Ge(0), afs.LatestKey] = None
-
-        # These fields are `ArtifactSpec` class variables.
-        # You can omit and pass them to `@afs.artifact_spec` instead.
-        load_fn = mlflow.sklearn.load_model
-        cache_path = afs.path("s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}/")
 
         @field_validator("iso3166_2", mode="before")
         @classmethod
@@ -126,13 +123,13 @@ K = TypeVar("K", bound=Union[SupportsLt, SupportsGt])
 
 
 class LatestKey(BaseModel, Generic[K]):
-    """Designates an :class:`ArtifactSpec` field as the latest key for the latter's storage path.
+    """Designates an artifact spec field as the latest key for the latter's storage path.
 
     A `LatestKey` may optionally specify a manifest filename via the `manifest`
     initialization parameter.
 
     If a manifest file is specified, then a :class:`ModelCache` that uses
-    the `ArtifactSpec` containing the given `LatestKey` will look for the manifest
+    the artifact spec containing the given `LatestKey` will look for the manifest
     file at the path obtained by substituting the manifest filename for
     the cache's storage path parameter corresponding to the latest key
     and omitting any trailing path components.
@@ -192,7 +189,7 @@ class CacheConfig(BaseModel, Generic[M]):
     load_model: Callable[..., M]  # TODO: Better argument typing
     """The method by which the cache will load the model artifact into the present application."""
     spec: Optional[Type[BaseModel]] = None
-    """An `ArtifactSpec` describing the specification of the model artifacts to be used with the present cache."""
+    """A Pydantic `BaseModel` describing the specification of the model artifacts to be used with the present cache."""
     max_size: Optional[int] = None  # TODO: Should default to actual default max size
     """The maximum number of models to be stored in the cache."""
     pre_fetch_all: bool = True

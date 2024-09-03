@@ -193,20 +193,23 @@ def handle(model: Pipeline, records_df: pl.DataFrame) -> pl.DataFrame:
 ```
 
 
-## `ArtifactSpec`
+## Artifact specs
 
 When serving predictions from parametrized models, it is common to validate request parameters before attempting to retrieve a model.
 Validating request parameters prior to model retrieval both avoids the cost of deserializing unprocessable records and helps to maintain clarity in logs and metrics.
-You can use the `ArtifactSpec` base class to declare a validation schema for request parameters.
-`ArtifactSpec` is a subclass of Pydantic's `BaseModel` and hence can use all Pydantic validation mechanisms.
-Redesmyn will apply the `ArtifactSpec`'s `model_validate` method to incoming request parameters and return an HTTP 422 response if validation fails.
+You can use a Pydantic model to declare a validation schema for request parameters.
+We call such a model class used to validate request parameters an _artifact spec_, or just _spec_ for short.
+As subclasses of Pydantic's `BaseModel`, artifact specs can make use of all Pydantic validation mechanisms.
+By default, if an artifact spec is Redesmyn will apply the spec's `model_validate` method to incoming request parameters and return an HTTP 422 response if validation fails.
 
-In the example below, we declare an `ArtifactSpec` with which to validate that ISO 3166-1 and 3166-2 request parameters are valid and supported:
+In the example below, we declare an artifact spec with which to validate that ISO 3166-1 and 3166-2 request parameters are valid and supported:
 
 ```python
-from typing import Enum
+from typing import Annotated, Enum
+
 
 from more_itertools import one
+from pydantic import BeforeValidator, field_validator, ValidationInfo
 
 
 class FromString(Enum):
@@ -231,8 +234,8 @@ class Iso3166_2(FromString):
         return first(self.value.split("-")) == of.value
 
 
-class FraudulentTransactionModelSpec(afs.ArtifactSpec[Pipeline]):
-    """An `ArtifactSpec` designating a model indexed by ISO 3166-1/3166-2 codes."""
+class FraudulentTransactionModelSpec(BaseModel):
+    """An artifact spec designating a model indexed by ISO 3166-1/3166-2 codes."""
     iso3166_1: Annotated[Iso3166_1, BeforeValidator(Iso3166_1.from_string)]
     iso3166_2: Iso3166_2
 

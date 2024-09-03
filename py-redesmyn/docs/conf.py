@@ -32,6 +32,7 @@ maximum_signature_line_length = 88
 
 # Extensions
 
+
 # autosummary
 def excluded_attributes() -> List[str]:
     return [
@@ -51,21 +52,18 @@ autosummary_context = {
     "decorators": ["redesmyn.service.endpoint", "redesmyn.artifacts.artifact_spec"],
     "special": {"redesmyn.schema.Schema": ["DataFrame"]},
     "show_inheritance": [
-        "redesmyn.artifacts.ArtifactSpec",
         "redesmyn.artifacts.LatestKey",
         "redesmyn.artifacts.CacheConfig",
         "redesmyn.artifacts.Cron",
         "redesmyn.artifacts.PathTemplate",
     ],
     "no_inherited_members": {
-        "redesmyn.artifacts.ArtifactSpec": ["BaseModel"],
         "redesmyn.artifacts.LatestKey": ["BaseModel"],
         "redesmyn.artifacts.CacheConfig": ["BaseModel"],
         "redesmyn.artifacts.Cron": ["BaseModel"],
         "redesmyn.artifacts.PathTemplate": ["Path"],
     },
     "exclude_attributes": {
-        "redesmyn.artifacts.ArtifactSpec": excluded_attributes(),
         "redesmyn.artifacts.LatestKey": excluded_attributes(),
         "redesmyn.artifacts.CacheConfig": excluded_attributes(),
         "redesmyn.artifacts.Cron": excluded_attributes(),
@@ -75,7 +73,7 @@ autosummary_context = {
             "flags",
             "idpattern",
             "pattern",
-        ]
+        ],
     },
 }
 

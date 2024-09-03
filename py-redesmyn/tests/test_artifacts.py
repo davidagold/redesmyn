@@ -1,27 +1,20 @@
-import math
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from enum import Enum
-from io import FileIO
-from pathlib import Path
-from typing import Annotated, Any, DefaultDict, Iterable, List, Self, cast
+from typing import Annotated, DefaultDict, List, Self
 
-import mlflow
-import pytest
-from annotated_types import Ge, Predicate
+from annotated_types import Ge
 from more_itertools import first, one, pairwise
 from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
-    ValidationError,
     ValidationInfo,
     field_validator,
 )
-from redesmyn import artifacts as afs
-from redesmyn.py_redesmyn import LogConfig
 
+from redesmyn import artifacts as afs
 from tests.common import DIR_TESTS
 
 
@@ -60,7 +53,7 @@ class Iso3166_2(FromString):
 #     load_fn=mlflow.sklearn.load_model,
 #     cache_path="s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}",
 # )
-class RegionalModelSpec(afs.ArtifactSpec[None]):
+class RegionalModelSpec(BaseModel):
     # These fields are parts of the artifact specification.
     iso3166_1: Annotated[Iso3166_1, BeforeValidator(Iso3166_1.from_string)]
     iso3166_2: Iso3166_2
@@ -75,16 +68,6 @@ class RegionalModelSpec(afs.ArtifactSpec[None]):
             raise ValueError(f"'{iso3166_2} is not a subdivision of {iso3166_1}")
 
         return iso3166_2
-
-
-# class TestArtifactSpec:
-#     def test(self):
-#         path = "s3://model-bucket/{iso3166_1}/{iso3166_2}/{id}"
-#         assert RegionalModelSpec.cache_path is not None
-#         assert (
-#             cast(afs.PathTemplate, RegionalModelSpec.cache_path).template
-#             == afs.PathTemplate(path).template
-#         )
 
 
 # class TestModelCache:
