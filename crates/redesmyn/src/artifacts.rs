@@ -217,10 +217,18 @@ impl FetchAs {
 pub trait Client: std::fmt::Debug + Send + Sync {
     fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String>;
 
-    fn list(
+    fn list_parametrizations(
         &self,
-        base_path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
+        base_path: PathBuf,
+        path_template: PathTemplate,
+    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
+        let spec = IndexMap::<String, String>::default();
+        let paths_by_spec =
+            list_parametrizations_impl([(spec, base_path)].into(), path_template.components());
+        Box::pin(std::future::ready(paths_by_spec))
+    }
+
+    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>>;
 
     fn fetch_bytes(
         &self,
@@ -253,6 +261,41 @@ pub trait Client: std::fmt::Debug + Send + Sync {
     }
 }
 
+fn list_parametrizations_impl(
+    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
+    mut remaining_components: VecDeque<PathComponent>,
+) -> Vec<(IndexMap<String, String>, PathBuf)> {
+    match remaining_components.pop_front() {
+        Some(PathComponent::Fixed(dir_name)) => {
+            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
+            list_parametrizations_impl(paths_by_spec, remaining_components)
+        }
+        Some(PathComponent::Identifier(identifier)) => {
+            let updated_paths_by_spec = paths_by_spec
+                .into_iter()
+                .filter_map(|(spec, path)| {
+                    let dir = std::fs::read_dir(&path).ok()?;
+                    let object_names = dir.filter_map(|entry| {
+                        Some(entry.ok()?.file_name().to_string_lossy().to_string())
+                    });
+                    Some(((spec, path.clone()), object_names))
+                })
+                .flat_map(|((spec, path), names)| {
+                    let cloned_identifier = identifier.clone();
+                    names.filter_map(move |name| {
+                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
+                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
+                        cloned_path.push(name);
+                        Some((cloned_spec, cloned_path))
+                    })
+                })
+                .collect();
+            list_parametrizations_impl(updated_paths_by_spec, remaining_components)
+        }
+        None => paths_by_spec,
+    }
+}
+
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct FsClient {
@@ -265,16 +308,12 @@ impl Client for FsClient {
         self.path_template.substitute(args)
     }
 
-    fn list(
-        &self,
-        base_path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
-        let spec = IndexMap::<String, String>::default();
-        let paths_by_spec = _list(
-            [(spec, base_path.unwrap_or(&self.base_path).clone())].into(),
-            self.path_template.components(),
-        );
-        Box::pin(std::future::ready(paths_by_spec))
+    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>> {
+        let dir = std::fs::read_dir(&path).ok()?;
+        let object_names = dir
+            .into_iter()
+            .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()));
+        Some(object_names)
     }
 
     fn fetch_bytes(
@@ -316,7 +355,61 @@ impl FsClient {
     }
 }
 
-struct S3Client {}
+#[pyclass]
+#[derive(Clone, Debug)]
+struct S3Client {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+    client: aws_sdk_s3::Client,
+}
+
+impl Client for S3Client {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        self.path_template.substitute(args)
+    }
+
+    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>> {
+        //
+    }
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        mut bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>> {
+        let path = do_in!(|| -> ArtifactsResult<_> {
+            Ok(PathBuf::from(self.substitute(spec.as_map()?)?))
+        });
+        Box::pin(async move {
+            bytes.extend(tokio::fs::read(path?).await?);
+            Ok(bytes)
+        })
+    }
+}
+
+impl S3Client {
+    pub fn new(base_path: PathBuf, path_template: String) -> S3Client {
+        S3Client {
+            // TODO: Remove redundant `base_path` field somewhere
+            base_path: base_path.clone(),
+            path_template: PathTemplate { template: path_template, base: base_path },
+        }
+    }
+}
+
+#[pymethods]
+impl S3Client {
+    #[new]
+    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<S3Client> {
+        Python::with_gil(|py| {
+            let client = S3Client::new(
+                base_path.extract::<PathBuf>(py)?,
+                path_template.extract::<String>(py)?,
+            );
+            Ok(client)
+        })
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct PathTemplate {
@@ -399,37 +492,5 @@ impl PathTemplate {
                 ArtifactsError::from(format!("Failed to stringify path {:#?}", abs_path))
             })?
             .to_string())
-    }
-}
-
-fn _list(
-    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
-    mut remaining_components: VecDeque<PathComponent>,
-) -> Vec<(IndexMap<String, String>, PathBuf)> {
-    match remaining_components.pop_front() {
-        Some(PathComponent::Fixed(dir_name)) => {
-            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
-            _list(paths_by_spec, remaining_components)
-        }
-        Some(PathComponent::Identifier(identifier)) => {
-            let updated_paths_by_spec = paths_by_spec
-                .into_iter()
-                .filter_map(|(spec, path)| {
-                    Some(((spec, path.clone()), std::fs::read_dir(path).ok()?))
-                })
-                .flat_map(|((spec, path), dir)| {
-                    let cloned_identifier = identifier.clone();
-                    dir.filter_map(move |entry| {
-                        let name = entry.ok()?.file_name().to_string_lossy().to_string();
-                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
-                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
-                        cloned_path.push(name);
-                        Some((cloned_spec, cloned_path))
-                    })
-                })
-                .collect();
-            _list(updated_paths_by_spec, remaining_components)
-        }
-        None => paths_by_spec,
     }
 }
