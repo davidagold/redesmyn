@@ -366,7 +366,7 @@ impl Client for S3Client {
         self.path_template.substitute(args)
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>> {
+    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>> {
         //
     }
 

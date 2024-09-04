@@ -588,7 +588,7 @@ impl Cache {
         );
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
-            let paths_by_spec = client.list(None).await;
+            let paths_by_spec = client.list_parametrizations(None).await;
             let rxs = paths_by_spec
                 .iter()
                 .map(|(spec, path)| {
