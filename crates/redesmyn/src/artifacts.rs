@@ -3,6 +3,8 @@ use crate::do_in;
 use crate::error::{ArtifactsError, ArtifactsResult};
 
 use bytes::{Buf, BufMut, BytesMut};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use indexmap::IndexMap;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{IntoPyDict, PyAnyMethods, PyIterator};
@@ -217,51 +219,49 @@ impl FetchAs {
 pub trait Client: std::fmt::Debug + Send + Sync {
     fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String>;
 
-    fn list_parametrizations(
+    async fn list_parametrizations(
         &self,
         base_path: PathBuf,
         path_template: PathTemplate,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
+    ) -> Vec<(IndexMap<String, String>, PathBuf)> {
         let spec = IndexMap::<String, String>::default();
-        let paths_by_spec =
-            self.list_parametrizations_impl([(spec, base_path)].into(), path_template.components());
-        Box::pin(std::future::ready(paths_by_spec))
+        let paths_by_spec = self
+            .list_parametrizations_impl([(spec, base_path)].into(), path_template.components())
+            .await;
+        paths_by_spec
     }
 
-    fn list_parametrizations_impl(
-        &self,
+    fn list_parametrizations_impl<'this>(
+        &'this self,
         mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
         mut remaining_components: VecDeque<PathComponent>,
-    ) -> Vec<(IndexMap<String, String>, PathBuf)> {
+    ) -> BoxFuture<'this, Vec<(IndexMap<String, String>, PathBuf)>> {
         match remaining_components.pop_front() {
             Some(PathComponent::Fixed(dir_name)) => {
                 paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
                 self.list_parametrizations_impl(paths_by_spec, remaining_components)
             }
-            Some(PathComponent::Identifier(identifier)) => {
-                let updated_paths_by_spec = paths_by_spec
-                    .into_iter()
-                    .filter_map(|(spec, path)| {
-                        let object_names = self.list_from_path(&path)?;
-                        Some(((spec, path), object_names))
-                    })
-                    .flat_map(|((spec, path), names)| {
-                        let cloned_identifier = identifier.clone();
-                        names.into_iter().filter_map(move |name| {
-                            let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
-                            cloned_spec.insert(cloned_identifier.clone(), name.clone());
-                            cloned_path.push(name);
-                            Some((cloned_spec, cloned_path))
-                        })
-                    })
-                    .collect();
-                self.list_parametrizations_impl(updated_paths_by_spec, remaining_components)
+            Some(PathComponent::Identifier(identifier)) => async move {
+                let updated_paths_by_spec = Vec::<(IndexMap<String, String>, PathBuf)>::new();
+                for (spec, path) in paths_by_spec {
+                    let Some(object_names) = self.list_from_path(path.clone()).await else {
+                        continue;
+                    };
+                    for name in object_names {
+                        let mut continued_spec = spec.clone();
+                        let mut continued_path = path.clone();
+                        continued_spec.insert(identifier.clone(), name.clone());
+                        continued_path.push(name);
+                    }
+                }
+                self.list_parametrizations_impl(updated_paths_by_spec, remaining_components).await
             }
-            None => paths_by_spec,
+            .boxed(),
+            None => async move { paths_by_spec }.boxed(),
         }
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>>;
+    fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>>;
 
     fn fetch_bytes(
         &self,
@@ -306,12 +306,15 @@ impl Client for FsClient {
         self.path_template.substitute(args)
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>> {
-        let dir = std::fs::read_dir(&path).ok()?;
-        let object_names = dir
-            .into_iter()
-            .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()));
-        Some(object_names.collect())
+    fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>> {
+        async move {
+            let dir = std::fs::read_dir(&path).ok()?;
+            let object_names = dir
+                .into_iter()
+                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()));
+            Some(object_names.collect())
+        }
+        .boxed()
     }
 
     fn fetch_bytes(
@@ -359,6 +362,8 @@ struct S3Client {
     base_path: PathBuf,
     path_template: PathTemplate,
     client: aws_sdk_s3::Client,
+    bucket: String,
+    base_prefix: PathBuf,
 }
 
 impl Client for S3Client {
@@ -366,8 +371,9 @@ impl Client for S3Client {
         self.path_template.substitute(args)
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>> {
-        //
+    async fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>> {
+        let paginator = self.client.list_objects_v2().into_paginator();
+        paginator.send()?.await;
     }
 
     fn fetch_bytes(
@@ -386,11 +392,21 @@ impl Client for S3Client {
 }
 
 impl S3Client {
-    pub fn new(base_path: PathBuf, path_template: String) -> S3Client {
+    pub async fn new(
+        base_path: PathBuf,
+        path_template: String,
+        bucket: String,
+        base_prefix: PathBuf,
+    ) -> S3Client {
+        let config = aws_config::load_from_env().await;
+        let client = aws_sdk_s3::Client::new(&config);
         S3Client {
             // TODO: Remove redundant `base_path` field somewhere
             base_path: base_path.clone(),
             path_template: PathTemplate { template: path_template, base: base_path },
+            client,
+            bucket,
+            base_prefix,
         }
     }
 }
