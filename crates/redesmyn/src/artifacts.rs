@@ -224,11 +224,44 @@ pub trait Client: std::fmt::Debug + Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
         let spec = IndexMap::<String, String>::default();
         let paths_by_spec =
-            list_parametrizations_impl([(spec, base_path)].into(), path_template.components());
+            self.list_parametrizations_impl([(spec, base_path)].into(), path_template.components());
         Box::pin(std::future::ready(paths_by_spec))
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>>;
+    fn list_parametrizations_impl(
+        &self,
+        mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
+        mut remaining_components: VecDeque<PathComponent>,
+    ) -> Vec<(IndexMap<String, String>, PathBuf)> {
+        match remaining_components.pop_front() {
+            Some(PathComponent::Fixed(dir_name)) => {
+                paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
+                self.list_parametrizations_impl(paths_by_spec, remaining_components)
+            }
+            Some(PathComponent::Identifier(identifier)) => {
+                let updated_paths_by_spec = paths_by_spec
+                    .into_iter()
+                    .filter_map(|(spec, path)| {
+                        let object_names = self.list_from_path(&path)?;
+                        Some(((spec, path), object_names))
+                    })
+                    .flat_map(|((spec, path), names)| {
+                        let cloned_identifier = identifier.clone();
+                        names.into_iter().filter_map(move |name| {
+                            let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
+                            cloned_spec.insert(cloned_identifier.clone(), name.clone());
+                            cloned_path.push(name);
+                            Some((cloned_spec, cloned_path))
+                        })
+                    })
+                    .collect();
+                self.list_parametrizations_impl(updated_paths_by_spec, remaining_components)
+            }
+            None => paths_by_spec,
+        }
+    }
+
+    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>>;
 
     fn fetch_bytes(
         &self,
@@ -261,41 +294,6 @@ pub trait Client: std::fmt::Debug + Send + Sync {
     }
 }
 
-fn list_parametrizations_impl(
-    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
-    mut remaining_components: VecDeque<PathComponent>,
-) -> Vec<(IndexMap<String, String>, PathBuf)> {
-    match remaining_components.pop_front() {
-        Some(PathComponent::Fixed(dir_name)) => {
-            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
-            list_parametrizations_impl(paths_by_spec, remaining_components)
-        }
-        Some(PathComponent::Identifier(identifier)) => {
-            let updated_paths_by_spec = paths_by_spec
-                .into_iter()
-                .filter_map(|(spec, path)| {
-                    let dir = std::fs::read_dir(&path).ok()?;
-                    let object_names = dir.filter_map(|entry| {
-                        Some(entry.ok()?.file_name().to_string_lossy().to_string())
-                    });
-                    Some(((spec, path.clone()), object_names))
-                })
-                .flat_map(|((spec, path), names)| {
-                    let cloned_identifier = identifier.clone();
-                    names.filter_map(move |name| {
-                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
-                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
-                        cloned_path.push(name);
-                        Some((cloned_spec, cloned_path))
-                    })
-                })
-                .collect();
-            list_parametrizations_impl(updated_paths_by_spec, remaining_components)
-        }
-        None => paths_by_spec,
-    }
-}
-
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct FsClient {
@@ -308,12 +306,12 @@ impl Client for FsClient {
         self.path_template.substitute(args)
     }
 
-    fn list_from_path(&self, path: &PathBuf) -> Option<impl Iterator<Item = String>> {
+    fn list_from_path(&self, path: &PathBuf) -> Option<Vec<String>> {
         let dir = std::fs::read_dir(&path).ok()?;
         let object_names = dir
             .into_iter()
             .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()));
-        Some(object_names)
+        Some(object_names.collect())
     }
 
     fn fetch_bytes(
