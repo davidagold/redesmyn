@@ -219,16 +219,19 @@ impl FetchAs {
 pub trait Client: std::fmt::Debug + Send + Sync {
     fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String>;
 
-    async fn list_parametrizations(
+    fn list_parametrizations(
         &self,
         base_path: PathBuf,
         path_template: PathTemplate,
-    ) -> Vec<(IndexMap<String, String>, PathBuf)> {
-        let spec = IndexMap::<String, String>::default();
-        let paths_by_spec = self
-            .list_parametrizations_impl([(spec, base_path)].into(), path_template.components())
-            .await;
-        paths_by_spec
+    ) -> BoxFuture<Vec<(IndexMap<String, String>, PathBuf)>> {
+        async move {
+            let spec = IndexMap::<String, String>::default();
+            let paths_by_spec = self
+                .list_parametrizations_impl([(spec, base_path)].into(), path_template.components())
+                .await;
+            paths_by_spec
+        }
+        .boxed()
     }
 
     fn list_parametrizations_impl<'this>(
@@ -261,7 +264,7 @@ pub trait Client: std::fmt::Debug + Send + Sync {
         }
     }
 
-    fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>>;
+    fn list_from_path<'this>(&'this self, path: PathBuf) -> BoxFuture<'this, Option<Vec<String>>>;
 
     fn fetch_bytes(
         &self,
@@ -371,9 +374,17 @@ impl Client for S3Client {
         self.path_template.substitute(args)
     }
 
-    async fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>> {
-        let paginator = self.client.list_objects_v2().into_paginator();
-        paginator.send()?.await;
+    fn list_from_path<'this>(&'this self, path: PathBuf) -> BoxFuture<'this, Option<Vec<String>>> {
+        async move {
+            let paginator = self.client.list_objects_v2().into_paginator();
+            let mut stream = paginator.send();
+            let objects = Vec::<String>::new();
+            while let Some(Ok(page)) = stream.next().await {
+                //
+            }
+            Some(objects)
+        }
+        .boxed()
     }
 
     fn fetch_bytes(
