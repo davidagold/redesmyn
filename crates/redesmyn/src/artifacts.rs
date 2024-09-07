@@ -222,13 +222,15 @@ pub trait Client: std::fmt::Debug + Send + Sync {
 
     fn list_parametrizations(
         &self,
-        base_path: PathBuf,
         path_template: PathTemplate,
     ) -> BoxFuture<Vec<(IndexMap<String, String>, PathBuf)>> {
         async move {
             let spec = IndexMap::<String, String>::default();
             let paths_by_spec = self
-                .list_parametrizations_impl([(spec, base_path)].into(), path_template.components())
+                .list_parametrizations_impl(
+                    [(spec, path_template.base.clone())].into(),
+                    path_template.components(),
+                )
                 .await;
             paths_by_spec
         }
@@ -456,7 +458,7 @@ pub struct PathTemplate {
     base: PathBuf,
 }
 
-enum PathComponent {
+pub enum PathComponent {
     Fixed(String),
     Identifier(String),
 }
