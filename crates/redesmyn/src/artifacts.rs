@@ -17,6 +17,7 @@ use pyo3::{pyclass, pymethods};
 use serde::Serialize;
 use std::{collections::VecDeque, future::Future, io::Read, path::PathBuf, pin::Pin, sync::Arc};
 use strum::Display;
+use tokio::sync::OnceCell;
 use tracing::info;
 
 pub trait Pydantic: __Str__ + Send + Sync {
@@ -364,7 +365,7 @@ impl FsClient {
 struct S3Client {
     base_path: PathBuf,
     path_template: PathTemplate,
-    client: aws_sdk_s3::Client,
+    client: OnceCell<aws_sdk_s3::Client>,
     bucket: String,
     base_prefix: PathBuf,
 }
@@ -376,7 +377,15 @@ impl Client for S3Client {
 
     fn list_from_path<'this>(&'this self, path: PathBuf) -> BoxFuture<'this, Option<Vec<String>>> {
         async move {
-            let paginator = self.client.list_objects_v2().into_paginator();
+            let paginator = self
+                .client
+                .get_or_init(|| async {
+                    let config = aws_config::load_from_env().await;
+                    aws_sdk_s3::Client::new(&config)
+                })
+                .await
+                .list_objects_v2()
+                .into_paginator();
             let mut stream = paginator.send();
             let objects = Vec::<String>::new();
             while let Some(Ok(page)) = stream.next().await {
@@ -403,19 +412,17 @@ impl Client for S3Client {
 }
 
 impl S3Client {
-    pub async fn new(
+    pub fn new(
         base_path: PathBuf,
         path_template: String,
         bucket: String,
         base_prefix: PathBuf,
     ) -> S3Client {
-        let config = aws_config::load_from_env().await;
-        let client = aws_sdk_s3::Client::new(&config);
         S3Client {
             // TODO: Remove redundant `base_path` field somewhere
             base_path: base_path.clone(),
             path_template: PathTemplate { template: path_template, base: base_path },
-            client,
+            client: OnceCell::new(),
             bucket,
             base_prefix,
         }
@@ -425,11 +432,18 @@ impl S3Client {
 #[pymethods]
 impl S3Client {
     #[new]
-    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<S3Client> {
+    pub fn __new__(
+        base_path: Py<PyAny>,
+        path_template: Py<PyString>,
+        bucket: Py<PyString>,
+        base_prefix: Py<PyAny>,
+    ) -> PyResult<S3Client> {
         Python::with_gil(|py| {
             let client = S3Client::new(
-                base_path.extract::<PathBuf>(py)?,
-                path_template.extract::<String>(py)?,
+                base_path.extract(py)?,
+                path_template.extract(py)?,
+                bucket.extract(py)?,
+                base_prefix.extract(py)?,
             );
             Ok(client)
         })
@@ -448,6 +462,13 @@ enum PathComponent {
 }
 
 impl PathTemplate {
+    pub fn new(template: String, base: Option<PathBuf>) -> PathTemplate {
+        PathTemplate {
+            template,
+            base: base.unwrap_or_else(|| PathBuf::default()),
+        }
+    }
+
     fn components(&self) -> VecDeque<PathComponent> {
         self.template
             .split("/")

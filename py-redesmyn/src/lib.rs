@@ -135,6 +135,9 @@ impl PyServer {
                     .getattr("spec")
                     .ok_or_log_err()
                     .and_then(|obj| (!obj.is_none()).then_some(obj.unbind()));
+                let path_template =
+                    config.getattr("path_template").ok_or_log_err().map(Bound::unbind);
+
                 Some(Cache::new(
                     fs_client,
                     max_size,
@@ -142,6 +145,7 @@ impl PyServer {
                     Some(pre_fetch_all),
                     load_model,
                     artifact_spec,
+                    path_template,
                 ))
             }
         };

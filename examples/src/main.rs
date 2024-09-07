@@ -2,7 +2,7 @@ use cron;
 use polars::datatypes::DataType;
 use pyo3::{prelude::*, Python};
 use redesmyn::{
-    artifacts::FsClient,
+    artifacts::{FsClient, PathTemplate},
     cache::{Cache, Schedule},
     common::{consume_and_log_err, include_python_paths},
     do_in,
@@ -70,6 +70,7 @@ async fn main() -> Result<(), ServiceError> {
         Some(true),
         load_model,
         None,
+        PathTemplate::new("/models/mlflow/iris/{run_id}/{model_id}/artifacts/model".into(), None),
     );
 
     let handler = Handler::try_from(

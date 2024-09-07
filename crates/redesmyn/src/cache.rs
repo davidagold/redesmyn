@@ -1,10 +1,9 @@
 use crate::{
-    artifacts::{self, ArtifactSpec, BoxedSpec, Client, FetchAs, FsClient, Pydantic, Uri},
+    artifacts::{ArtifactSpec, BoxedSpec, Client, FetchAs, FsClient, PathTemplate, Pydantic},
     common::{__Str__, build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
     error::{ArtifactsError, ServiceError, ServiceResult},
 };
-use bytes::BytesMut;
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
@@ -19,11 +18,8 @@ use pyo3::{
     Bound, IntoPy, Py, PyAny, PyResult, Python,
 };
 use std::{
-    collections::VecDeque,
-    fs,
     future::{self, Future},
     num::NonZeroUsize,
-    path::PathBuf,
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -475,6 +471,7 @@ pub struct Cache {
     task: OnceCell<JoinHandle<Result<(), CacheError>>>,
     load_model: Py<PyAny>,
     artifact_spec: Option<Arc<dyn Pydantic>>,
+    path_template: PathTemplate,
 }
 
 impl std::fmt::Display for Cache {
@@ -524,6 +521,7 @@ impl Cache {
         pre_fetch_all: Option<bool>,
         load_model: Py<PyAny>,
         artifact_spec: Option<Py<PyAny>>,
+        path_template: PathTemplate,
     ) -> Cache {
         Cache {
             client: Arc::from(client),
@@ -534,6 +532,7 @@ impl Cache {
             task: OnceCell::<JoinHandle<Result<(), CacheError>>>::default(),
             load_model,
             artifact_spec: artifact_spec.map(|spec| -> Arc<dyn Pydantic> { Arc::new(spec) }),
+            path_template,
         }
     }
 
@@ -549,6 +548,7 @@ impl Cache {
             self.pre_fetch_all,
             self.schedule.clone(),
             self.load_model.clone(),
+            self.path_template.clone(),
         );
         if let Err(err) = self.tx.set(tx.into()) {
             error!("Failed to set Cache tx: {}", err)
@@ -577,6 +577,7 @@ impl Cache {
         pre_fetch_all: Option<bool>,
         schedule: Arc<Schedule>,
         load_model: Py<PyAny>,
+        path_template: PathTemplate,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size).unwrap());
@@ -914,8 +915,10 @@ pub fn validate_schedule(
 impl Cache {
     #[new]
     fn __new__(
+        py: Python<'_>,
         // TODO: Figure out how to accept a generic `impl Client` argument, e.g. wrapper struct over `Arc<dyn Client>`
         client: FsClient,
+        path_template: Py<PyString>,
         load_model: Bound<'_, PyAny>,
         spec: Option<Bound<'_, PyAny>>,
         max_size: Option<usize>,
@@ -931,6 +934,7 @@ impl Cache {
             pre_fetch_all,
             load_model.unbind(),
             artifact_spec.map(|obj| obj.unbind()),
+            PathTemplate::new(path_template.extract(py)?, None),
         ))
     }
 
