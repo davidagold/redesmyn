@@ -1,10 +1,9 @@
 use crate::{
-    artifacts::{ArtifactSpec, BoxedSpec, FetchAs, Pydantic, Uri},
+    artifacts::{ArtifactSpec, BoxedSpec, Client, FetchAs, FsClient, PathTemplate, Pydantic},
     common::{__Str__, build_runtime, consume_and_log_err, TOKIO_RUNTIME},
     do_in,
-    error::{ServiceError, ServiceResult},
+    error::{ArtifactsError, ServiceError, ServiceResult},
 };
-use bytes::BytesMut;
 use chrono::{DateTime, Duration, Utc};
 use core::fmt;
 use cron;
@@ -19,11 +18,8 @@ use pyo3::{
     Bound, IntoPy, Py, PyAny, PyResult, Python,
 };
 use std::{
-    collections::VecDeque,
-    fs,
     future::{self, Future},
     num::NonZeroUsize,
-    path::PathBuf,
     pin::Pin,
     str::FromStr,
     sync::Arc,
@@ -356,7 +352,12 @@ impl Transition<PendingFetch> for FetchingData {
 
         let task = tokio::spawn(async move {
             let container = FetchAs::empty_like(&config.fetch_as); // TODO: Maybe we should just take `fetch_as` from the config
-            config.client.fetch(Box::new(config.spec.as_map()?), container).into_future().await
+            config
+                .client
+                .fetch(Box::new(config.spec.as_map()?), container)
+                .into_future()
+                .await
+                .map_err(CacheError::from)
         });
         Ok(FetchingData { task })
     }
@@ -470,6 +471,7 @@ pub struct Cache {
     task: OnceCell<JoinHandle<Result<(), CacheError>>>,
     load_model: Py<PyAny>,
     artifact_spec: Option<Arc<dyn Pydantic>>,
+    path_template: PathTemplate,
 }
 
 impl std::fmt::Display for Cache {
@@ -519,6 +521,7 @@ impl Cache {
         pre_fetch_all: Option<bool>,
         load_model: Py<PyAny>,
         artifact_spec: Option<Py<PyAny>>,
+        path_template: PathTemplate,
     ) -> Cache {
         Cache {
             client: Arc::from(client),
@@ -529,6 +532,7 @@ impl Cache {
             task: OnceCell::<JoinHandle<Result<(), CacheError>>>::default(),
             load_model,
             artifact_spec: artifact_spec.map(|spec| -> Arc<dyn Pydantic> { Arc::new(spec) }),
+            path_template,
         }
     }
 
@@ -544,6 +548,7 @@ impl Cache {
             self.pre_fetch_all,
             self.schedule.clone(),
             self.load_model.clone(),
+            self.path_template.clone(),
         );
         if let Err(err) = self.tx.set(tx.into()) {
             error!("Failed to set Cache tx: {}", err)
@@ -572,6 +577,7 @@ impl Cache {
         pre_fetch_all: Option<bool>,
         schedule: Arc<Schedule>,
         load_model: Py<PyAny>,
+        path_template: PathTemplate,
     ) -> Result<(), CacheError> {
         let mut model_cache: LruCache<CacheKey, (Option<TaskFlow>, ModelEntry)> =
             LruCache::new(NonZeroUsize::new(max_size).unwrap());
@@ -583,7 +589,7 @@ impl Cache {
         );
 
         if pre_fetch_all.is_some_and(|pre_fetch_all| pre_fetch_all) {
-            let paths_by_spec = client.list(None).await;
+            let paths_by_spec = client.list_parametrizations(path_template).await;
             let rxs = paths_by_spec
                 .iter()
                 .map(|(spec, path)| {
@@ -909,8 +915,10 @@ pub fn validate_schedule(
 impl Cache {
     #[new]
     fn __new__(
+        py: Python<'_>,
         // TODO: Figure out how to accept a generic `impl Client` argument, e.g. wrapper struct over `Arc<dyn Client>`
         client: FsClient,
+        path_template: Py<PyString>,
         load_model: Bound<'_, PyAny>,
         spec: Option<Bound<'_, PyAny>>,
         max_size: Option<usize>,
@@ -926,6 +934,7 @@ impl Cache {
             pre_fetch_all,
             load_model.unbind(),
             artifact_spec.map(|obj| obj.unbind()),
+            PathTemplate::new(path_template.extract(py)?, None),
         ))
     }
 
@@ -956,6 +965,8 @@ pub enum CacheError {
     InUseError,
     #[error("Failed to receive message over oneshot channel")]
     RecvError(#[from] oneshot::error::RecvError),
+    #[error("ArtifactsError: {0}")]
+    ArtifactsError(#[from] ArtifactsError),
 }
 
 impl From<String> for CacheError {
@@ -971,216 +982,3 @@ impl From<&str> for CacheError {
 }
 
 pub type CacheResult<T> = Result<T, CacheError>;
-
-pub trait Client: std::fmt::Debug + Send + Sync {
-    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String>;
-
-    fn list(
-        &self,
-        base_path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>>;
-
-    fn fetch_bytes(
-        &self,
-        spec: BoxedSpec,
-        bytes: BytesMut,
-    ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>>;
-
-    fn fetch<'this>(
-        &'this self,
-        spec: BoxedSpec,
-        fetch_as: FetchAs,
-    ) -> Pin<Box<dyn Future<Output = Result<FetchAs, CacheError>> + Send + 'this>> {
-        // TODO: This may be fine for now but we should wrap in an `Arc``
-        match fetch_as {
-            FetchAs::Uri(None) => {
-                let uri = do_in!(|| -> CacheResult<_> {
-                    let args = spec.as_map()?;
-                    let path = self.substitute(args)?;
-                    let uri = Uri::Path(Some(PathBuf::from(path)));
-                    Ok(FetchAs::Uri(Some(uri)))
-                });
-                Box::pin(future::ready(uri))
-            }
-            FetchAs::Bytes(None) => {
-                Box::pin(async move { Ok(self.fetch_bytes(spec, BytesMut::new()).await?.into()) })
-            }
-            // TODO: Don't panic, just return Error
-            _ => panic!(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PathTemplate {
-    template: String,
-    base: PathBuf,
-}
-
-enum PathComponent {
-    Fixed(String),
-    Identifier(String),
-}
-
-impl PathTemplate {
-    fn components(&self) -> VecDeque<PathComponent> {
-        self.template
-            .split("/")
-            .filter_map(|part| {
-                if part.starts_with("{") && part.ends_with("}") {
-                    let n_chars = part.len();
-                    let identifier: String = part.chars().skip(1).take(n_chars - 2).collect();
-                    Some(PathComponent::Identifier(identifier))
-                } else if part != "" {
-                    Some(PathComponent::Fixed(part.to_string()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    fn parse(&self, path: &PathBuf) -> IndexMap<String, String> {
-        let mut base_parts: VecDeque<_> = self.base.iter().collect();
-        let rel_path: PathBuf = path
-            .into_iter()
-            .skip_while(|&part| {
-                let Some(base_part) = base_parts.pop_front() else { return false };
-                base_part == part
-            })
-            .collect();
-
-        self.components()
-            .into_iter()
-            .filter_map(|part| match part {
-                PathComponent::Fixed(_) => None,
-                PathComponent::Identifier(identifier) => Some(identifier),
-            })
-            .zip(rel_path.into_iter().filter_map(|part| part.to_str().map(str::to_string)))
-            .collect()
-    }
-
-    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
-        let path = self
-            .components()
-            .iter()
-            .try_fold(None, |path: Option<String>, component| {
-                let next_path_component = match component {
-                    PathComponent::Fixed(dir_name) => dir_name,
-                    PathComponent::Identifier(identifier) => {
-                        args.get(identifier).ok_or_else(|| {
-                            CacheError::from(format!(
-                                "Substitution identifier `{}` is not present in the provided args",
-                                identifier
-                            ))
-                        })?
-                    }
-                };
-                let path = match path {
-                    None => next_path_component.to_string(),
-                    Some(path) => vec![path, next_path_component.to_string()].join("/"),
-                };
-                CacheResult::<Option<String>>::Ok(Some(path))
-            })?
-            .ok_or_else(|| CacheError::from("Failed to substitute args into path template"))?;
-
-        let mut abs_path = self.base.clone();
-        abs_path.push(path);
-        Ok(abs_path
-            .to_str()
-            .ok_or_else(|| CacheError::from(format!("Failed to stringify path {:#?}", abs_path)))?
-            .to_string())
-    }
-}
-
-#[pyclass]
-#[derive(Clone, Debug)]
-pub struct FsClient {
-    base_path: PathBuf,
-    path_template: PathTemplate,
-}
-
-impl FsClient {
-    pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
-        FsClient {
-            // TODO: Remove redundant `base_path` field somewhere
-            base_path: base_path.clone(),
-            path_template: PathTemplate { template: path_template, base: base_path },
-        }
-    }
-}
-
-#[pymethods]
-impl FsClient {
-    #[new]
-    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<FsClient> {
-        Python::with_gil(|py| {
-            let client = FsClient::new(
-                base_path.extract::<PathBuf>(py)?,
-                path_template.extract::<String>(py)?,
-            );
-            Ok(client)
-        })
-    }
-}
-
-fn _list(
-    mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
-    mut remaining_components: VecDeque<PathComponent>,
-) -> Vec<(IndexMap<String, String>, PathBuf)> {
-    match remaining_components.pop_front() {
-        Some(PathComponent::Fixed(dir_name)) => {
-            paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
-            _list(paths_by_spec, remaining_components)
-        }
-        Some(PathComponent::Identifier(identifier)) => {
-            let updated_paths_by_spec = paths_by_spec
-                .into_iter()
-                .filter_map(|(spec, path)| Some(((spec, path.clone()), fs::read_dir(path).ok()?)))
-                .flat_map(|((spec, path), dir)| {
-                    let cloned_identifier = identifier.clone();
-                    dir.filter_map(move |entry| {
-                        let name = entry.ok()?.file_name().to_string_lossy().to_string();
-                        let (mut cloned_spec, mut cloned_path) = (spec.clone(), path.clone());
-                        cloned_spec.insert(cloned_identifier.clone(), name.clone());
-                        cloned_path.push(name);
-                        Some((cloned_spec, cloned_path))
-                    })
-                })
-                .collect();
-            _list(updated_paths_by_spec, remaining_components)
-        }
-        None => paths_by_spec,
-    }
-}
-
-impl Client for FsClient {
-    fn substitute(&self, args: IndexMap<String, String>) -> CacheResult<String> {
-        self.path_template.substitute(args)
-    }
-
-    fn list(
-        &self,
-        base_path: Option<&PathBuf>,
-    ) -> Pin<Box<dyn Future<Output = Vec<(IndexMap<String, String>, PathBuf)>> + Send>> {
-        let spec = IndexMap::<String, String>::default();
-        let paths_by_spec = _list(
-            [(spec, base_path.unwrap_or(&self.base_path).clone())].into(),
-            self.path_template.components(),
-        );
-        Box::pin(future::ready(paths_by_spec))
-    }
-
-    fn fetch_bytes(
-        &self,
-        spec: BoxedSpec,
-        mut bytes: BytesMut,
-    ) -> Pin<Box<dyn Future<Output = Result<BytesMut, CacheError>> + Send + 'static>> {
-        let path =
-            do_in!(|| -> CacheResult<_> { Ok(PathBuf::from(self.substitute(spec.as_map()?)?)) });
-        Box::pin(async move {
-            bytes.extend(tokio::fs::read(path?).await?);
-            Ok(bytes)
-        })
-    }
-}

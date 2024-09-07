@@ -1,4 +1,5 @@
-use ::redesmyn::cache::{validate_schedule, Cache, FsClient};
+use ::redesmyn::artifacts::{FsClient, PathTemplate};
+use ::redesmyn::cache::{validate_schedule, Cache};
 use ::redesmyn::common::{from_optional, OkOrLogErr, Wrap};
 use ::redesmyn::error::ServiceError;
 use ::redesmyn::handler::Handler;
@@ -10,6 +11,7 @@ use ::redesmyn::server::{Server, ServerHandle};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDelta, PyType};
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 #[pyclass]
@@ -134,6 +136,8 @@ impl PyServer {
                     .getattr("spec")
                     .ok_or_log_err()
                     .and_then(|obj| (!obj.is_none()).then_some(obj.unbind()));
+                let path_template = config.getattr("path_template")?.extract::<String>()?;
+
                 Some(Cache::new(
                     fs_client,
                     max_size,
@@ -141,6 +145,7 @@ impl PyServer {
                     Some(pre_fetch_all),
                     load_model,
                     artifact_spec,
+                    PathTemplate::new(path_template, None),
                 ))
             }
         };

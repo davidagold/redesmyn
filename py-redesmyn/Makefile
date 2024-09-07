@@ -25,7 +25,7 @@ build: sync-deps
 build-release:
 	@make build MATURIN_FLAGS=--release
 
-test:
+test: develop
 	@RUST_LOG=debug poetry run python -m pytest tests
 
 docs: clean-docs

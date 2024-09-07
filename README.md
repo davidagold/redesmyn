@@ -1,7 +1,7 @@
 ## Redesmyn: Build ML inference servers with Python and Rust
 
 Redesmyn (/ˈreɪd.smɪn/, REEDZ-min) enables simple, fast, and fexible development of real-time ML inference services in Python and Rust:
-* **Dual language**: Core Redesmyn functionality is written in Rust for safety and performance and exposed through interoperable Python and Rust APIs.
+* **Dual language**: Core Redesmyn functionality is written in Rust for safety and performance and exposed through interoperable[†](Citation needed) Python and Rust APIs.
 * **Predict in Python**: Seamlessly integrate prediction handlers written in Python with Rust server frameworks.
 * **Serde deserialization**: Declare inference handler schemas via the derivable Rust `Schema` trait or [Pydantic](https://docs.pydantic.dev/latest/) Python subclasses to use
     [strongly-typed Serde parsing](https://docs.rs/serde_json/latest/serde_json/#parsing-json-as-strongly-typed-data-structures) or

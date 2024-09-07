@@ -1,6 +1,10 @@
 use crate::common::{__Str__, consume_and_log_err};
+use crate::do_in;
+use crate::error::{ArtifactsError, ArtifactsResult};
 
 use bytes::{Buf, BufMut, BytesMut};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use indexmap::IndexMap;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::types::{IntoPyDict, PyAnyMethods, PyIterator};
@@ -9,9 +13,11 @@ use pyo3::{
     types::{PyByteArray, PyNone, PyString},
     IntoPy, Py, PyAny, PyResult, Python,
 };
+use pyo3::{pyclass, pymethods};
 use serde::Serialize;
-use std::{io::Read, path::PathBuf, sync::Arc};
+use std::{collections::VecDeque, future::Future, io::Read, path::PathBuf, pin::Pin, sync::Arc};
 use strum::Display;
+use tokio::sync::OnceCell;
 use tracing::info;
 
 pub trait Pydantic: __Str__ + Send + Sync {
@@ -208,5 +214,331 @@ impl FetchAs {
             &FetchAs::Uri(_) => FetchAs::Uri(None),
             &FetchAs::Bytes(_) => FetchAs::Bytes(None),
         }
+    }
+}
+
+pub trait Client: std::fmt::Debug + Send + Sync {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String>;
+
+    fn list_parametrizations(
+        &self,
+        path_template: PathTemplate,
+    ) -> BoxFuture<Vec<(IndexMap<String, String>, PathBuf)>> {
+        async move {
+            let spec = IndexMap::<String, String>::default();
+            let paths_by_spec = self
+                .list_parametrizations_impl(
+                    [(spec, path_template.base.clone())].into(),
+                    path_template.components(),
+                )
+                .await;
+            paths_by_spec
+        }
+        .boxed()
+    }
+
+    fn list_parametrizations_impl<'this>(
+        &'this self,
+        mut paths_by_spec: Vec<(IndexMap<String, String>, PathBuf)>,
+        mut remaining_components: VecDeque<PathComponent>,
+    ) -> BoxFuture<'this, Vec<(IndexMap<String, String>, PathBuf)>> {
+        match remaining_components.pop_front() {
+            Some(PathComponent::Fixed(dir_name)) => {
+                paths_by_spec.iter_mut().for_each(|(_, ref mut path)| path.push(dir_name.clone()));
+                self.list_parametrizations_impl(paths_by_spec, remaining_components)
+            }
+            Some(PathComponent::Identifier(identifier)) => async move {
+                let updated_paths_by_spec = Vec::<(IndexMap<String, String>, PathBuf)>::new();
+                for (spec, path) in paths_by_spec {
+                    let Some(object_names) = self.list_from_path(path.clone()).await else {
+                        continue;
+                    };
+                    for name in object_names {
+                        let mut continued_spec = spec.clone();
+                        let mut continued_path = path.clone();
+                        continued_spec.insert(identifier.clone(), name.clone());
+                        continued_path.push(name);
+                    }
+                }
+                self.list_parametrizations_impl(updated_paths_by_spec, remaining_components).await
+            }
+            .boxed(),
+            None => async move { paths_by_spec }.boxed(),
+        }
+    }
+
+    fn list_from_path<'this>(&'this self, path: PathBuf) -> BoxFuture<'this, Option<Vec<String>>>;
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>>;
+
+    fn fetch<'this>(
+        &'this self,
+        spec: BoxedSpec,
+        fetch_as: FetchAs,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<FetchAs>> + Send + 'this>> {
+        // TODO: This may be fine for now but we should wrap in an `Arc``
+        match fetch_as {
+            FetchAs::Uri(None) => {
+                let uri = do_in!(|| -> ArtifactsResult<_> {
+                    let args = spec.as_map()?;
+                    let path = self.substitute(args)?;
+                    let uri = Uri::Path(Some(PathBuf::from(path)));
+                    Ok(FetchAs::Uri(Some(uri)))
+                });
+                Box::pin(std::future::ready(uri))
+            }
+            FetchAs::Bytes(None) => {
+                Box::pin(async move { Ok(self.fetch_bytes(spec, BytesMut::new()).await?.into()) })
+            }
+            // TODO: Don't panic, just return Error
+            _ => panic!(),
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct FsClient {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+}
+
+impl Client for FsClient {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        self.path_template.substitute(args)
+    }
+
+    fn list_from_path(&self, path: PathBuf) -> BoxFuture<'static, Option<Vec<String>>> {
+        async move {
+            let dir = std::fs::read_dir(&path).ok()?;
+            let object_names = dir
+                .into_iter()
+                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()));
+            Some(object_names.collect())
+        }
+        .boxed()
+    }
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        mut bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>> {
+        let path = do_in!(|| -> ArtifactsResult<_> {
+            Ok(PathBuf::from(self.substitute(spec.as_map()?)?))
+        });
+        Box::pin(async move {
+            bytes.extend(tokio::fs::read(path?).await?);
+            Ok(bytes)
+        })
+    }
+}
+
+impl FsClient {
+    pub fn new(base_path: PathBuf, path_template: String) -> FsClient {
+        FsClient {
+            // TODO: Remove redundant `base_path` field somewhere
+            base_path: base_path.clone(),
+            path_template: PathTemplate { template: path_template, base: base_path },
+        }
+    }
+}
+
+#[pymethods]
+impl FsClient {
+    #[new]
+    pub fn __new__(base_path: Py<PyAny>, path_template: Py<PyString>) -> PyResult<FsClient> {
+        Python::with_gil(|py| {
+            let client = FsClient::new(
+                base_path.extract::<PathBuf>(py)?,
+                path_template.extract::<String>(py)?,
+            );
+            Ok(client)
+        })
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+struct S3Client {
+    base_path: PathBuf,
+    path_template: PathTemplate,
+    client: OnceCell<aws_sdk_s3::Client>,
+    bucket: String,
+    base_prefix: PathBuf,
+}
+
+impl Client for S3Client {
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        self.path_template.substitute(args)
+    }
+
+    fn list_from_path<'this>(&'this self, path: PathBuf) -> BoxFuture<'this, Option<Vec<String>>> {
+        async move {
+            let paginator = self
+                .client
+                .get_or_init(|| async {
+                    let config = aws_config::load_from_env().await;
+                    aws_sdk_s3::Client::new(&config)
+                })
+                .await
+                .list_objects_v2()
+                .into_paginator();
+            let mut stream = paginator.send();
+            let objects = Vec::<String>::new();
+            while let Some(Ok(page)) = stream.next().await {
+                //
+            }
+            Some(objects)
+        }
+        .boxed()
+    }
+
+    fn fetch_bytes(
+        &self,
+        spec: BoxedSpec,
+        mut bytes: BytesMut,
+    ) -> Pin<Box<dyn Future<Output = ArtifactsResult<BytesMut>> + Send + 'static>> {
+        let path = do_in!(|| -> ArtifactsResult<_> {
+            Ok(PathBuf::from(self.substitute(spec.as_map()?)?))
+        });
+        Box::pin(async move {
+            bytes.extend(tokio::fs::read(path?).await?);
+            Ok(bytes)
+        })
+    }
+}
+
+impl S3Client {
+    pub fn new(
+        base_path: PathBuf,
+        path_template: String,
+        bucket: String,
+        base_prefix: PathBuf,
+    ) -> S3Client {
+        S3Client {
+            // TODO: Remove redundant `base_path` field somewhere
+            base_path: base_path.clone(),
+            path_template: PathTemplate { template: path_template, base: base_path },
+            client: OnceCell::new(),
+            bucket,
+            base_prefix,
+        }
+    }
+}
+
+#[pymethods]
+impl S3Client {
+    #[new]
+    pub fn __new__(
+        base_path: Py<PyAny>,
+        path_template: Py<PyString>,
+        bucket: Py<PyString>,
+        base_prefix: Py<PyAny>,
+    ) -> PyResult<S3Client> {
+        Python::with_gil(|py| {
+            let client = S3Client::new(
+                base_path.extract(py)?,
+                path_template.extract(py)?,
+                bucket.extract(py)?,
+                base_prefix.extract(py)?,
+            );
+            Ok(client)
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PathTemplate {
+    template: String,
+    base: PathBuf,
+}
+
+pub enum PathComponent {
+    Fixed(String),
+    Identifier(String),
+}
+
+impl PathTemplate {
+    pub fn new(template: String, base: Option<PathBuf>) -> PathTemplate {
+        PathTemplate {
+            template,
+            base: base.unwrap_or_else(|| PathBuf::default()),
+        }
+    }
+
+    fn components(&self) -> VecDeque<PathComponent> {
+        self.template
+            .split("/")
+            .filter_map(|part| {
+                if part.starts_with("{") && part.ends_with("}") {
+                    let n_chars = part.len();
+                    let identifier: String = part.chars().skip(1).take(n_chars - 2).collect();
+                    Some(PathComponent::Identifier(identifier))
+                } else if part != "" {
+                    Some(PathComponent::Fixed(part.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn parse(&self, path: &PathBuf) -> IndexMap<String, String> {
+        let mut base_parts: VecDeque<_> = self.base.iter().collect();
+        let rel_path: PathBuf = path
+            .into_iter()
+            .skip_while(|&part| {
+                let Some(base_part) = base_parts.pop_front() else { return false };
+                base_part == part
+            })
+            .collect();
+
+        self.components()
+            .into_iter()
+            .filter_map(|part| match part {
+                PathComponent::Fixed(_) => None,
+                PathComponent::Identifier(identifier) => Some(identifier),
+            })
+            .zip(rel_path.into_iter().filter_map(|part| part.to_str().map(str::to_string)))
+            .collect()
+    }
+
+    fn substitute(&self, args: IndexMap<String, String>) -> ArtifactsResult<String> {
+        let path = self
+            .components()
+            .iter()
+            .try_fold(None, |path: Option<String>, component| {
+                let next_path_component = match component {
+                    PathComponent::Fixed(dir_name) => dir_name,
+                    PathComponent::Identifier(identifier) => {
+                        args.get(identifier).ok_or_else(|| {
+                            ArtifactsError::from(format!(
+                                "Substitution identifier `{}` is not present in the provided args",
+                                identifier
+                            ))
+                        })?
+                    }
+                };
+                let path = match path {
+                    None => next_path_component.to_string(),
+                    Some(path) => vec![path, next_path_component.to_string()].join("/"),
+                };
+                ArtifactsResult::<Option<String>>::Ok(Some(path))
+            })?
+            .ok_or_else(|| ArtifactsError::from("Failed to substitute args into path template"))?;
+
+        let mut abs_path = self.base.clone();
+        abs_path.push(path);
+        Ok(abs_path
+            .to_str()
+            .ok_or_else(|| {
+                ArtifactsError::from(format!("Failed to stringify path {:#?}", abs_path))
+            })?
+            .to_string())
     }
 }
