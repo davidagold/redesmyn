@@ -7,16 +7,18 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
     func,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, composite, mapped_column
@@ -281,18 +283,22 @@ class Pause(Base):
     __tablename__ = "pauses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
     scope_repo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     scope_from_branch: Mapped[str | None] = mapped_column(String, nullable=True)
     scope_to_branch: Mapped[str | None] = mapped_column(String, nullable=True)
     scope: Mapped[PauseScope] = composite(
         PauseScope, scope_repo, scope_from_branch, scope_to_branch
     )
+
     mode: Mapped[PauseMode] = mapped_column(
         _enum_type(PauseMode, "pause_mode"),
         default=PauseMode.Lax,
         nullable=False,
     )
+
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
