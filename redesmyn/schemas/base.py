@@ -8,7 +8,7 @@ def to_camel(value: str) -> str:
     return parts[0] + "".join(word.capitalize() for word in parts[1:])
 
 
-class ApiBaseModel(BaseModel):
+class ApiResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True, populate_by_name=True, alias_generator=to_camel
     )

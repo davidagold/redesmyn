@@ -1,4 +1,4 @@
-from redesmyn.schemas.base import ApiBaseModel
+from redesmyn.schemas.base import ApiResponse
 from redesmyn.schemas.core import (
     AgentResponse,
     ApiStatusResponse,

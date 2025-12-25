@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import Field
+
 from redesmyn.domain.enums import (
     AgentStatus,
     BlockMode,
@@ -13,17 +14,17 @@ from redesmyn.domain.enums import (
     TaskSource,
     TaskState,
 )
-from redesmyn.schemas.base import ApiBaseModel
+from redesmyn.schemas.base import ApiResponse
 
 
-class RepositoryResponse(ApiBaseModel):
+class RepositoryResponse(ApiResponse):
     id: int
     repo_root: str
     default_branch: str
     created_at: datetime
 
 
-class EpicResponse(ApiBaseModel):
+class EpicResponse(ApiResponse):
     id: int
     repository_id: int
     name: str
@@ -33,7 +34,7 @@ class EpicResponse(ApiBaseModel):
     created_at: datetime
 
 
-class TaskResponse(ApiBaseModel):
+class TaskResponse(ApiResponse):
     id: int
     epic_id: int
     title: str
@@ -49,7 +50,7 @@ class TaskResponse(ApiBaseModel):
     updated_at: datetime
 
 
-class NodeResponse(ApiBaseModel):
+class NodeResponse(ApiResponse):
     id: int
     epic_id: int
     branch_name: str
@@ -63,7 +64,7 @@ class NodeResponse(ApiBaseModel):
     updated_at: datetime
 
 
-class AgentResponse(ApiBaseModel):
+class AgentResponse(ApiResponse):
     id: int
     display_name: str
     status: AgentStatus
@@ -71,7 +72,7 @@ class AgentResponse(ApiBaseModel):
     created_at: datetime
 
 
-class CommandResponse(ApiBaseModel):
+class CommandResponse(ApiResponse):
     id: int
     command_type: str
     target_agent_id: int | None
@@ -82,22 +83,22 @@ class CommandResponse(ApiBaseModel):
     updated_at: datetime
 
 
-class BlockScopeResponse(ApiBaseModel):
+class BlockScopeResponse(ApiResponse):
     repo: bool
     from_branch: str | None
     to_branch: str | None
 
 
-class ManualReleaseResponse(ApiBaseModel):
+class ManualReleaseResponse(ApiResponse):
     type: Literal["manual"] = "manual"
 
 
-class CommandReleaseResponse(ApiBaseModel):
+class CommandReleaseResponse(ApiResponse):
     type: Literal["command"] = "command"
     command_id: int
 
 
-class AckReleaseResponse(ApiBaseModel):
+class AckReleaseResponse(ApiResponse):
     type: Literal["acks"] = "acks"
     required_agent_ids: list[int]
 
@@ -108,7 +109,7 @@ ReleaseConditionResponse = Annotated[
 ]
 
 
-class BlockResponse(ApiBaseModel):
+class BlockResponse(ApiResponse):
     id: int
     scope: BlockScopeResponse
     policy: BlockPolicy
@@ -120,14 +121,14 @@ class BlockResponse(ApiBaseModel):
     cleared_reason: str | None
 
 
-class EventResponse(ApiBaseModel):
+class EventResponse(ApiResponse):
     id: int
     event_type: str
     data: dict[str, Any]
     created_at: datetime
 
 
-class BlockStatusResponse(ApiBaseModel):
+class BlockStatusResponse(ApiResponse):
     mode: BlockMode
     scope: BlockScopeResponse
     reason: str | None
@@ -135,7 +136,7 @@ class BlockStatusResponse(ApiBaseModel):
     release: ReleaseConditionResponse
 
 
-class ApiStatusResponse(ApiBaseModel):
+class ApiStatusResponse(ApiResponse):
     repo_root: str
     db_path: str
     default_branch: str | None
