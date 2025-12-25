@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import webbrowser
 from pathlib import Path
 
 import typer
-from sqlalchemy import select
+from sqlalchemy import desc, select
 
 from redesmyn import __version__
 from redesmyn.blocks import (
@@ -19,6 +20,7 @@ from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
     Epic,
+    LinearAuth,
     Node,
     Repository,
     Task,
@@ -26,6 +28,7 @@ from redesmyn.db import (
     create_sessionmaker,
 )
 from redesmyn.domain.enums import BlockPolicy
+from redesmyn.integrations.linear import LinearClient
 from redesmyn.git_proxy import does_block_git
 from redesmyn.orchestrator import init_repo
 from redesmyn.repo import (
@@ -45,6 +48,7 @@ epic_app = typer.Typer(add_completion=False, help="Epic management.")
 task_app = typer.Typer(add_completion=False, help="Task management.")
 node_app = typer.Typer(add_completion=False, help="Node/branch graph management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
+linear_app = typer.Typer(add_completion=False, help="Linear integration.")
 
 
 @app.command()
@@ -689,6 +693,119 @@ def agent_assign(
 
 
 app.add_typer(agent_app, name="agent")
+
+
+async def _load_linear_auth(ctx: RepoContext) -> LinearAuth | None:
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            return await session.scalar(
+                select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+            )
+    finally:
+        await engine.dispose()
+
+
+@linear_app.command("status")
+def linear_status() -> None:
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    auth = asyncio.run(_load_linear_auth(ctx))
+    if auth is None:
+        typer.echo("Linear: not connected")
+        raise typer.Exit(1)
+
+    typer.echo("Linear: connected")
+    typer.echo(f"Connected at: {auth.created_at.isoformat()}")
+
+
+@linear_app.command("auth")
+def linear_auth(
+    wait: bool = typer.Option(True, help="Wait for authorization to complete."),
+    timeout_seconds: int = typer.Option(180, help="Max time to wait for auth."),
+) -> None:
+    try:
+        _ensure_initialized(get_repo_context())
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    from redesmyn.settings import RedesmynSettings
+
+    settings = RedesmynSettings()
+    base = f"http://{settings.api_host}:{settings.api_port}"
+    start_url = f"{base}/v1/linear/oauth/start"
+    status_url = f"{base}/v1/linear/status"
+
+    if not webbrowser.open(start_url):
+        typer.echo(start_url)
+
+    if not wait:
+        return
+
+    import httpx
+
+    async def _poll() -> None:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            start = asyncio.get_event_loop().time()
+            while True:
+                if asyncio.get_event_loop().time() - start > timeout_seconds:
+                    raise typer.BadParameter("Timed out waiting for Linear authorization")
+
+                try:
+                    resp = await client.get(status_url)
+                except httpx.RequestError:
+                    raise typer.BadParameter(
+                        f"Daemon not reachable at {base}. Run `rn daemon run`."
+                    ) from None
+
+                if resp.status_code != 200:
+                    await asyncio.sleep(1.0)
+                    continue
+
+                payload = resp.json()
+                if payload.get("connected"):
+                    return
+                await asyncio.sleep(1.0)
+
+    try:
+        asyncio.run(_poll())
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo("Linear: connected")
+
+
+@linear_app.command("whoami")
+def linear_whoami() -> None:
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    auth = asyncio.run(_load_linear_auth(ctx))
+    if auth is None:
+        typer.echo("error: Linear is not connected. Run `rn linear auth`.", err=True)
+        raise typer.Exit(2)
+
+    async def _run() -> None:
+        client = LinearClient(access_token=auth.access_token)
+        data = await client.graphql("query { viewer { id name email } }")
+        typer.echo(str(data.get("viewer")))
+
+    asyncio.run(_run())
+
+
+app.add_typer(linear_app, name="linear")
 
 
 @block_app.command("lax")
