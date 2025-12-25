@@ -51,7 +51,7 @@ def _enum_type(enum_cls: type[StrEnum], name: str) -> SAEnum:
     )
 
 
-class CommandPayload(BaseModel):
+class CommandData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
@@ -253,7 +253,7 @@ class Command(Base):
     target_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("nodes.id"), nullable=True, index=True
     )
-    payload: Mapped[dict[str, Any]] = mapped_column(
+    data: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
         nullable=False,
         default=dict,  # Pydantic: CommandPayload
