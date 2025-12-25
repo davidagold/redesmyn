@@ -8,17 +8,18 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 
 - Python 3.11+
 - Node (see `.nvmrc`; Vite currently expects Node `>=22.12.0`)
+- `uv` (install via Homebrew: `brew install uv`)
 
 **Backend**
 
-- Install (recommended: `uv`): `uv venv && uv pip install -e ".[dev]"`
+- Install (recommended: `uv`): `uv sync --dev`
 - Initialize repo state: `rn init`
 - Run daemon (dev): `rn daemon run --reload` (serves API on `http://127.0.0.1:9234`)
 
 **Dashboard**
 
 - `cd dashboard && npm install`
-- Run dev server: `npm run dev` (proxies `/api/*` to the daemon)
+- Run dev server: `npm run dev` (proxies `/v1/*` to the daemon)
 - Or build + serve from daemon: `npm run build` then open `http://127.0.0.1:9234/`
 
 ## Epics
