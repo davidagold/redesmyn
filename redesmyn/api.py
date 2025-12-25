@@ -4,7 +4,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from sqlalchemy import desc, select
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from starlette.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from redesmyn.context import get_repo_context
@@ -19,9 +20,17 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return "<h1>Redesmyn</h1><p>Dashboard not built yet.</p>"
+@app.get("/", include_in_schema=False)
+async def index() -> Response:
+    ctx = getattr(app.state, "ctx", None)
+    if ctx is not None:
+        index_html = ctx.repo_root / "dashboard" / "dist" / "index.html"
+        if index_html.is_file():
+            return FileResponse(str(index_html))
+
+    return HTMLResponse(
+        "<h1>Redesmyn</h1><p>Dashboard not built yet. Build with `cd dashboard && npm run build`.</p>"
+    )
 
 
 def maybe_mount_dashboard(app_: FastAPI, repo_root: Path) -> None:
