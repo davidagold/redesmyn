@@ -1,8 +1,40 @@
 {
   "components": {
     "schemas": {
+      "AckReleaseResponse": {
+        "properties": {
+          "requiredAgentIds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Requiredagentids",
+            "type": "array"
+          },
+          "type": {
+            "const": "acks",
+            "default": "acks",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requiredAgentIds"
+        ],
+        "title": "AckReleaseResponse",
+        "type": "object"
+      },
       "ApiStatusResponse": {
         "properties": {
+          "block": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BlockStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dbPath": {
             "title": "Dbpath",
             "type": "string"
@@ -18,16 +50,6 @@
             ],
             "title": "Defaultbranch"
           },
-          "pause": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PauseStatusResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "repoRoot": {
             "title": "Reporoot",
             "type": "string"
@@ -37,20 +59,28 @@
           "repoRoot",
           "dbPath",
           "defaultBranch",
-          "pause"
+          "block"
         ],
         "title": "ApiStatusResponse",
         "type": "object"
       },
-      "PauseMode": {
+      "BlockMode": {
         "enum": [
           "lax",
           "strict"
         ],
-        "title": "PauseMode",
+        "title": "BlockMode",
         "type": "string"
       },
-      "PauseScopeResponse": {
+      "BlockPolicy": {
+        "enum": [
+          "git_mutations",
+          "daemon_mutations"
+        ],
+        "title": "BlockPolicy",
+        "type": "string"
+      },
+      "BlockScopeResponse": {
         "properties": {
           "fromBranch": {
             "anyOf": [
@@ -84,13 +114,16 @@
           "fromBranch",
           "toBranch"
         ],
-        "title": "PauseScopeResponse",
+        "title": "BlockScopeResponse",
         "type": "object"
       },
-      "PauseStatusResponse": {
+      "BlockStatusResponse": {
         "properties": {
           "mode": {
-            "$ref": "#/components/schemas/PauseMode"
+            "$ref": "#/components/schemas/BlockMode"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/BlockPolicy"
           },
           "reason": {
             "anyOf": [
@@ -103,16 +136,71 @@
             ],
             "title": "Reason"
           },
+          "release": {
+            "discriminator": {
+              "mapping": {
+                "acks": "#/components/schemas/AckReleaseResponse",
+                "command": "#/components/schemas/CommandReleaseResponse",
+                "manual": "#/components/schemas/ManualReleaseResponse"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ManualReleaseResponse"
+              },
+              {
+                "$ref": "#/components/schemas/CommandReleaseResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AckReleaseResponse"
+              }
+            ],
+            "title": "Release"
+          },
           "scope": {
-            "$ref": "#/components/schemas/PauseScopeResponse"
+            "$ref": "#/components/schemas/BlockScopeResponse"
           }
         },
         "required": [
           "mode",
           "scope",
-          "reason"
+          "reason",
+          "policy",
+          "release"
         ],
-        "title": "PauseStatusResponse",
+        "title": "BlockStatusResponse",
+        "type": "object"
+      },
+      "CommandReleaseResponse": {
+        "properties": {
+          "commandId": {
+            "title": "Commandid",
+            "type": "integer"
+          },
+          "type": {
+            "const": "command",
+            "default": "command",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commandId"
+        ],
+        "title": "CommandReleaseResponse",
+        "type": "object"
+      },
+      "ManualReleaseResponse": {
+        "properties": {
+          "type": {
+            "const": "manual",
+            "default": "manual",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ManualReleaseResponse",
         "type": "object"
       }
     }

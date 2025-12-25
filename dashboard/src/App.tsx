@@ -63,10 +63,10 @@ function App() {
                 </dd>
               </div>
               <div className="grid gap-1">
-                <dt className="text-sm text-muted-foreground">Pause</dt>
+                <dt className="text-sm text-muted-foreground">Block</dt>
                 <dd className="font-mono text-sm">
-                  {status?.pause
-                    ? `${status.pause.mode} (${status.pause.reason ?? "n/a"})`
+                  {status?.block
+                    ? `${status.block.mode} (${status.block.reason ?? "n/a"})`
                     : "none"}
                 </dd>
               </div>

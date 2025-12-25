@@ -42,23 +42,38 @@ export interface paths {
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    /** AckReleaseResponse */
+    AckReleaseResponse: {
+      /** Requiredagentids */
+      requiredAgentIds: number[]
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "acks"
+    }
     /** ApiStatusResponse */
     ApiStatusResponse: {
+      block: components["schemas"]["BlockStatusResponse"] | null
       /** Dbpath */
       dbPath: string
       /** Defaultbranch */
       defaultBranch: string | null
-      pause: components["schemas"]["PauseStatusResponse"] | null
       /** Reporoot */
       repoRoot: string
     }
     /**
-     * PauseMode
+     * BlockMode
      * @enum {string}
      */
-    PauseMode: "lax" | "strict"
-    /** PauseScopeResponse */
-    PauseScopeResponse: {
+    BlockMode: "lax" | "strict"
+    /**
+     * BlockPolicy
+     * @enum {string}
+     */
+    BlockPolicy: "git_mutations" | "daemon_mutations"
+    /** BlockScopeResponse */
+    BlockScopeResponse: {
       /** Frombranch */
       fromBranch: string | null
       /** Repo */
@@ -66,12 +81,33 @@ export interface components {
       /** Tobranch */
       toBranch: string | null
     }
-    /** PauseStatusResponse */
-    PauseStatusResponse: {
-      mode: components["schemas"]["PauseMode"]
+    /** BlockStatusResponse */
+    BlockStatusResponse: {
+      mode: components["schemas"]["BlockMode"]
+      policy: components["schemas"]["BlockPolicy"]
       /** Reason */
       reason: string | null
-      scope: components["schemas"]["PauseScopeResponse"]
+      /** Release */
+      release: components["schemas"]["ManualReleaseResponse"] | components["schemas"]["CommandReleaseResponse"] | components["schemas"]["AckReleaseResponse"]
+      scope: components["schemas"]["BlockScopeResponse"]
+    }
+    /** CommandReleaseResponse */
+    CommandReleaseResponse: {
+      /** Commandid */
+      commandId: number
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "command"
+    }
+    /** ManualReleaseResponse */
+    ManualReleaseResponse: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "manual"
     }
   }
   responses: never
