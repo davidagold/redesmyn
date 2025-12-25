@@ -37,6 +37,7 @@ We will use Redesmyn to build Redesmyn.
 - **Agent**: An external worker (Codex, Claude Code, etc.) assigned to a node.
 - **Daemon**: The local long-running orchestrator managing state, locks, commands, and integrations.
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
+- **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).
 - **Work Range**: The commit range representing a node’s “work”: `parent..branch` (multi-commit allowed).
 - **Event Log**: Append-only record of domain events (git, agent, integration, orchestration).
 - **Projection**: A materialized view computed from the event log for fast UI queries.
@@ -162,7 +163,7 @@ Default stance: **Linear is authoritative** for task metadata and discussion, be
 The daemon exposes:
 
 - Query endpoints for projections (graph, nodes, agents, timelines, comments).
-- Command endpoints (issue command, acknowledge barrier, lock operations).
+- Command endpoints (issue commands, acknowledge blocks, lock operations).
 - Event stream endpoint (SSE/WebSocket) for UI.
 
 (Exact protocol is a technology decision; the contract is what matters.)
@@ -253,7 +254,11 @@ These are enforced by the daemon and by `rn` when possible:
   - `scope` (repo/branch/subtree)
   - `policy` (e.g. git_mutations, daemon_mutations)
   - `mode`: `lax | strict` (enforcement)
-  - `releaseCondition`: manual | command(commandId) | acks(requiredAgentIds)
+  - `releaseCondition` (discriminated union):
+    - `manual`
+    - `command(commandId)` (auto-clear when a daemon-managed command completes)
+    - `acks(requiredPrincipalIds)` (auto-clear when all required principals acknowledge)
+  - `acknowledgements`: persisted separately as `(blockId, principalId, ackedAt)` for auditability (v0: principals are agents)
 
 ### 8.2 Persistence approach (v0)
 
@@ -283,8 +288,7 @@ Every event has:
 - `node.created`, `node.parent_set`, `node.deleted`
 - `agent.created`, `agent.assigned`, `agent.unassigned`, `agent.heartbeat`
 - `command.issued`, `command.state_changed`
-- `barrier.created`, `barrier.acked`, `barrier.fulfilled`, `barrier.expired`
-- `pause.set`, `pause.cleared`
+- `block.set`, `block.ack`, `block.cleared`
 - `message.sent` (agent↔agent, user↔agent; all via daemon)
 
 **Git semantics**
@@ -330,17 +334,22 @@ When disallowing, `rn` provides a remediation:
 
 - “Use `rn rebase <node>`”
 - “Use `rn move-range …`”
-- “Request a barrier with `rn sync tight …`”
+- “Create a scoped block (manual or ack-based) before proceeding”
 
-#### `rn pause` gating (v0)
+#### `rn block` gating (v0)
 
-`rn pause` is a user/agent-facing control that blocks **mutating** operations on a node or subtree (read-only operations always work). It is meant to let humans and agents coordinate “don’t change this while we decide” moments without relying on long-running/hanging commands.
+`rn block` is a user/agent-facing control that blocks **mutating** operations on a scope (read-only operations always work). It is meant to let humans and agents coordinate “don’t change this while we decide” moments without relying on long-running/hanging commands.
 
 - Modes:
   - `lax`: allow local progress (e.g. `add`/`commit`), but block push + rewrites/cross-branch operations.
   - `strict`: block all mutating operations in-scope.
 - Additional rule: `fetch` is allowed even during `strict` (it mutates `.git` but not the working tree/branch state).
-- When an operation is blocked by a pause, `rn` returns immediately with a non-zero exit code and a clear message (no hanging/waiting in v0).
+- When an operation is blocked, `rn` returns immediately with a non-zero exit code and a clear message (no hanging/waiting in v0).
+
+Notes:
+
+- v0 keeps policy knobs internal; user-facing `rn block` primarily targets `git_mutations`.
+- `rn pause` may remain as an alias for `rn block` for ergonomics/compatibility.
 
 First-pass mutating command classification (v0):
 
@@ -361,19 +370,21 @@ First-pass mutating command classification (v0):
 - `cascade-rebase(subtreeRootId)`
 - `move-range(fromNodeId, toNodeId, commitRangeSpec)`
 
-All of the above require appropriate locks, may create barriers, and must respect `rn pause` state (daemon refuses to rewrite/move history in paused scopes).
+All of the above require appropriate locks, may create **blocks**, and must respect active blocks (daemon refuses to rewrite/move history in blocked scopes).
 
-## 11) Synchronization Model (Loose vs Tight)
+## 11) Synchronization Model (v0 seam)
 
-- **Loose sync**
-  - Daemon notifies relevant agents and proceeds after either acknowledgements or a timeout.
-  - Used when risk is low (e.g., non-overlapping work, idle agents).
+Synchronization is expressed in terms of blocks:
 
-- **Tight sync**
-  - Daemon requires explicit acknowledgements before proceeding.
-  - Used for commit-range moves, subtree rebases, or anything that risks conflicting local work.
+- **Command-based blocks** (`releaseCondition: command(commandId)`)
+  - Used for daemon-managed operations like range moves or cascades.
+  - The daemon auto-clears the block when the command completes.
+- **Ack-based blocks** (`releaseCondition: acks(requiredPrincipalIds)`)
+  - Used for “contract renegotiation” between agents, or when a user wants to force synchronization.
+  - Required principals are explicit; v0 treats principals as agents.
+  - The daemon auto-clears the block when all required principals acknowledge.
 
-Agents acknowledge via `rn barrier ack <id>`.
+Manual blocks (`releaseCondition: manual`) remain available for user-driven “stop the world” moments.
 
 ## 12) CLI (v0 contract)
 
@@ -421,10 +432,9 @@ This is the stable surface for both humans and agents.
 
 - `rn msg send --to <agent|node> --text <…>`
 - `rn inbox` / `rn outbox` (names TBD)
-- `rn sync loose|tight --scope <node|subtree> [--reason <…>]`
-- `rn barrier ack <id>`
-- `rn pause lax|strict --scope <node|subtree> [--reason <…>]`
-- `rn pause clear --scope <node|subtree>`
+- `rn block lax|strict --scope <node|subtree> [--reason <…>]` (v0 primarily targets `git_mutations`)
+- `rn block clear --scope <node|subtree>`
+- `rn block ack <id>` (ack-based blocks; v0 seam)
 - `rn command issue …` (structured commands; UI can generate these too)
 
 ### 12.7 Integrations
@@ -499,5 +509,5 @@ Start with one-way sync (canonical → mirrors) and require explicit user approv
 - What is the canonical unit of “progress” (commits, diff size, CI state, PR review state)?
 - How do we represent agent “work in progress” when changes are uncommitted?
 - How should `move-range` be specified (commit SHAs, counts, ranges, patch-id selectors)?
-- `rn pause` command coverage: allow or block `stash`, `pull`, and `switch/checkout` in `lax`?
+- `rn block` command coverage: allow or block `stash`, `pull`, and `switch/checkout` in `lax`?
 - Branch naming details: exact format and whether/when renames are supported.
