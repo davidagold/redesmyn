@@ -4,7 +4,7 @@ default: check
 
 install:
     uv sync
-    uv tool install --editable .
+    uv tool install --editable . --force
     @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
 
 format:
