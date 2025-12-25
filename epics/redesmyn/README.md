@@ -48,8 +48,8 @@ We will use Redesmyn to build Redesmyn.
 
 An epic is a **collection of tasks** (tickets) plus the branch graph that implements them. Redesmyn treats GitHub + Linear as first-class planning/discussion substrates and provides two common starting points:
 
-- **Markdown-first**: create local Markdown “task specs” (e.g. under `epics/<slug>/tasks/`) and have `rn` generate/sync the corresponding Linear tickets (and optionally GitHub issues).
-- **Linear-first**: start from an existing set of Linear tickets (query/label/milestone) and have `rn` import them into the local database, **auto-creating nodes/branches and linking tasks by default** (and optionally generating local task specs as an offline cache).
+- **Local-first**: create/update local task docs under `epics/<slug>/tasks/` and push to Linear (and later GitHub) with `rn sync --to linear`.
+- **Linear-first**: link the epic to a Linear project and pull tasks into local task docs with `rn sync --from linear` (default behavior: create/update local task docs, then create/update nodes/branches/worktrees).
 
 Each node typically links to a **primary task** (usually a Linear issue) so the UI can join “code progress” (git/PR) with “planning progress” (issue state, comments, discussion). v0 should support linking at minimum; richer bi-directional updates are roadmap.
 
@@ -57,47 +57,71 @@ Each node typically links to a **primary task** (usually a Linear issue) so the 
 
 - **Epic == Linear Project** (the epic stores a `linearProjectId`).
 - **Tasks == Linear Issues** in that project.
-- Linear **parent/sub-issue** structure is primarily used for **grouping and focus** in the UI, not for determining branch topology.
+- Linear **parent/sub-issue** structure is used for **grouping and focus** (orthogonal to branch topology).
 
 #### Topology inference from Linear (v0)
 
-Branch topology must be a **tree** (one parent per node), but Linear dependencies are a general graph. For v0 we choose a simple, explicit mapping:
+Branch topology must be a **tree** (one parent per node), but Linear dependencies are a general graph. Redesmyn splits “grouping” from “dependency” to avoid conflating different relationships:
 
-- Use Linear **blocked-by** as “must land before” (a merge-order constraint).
+- Local docs store:
+  - `parent`: grouping (maps to Linear parent/sub-issue, not to topology)
+  - `depends_on`: a single primary dependency that defines the node’s parent (“must land before”)
+  - `also_depends_on`: additional dependencies that do **not** map to the branch parent (tracked for visibility only)
+
+When importing from Linear:
+
+- Use Linear **blocked-by** to populate `depends_on` (and `also_depends_on` if there are multiple blockers).
   - Blocked tasks can still be started in parallel (stacked on the blocker branch), but their PRs cannot be merged until blockers merge, and they may require rebases as blockers evolve.
 - Inference rules:
-  - `blocked_by == 0` → node parent is the epic root branch (typically the repo default branch).
-  - `blocked_by == 1` → node parent is the blocker’s node (PR base = blocker branch).
-  - `blocked_by > 1` → **error in v0** (user must resolve by choosing a single primary blocker; interactive selection is deferred).
+  - `blocked_by == 0` → `depends_on` is empty; node parent is the epic root branch (typically the repo default branch).
+  - `blocked_by == 1` → `depends_on` is the blocker’s task; node parent is the blocker’s node (PR base = blocker branch).
+  - `blocked_by > 1` → **requires explicit resolution in v0**: user must choose a single `depends_on` to define the node parent; remaining blockers can be stored in `also_depends_on`.
   - Cycles/self-dependencies → error.
 
 #### Branch naming from Linear (v0)
 
-- Default branch naming includes the Linear issue identifier:
-  - `rn/<epicSlug>/<LINEAR-123>-<short-slug>`
+- Default branch naming includes the Linear issue identifier when available:
+  - `rn/<epicSlug>/<LINEAR-123>-<short-slug>` (Linear-linked)
+  - `rn/<epicSlug>/<T-001>-<short-slug>` (local-only)
 - Branch names should be treated as stable identifiers once created (do not auto-rename on title edits in v0).
 
-#### v0 task spec format (Markdown-first)
+#### v0 task doc format (Markdown-first)
 
-- One file per task under `epics/<slug>/tasks/`.
-- File contains a small YAML frontmatter block (written/updated by `rn`) plus a Markdown body:
-  - `rn_task_id`: stable local identifier (UUID)
-  - `title` (informational when an external source is authoritative)
-  - `authority`: `linear | local | github` (v0 supports `linear` and `local`; `github` is a seam)
-  - `linear_issue_id` (optional; filled after first sync/push)
-  - `github_issue` (optional; seam for later)
-  - `node_branch` (optional; filled when linked)
-  - Body conventions (v0):
-    - `rn` may manage a “synced” section populated from Linear (or other providers).
-    - Users may keep a “local notes / agent brief” section that `rn` never overwrites (so “Linear-authoritative” doesn’t destroy local instructions).
+- One Markdown doc per task under `epics/<slug>/tasks/` (flat; no “tasks of tasks” directories in v0).
+- Use Markdown headers (not YAML frontmatter) for metadata so tasks remain readable/editable without special tooling.
+- Metadata must include stable local IDs so dependencies are unambiguous:
+  - Epic local id: `E-<NNN>` (stored in the epic control doc)
+  - Task local id: `T-<NNN>` (stored in each task doc)
+  - The combined identity is `E-<NNN>/T-<NNN>`.
+- Task metadata includes:
+  - `title`
+  - `parent` (grouping; optional)
+  - `depends_on` (single; optional; defines node parent)
+  - `also_depends_on` (list; optional; tracked only)
+  - `linear_issue_id` (optional; filled after `rn sync --from linear` or `rn sync --to linear`)
+  - `github_issue_id` (optional; seam for later)
+  - `node_branch` (optional; filled when linked/created)
+- Body conventions (v0):
+  - `rn` may manage a “synced” section populated from Linear (or other providers).
+  - Users may keep a “local notes / agent brief” section that `rn` never overwrites.
 
-#### Authority model (v0)
+#### Sync model (v0)
 
-Default stance: **Linear is authoritative** for task metadata and discussion, because it is where planning happens and where teams collaborate.
+Redesmyn splits “authority” by concern:
 
-- When `authority: linear`, `rn task pull` updates local task specs from Linear; local edits do not overwrite Linear unless explicitly pushed/forced.
-- When `authority: local`, `rn task push` updates/creates Linear issues from local specs (useful for “local-first spec writing” or offline workflows).
-- Allow per-epic defaults with per-task overrides (design seam; exact config format is an implementation detail).
+- **Local (task docs + DB projection)** is canonical for:
+  - branch graph topology (`depends_on`)
+  - agent instructions / local briefs
+  - deterministic, reproducible “bootstrap this epic on a new machine”
+- **Linear** is canonical for:
+  - workflow state, discussion, comments, team collaboration
+  - issue metadata that changes frequently (labels, assignees, etc.)
+
+Sync commands are explicit about direction:
+
+- `rn sync --from local` (parse local epic/task docs into the DB graph)
+- `rn sync --from linear` (pull Linear project issues into local task docs + DB graph)
+- `rn sync --to linear` (push local tasks + dependency edges to Linear)
 
 ### 5.1 Must-have user flows
 
@@ -215,10 +239,12 @@ These are enforced by the daemon and by `rn` when possible:
 - **Task**
   - `taskId`
   - `epicId`
+  - `localId`: `E-<NNN>/T-<NNN>` (stable; used by local docs and `depends_on` refs)
   - `title`, `body`
-  - `source`: `local | linear | github`
-  - `authority`: `linear | local | github` (v0 supports `linear` and `local`)
   - `refs`: `{ linearIssueId?, githubIssueId?, localPath? }`
+  - `groupParentTaskId | null` (grouping only; maps to Linear parent/sub-issue)
+  - `dependsOnTaskId | null` (single; defines node parent)
+  - `alsoDependsOnTaskIds[]` (tracked only; does not affect topology)
   - `state` (todo/in_progress/done/blocked; provider-specific mapping)
   - `nodeId | null` (the primary node for this task, if assigned)
 
@@ -404,8 +430,9 @@ This is the stable surface for both humans and agents.
 - `rn task add --title <title> [--epic <epic>]` (creates a local task spec)
 - `rn task link <task> --node <node>`
 - `rn task show <task>`
-- `rn task pull [--epic <epic>]` (refresh local task cache from Linear)
-- `rn task push [--epic <epic>]` (create/update Linear issues from local tasks when `authority: local`)
+- `rn sync --from local [--epic <epic>]` (parse local epic/task docs into the DB graph)
+- `rn sync --from linear [--epic <epic>]` (pull Linear project issues into local task docs + DB graph)
+- `rn sync --to linear [--epic <epic>]` (push local tasks + dependencies to Linear)
 
 ### 12.3 Topology
 
@@ -440,8 +467,8 @@ This is the stable surface for both humans and agents.
 ### 12.7 Integrations
 
 - `rn gh status|sync`
-- `rn linear status|sync`
-- `rn linear import --project <id|name> [--epic <epic>] [--create-nodes | --no-create-nodes]` (default: create nodes/branches and link tasks; errors on tasks with multiple blockers)
+- `rn linear auth|status|whoami`
+- `rn linear import --project <id> [--epic <epic>] [--create-nodes | --no-create-nodes]` (v0 bootstrap; errors when multiple blockers require choosing a single `depends_on`)
 
 ## 13) Web UI (v0)
 
