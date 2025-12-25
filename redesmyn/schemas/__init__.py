@@ -12,7 +12,7 @@ from redesmyn.schemas.core import (
 )
 
 __all__ = [
-    "ApiBaseModel",
+    "ApiResponse",
     "AgentResponse",
     "ApiStatusResponse",
     "BlockResponse",
