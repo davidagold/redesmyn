@@ -16,3 +16,7 @@ class RedesmynSettings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = 9234
+
+    linear_client_id: str | None = None
+    linear_client_secret: str | None = None
+    linear_scopes: str = "read"
