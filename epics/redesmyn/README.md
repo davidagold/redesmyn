@@ -167,6 +167,22 @@ The daemon exposes:
 
 (Exact protocol is a technology decision; the contract is what matters.)
 
+### 6.3 Technology choices (v0)
+
+- **Backend + CLI**: Python 3.11+, async-first
+  - API: FastAPI
+  - DB: SQLite (repo-local), SQLAlchemy 2.0 async ORM, Alembic migrations
+  - CLI: Typer (`rn`)
+  - Python tooling: `uv`
+- **Dashboard**: React + TypeScript + Vite
+  - UI: Tailwind + shadcn/ui
+  - Lint/format: `oxlint` / `oxfmt`
+  - Build: `rolldown-vite`
+- **Repo layout**
+  - Python package: `redesmyn/` (no `src/`)
+  - Dashboard: `dashboard/`
+  - Local state + DB: `.redesmyn/` at repo root (e.g. `.redesmyn/redesmyn.sqlite3`)
+
 ## 7) Invariants (Hard Rules)
 
 These are enforced by the daemon and by `rn` when possible:
