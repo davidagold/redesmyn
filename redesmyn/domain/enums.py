@@ -1,55 +1,54 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class TaskSource(str, Enum):
-    local = "local"
-    linear = "linear"
-    github = "github"
+class TaskSource(StrEnum):
+    Local = "local"
+    Linear = "linear"
+    Github = "github"
 
 
-class TaskAuthority(str, Enum):
-    local = "local"
-    linear = "linear"
-    github = "github"
+class TaskAuthority(StrEnum):
+    Local = "local"
+    Linear = "linear"
+    Github = "github"
 
 
-class TaskState(str, Enum):
-    todo = "todo"
-    in_progress = "in_progress"
-    blocked = "blocked"
-    done = "done"
+class TaskState(StrEnum):
+    Todo = "todo"
+    InProgress = "in_progress"
+    Blocked = "blocked"
+    Done = "done"
 
 
-class AgentStatus(str, Enum):
-    idle = "idle"
-    running = "running"
-    blocked = "blocked"
-    error = "error"
+class AgentStatus(StrEnum):
+    Idle = "idle"
+    Running = "running"
+    Blocked = "blocked"
+    Error = "error"
 
 
-class CommandState(str, Enum):
-    queued = "queued"
-    running = "running"
-    succeeded = "succeeded"
-    failed = "failed"
-    canceled = "canceled"
+class CommandState(StrEnum):
+    Queued = "queued"
+    Running = "running"
+    Succeeded = "succeeded"
+    Failed = "failed"
+    Canceled = "canceled"
 
 
-class BarrierMode(str, Enum):
-    loose = "loose"
-    tight = "tight"
+class BarrierMode(StrEnum):
+    Loose = "loose"
+    Tight = "tight"
 
 
-class BarrierState(str, Enum):
-    open = "open"
-    fulfilled = "fulfilled"
-    expired = "expired"
-    canceled = "canceled"
+class BarrierState(StrEnum):
+    Open = "open"
+    Fulfilled = "fulfilled"
+    Expired = "expired"
+    Canceled = "canceled"
 
 
-class PauseMode(str, Enum):
-    lax = "lax"
-    strict = "strict"
-
+class PauseMode(StrEnum):
+    Lax = "lax"
+    Strict = "strict"

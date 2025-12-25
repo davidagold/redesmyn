@@ -92,9 +92,15 @@ class BarrierResponse(ApiBaseModel):
     fulfilled_at: datetime | None
 
 
+class PauseScopeResponse(ApiBaseModel):
+    repo: bool
+    from_branch: str | None
+    to_branch: str | None
+
+
 class PauseResponse(ApiBaseModel):
     id: int
-    scope: str
+    scope: PauseScopeResponse
     mode: PauseMode
     reason: str | None
     created_at: datetime
@@ -105,13 +111,13 @@ class PauseResponse(ApiBaseModel):
 class EventResponse(ApiBaseModel):
     id: int
     event_type: str
-    payload: dict[str, Any]
+    data: dict[str, Any]
     created_at: datetime
 
 
 class PauseStatusResponse(ApiBaseModel):
     mode: PauseMode
-    scope: str
+    scope: PauseScopeResponse
     reason: str | None
 
 
@@ -120,4 +126,3 @@ class ApiStatusResponse(ApiBaseModel):
     db_path: str
     default_branch: str | None
     pause: PauseStatusResponse | None
-

@@ -9,6 +9,7 @@ from redesmyn.db.models import (
     Event,
     Node,
     Pause,
+    PauseScope,
     Repository,
     Task,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "Event",
     "Node",
     "Pause",
+    "PauseScope",
     "Repository",
     "Task",
     "async_session",

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
@@ -14,7 +18,8 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, composite, mapped_column
 
 from redesmyn.domain.enums import (
     AgentStatus,
@@ -30,6 +35,61 @@ from redesmyn.domain.enums import (
 
 class Base(DeclarativeBase):
     pass
+
+
+# SQLite uses JSON; Postgres uses JSONB via variant.
+JSON_TYPE = JSON().with_variant(JSONB, "postgresql")
+
+
+def _enum_type(enum_cls: type[StrEnum], name: str) -> SAEnum:
+    return SAEnum(
+        enum_cls,
+        name=name,
+        native_enum=False,
+        values_callable=lambda obj: [member.value for member in obj],
+    )
+
+
+class CommandPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class EventData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+@dataclass(frozen=True, slots=True)
+class PauseScope:
+    repo: bool
+    from_branch: str | None = None
+    to_branch: str | None = None
+
+    @classmethod
+    def for_repo(cls) -> "PauseScope":
+        return cls(repo=True, from_branch=None, to_branch=None)
+
+    @classmethod
+    def for_branch(cls, branch: str) -> "PauseScope":
+        return cls(repo=False, from_branch=branch, to_branch=None)
+
+    @classmethod
+    def for_branch_range(cls, from_branch: str, to_branch: str) -> "PauseScope":
+        return cls(repo=False, from_branch=from_branch, to_branch=to_branch)
+
+    def __composite_values__(self) -> tuple[bool, str | None, str | None]:
+        return (self.repo, self.from_branch, self.to_branch)
+
+    def to_dict(self) -> dict[str, object]:
+        return {"repo": self.repo, "from_branch": self.from_branch, "to_branch": self.to_branch}
+
+    def __str__(self) -> str:
+        if self.repo:
+            return "repo"
+        if self.from_branch and self.to_branch:
+            return f"branches:{self.from_branch}..{self.to_branch}"
+        if self.from_branch:
+            return f"branch:{self.from_branch}"
+        return "scope:unknown"
 
 
 class Repository(Base):
@@ -67,18 +127,18 @@ class Task(Base):
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[TaskSource] = mapped_column(
-        SAEnum(TaskSource, name="task_source", native_enum=False),
-        default=TaskSource.local,
+        _enum_type(TaskSource, "task_source"),
+        default=TaskSource.Local,
         nullable=False,
     )
     authority: Mapped[TaskAuthority] = mapped_column(
-        SAEnum(TaskAuthority, name="task_authority", native_enum=False),
-        default=TaskAuthority.local,
+        _enum_type(TaskAuthority, "task_authority"),
+        default=TaskAuthority.Local,
         nullable=False,
     )
     state: Mapped[TaskState] = mapped_column(
-        SAEnum(TaskState, name="task_state", native_enum=False),
-        default=TaskState.todo,
+        _enum_type(TaskState, "task_state"),
+        default=TaskState.Todo,
         nullable=False,
     )
     node_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id"), nullable=True, index=True)
@@ -121,8 +181,8 @@ class Agent(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[AgentStatus] = mapped_column(
-        SAEnum(AgentStatus, name="agent_status", native_enum=False),
-        default=AgentStatus.idle,
+        _enum_type(AgentStatus, "agent_status"),
+        default=AgentStatus.Idle,
         nullable=False,
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -138,10 +198,12 @@ class Command(Base):
     command_type: Mapped[str] = mapped_column(String, nullable=False)
     target_agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
     target_node_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id"), nullable=True, index=True)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict  # Pydantic: CommandPayload
+    )
     state: Mapped[CommandState] = mapped_column(
-        SAEnum(CommandState, name="command_state", native_enum=False),
-        default=CommandState.queued,
+        _enum_type(CommandState, "command_state"),
+        default=CommandState.Queued,
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -158,14 +220,14 @@ class Barrier(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     scope: Mapped[str] = mapped_column(String, nullable=False)
     mode: Mapped[BarrierMode] = mapped_column(
-        SAEnum(BarrierMode, name="barrier_mode", native_enum=False),
-        default=BarrierMode.loose,
+        _enum_type(BarrierMode, "barrier_mode"),
+        default=BarrierMode.Loose,
         nullable=False,
     )
     required_acks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     state: Mapped[BarrierState] = mapped_column(
-        SAEnum(BarrierState, name="barrier_state", native_enum=False),
-        default=BarrierState.open,
+        _enum_type(BarrierState, "barrier_state"),
+        default=BarrierState.Open,
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -178,10 +240,13 @@ class Pause(Base):
     __tablename__ = "pauses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    scope: Mapped[str] = mapped_column(String, nullable=False)  # e.g. "repo", "branch:<name>"
+    scope_repo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    scope_from_branch: Mapped[str | None] = mapped_column(String, nullable=True)
+    scope_to_branch: Mapped[str | None] = mapped_column(String, nullable=True)
+    scope: Mapped[PauseScope] = composite(PauseScope, scope_repo, scope_from_branch, scope_to_branch)
     mode: Mapped[PauseMode] = mapped_column(
-        SAEnum(PauseMode, name="pause_mode", native_enum=False),
-        default=PauseMode.lax,
+        _enum_type(PauseMode, "pause_mode"),
+        default=PauseMode.Lax,
         nullable=False,
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -197,7 +262,9 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict  # Pydantic: EventData
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
