@@ -12,7 +12,10 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 
 **Backend**
 
-- Install (recommended: `uv`): `uv sync`
+- Install deps (recommended: `uv`): `uv sync`
+- Make `rn` available without `uv run` (pick one):
+  - Recommended (global install): `uv tool install --editable .` (one-time)
+  - Or per-shell: `source .venv/bin/activate`
 - Initialize repo state: `rn init`
 - Run daemon (dev): `rn daemon run --reload` (serves API on `http://127.0.0.1:9234`)
 
