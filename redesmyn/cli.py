@@ -27,8 +27,14 @@ from redesmyn.db import (
     create_engine,
     create_sessionmaker,
 )
-from redesmyn.domain.enums import BlockPolicy
-from redesmyn.integrations.linear import LinearClient
+from redesmyn.domain.enums import BlockPolicy, TaskAuthority, TaskSource, TaskState
+from redesmyn.integrations.linear import (
+    LinearClient,
+    LinearIssue,
+    LinearIssueRelation,
+    fetch_project_issue_relations,
+    fetch_project_issues,
+)
 from redesmyn.git_proxy import does_block_git
 from redesmyn.orchestrator import init_repo
 from redesmyn.repo import (
@@ -803,6 +809,221 @@ def linear_whoami() -> None:
         typer.echo(str(data.get("viewer")))
 
     asyncio.run(_run())
+
+
+def _task_state_from_linear(state_type: str | None) -> TaskState:
+    if state_type is None:
+        return TaskState.Todo
+    normalized = state_type.lower()
+    if normalized in {"started", "in_progress"}:
+        return TaskState.InProgress
+    if normalized in {"completed", "canceled"}:
+        return TaskState.Done
+    if normalized == "blocked":
+        return TaskState.Blocked
+    return TaskState.Todo
+
+
+@linear_app.command("import")
+def linear_import(
+    project: str = typer.Option(..., "--project", help="Linear project id."),
+    epic: str | None = typer.Option(
+        None, help="Epic slug or id (defaults if only one epic)."
+    ),
+    create_nodes: bool = typer.Option(
+        True, "--create-nodes/--no-create-nodes", help="Create nodes/branches by default."
+    ),
+) -> None:
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    auth = asyncio.run(_load_linear_auth(ctx))
+    if auth is None:
+        typer.echo("error: Linear is not connected. Run `rn linear auth`.", err=True)
+        raise typer.Exit(2)
+
+    epic_row = asyncio.run(_resolve_epic(ctx, epic=epic))
+    client = LinearClient(access_token=auth.access_token)
+
+    async def _fetch() -> tuple[list[LinearIssue], list[LinearIssueRelation]]:
+        issues = await fetch_project_issues(client, project_id=project)
+        try:
+            relations = await fetch_project_issue_relations(client, project_id=project)
+        except Exception as e:
+            typer.echo(
+                f"warning: could not fetch issue relations; parent inference disabled ({e})",
+                err=True,
+            )
+            relations: list[LinearIssueRelation] = []
+        return issues, relations
+
+    issues, relations = asyncio.run(_fetch())
+    issue_ids = {i.id for i in issues}
+
+    blockers_by_issue: dict[str, list[str]] = {i.id: [] for i in issues}
+    for rel in relations:
+        rel_type = rel.type.lower()
+        if rel_type == "blocks":
+            if rel.related_issue_id in blockers_by_issue:
+                blockers_by_issue[rel.related_issue_id].append(rel.issue_id)
+            continue
+        if rel_type in {"blocked_by", "blockedby"}:
+            if rel.issue_id in blockers_by_issue:
+                blockers_by_issue[rel.issue_id].append(rel.related_issue_id)
+
+    parent_by_issue: dict[str, str | None] = {}
+    for issue_id, blockers in blockers_by_issue.items():
+        if not blockers:
+            parent_by_issue[issue_id] = None
+            continue
+        if len(blockers) > 1:
+            raise typer.BadParameter(
+                f"Linear issue {issue_id} has multiple blockers; choose a parent explicitly (v0)"
+            )
+        parent = blockers[0]
+        if parent not in issue_ids:
+            raise typer.BadParameter(
+                f"Linear issue {issue_id} blocker {parent} is outside the imported project (v0)"
+            )
+        parent_by_issue[issue_id] = parent
+
+    depth_cache: dict[str, int] = {}
+
+    def _depth(issue_id: str, *, stack: set[str]) -> int:
+        if issue_id in depth_cache:
+            return depth_cache[issue_id]
+        if issue_id in stack:
+            raise typer.BadParameter("Cycle detected in Linear blocked-by graph (v0)")
+        stack.add(issue_id)
+        parent = parent_by_issue.get(issue_id)
+        depth = 0 if parent is None else _depth(parent, stack=stack) + 1
+        stack.remove(issue_id)
+        depth_cache[issue_id] = depth
+        return depth
+
+    issues_sorted = sorted(issues, key=lambda issue: _depth(issue.id, stack=set()))
+
+    def _branch_name(identifier: str, title: str) -> str:
+        slug = _slugify(title)[:60].strip("-") or "task"
+        return f"rn/{epic_row.slug}/{identifier}-{slug}"
+
+    async def _apply() -> None:
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                epic_db = await session.get(Epic, epic_row.id)
+                if epic_db is None:
+                    raise typer.BadParameter("Epic not found")
+                if epic_db.linear_project_id is None:
+                    epic_db.linear_project_id = project
+                elif epic_db.linear_project_id != project:
+                    raise typer.BadParameter(
+                        f"Epic is linked to a different Linear project ({epic_db.linear_project_id})"
+                    )
+
+                node_by_issue_id: dict[str, Node] = {}
+                for issue in issues_sorted:
+                    task = await session.scalar(
+                        select(Task).where(
+                            Task.epic_id == epic_db.id,
+                            Task.linear_issue_id == issue.id,
+                        )
+                    )
+                    title = f"{issue.identifier} {issue.title}"
+                    if task is None:
+                        task = Task(
+                            epic_id=epic_db.id,
+                            title=title,
+                            body=issue.description,
+                            source=TaskSource.Linear,
+                            authority=TaskAuthority.Linear,
+                            state=_task_state_from_linear(issue.state_type),
+                            linear_issue_id=issue.id,
+                        )
+                        session.add(task)
+                        await session.flush()
+                    else:
+                        task.title = title
+                        task.body = issue.description
+                        task.state = _task_state_from_linear(issue.state_type)
+
+                    if not create_nodes:
+                        continue
+
+                    branch = _branch_name(issue.identifier, issue.title)
+                    node = await session.scalar(
+                        select(Node).where(
+                            Node.epic_id == epic_db.id,
+                            Node.branch_name == branch,
+                        )
+                    )
+                    if node is None:
+                        node = Node(
+                            epic_id=epic_db.id,
+                            branch_name=branch,
+                            linear_issue_id=issue.id,
+                        )
+                        session.add(node)
+                        await session.flush()
+                    else:
+                        node.linear_issue_id = issue.id
+
+                    node_by_issue_id[issue.id] = node
+
+                if not create_nodes:
+                    await session.commit()
+                    return
+
+                for issue in issues_sorted:
+                    node = node_by_issue_id[issue.id]
+                    parent_issue_id = parent_by_issue.get(issue.id)
+                    parent_node = (
+                        node_by_issue_id[parent_issue_id]
+                        if parent_issue_id is not None
+                        else None
+                    )
+                    node.parent_node_id = parent_node.id if parent_node else None
+
+                    base_ref = parent_node.branch_name if parent_node else epic_db.root_branch
+                    if node.worktree_path is None:
+                        branch = node.branch_name
+                        worktree_path = _default_worktree_path(ctx, branch=branch)
+                        if worktree_path.exists():
+                            raise typer.BadParameter(
+                                f"Worktree path already exists: {worktree_path}"
+                            )
+                        try:
+                            git_worktree_add(
+                                ctx.repo_root,
+                                worktree_path=worktree_path,
+                                branch_name=branch,
+                                base_ref=base_ref,
+                            )
+                        except GitCommandError as e:
+                            raise typer.BadParameter(str(e)) from e
+                        node.worktree_path = str(worktree_path)
+
+                    task = await session.scalar(
+                        select(Task).where(
+                            Task.epic_id == epic_db.id,
+                            Task.linear_issue_id == issue.id,
+                        )
+                    )
+                    if task is not None:
+                        task.node_id = node.id
+                        node.primary_task_id = task.id
+
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_apply())
+    typer.echo(f"Imported {len(issues)} issues into epic {epic_row.slug}")
 
 
 app.add_typer(linear_app, name="linear")
