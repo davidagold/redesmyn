@@ -6,6 +6,7 @@ from sqlalchemy import desc, select
 
 from redesmyn.context import RepoContext
 from redesmyn.db import Event, Pause, create_engine, create_sessionmaker
+from redesmyn.domain.enums import PauseMode
 
 
 class NotInitializedError(RuntimeError):
@@ -43,8 +44,16 @@ async def get_active_pause(ctx: RepoContext, *, scope: str) -> Pause | None:
         await engine.dispose()
 
 
-async def set_pause(ctx: RepoContext, *, scope: str, mode: str, reason: str | None) -> Pause:
+def _normalize_mode(mode: str | PauseMode) -> PauseMode:
+    if isinstance(mode, PauseMode):
+        return mode
+    return PauseMode(mode)
+
+
+async def set_pause(ctx: RepoContext, *, scope: str, mode: str | PauseMode, reason: str | None) -> Pause:
     _ensure_initialized(ctx)
+
+    normalized = _normalize_mode(mode)
 
     engine = create_engine(ctx.db_path)
     try:
@@ -60,12 +69,12 @@ async def set_pause(ctx: RepoContext, *, scope: str, mode: str, reason: str | No
                 active.cleared_at = datetime.now(UTC)
                 active.cleared_reason = "superseded"
 
-            pause = Pause(scope=scope, mode=mode, reason=reason, created_at=datetime.now(UTC))
+            pause = Pause(scope=scope, mode=normalized, reason=reason, created_at=datetime.now(UTC))
             session.add(pause)
             session.add(
                 Event(
                     event_type="pause.set",
-                    payload={"scope": scope, "mode": mode, "reason": reason},
+                    payload={"scope": scope, "mode": normalized.value, "reason": reason},
                     created_at=datetime.now(UTC),
                 )
             )

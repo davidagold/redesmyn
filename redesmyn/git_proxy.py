@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from redesmyn.domain.enums import PauseMode
+
 
 READ_ONLY_SUBCOMMANDS: set[str] = {
     "blame",
@@ -68,7 +70,7 @@ def _has_flag(args: list[str], flag: str) -> bool:
     return any(a == flag or a.startswith(f"{flag}=") for a in args)
 
 
-def pause_blocks_git(args: list[str], *, mode: str) -> GitBlockDecision:
+def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecision:
     """
     Decide whether a `git` invocation should be blocked under a pause.
 
@@ -80,12 +82,14 @@ def pause_blocks_git(args: list[str], *, mode: str) -> GitBlockDecision:
     if subcommand is None:
         return GitBlockDecision(allowed=True)
 
-    if mode == "strict":
+    mode_value = mode.value if isinstance(mode, PauseMode) else mode
+
+    if mode_value == "strict":
         if subcommand in STRICT_ALLOWED:
             return GitBlockDecision(allowed=True)
         return GitBlockDecision(allowed=False, reason=f"`git {subcommand}` blocked by strict pause")
 
-    if mode == "lax":
+    if mode_value == "lax":
         if subcommand in READ_ONLY_SUBCOMMANDS or subcommand == "fetch":
             return GitBlockDecision(allowed=True)
 
@@ -100,5 +104,4 @@ def pause_blocks_git(args: list[str], *, mode: str) -> GitBlockDecision:
 
         return GitBlockDecision(allowed=False, reason=f"`git {subcommand}` blocked by lax pause")
 
-    return GitBlockDecision(allowed=False, reason=f"Unknown pause mode: {mode}")
-
+    return GitBlockDecision(allowed=False, reason=f"Unknown pause mode: {mode_value}")

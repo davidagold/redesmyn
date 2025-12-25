@@ -84,7 +84,8 @@ async def _load_pause_summary(ctx: RepoContext, *, branch: str | None) -> str | 
         return None
 
     reason = pause.reason or "n/a"
-    return f"{pause.mode} (scope={pause.scope}, reason={reason})"
+    mode = pause.mode.value if hasattr(pause.mode, "value") else pause.mode
+    return f"{mode} (scope={pause.scope}, reason={reason})"
 
 
 @app.command()
@@ -165,7 +166,7 @@ def pause_lax(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    typer.echo(f"Paused: {pause.mode} (scope={pause.scope})")
+    typer.echo(f"Paused: {pause.mode.value} (scope={pause.scope})")
 
 
 @pause_app.command("strict")
@@ -180,7 +181,7 @@ def pause_strict(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    typer.echo(f"Paused: {pause.mode} (scope={pause.scope})")
+    typer.echo(f"Paused: {pause.mode.value} (scope={pause.scope})")
 
 
 @pause_app.command("clear")
@@ -199,7 +200,7 @@ def pause_clear(
         typer.echo("No active pause.", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"Pause cleared: {pause.mode} (scope={pause.scope})")
+    typer.echo(f"Pause cleared: {pause.mode.value} (scope={pause.scope})")
 
 
 @pause_app.command("list")
@@ -219,7 +220,7 @@ def pause_list(
 
     for p in pauses:
         cleared = "active" if p.cleared_at is None else "cleared"
-        typer.echo(f"{p.id}: {p.mode} {cleared} scope={p.scope} reason={p.reason or 'n/a'}")
+        typer.echo(f"{p.id}: {p.mode.value} {cleared} scope={p.scope} reason={p.reason or 'n/a'}")
 
 
 app.add_typer(pause_app, name="pause")

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from redesmyn.context import get_repo_context
 from redesmyn.db import Pause, Repository, create_engine, create_sessionmaker
 from redesmyn.orchestrator import init_repo
+from redesmyn.schemas.core import ApiStatusResponse, PauseStatusResponse
 
 app = FastAPI(title="Redesmyn")
 
@@ -39,8 +40,8 @@ def maybe_mount_dashboard(app_: FastAPI, repo_root: Path) -> None:
         app_.mount("/", StaticFiles(directory=str(dist), html=True), name="dashboard")
 
 
-@app.get("/api/status")
-async def api_status() -> dict[str, object]:
+@app.get("/api/status", response_model=ApiStatusResponse)
+async def api_status() -> ApiStatusResponse:
     ctx = app.state.ctx
     sessionmaker = app.state.sessionmaker
 
@@ -53,14 +54,14 @@ async def api_status() -> dict[str, object]:
             .limit(1)
         )
 
-    return {
-        "repoRoot": str(ctx.repo_root),
-        "dbPath": str(ctx.db_path),
-        "defaultBranch": repo.default_branch if repo else None,
-        "pause": None
+    return ApiStatusResponse(
+        repo_root=str(ctx.repo_root),
+        db_path=str(ctx.db_path),
+        default_branch=repo.default_branch if repo else None,
+        pause=None
         if pause is None
-        else {"mode": pause.mode, "scope": pause.scope, "reason": pause.reason},
-    }
+        else PauseStatusResponse(mode=pause.mode, scope=pause.scope, reason=pause.reason),
+    )
 
 
 @app.on_event("startup")
