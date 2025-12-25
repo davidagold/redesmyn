@@ -1,39 +1,51 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.responses import Response
+from starlette.responses import RedirectResponse
 
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Block,
     BlockScope,
+    LinearAuth,
     Repository,
     create_engine,
     create_sessionmaker,
 )
 from redesmyn.domain.enums import BlockPolicy
+from redesmyn.integrations.linear import (
+    exchange_code_for_token,
+    linear_authorize_url,
+    linear_redirect_uri,
+    new_oauth_state,
+)
 from redesmyn.orchestrator import init_repo
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     BlockScopeResponse,
     BlockStatusResponse,
+    LinearStatusResponse,
     ReleaseConditionResponse,
 )
+from redesmyn.settings import RedesmynSettings
 
 
 class AppState(Protocol):
     ctx: RepoContext
     engine: AsyncEngine
     sessionmaker: async_sessionmaker[AsyncSession]
+    linear_oauth_states: dict[str, datetime]
 
 
 class App(FastAPI):
@@ -48,6 +60,7 @@ async def lifespan(app: App):
     app.state.ctx = ctx
     app.state.engine = create_engine(ctx.db_path)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
+    app.state.linear_oauth_states = {}
     maybe_mount_dashboard(app, ctx.repo_root)
 
     yield
@@ -69,6 +82,85 @@ v1 = APIRouter(prefix="/v1")
 @v1.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@v1.get("/linear/status", response_model=LinearStatusResponse)
+async def linear_status() -> LinearStatusResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        auth = await session.scalar(
+            select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+        )
+    return LinearStatusResponse(
+        connected=auth is not None,
+        connected_at=auth.created_at if auth is not None else None,
+    )
+
+
+@v1.get("/linear/oauth/start", include_in_schema=False)
+async def linear_oauth_start() -> Response:
+    settings = RedesmynSettings()
+    state = new_oauth_state()
+    app.state.linear_oauth_states[state] = datetime.now(UTC)
+
+    for key, created in list(app.state.linear_oauth_states.items()):
+        if datetime.now(UTC) - created > timedelta(minutes=15):
+            app.state.linear_oauth_states.pop(key, None)
+
+    try:
+        url = linear_authorize_url(settings, state=state)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return RedirectResponse(url=url, status_code=302)
+
+
+@v1.get("/linear/oauth/callback", include_in_schema=False)
+async def linear_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> Response:
+    if error:
+        return HTMLResponse(
+            f"<h1>Linear auth failed</h1><p>{error}</p><p>{error_description or ''}</p>",
+            status_code=400,
+        )
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code/state")
+
+    if state not in app.state.linear_oauth_states:
+        raise HTTPException(status_code=400, detail="Unknown or expired state")
+    app.state.linear_oauth_states.pop(state, None)
+
+    settings = RedesmynSettings()
+    redirect_uri = linear_redirect_uri(settings)
+    try:
+        token = await exchange_code_for_token(settings, code=code, redirect_uri=redirect_uri)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        auth = await session.scalar(
+            select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+        )
+        if auth is None:
+            auth = LinearAuth(access_token=token.access_token)
+            session.add(auth)
+
+        auth.access_token = token.access_token
+        auth.refresh_token = token.refresh_token
+        auth.token_type = token.token_type
+        auth.scope = token.scope
+        auth.expires_at = token.expires_at
+        await session.commit()
+
+    return HTMLResponse(
+        "<h1>Linear connected</h1><p>You can close this tab and return to Redesmyn.</p>"
+    )
 
 
 @app.get("/", include_in_schema=False)

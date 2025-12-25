@@ -141,3 +141,8 @@ class ApiStatusResponse(ApiResponse):
     db_path: str
     default_branch: str | None
     block: BlockStatusResponse | None
+
+
+class LinearStatusResponse(ApiResponse):
+    connected: bool
+    connected_at: datetime | None
