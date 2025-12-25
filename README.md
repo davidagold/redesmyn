@@ -12,7 +12,8 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 
 **Backend**
 
-- Install deps (recommended: `uv`): `uv sync`
+- Install: `just install` (runs `uv sync` + `uv tool install --editable .`)
+- Or install deps (recommended: `uv`): `uv sync`
 - Make `rn` available without `uv run` (pick one):
   - Recommended (global install): `uv tool install --editable .` (one-time)
   - Or per-shell: `source .venv/bin/activate`

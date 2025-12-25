@@ -2,6 +2,11 @@ set shell := ["bash", "-cu"]
 
 default: check
 
+install:
+    uv sync
+    uv tool install --editable .
+    @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
+
 format:
     uv run ruff format .
     cd dashboard && npm run format
