@@ -248,12 +248,12 @@ These are enforced by the daemon and by `rn` when possible:
   - `state` (queued/running/succeeded/failed/canceled)
   - `createdAt/updatedAt`
 
-- **Barrier / Sync Point**
-  - `barrierId`
-  - `scope` (node/subtree)
-  - `requiredAcks` (agents/nodes)
-  - `mode`: `loose | tight`
-  - `state` (open/fulfilled/expired/canceled)
+- **Block (unified pause/barrier)**
+  - `blockId`
+  - `scope` (repo/branch/subtree)
+  - `policy` (e.g. git_mutations, daemon_mutations)
+  - `mode`: `lax | strict` (enforcement)
+  - `releaseCondition`: manual | command(commandId) | acks(requiredAgentIds)
 
 ### 8.2 Persistence approach (v0)
 
@@ -271,7 +271,7 @@ Every event has:
 - `repoId`, optional `epicId`
 - `actor` (user/agent/daemon/integration)
 - `type`
-- `payload` (type-specific)
+- `data` (type-specific)
 - `correlationId` (ties together multi-step operations like cascade rebases)
 
 ### 9.2 Key event types (v0)
