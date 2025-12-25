@@ -7,6 +7,9 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "api:spec": "uv run --directory .. python scripts/export_openapi.py",
+    "api:gen": "openapi-typescript ../openapi/openapi.json -o src/api/v1.ts",
+    "api:update": "npm run api:spec && npm run api:gen",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint --react-plugin --tsconfig tsconfig.json .",
@@ -32,6 +35,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.5.2",
+    "openapi-typescript": "^7.10.0",
     "oxfmt": "^0.2.0",
     "oxlint": "^1.16.0",
     "tailwindcss": "^4.1.18",

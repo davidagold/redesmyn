@@ -13,7 +13,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:9234",
+      "/v1": "http://127.0.0.1:9234",
     },
   },
 })

@@ -1,0 +1,167 @@
+{
+  "components": {
+    "schemas": {
+      "ApiStatusResponse": {
+        "properties": {
+          "dbPath": {
+            "title": "Dbpath",
+            "type": "string"
+          },
+          "defaultBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultbranch"
+          },
+          "pause": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PauseStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repoRoot": {
+            "title": "Reporoot",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repoRoot",
+          "dbPath",
+          "defaultBranch",
+          "pause"
+        ],
+        "title": "ApiStatusResponse",
+        "type": "object"
+      },
+      "PauseMode": {
+        "enum": [
+          "lax",
+          "strict"
+        ],
+        "title": "PauseMode",
+        "type": "string"
+      },
+      "PauseScopeResponse": {
+        "properties": {
+          "fromBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frombranch"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "boolean"
+          },
+          "toBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tobranch"
+          }
+        },
+        "required": [
+          "repo",
+          "fromBranch",
+          "toBranch"
+        ],
+        "title": "PauseScopeResponse",
+        "type": "object"
+      },
+      "PauseStatusResponse": {
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/PauseMode"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/PauseScopeResponse"
+          }
+        },
+        "required": [
+          "mode",
+          "scope",
+          "reason"
+        ],
+        "title": "PauseStatusResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Redesmyn",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/healthz": {
+      "get": {
+        "operationId": "healthz_v1_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz V1 Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "operationId": "api_status_v1_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Status"
+      }
+    }
+  }
+}
