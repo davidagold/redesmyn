@@ -38,7 +38,7 @@ from redesmyn.schemas.core import (
     LinearStatusResponse,
     ReleaseConditionResponse,
 )
-from redesmyn.settings import RedesmynSettings
+from redesmyn.settings import load_settings
 
 
 class AppState(Protocol):
@@ -99,7 +99,7 @@ async def linear_status() -> LinearStatusResponse:
 
 @v1.get("/linear/oauth/start", include_in_schema=False)
 async def linear_oauth_start() -> Response:
-    settings = RedesmynSettings()
+    settings = load_settings(repo_root=app.state.ctx.repo_root)
     state = new_oauth_state()
     app.state.linear_oauth_states[state] = datetime.now(UTC)
 
@@ -110,7 +110,13 @@ async def linear_oauth_start() -> Response:
     try:
         url = linear_authorize_url(settings, state=state)
     except ValueError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        return HTMLResponse(
+            "<h1>Linear is not configured</h1>"
+            "<p>Set <code>REDESMYN_LINEAR_CLIENT_ID</code> and <code>REDESMYN_LINEAR_CLIENT_SECRET</code> "
+            "in <code>.env</code> (see <code>.env.example</code>).</p>"
+            f"<pre>{e}</pre>",
+            status_code=500,
+        )
 
     return RedirectResponse(url=url, status_code=302)
 
@@ -135,7 +141,7 @@ async def linear_oauth_callback(
         raise HTTPException(status_code=400, detail="Unknown or expired state")
     app.state.linear_oauth_states.pop(state, None)
 
-    settings = RedesmynSettings()
+    settings = load_settings(repo_root=app.state.ctx.repo_root)
     redirect_uri = linear_redirect_uri(settings)
     try:
         token = await exchange_code_for_token(settings, code=code, redirect_uri=redirect_uri)

@@ -742,9 +742,20 @@ def linear_auth(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    from redesmyn.settings import RedesmynSettings
+    from redesmyn.settings import load_settings
 
-    settings = RedesmynSettings()
+    settings = load_settings(repo_root=get_repo_context().repo_root)
+    if not settings.linear_client_id or not settings.linear_client_secret:
+        redirect_uri = f"http://{settings.api_host}:{settings.api_port}/v1/linear/oauth/callback"
+        typer.echo(
+            "error: Linear OAuth is not configured. Create a Linear OAuth app and set:\n"
+            "  REDESMYN_LINEAR_CLIENT_ID\n"
+            "  REDESMYN_LINEAR_CLIENT_SECRET\n"
+            "in `.env` (see `.env.example`).\n"
+            f"Redirect URL: {redirect_uri}",
+            err=True,
+        )
+        raise typer.Exit(2)
     base = f"http://{settings.api_host}:{settings.api_port}"
     start_url = f"{base}/v1/linear/oauth/start"
     status_url = f"{base}/v1/linear/status"
