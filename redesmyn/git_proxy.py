@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from redesmyn.domain.enums import BlockMode
 
-
 READ_ONLY_SUBCOMMANDS: set[str] = {
     "blame",
     "cat-file",
@@ -70,7 +69,7 @@ def _has_flag(args: list[str], flag: str) -> bool:
     return any(a == flag or a.startswith(f"{flag}=") for a in args)
 
 
-def block_blocks_git(args: list[str], *, mode: str | BlockMode) -> GitBlockDecision:
+def does_block_git(args: list[str], *, mode: str | BlockMode) -> GitBlockDecision:
     """
     Decide whether a `git` invocation should be blocked under a block.
 

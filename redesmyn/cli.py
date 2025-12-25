@@ -18,7 +18,7 @@ from redesmyn.blocks import (
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import Repository, create_engine, create_sessionmaker
 from redesmyn.domain.enums import BlockPolicy
-from redesmyn.git_proxy import block_blocks_git
+from redesmyn.git_proxy import does_block_git
 from redesmyn.orchestrator import init_repo
 from redesmyn.repo import NotAGitRepositoryError, current_branch
 
@@ -305,7 +305,7 @@ def git_proxy(ctx: typer.Context) -> None:
         raise typer.Exit(2)
 
     if block is not None:
-        decision = block_blocks_git(git_args, mode=block.mode)
+        decision = does_block_git(git_args, mode=block.mode)
         if not decision.allowed:
             reason = block.reason or "n/a"
             typer.echo(
