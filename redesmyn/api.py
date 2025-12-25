@@ -7,23 +7,26 @@ from typing import Protocol
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import TypeAdapter
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.responses import Response
 
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
-    Pause,
-    PauseScope,
+    Block,
+    BlockScope,
     Repository,
     create_engine,
     create_sessionmaker,
 )
+from redesmyn.domain.enums import BlockPolicy
 from redesmyn.orchestrator import init_repo
 from redesmyn.schemas.core import (
     ApiStatusResponse,
-    PauseScopeResponse,
-    PauseStatusResponse,
+    BlockScopeResponse,
+    BlockStatusResponse,
+    ReleaseConditionResponse,
 )
 
 
@@ -93,10 +96,14 @@ async def api_status() -> ApiStatusResponse:
         repo = await session.scalar(
             select(Repository).where(Repository.repo_root == str(ctx.repo_root))
         )
-        pause = await session.scalar(
-            select(Pause)
-            .where(Pause.scope == PauseScope.for_repo(), Pause.cleared_at.is_(None))
-            .order_by(desc(Pause.id))
+        block = await session.scalar(
+            select(Block)
+            .where(
+                Block.scope == BlockScope.for_repo(),
+                Block.policy == BlockPolicy.GitMutations,
+                Block.cleared_at.is_(None),
+            )
+            .order_by(desc(Block.id))
             .limit(1)
         )
 
@@ -104,12 +111,16 @@ async def api_status() -> ApiStatusResponse:
         repo_root=str(ctx.repo_root),
         db_path=str(ctx.db_path),
         default_branch=repo.default_branch if repo else None,
-        pause=None
-        if pause is None
-        else PauseStatusResponse(
-            mode=pause.mode,
-            scope=PauseScopeResponse.model_validate(pause.scope, from_attributes=True),
-            reason=pause.reason,
+        block=None
+        if block is None
+        else BlockStatusResponse(
+            mode=block.mode,
+            scope=BlockScopeResponse.model_validate(block.scope, from_attributes=True),
+            reason=block.reason,
+            policy=block.policy,
+            release=TypeAdapter(ReleaseConditionResponse).validate_python(
+                block.release
+            ),
         ),
     )
 

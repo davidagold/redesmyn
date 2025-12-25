@@ -1,9 +1,8 @@
 from redesmyn.domain.enums import (
     AgentStatus,
-    BarrierMode,
-    BarrierState,
+    BlockMode,
+    BlockPolicy,
     CommandState,
-    PauseMode,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -11,10 +10,9 @@ from redesmyn.domain.enums import (
 
 __all__ = [
     "AgentStatus",
-    "BarrierMode",
-    "BarrierState",
+    "BlockMode",
+    "BlockPolicy",
     "CommandState",
-    "PauseMode",
     "TaskAuthority",
     "TaskSource",
     "TaskState",

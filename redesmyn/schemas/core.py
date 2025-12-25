@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
+from pydantic import Field
 from redesmyn.domain.enums import (
     AgentStatus,
-    BarrierMode,
-    BarrierState,
+    BlockMode,
+    BlockPolicy,
     CommandState,
-    PauseMode,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -82,26 +82,38 @@ class CommandResponse(ApiBaseModel):
     updated_at: datetime
 
 
-class BarrierResponse(ApiBaseModel):
-    id: int
-    scope: str
-    mode: BarrierMode
-    required_acks: int
-    state: BarrierState
-    created_at: datetime
-    fulfilled_at: datetime | None
-
-
-class PauseScopeResponse(ApiBaseModel):
+class BlockScopeResponse(ApiBaseModel):
     repo: bool
     from_branch: str | None
     to_branch: str | None
 
 
-class PauseResponse(ApiBaseModel):
+class ManualReleaseResponse(ApiBaseModel):
+    type: Literal["manual"] = "manual"
+
+
+class CommandReleaseResponse(ApiBaseModel):
+    type: Literal["command"] = "command"
+    command_id: int
+
+
+class AckReleaseResponse(ApiBaseModel):
+    type: Literal["acks"] = "acks"
+    required_agent_ids: list[int]
+
+
+ReleaseConditionResponse = Annotated[
+    ManualReleaseResponse | CommandReleaseResponse | AckReleaseResponse,
+    Field(discriminator="type"),
+]
+
+
+class BlockResponse(ApiBaseModel):
     id: int
-    scope: PauseScopeResponse
-    mode: PauseMode
+    scope: BlockScopeResponse
+    policy: BlockPolicy
+    mode: BlockMode
+    release: ReleaseConditionResponse
     reason: str | None
     created_at: datetime
     cleared_at: datetime | None
@@ -115,14 +127,16 @@ class EventResponse(ApiBaseModel):
     created_at: datetime
 
 
-class PauseStatusResponse(ApiBaseModel):
-    mode: PauseMode
-    scope: PauseScopeResponse
+class BlockStatusResponse(ApiBaseModel):
+    mode: BlockMode
+    scope: BlockScopeResponse
     reason: str | None
+    policy: BlockPolicy
+    release: ReleaseConditionResponse
 
 
 class ApiStatusResponse(ApiBaseModel):
     repo_root: str
     db_path: str
     default_branch: str | None
-    pause: PauseStatusResponse | None
+    block: BlockStatusResponse | None

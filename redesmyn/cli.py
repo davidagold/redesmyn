@@ -8,22 +8,26 @@ import typer
 from sqlalchemy import select
 
 from redesmyn import __version__
+from redesmyn.blocks import (
+    NotInitializedError,
+    clear_block,
+    get_effective_block,
+    list_blocks,
+    set_manual_block,
+)
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import Repository, create_engine, create_sessionmaker
-from redesmyn.git_proxy import pause_blocks_git
+from redesmyn.domain.enums import BlockPolicy
+from redesmyn.git_proxy import block_blocks_git
 from redesmyn.orchestrator import init_repo
-from redesmyn.pause import (
-    NotInitializedError,
-    clear_pause,
-    get_effective_pause,
-    list_pauses,
-    set_pause,
-)
 from redesmyn.repo import NotAGitRepositoryError, current_branch
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
-pause_app = typer.Typer(add_completion=False, help="Pause controls.")
+block_app = typer.Typer(
+    add_completion=False,
+    help="Block controls (use `rn pause` as an alias for v0).",
+)
 
 
 @app.command()
@@ -84,18 +88,22 @@ def _git_cwd_from_args(base_cwd: Path, git_args: list[str]) -> Path:
     return cwd
 
 
-async def _load_pause_summary(ctx: RepoContext, *, branch: str | None) -> str | None:
+async def _load_block_summary(ctx: RepoContext, *, branch: str | None) -> str | None:
     try:
-        pause = await get_effective_pause(ctx, branch=branch)
+        block = await get_effective_block(
+            ctx,
+            branch=branch,
+            policy=BlockPolicy.GitMutations,
+        )
     except NotInitializedError:
         return None
 
-    if pause is None:
+    if block is None:
         return None
 
-    reason = pause.reason or "n/a"
-    mode = pause.mode.value if hasattr(pause.mode, "value") else pause.mode
-    return f"{mode} (scope={pause.scope}, reason={reason})"
+    reason = block.reason or "n/a"
+    mode = block.mode.value if hasattr(block.mode, "value") else block.mode
+    return f"{mode} (scope={block.scope}, reason={reason})"
 
 
 @app.command()
@@ -111,7 +119,7 @@ def status(
 
     repo = asyncio.run(_load_repository_row(ctx))
     branch = current_branch(cwd=cwd or Path.cwd())
-    pause_summary = asyncio.run(_load_pause_summary(ctx, branch=branch))
+    block_summary = asyncio.run(_load_block_summary(ctx, branch=branch))
     typer.echo(f"Repo: {ctx.repo_root}")
     typer.echo(f"State: {ctx.state_dir}")
     typer.echo(f"DB: {ctx.db_path}")
@@ -120,7 +128,7 @@ def status(
     else:
         typer.echo("Initialized: yes")
         typer.echo(f"Default branch: {repo.default_branch}")
-    typer.echo(f"Pause: {pause_summary or 'none'}")
+    typer.echo(f"Block (git): {block_summary or 'none'}")
 
 
 @daemon_app.command("run")
@@ -166,80 +174,104 @@ def daemon_status() -> None:
 app.add_typer(daemon_app, name="daemon")
 
 
-@pause_app.command("lax")
-def pause_lax(
-    scope: str = typer.Option("repo", help="Pause scope (v0: use 'repo')."),
+@block_app.command("lax")
+def block_lax(
+    scope: str = typer.Option("repo", help="Block scope (v0: use 'repo')."),
     reason: str | None = typer.Option(None, help="Human-readable reason."),
 ) -> None:
     try:
         repo_ctx = get_repo_context()
-        pause = asyncio.run(set_pause(repo_ctx, scope=scope, mode="lax", reason=reason))
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    typer.echo(f"Paused: {pause.mode.value} (scope={pause.scope})")
-
-
-@pause_app.command("strict")
-def pause_strict(
-    scope: str = typer.Option("repo", help="Pause scope (v0: use 'repo')."),
-    reason: str | None = typer.Option(None, help="Human-readable reason."),
-) -> None:
-    try:
-        repo_ctx = get_repo_context()
-        pause = asyncio.run(
-            set_pause(repo_ctx, scope=scope, mode="strict", reason=reason)
+        block = asyncio.run(
+            set_manual_block(
+                repo_ctx,
+                scope=scope,
+                policy=BlockPolicy.GitMutations,
+                mode="lax",
+                reason=reason,
+            )
         )
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    typer.echo(f"Paused: {pause.mode.value} (scope={pause.scope})")
+    typer.echo(f"Blocked: {block.mode.value} (scope={block.scope})")
 
 
-@pause_app.command("clear")
-def pause_clear(
-    scope: str = typer.Option("repo", help="Pause scope (v0: use 'repo')."),
+@block_app.command("strict")
+def block_strict(
+    scope: str = typer.Option("repo", help="Block scope (v0: use 'repo')."),
+    reason: str | None = typer.Option(None, help="Human-readable reason."),
+) -> None:
+    try:
+        repo_ctx = get_repo_context()
+        block = asyncio.run(
+            set_manual_block(
+                repo_ctx,
+                scope=scope,
+                policy=BlockPolicy.GitMutations,
+                mode="strict",
+                reason=reason,
+            )
+        )
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"Blocked: {block.mode.value} (scope={block.scope})")
+
+
+@block_app.command("clear")
+def block_clear(
+    scope: str = typer.Option("repo", help="Block scope (v0: use 'repo')."),
     reason: str | None = typer.Option(None, help="Reason for clearing."),
 ) -> None:
     try:
         repo_ctx = get_repo_context()
-        pause = asyncio.run(clear_pause(repo_ctx, scope=scope, reason=reason))
+        block = asyncio.run(
+            clear_block(
+                repo_ctx,
+                scope=scope,
+                policy=BlockPolicy.GitMutations,
+                reason=reason,
+            )
+        )
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if pause is None:
-        typer.echo("No active pause.", err=True)
+    if block is None:
+        typer.echo("No active block.", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"Pause cleared: {pause.mode.value} (scope={pause.scope})")
+    typer.echo(f"Block cleared: {block.mode.value} (scope={block.scope})")
 
 
-@pause_app.command("list")
-def pause_list(
-    scope: str = typer.Option("repo", help="Pause scope (v0: use 'repo')."),
+@block_app.command("list")
+def block_list(
+    scope: str = typer.Option("repo", help="Block scope (v0: use 'repo')."),
 ) -> None:
     try:
         repo_ctx = get_repo_context()
-        pauses = asyncio.run(list_pauses(repo_ctx, scope=scope))
+        blocks = asyncio.run(
+            list_blocks(repo_ctx, scope=scope, policy=BlockPolicy.GitMutations)
+        )
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if not pauses:
-        typer.echo("No pauses.")
+    if not blocks:
+        typer.echo("No blocks.")
         return
 
-    for p in pauses:
-        cleared = "active" if p.cleared_at is None else "cleared"
+    for b in blocks:
+        cleared = "active" if b.cleared_at is None else "cleared"
         typer.echo(
-            f"{p.id}: {p.mode.value} {cleared} scope={p.scope} reason={p.reason or 'n/a'}"
+            f"{b.id}: {b.mode.value} {cleared} scope={b.scope} reason={b.reason or 'n/a'}"
         )
 
 
-app.add_typer(pause_app, name="pause")
+app.add_typer(block_app, name="block")
+app.add_typer(block_app, name="pause")
 
 
 @app.command(
@@ -258,7 +290,13 @@ def git_proxy(ctx: typer.Context) -> None:
     try:
         repo_ctx = get_repo_context(cwd=git_cwd)
         branch = current_branch(cwd=git_cwd)
-        pause = asyncio.run(get_effective_pause(repo_ctx, branch=branch))
+        block = asyncio.run(
+            get_effective_block(
+                repo_ctx,
+                branch=branch,
+                policy=BlockPolicy.GitMutations,
+            )
+        )
     except NotInitializedError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -266,12 +304,12 @@ def git_proxy(ctx: typer.Context) -> None:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if pause is not None:
-        decision = pause_blocks_git(git_args, mode=pause.mode)
+    if block is not None:
+        decision = block_blocks_git(git_args, mode=block.mode)
         if not decision.allowed:
-            reason = pause.reason or "n/a"
+            reason = block.reason or "n/a"
             typer.echo(
-                f"blocked: {decision.reason} (scope={pause.scope}, reason={reason})",
+                f"blocked: {decision.reason} (scope={block.scope}, reason={reason})",
                 err=True,
             )
             raise typer.Exit(3)

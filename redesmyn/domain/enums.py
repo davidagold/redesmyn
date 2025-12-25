@@ -37,18 +37,11 @@ class CommandState(StrEnum):
     Canceled = "canceled"
 
 
-class BarrierMode(StrEnum):
-    Loose = "loose"
-    Tight = "tight"
+class BlockPolicy(StrEnum):
+    GitMutations = "git_mutations"
+    DaemonMutations = "daemon_mutations"
 
 
-class BarrierState(StrEnum):
-    Open = "open"
-    Fulfilled = "fulfilled"
-    Expired = "expired"
-    Canceled = "canceled"
-
-
-class PauseMode(StrEnum):
+class BlockMode(StrEnum):
     Lax = "lax"
     Strict = "strict"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from redesmyn.domain.enums import PauseMode
+from redesmyn.domain.enums import BlockMode
 
 
 READ_ONLY_SUBCOMMANDS: set[str] = {
@@ -70,9 +70,9 @@ def _has_flag(args: list[str], flag: str) -> bool:
     return any(a == flag or a.startswith(f"{flag}=") for a in args)
 
 
-def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecision:
+def block_blocks_git(args: list[str], *, mode: str | BlockMode) -> GitBlockDecision:
     """
-    Decide whether a `git` invocation should be blocked under a pause.
+    Decide whether a `git` invocation should be blocked under a block.
 
     Modes:
     - lax: allow limited local progress; block push + rewrites/cross-branch ops.
@@ -82,13 +82,13 @@ def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecis
     if subcommand is None:
         return GitBlockDecision(allowed=True)
 
-    mode_value = mode.value if isinstance(mode, PauseMode) else mode
+    mode_value = mode.value if isinstance(mode, BlockMode) else mode
 
     if mode_value == "strict":
         if subcommand in STRICT_ALLOWED:
             return GitBlockDecision(allowed=True)
         return GitBlockDecision(
-            allowed=False, reason=f"`git {subcommand}` blocked by strict pause"
+            allowed=False, reason=f"`git {subcommand}` blocked by strict block"
         )
 
     if mode_value == "lax":
@@ -97,7 +97,7 @@ def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecis
 
         if subcommand == "commit" and _has_flag(args, "--amend"):
             return GitBlockDecision(
-                allowed=False, reason="`git commit --amend` blocked by lax pause"
+                allowed=False, reason="`git commit --amend` blocked by lax block"
             )
 
         if subcommand in LAX_ALLOWED_MUTATING:
@@ -105,11 +105,11 @@ def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecis
 
         if subcommand in LAX_BLOCKED_MUTATING:
             return GitBlockDecision(
-                allowed=False, reason=f"`git {subcommand}` blocked by lax pause"
+                allowed=False, reason=f"`git {subcommand}` blocked by lax block"
             )
 
         return GitBlockDecision(
-            allowed=False, reason=f"`git {subcommand}` blocked by lax pause"
+            allowed=False, reason=f"`git {subcommand}` blocked by lax block"
         )
 
-    return GitBlockDecision(allowed=False, reason=f"Unknown pause mode: {mode_value}")
+    return GitBlockDecision(allowed=False, reason=f"Unknown block mode: {mode_value}")

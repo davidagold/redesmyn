@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -25,10 +25,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, composite, mapped_column
 
 from redesmyn.domain.enums import (
     AgentStatus,
-    BarrierMode,
-    BarrierState,
+    BlockMode,
+    BlockPolicy,
     CommandState,
-    PauseMode,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -60,22 +59,42 @@ class EventData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class ManualRelease(BaseModel):
+    type: Literal["manual"] = "manual"
+
+
+class CommandRelease(BaseModel):
+    type: Literal["command"] = "command"
+    command_id: int
+
+
+class AckRelease(BaseModel):
+    type: Literal["acks"] = "acks"
+    required_agent_ids: list[int]
+
+
+ReleaseCondition = Annotated[
+    ManualRelease | CommandRelease | AckRelease,
+    Field(discriminator="type"),
+]
+
+
 @dataclass(frozen=True, slots=True)
-class PauseScope:
+class BlockScope:
     repo: bool
     from_branch: str | None = None
     to_branch: str | None = None
 
     @classmethod
-    def for_repo(cls) -> "PauseScope":
+    def for_repo(cls) -> "BlockScope":
         return cls(repo=True, from_branch=None, to_branch=None)
 
     @classmethod
-    def for_branch(cls, branch: str) -> "PauseScope":
+    def for_branch(cls, branch: str) -> "BlockScope":
         return cls(repo=False, from_branch=branch, to_branch=None)
 
     @classmethod
-    def for_branch_range(cls, from_branch: str, to_branch: str) -> "PauseScope":
+    def for_branch_range(cls, from_branch: str, to_branch: str) -> "BlockScope":
         return cls(repo=False, from_branch=from_branch, to_branch=to_branch)
 
     def __composite_values__(self) -> tuple[bool, str | None, str | None]:
@@ -255,46 +274,32 @@ class Command(Base):
     )
 
 
-class Barrier(Base):
-    __tablename__ = "barriers"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    scope: Mapped[str] = mapped_column(String, nullable=False)
-    mode: Mapped[BarrierMode] = mapped_column(
-        _enum_type(BarrierMode, "barrier_mode"),
-        default=BarrierMode.Loose,
-        nullable=False,
-    )
-    required_acks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    state: Mapped[BarrierState] = mapped_column(
-        _enum_type(BarrierState, "barrier_state"),
-        default=BarrierState.Open,
-        nullable=False,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    fulfilled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-
-class Pause(Base):
-    __tablename__ = "pauses"
+class Block(Base):
+    __tablename__ = "blocks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     scope_repo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     scope_from_branch: Mapped[str | None] = mapped_column(String, nullable=True)
     scope_to_branch: Mapped[str | None] = mapped_column(String, nullable=True)
-    scope: Mapped[PauseScope] = composite(
-        PauseScope, scope_repo, scope_from_branch, scope_to_branch
+    scope: Mapped[BlockScope] = composite(
+        BlockScope, scope_repo, scope_from_branch, scope_to_branch
     )
 
-    mode: Mapped[PauseMode] = mapped_column(
-        _enum_type(PauseMode, "pause_mode"),
-        default=PauseMode.Lax,
+    policy: Mapped[BlockPolicy] = mapped_column(
+        _enum_type(BlockPolicy, "block_policy"),
+        default=BlockPolicy.GitMutations,
         nullable=False,
+    )
+    mode: Mapped[BlockMode] = mapped_column(
+        _enum_type(BlockMode, "block_mode"),
+        default=BlockMode.Lax,
+        nullable=False,
+    )
+    release: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=lambda: {"type": "manual"},  # Pydantic: ReleaseCondition
     )
 
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -306,6 +311,16 @@ class Pause(Base):
         DateTime(timezone=True), nullable=True
     )
     cleared_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BlockAck(Base):
+    __tablename__ = "block_acks"
+
+    block_id: Mapped[int] = mapped_column(ForeignKey("blocks.id"), primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), primary_key=True)
+    acked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class Event(Base):
