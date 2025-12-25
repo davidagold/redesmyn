@@ -15,7 +15,9 @@ class NotInitializedError(RuntimeError):
 
 def _ensure_initialized(ctx: RepoContext) -> None:
     if not ctx.db_path.exists():
-        raise NotInitializedError("Redesmyn is not initialized in this repo. Run `rn init`.")
+        raise NotInitializedError(
+            "Redesmyn is not initialized in this repo. Run `rn init`."
+        )
 
 
 def _normalize_scope(scope: str | PauseScope) -> PauseScope:
@@ -36,7 +38,9 @@ async def get_effective_pause(ctx: RepoContext, *, branch: str | None) -> Pause 
     return await get_active_pause(ctx, scope=PauseScope.for_repo())
 
 
-async def get_active_pause(ctx: RepoContext, *, scope: str | PauseScope) -> Pause | None:
+async def get_active_pause(
+    ctx: RepoContext, *, scope: str | PauseScope
+) -> Pause | None:
     _ensure_initialized(ctx)
     normalized_scope = _normalize_scope(scope)
 
@@ -61,7 +65,13 @@ def _normalize_mode(mode: str | PauseMode) -> PauseMode:
     return PauseMode(mode)
 
 
-async def set_pause(ctx: RepoContext, *, scope: str | PauseScope, mode: str | PauseMode, reason: str | None) -> Pause:
+async def set_pause(
+    ctx: RepoContext,
+    *,
+    scope: str | PauseScope,
+    mode: str | PauseMode,
+    reason: str | None,
+) -> Pause:
     _ensure_initialized(ctx)
 
     normalized_scope = _normalize_scope(scope)
@@ -81,12 +91,21 @@ async def set_pause(ctx: RepoContext, *, scope: str | PauseScope, mode: str | Pa
                 active.cleared_at = datetime.now(UTC)
                 active.cleared_reason = "superseded"
 
-            pause = Pause(scope=normalized_scope, mode=normalized, reason=reason, created_at=datetime.now(UTC))
+            pause = Pause(
+                scope=normalized_scope,
+                mode=normalized,
+                reason=reason,
+                created_at=datetime.now(UTC),
+            )
             session.add(pause)
             session.add(
                 Event(
                     event_type="pause.set",
-                    data={"scope": normalized_scope.to_dict(), "mode": normalized.value, "reason": reason},
+                    data={
+                        "scope": normalized_scope.to_dict(),
+                        "mode": normalized.value,
+                        "reason": reason,
+                    },
                     created_at=datetime.now(UTC),
                 )
             )
@@ -97,7 +116,9 @@ async def set_pause(ctx: RepoContext, *, scope: str | PauseScope, mode: str | Pa
         await engine.dispose()
 
 
-async def clear_pause(ctx: RepoContext, *, scope: str | PauseScope, reason: str | None) -> Pause | None:
+async def clear_pause(
+    ctx: RepoContext, *, scope: str | PauseScope, reason: str | None
+) -> Pause | None:
     _ensure_initialized(ctx)
 
     normalized_scope = _normalize_scope(scope)
@@ -139,7 +160,9 @@ async def list_pauses(ctx: RepoContext, *, scope: str | PauseScope) -> list[Paus
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             rows = await session.scalars(
-                select(Pause).where(Pause.scope == normalized_scope).order_by(desc(Pause.id))
+                select(Pause)
+                .where(Pause.scope == normalized_scope)
+                .order_by(desc(Pause.id))
             )
             return list(rows)
     finally:

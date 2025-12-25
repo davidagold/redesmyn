@@ -8,7 +8,9 @@ class NotAGitRepositoryError(RuntimeError):
     pass
 
 
-def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run_git(
+    args: list[str], *, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd is not None else None,

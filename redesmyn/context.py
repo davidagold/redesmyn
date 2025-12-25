@@ -18,4 +18,3 @@ def get_repo_context(cwd: Path | None = None) -> RepoContext:
     state_dir = repo_root / ".redesmyn"
     db_path = state_dir / "redesmyn.sqlite3"
     return RepoContext(repo_root=repo_root, state_dir=state_dir, db_path=db_path)
-

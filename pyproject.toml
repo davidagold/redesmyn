@@ -13,11 +13,23 @@ dependencies = [
   "uvicorn[standard]>=0.32",
 ]
 
-[project.optional-dependencies]
-dev = [
-  "alembic>=1.14",
-  "httpx>=0.27",
-]
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [project.scripts]
 rn = "redesmyn.cli:main"
+
+[dependency-groups]
+dev = [
+  "alembic>=1.14",
+  "httpx>=0.27",
+  "ruff",
+  "ty",
+]
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+include = ["redesmyn*"]

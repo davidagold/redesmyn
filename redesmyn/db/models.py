@@ -80,7 +80,11 @@ class PauseScope:
         return (self.repo, self.from_branch, self.to_branch)
 
     def to_dict(self) -> dict[str, object]:
-        return {"repo": self.repo, "from_branch": self.from_branch, "to_branch": self.to_branch}
+        return {
+            "repo": self.repo,
+            "from_branch": self.from_branch,
+            "to_branch": self.to_branch,
+        }
 
     def __str__(self) -> str:
         if self.repo:
@@ -107,7 +111,9 @@ class Epic(Base):
     __tablename__ = "epics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    repository_id: Mapped[int] = mapped_column(ForeignKey("repositories.id"), nullable=False, index=True)
+    repository_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     slug: Mapped[str] = mapped_column(String, nullable=False)
     root_branch: Mapped[str] = mapped_column(String, nullable=False)
@@ -116,14 +122,18 @@ class Epic(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (UniqueConstraint("repository_id", "slug", name="uq_epics_repo_slug"),)
+    __table_args__ = (
+        UniqueConstraint("repository_id", "slug", name="uq_epics_repo_slug"),
+    )
 
 
 class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    epic_id: Mapped[int] = mapped_column(ForeignKey("epics.id"), nullable=False, index=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[TaskSource] = mapped_column(
@@ -141,7 +151,9 @@ class Task(Base):
         default=TaskState.Todo,
         nullable=False,
     )
-    node_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id"), nullable=True, index=True)
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     github_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -149,7 +161,10 @@ class Task(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -157,22 +172,35 @@ class Node(Base):
     __tablename__ = "nodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    epic_id: Mapped[int] = mapped_column(ForeignKey("epics.id"), nullable=False, index=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
     branch_name: Mapped[str] = mapped_column(String, nullable=False)
-    parent_node_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id"), nullable=True, index=True)
-    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
+    parent_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
+    agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id"), nullable=True, index=True
+    )
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    primary_task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"), nullable=True, index=True)
+    primary_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
+    )
     github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
-    __table_args__ = (UniqueConstraint("epic_id", "branch_name", name="uq_nodes_epic_branch"),)
+    __table_args__ = (
+        UniqueConstraint("epic_id", "branch_name", name="uq_nodes_epic_branch"),
+    )
 
 
 class Agent(Base):
@@ -185,7 +213,9 @@ class Agent(Base):
         default=AgentStatus.Idle,
         nullable=False,
     )
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -196,10 +226,16 @@ class Command(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     command_type: Mapped[str] = mapped_column(String, nullable=False)
-    target_agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True, index=True)
-    target_node_id: Mapped[int | None] = mapped_column(ForeignKey("nodes.id"), nullable=True, index=True)
+    target_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id"), nullable=True, index=True
+    )
+    target_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
     payload: Mapped[dict[str, Any]] = mapped_column(
-        JSON_TYPE, nullable=False, default=dict  # Pydantic: CommandPayload
+        JSON_TYPE,
+        nullable=False,
+        default=dict,  # Pydantic: CommandPayload
     )
     state: Mapped[CommandState] = mapped_column(
         _enum_type(CommandState, "command_state"),
@@ -210,7 +246,10 @@ class Command(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
 
@@ -233,7 +272,9 @@ class Barrier(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    fulfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fulfilled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Pause(Base):
@@ -243,7 +284,9 @@ class Pause(Base):
     scope_repo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     scope_from_branch: Mapped[str | None] = mapped_column(String, nullable=True)
     scope_to_branch: Mapped[str | None] = mapped_column(String, nullable=True)
-    scope: Mapped[PauseScope] = composite(PauseScope, scope_repo, scope_from_branch, scope_to_branch)
+    scope: Mapped[PauseScope] = composite(
+        PauseScope, scope_repo, scope_from_branch, scope_to_branch
+    )
     mode: Mapped[PauseMode] = mapped_column(
         _enum_type(PauseMode, "pause_mode"),
         default=PauseMode.Lax,
@@ -253,7 +296,9 @@ class Pause(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleared_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     cleared_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -263,7 +308,9 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     data: Mapped[dict[str, Any]] = mapped_column(
-        JSON_TYPE, nullable=False, default=dict  # Pydantic: EventData
+        JSON_TYPE,
+        nullable=False,
+        default=dict,  # Pydantic: EventData
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

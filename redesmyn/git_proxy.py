@@ -87,21 +87,29 @@ def pause_blocks_git(args: list[str], *, mode: str | PauseMode) -> GitBlockDecis
     if mode_value == "strict":
         if subcommand in STRICT_ALLOWED:
             return GitBlockDecision(allowed=True)
-        return GitBlockDecision(allowed=False, reason=f"`git {subcommand}` blocked by strict pause")
+        return GitBlockDecision(
+            allowed=False, reason=f"`git {subcommand}` blocked by strict pause"
+        )
 
     if mode_value == "lax":
         if subcommand in READ_ONLY_SUBCOMMANDS or subcommand == "fetch":
             return GitBlockDecision(allowed=True)
 
         if subcommand == "commit" and _has_flag(args, "--amend"):
-            return GitBlockDecision(allowed=False, reason="`git commit --amend` blocked by lax pause")
+            return GitBlockDecision(
+                allowed=False, reason="`git commit --amend` blocked by lax pause"
+            )
 
         if subcommand in LAX_ALLOWED_MUTATING:
             return GitBlockDecision(allowed=True)
 
         if subcommand in LAX_BLOCKED_MUTATING:
-            return GitBlockDecision(allowed=False, reason=f"`git {subcommand}` blocked by lax pause")
+            return GitBlockDecision(
+                allowed=False, reason=f"`git {subcommand}` blocked by lax pause"
+            )
 
-        return GitBlockDecision(allowed=False, reason=f"`git {subcommand}` blocked by lax pause")
+        return GitBlockDecision(
+            allowed=False, reason=f"`git {subcommand}` blocked by lax pause"
+        )
 
     return GitBlockDecision(allowed=False, reason=f"Unknown pause mode: {mode_value}")

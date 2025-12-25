@@ -3,7 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from redesmyn.db.models import Base
 
@@ -25,7 +30,8 @@ async def init_db(engine: AsyncEngine) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def async_session(sessionmaker: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
+async def async_session(
+    sessionmaker: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
     async with sessionmaker() as session:
         yield session
-

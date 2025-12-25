@@ -18,7 +18,9 @@ async def init_repo(ctx: RepoContext) -> None:
         sessionmaker = create_sessionmaker(engine)
 
         async with sessionmaker() as session:
-            repo = await session.scalar(select(Repository).where(Repository.repo_root == str(ctx.repo_root)))
+            repo = await session.scalar(
+                select(Repository).where(Repository.repo_root == str(ctx.repo_root))
+            )
             if repo is None:
                 repo = Repository(
                     repo_root=str(ctx.repo_root),
@@ -29,4 +31,3 @@ async def init_repo(ctx: RepoContext) -> None:
                 await session.commit()
     finally:
         await engine.dispose()
-

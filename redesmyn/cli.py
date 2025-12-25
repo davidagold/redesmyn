@@ -12,7 +12,13 @@ from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import Repository, create_engine, create_sessionmaker
 from redesmyn.git_proxy import pause_blocks_git
 from redesmyn.orchestrator import init_repo
-from redesmyn.pause import NotInitializedError, clear_pause, get_effective_pause, list_pauses, set_pause
+from redesmyn.pause import (
+    NotInitializedError,
+    clear_pause,
+    get_effective_pause,
+    list_pauses,
+    set_pause,
+)
 from redesmyn.repo import NotAGitRepositoryError, current_branch
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
@@ -26,7 +32,9 @@ def version() -> None:
 
 
 @app.command()
-def init(cwd: Path | None = typer.Option(None, help="Run from this directory.")) -> None:
+def init(
+    cwd: Path | None = typer.Option(None, help="Run from this directory."),
+) -> None:
     """Initialize Redesmyn state for this repo."""
     try:
         ctx = get_repo_context(cwd=cwd)
@@ -47,7 +55,9 @@ async def _load_repository_row(ctx: RepoContext) -> Repository | None:
     try:
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
-            return await session.scalar(select(Repository).where(Repository.repo_root == str(ctx.repo_root)))
+            return await session.scalar(
+                select(Repository).where(Repository.repo_root == str(ctx.repo_root))
+            )
     finally:
         await engine.dispose()
 
@@ -89,7 +99,9 @@ async def _load_pause_summary(ctx: RepoContext, *, branch: str | None) -> str | 
 
 
 @app.command()
-def status(cwd: Path | None = typer.Option(None, help="Run from this directory.")) -> None:
+def status(
+    cwd: Path | None = typer.Option(None, help="Run from this directory."),
+) -> None:
     """Show current repo orchestration status."""
     try:
         ctx = get_repo_context(cwd=cwd)
@@ -176,7 +188,9 @@ def pause_strict(
 ) -> None:
     try:
         repo_ctx = get_repo_context()
-        pause = asyncio.run(set_pause(repo_ctx, scope=scope, mode="strict", reason=reason))
+        pause = asyncio.run(
+            set_pause(repo_ctx, scope=scope, mode="strict", reason=reason)
+        )
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -220,7 +234,9 @@ def pause_list(
 
     for p in pauses:
         cleared = "active" if p.cleared_at is None else "cleared"
-        typer.echo(f"{p.id}: {p.mode.value} {cleared} scope={p.scope} reason={p.reason or 'n/a'}")
+        typer.echo(
+            f"{p.id}: {p.mode.value} {cleared} scope={p.scope} reason={p.reason or 'n/a'}"
+        )
 
 
 app.add_typer(pause_app, name="pause")
