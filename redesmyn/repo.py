@@ -65,3 +65,33 @@ def default_branch(repo_root: Path) -> str:
         return head.stdout.strip().removeprefix("refs/heads/")
 
     return "main"
+
+
+def branch_exists(repo_root: Path, branch_name: str) -> bool:
+    proc = _run_git(
+        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_root
+    )
+    return proc.returncode == 0
+
+
+class GitCommandError(RuntimeError):
+    pass
+
+
+def git_worktree_add(
+    repo_root: Path,
+    *,
+    worktree_path: Path,
+    branch_name: str,
+    base_ref: str,
+) -> None:
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if branch_exists(repo_root, branch_name):
+        args = ["worktree", "add", str(worktree_path), branch_name]
+    else:
+        args = ["worktree", "add", "-b", branch_name, str(worktree_path), base_ref]
+
+    proc = _run_git(args, cwd=repo_root)
+    if proc.returncode != 0:
+        raise GitCommandError(proc.stderr.strip() or f"git {' '.join(args)} failed")
