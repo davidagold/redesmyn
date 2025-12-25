@@ -19,14 +19,35 @@ def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
 
 
 def find_repo_root(*, cwd: Path | None = None) -> Path:
+    proc = _run_git(["worktree", "list", "--porcelain"], cwd=cwd)
+    if proc.returncode == 0:
+        candidates: list[Path] = []
+        for line in proc.stdout.splitlines():
+            if line.startswith("worktree "):
+                candidates.append(Path(line.removeprefix("worktree ").strip()))
+
+        for path in candidates:
+            if (path / ".git").is_dir():
+                return path
+
+        if candidates:
+            return candidates[0]
+
+    fallback = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    if fallback.returncode != 0:
+        raise NotAGitRepositoryError(fallback.stderr.strip() or "Not a git repository")
+    return Path(fallback.stdout.strip())
+
+
+def worktree_root(*, cwd: Path | None = None) -> Path:
     proc = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
     if proc.returncode != 0:
         raise NotAGitRepositoryError(proc.stderr.strip() or "Not a git repository")
     return Path(proc.stdout.strip())
 
 
-def current_branch(repo_root: Path) -> str:
-    proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
+def current_branch(*, cwd: Path | None = None) -> str:
+    proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
     if proc.returncode != 0:
         return "HEAD"
     return proc.stdout.strip()
@@ -42,4 +63,3 @@ def default_branch(repo_root: Path) -> str:
         return head.stdout.strip().removeprefix("refs/heads/")
 
     return "main"
-

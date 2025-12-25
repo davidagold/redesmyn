@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from redesmyn.db.models import Base, Pause, Repository
+from redesmyn.db.models import Base, Event, Pause, Repository
 from redesmyn.db.session import (
     async_session,
     create_engine,
@@ -10,6 +10,7 @@ from redesmyn.db.session import (
 
 __all__ = [
     "Base",
+    "Event",
     "Pause",
     "Repository",
     "async_session",
@@ -17,4 +18,3 @@ __all__ = [
     "create_sessionmaker",
     "init_db",
 ]
-
