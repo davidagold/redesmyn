@@ -12,7 +12,11 @@ __pycache__/
 # Redesmyn local state
 .redesmyn/
 
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
 # Dashboard
 dashboard/node_modules/
 dashboard/dist/
-
