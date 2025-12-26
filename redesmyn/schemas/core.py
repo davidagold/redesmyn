@@ -146,3 +146,10 @@ class ApiStatusResponse(ApiResponse):
 class LinearStatusResponse(ApiResponse):
     connected: bool
     connected_at: datetime | None
+
+
+class EpicGraphResponse(ApiResponse):
+    epic: EpicResponse
+    tasks: list[TaskResponse]
+    nodes: list[NodeResponse]
+    agents: list[AgentResponse]

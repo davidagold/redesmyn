@@ -16,10 +16,14 @@ from starlette.responses import RedirectResponse
 
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
+    Agent,
     Block,
     BlockScope,
+    Epic,
     LinearAuth,
+    Node,
     Repository,
+    Task,
     create_engine,
     create_sessionmaker,
 )
@@ -33,10 +37,15 @@ from redesmyn.integrations.linear import (
 from redesmyn.orchestrator import init_repo
 from redesmyn.schemas.core import (
     ApiStatusResponse,
+    AgentResponse,
     BlockScopeResponse,
     BlockStatusResponse,
+    EpicGraphResponse,
+    EpicResponse,
     LinearStatusResponse,
+    NodeResponse,
     ReleaseConditionResponse,
+    TaskResponse,
 )
 from redesmyn.settings import load_settings
 
@@ -82,6 +91,89 @@ v1 = APIRouter(prefix="/v1")
 @v1.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+async def _repo_id(session: AsyncSession) -> int | None:
+    repo = await session.scalar(
+        select(Repository).where(Repository.repo_root == str(app.state.ctx.repo_root))
+    )
+    return repo.id if repo is not None else None
+
+
+async def _resolve_epic_row(session: AsyncSession, *, epic: str) -> Epic:
+    repo_id = await _repo_id(session)
+    if repo_id is None:
+        raise HTTPException(status_code=404, detail="Repository not initialized")
+
+    if epic.isdigit():
+        row = await session.get(Epic, int(epic))
+        if row is None or row.repository_id != repo_id:
+            raise HTTPException(status_code=404, detail="Epic not found")
+        return row
+
+    row = await session.scalar(
+        select(Epic).where(Epic.repository_id == repo_id, Epic.slug == epic)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Epic not found")
+    return row
+
+
+@v1.get("/epics", response_model=list[EpicResponse])
+async def list_epics() -> list[EpicResponse]:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        repo_id = await _repo_id(session)
+        if repo_id is None:
+            return []
+        rows = await session.scalars(
+            select(Epic).where(Epic.repository_id == repo_id).order_by(Epic.id)
+        )
+        return [EpicResponse.model_validate(r, from_attributes=True) for r in rows]
+
+
+@v1.get("/epics/{epic}", response_model=EpicResponse)
+async def get_epic(epic: str) -> EpicResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        row = await _resolve_epic_row(session, epic=epic)
+        return EpicResponse.model_validate(row, from_attributes=True)
+
+
+@v1.get("/epics/{epic}/graph", response_model=EpicGraphResponse)
+async def epic_graph(epic: str) -> EpicGraphResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, epic=epic)
+        tasks = list(
+            await session.scalars(
+                select(Task).where(Task.epic_id == epic_row.id).order_by(Task.id)
+            )
+        )
+        nodes = list(
+            await session.scalars(
+                select(Node).where(Node.epic_id == epic_row.id).order_by(Node.id)
+            )
+        )
+        agent_ids = {n.agent_id for n in nodes if n.agent_id is not None}
+        agents = (
+            list(
+                await session.scalars(
+                    select(Agent)
+                    .where(Agent.id.in_(list(agent_ids)))
+                    .order_by(Agent.id)
+                )
+            )
+            if agent_ids
+            else []
+        )
+
+    return EpicGraphResponse(
+        epic=EpicResponse.model_validate(epic_row, from_attributes=True),
+        tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
+        nodes=[NodeResponse.model_validate(n, from_attributes=True) for n in nodes],
+        agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
+    )
 
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)
