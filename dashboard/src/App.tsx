@@ -28,15 +28,15 @@ function App() {
     selectedTask,
   } = useEpicGraph()
 
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [epicMenuOpen, setEpicMenuOpen] = useState(false)
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") {
         return
       }
-      if (projectMenuOpen) {
-        setProjectMenuOpen(false)
+      if (epicMenuOpen) {
+        setEpicMenuOpen(false)
         return
       }
       if (selectedNodeId !== null) {
@@ -46,7 +46,7 @@ function App() {
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [projectMenuOpen, selectedNodeId, setSelectedNodeId])
+  }, [epicMenuOpen, selectedNodeId, setSelectedNodeId])
 
   const selectedLabel =
     selectedTask?.title ??
@@ -57,28 +57,23 @@ function App() {
   return (
     <div className="h-screen w-screen bg-surface text-foreground">
       <div className="flex h-full gap-2 p-2">
-        <Sidebar
-          epics={epics}
-          selectedEpic={selectedEpic}
-          selectedEpicId={selectedEpicId}
-          loading={loading}
-          projectMenuOpen={projectMenuOpen}
-          onProjectMenuToggle={() => setProjectMenuOpen((open) => !open)}
-          onProjectMenuClose={() => setProjectMenuOpen(false)}
-          onSelectEpic={(epicId) => {
-            void refresh(epicId)
-            setProjectMenuOpen(false)
-          }}
-          theme={theme}
-          onCycleTheme={cycleTheme}
-        />
+        <Sidebar theme={theme} onCycleTheme={cycleTheme} />
 
         <ContentPanel>
           <Header
+            epics={epics}
             selectedEpic={selectedEpic}
+            selectedEpicId={selectedEpicId}
             selectedLabel={selectedLabel}
             loading={loading}
             error={error}
+            epicMenuOpen={epicMenuOpen}
+            onEpicMenuToggle={() => setEpicMenuOpen((open) => !open)}
+            onEpicMenuClose={() => setEpicMenuOpen(false)}
+            onSelectEpic={(epicId) => {
+              void refresh(epicId)
+              setEpicMenuOpen(false)
+            }}
             onClearSelection={() => setSelectedNodeId(null)}
             onRefresh={() => void refresh(selectedEpicId)}
           />
@@ -100,7 +95,7 @@ function App() {
             </div>
           ) : (
             <div className="flex-1 p-6 text-sm text-muted-foreground">
-              Select a project to view its graph.
+              Select an epic to view its graph.
             </div>
           )}
         </ContentPanel>
