@@ -18,7 +18,9 @@ function formatBranchName(branchName: string, epicSlug?: string | null) {
     return branchName
   }
   const prefix = `rn/${epicSlug}/`
-  return branchName.startsWith(prefix) ? branchName.slice(prefix.length) : branchName
+  return branchName.startsWith(prefix)
+    ? branchName.slice(prefix.length)
+    : branchName
 }
 
 function App() {
@@ -293,6 +295,7 @@ function App() {
               {selectedEpic ? (
                 <Button
                   variant="ghost"
+                  size="menubar"
                   className="w-fit px-2"
                   onClick={() => setSelectedNodeId(null)}
                 >
@@ -314,6 +317,7 @@ function App() {
 
             <Button
               variant="outline"
+              size="menubar"
               onClick={() => void refresh(selectedEpicId)}
               disabled={loading}
             >
