@@ -38,7 +38,7 @@ class TaskResponse(ApiResponse):
     id: int
     epic_id: int
     title: str
-    body: str | None
+    readme: str | None = Field(validation_alias="body")
     source: TaskSource
     authority: TaskAuthority
     state: TaskState

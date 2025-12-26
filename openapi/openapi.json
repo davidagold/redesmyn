@@ -501,17 +501,6 @@
           "authority": {
             "$ref": "#/components/schemas/TaskAuthority"
           },
-          "body": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Body"
-          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -569,6 +558,17 @@
             ],
             "title": "Nodeid"
           },
+          "readme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Readme"
+          },
           "source": {
             "$ref": "#/components/schemas/TaskSource"
           },
@@ -589,7 +589,7 @@
           "id",
           "epicId",
           "title",
-          "body",
+          "readme",
           "source",
           "authority",
           "state",

@@ -278,8 +278,6 @@ export interface components {
         /** TaskResponse */
         TaskResponse: {
             authority: components["schemas"]["TaskAuthority"];
-            /** Body */
-            body: string | null;
             /**
              * Createdat
              * Format: date-time
@@ -297,6 +295,8 @@ export interface components {
             localPath: string | null;
             /** Nodeid */
             nodeId: number | null;
+            /** Readme */
+            readme: string | null;
             source: components["schemas"]["TaskSource"];
             state: components["schemas"]["TaskState"];
             /** Title */
