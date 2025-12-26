@@ -5,7 +5,7 @@ An **epic** is a coherent objective/initiative inside a git repository (a “pro
 Each epic gets a directory under `epics/<slug>/`:
 
 - `README.md`: canonical “control doc” (vision, scope, invariants, architecture, decisions)
-- Optional: `notes/`, `artifacts/`, `decisions/`, `tasks/`
+- Optional: `notes/`, `artifacts/`, `decisions/`, `tasks/` (task directories under `tasks/<task>/README.md`)
 
 By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. Add `CHANGELOG.md` only if a human-curated changelog becomes necessary.
 
