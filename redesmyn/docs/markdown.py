@@ -11,8 +11,8 @@ class MarkdownSectionError(ValueError):
     pass
 
 
-_HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\\s+(?P<title>[^#].*?)\\s*$")
-_FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})\\s*(?P<lang>[A-Za-z0-9_-]+)?\\s*$")
+_HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<title>[^#].*?)\s*$")
+_FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})\s*(?P<lang>[A-Za-z0-9_-]+)?\s*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,4 +100,3 @@ def parse_yaml_block(block: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise MarkdownSectionError("YAML metadata must be a mapping/object")
     return data
-
