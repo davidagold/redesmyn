@@ -10,6 +10,9 @@ install:
     cd dashboard && npm run build
     @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
 
+dev:
+    uv run rn dev
+
 format:
     uv run ruff format .
     cd dashboard && npm run format

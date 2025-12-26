@@ -10,6 +10,13 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 - Node (see `.nvmrc`; Vite currently expects Node `>=22.12.0`)
 - `uv` (install via Homebrew: `brew install uv`)
 
+**Dev (recommended)**
+
+- Run dashboard HMR + daemon reload on a single origin: `rn dev`
+  - If `rn` isn’t installed yet: `uv run rn dev`
+  - Dashboard: `http://127.0.0.1:9234/` (Vite)
+  - API: `http://127.0.0.1:9234/v1/*` (proxied to the daemon on `:9235`)
+
 **Backend**
 
 - Install: `just install` (runs `uv sync` + `uv tool install --editable . --force`)
@@ -23,7 +30,7 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 **Dashboard**
 
 - `cd dashboard && npm install`
-- Run dev server: `npm run dev` (proxies `/v1/*` to the daemon)
+- Run dev server (separate origin): `npm run dev` (proxies `/v1/*` to the daemon)
 - Or build + serve from daemon: `npm run build` then open `http://127.0.0.1:9234/`
 
 ## Epics

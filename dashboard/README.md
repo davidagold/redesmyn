@@ -5,8 +5,11 @@ React + TypeScript + Vite (using `rolldown-vite`) + Tailwind + shadcn/ui.
 ## Dev
 
 - Install deps: `npm install`
-- Run dev server: `npm run dev`
-  - Proxies `/v1/*` to the daemon at `http://127.0.0.1:9234` (see `dashboard/vite.config.ts`).
+- Recommended (single origin): from repo root, run `rn dev`
+  - Dashboard: `http://127.0.0.1:9234/`
+  - API: `http://127.0.0.1:9234/v1/*` (proxied to the daemon on `:9235`)
+- Dashboard only: `npm run dev`
+  - Proxies `/v1/*` to `REDESMYN_DAEMON_ORIGIN` (defaults to `http://127.0.0.1:9234`; see `dashboard/vite.config.ts`).
 
 ## Build
 
