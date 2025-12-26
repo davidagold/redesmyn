@@ -28,6 +28,9 @@ node:
 - Git computation is correct relative to the epic’s branch graph:
   - Work range is `parent..branch` (multi-commit allowed).
   - Missing branches/refs degrade gracefully with explicit “unknown/unavailable” signals.
+ - Root attachments are commit-accurate:
+   - For root nodes (parent is the epic root branch), expose enough information to place the edge origin at the node’s **merge-base** commit on the trunk.
+   - Provide a trunk-relative position signal (e.g. distance from trunk head) so the UI can place branch-off points without rendering the entire trunk history.
 
 ## Notes / Contracts
 
@@ -35,3 +38,4 @@ node:
 - Keep the v0 surface area minimal, but pick shapes that won’t force a breaking change when we add:
   - commit metadata (author, timestamp, subject)
   - rebase lineage / historical views
+- The UI’s x-axis is commit-count-scaled, so the API must provide **counts** even when detailed commit lists are deferred.

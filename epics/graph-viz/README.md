@@ -21,6 +21,14 @@ Upgrade the dashboard graph from a static nested list to a Dagster-like interact
 - Smooth transitions for layout changes and live updates.
 - “Commit strings” are **first-class** (edges represent a selectable, inspectable sequence of commits).
 
+### Layout vision (target)
+
+- The epic root branch (usually `main`) is rendered as a horizontal **trunk** across the top.
+- Each node gets a horizontal “lane” below; lanes flow **left → right**.
+- Parent → child edges branch **down** from the parent lane/trunk and curve into the child lane.
+- Horizontal distance is **commit-count scaled** (with summarization/clamping for long ranges).
+- Root nodes (stacked on the trunk) attach at the **merge-base commit** on the trunk (“commit-accurate”).
+
 ## 2) Why a dedicated epic?
 
 The graph is the primary UI object in Redesmyn. This epic exists to keep the migration plan and sequencing clear, so we can dogfood it safely and iterate without derailing unrelated v0 work.
@@ -56,4 +64,3 @@ The graph is the primary UI object in Redesmyn. This epic exists to keep the mig
 - Start with the **branch graph** (nodes + parent edges).
 - Commit-string edges start minimal (e.g., count + highlights), then grow toward full per-commit inspectability.
 - Avoid premature optimization; prefer clear architecture so we can later swap render strategies if needed.
-

@@ -28,6 +28,8 @@ node:
 - Level-of-detail behavior exists:
   - Zoomed out: edges are simple (line + optional count).
   - Zoomed in: edges can show richer “commit string” detail (ticks/segments) without tanking performance.
+ - Commit-count scaling is respected:
+   - Edge geometry or glyph density communicates relative commit length (with summarization/clamping so long ranges don’t blow out the viewport).
 
 ## Notes / Contracts
 
