@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import shutil
+import signal
 import subprocess
+import sys
+import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
@@ -722,6 +727,147 @@ def status(
         typer.echo("Initialized: yes")
         typer.echo(f"Default branch: {repo.default_branch}")
     typer.echo(f"Block (git): {block_summary or 'none'}")
+
+
+def _with_prepend_pythonpath(env: dict[str, str], path: Path) -> dict[str, str]:
+    value = str(path)
+    if old := env.get("PYTHONPATH"):
+        env = env.copy()
+        env["PYTHONPATH"] = f"{value}{os.pathsep}{old}"
+        return env
+    env = env.copy()
+    env["PYTHONPATH"] = value
+    return env
+
+
+def _terminate_process(
+    proc: subprocess.Popen[str] | subprocess.Popen[bytes], sig: signal.Signals
+) -> None:
+    if proc.poll() is not None:
+        return
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, sig)
+            return
+        except ProcessLookupError:
+            return
+        except Exception:
+            pass
+    try:
+        proc.send_signal(sig)
+    except ProcessLookupError:
+        return
+
+
+@app.command()
+def dev(
+    host: str = typer.Option("127.0.0.1", help="Bind host."),
+    port: int = typer.Option(9234, help="Dashboard dev server port."),
+    api_port: int = typer.Option(9235, help="Daemon bind port."),
+    reload: bool = typer.Option(True, help="Auto-reload on code changes."),
+) -> None:
+    """Run dashboard HMR + daemon reload on a single origin."""
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if not shutil.which("npm"):
+        typer.echo(
+            "error: npm not found. Install Node.js and npm, then run "
+            "`cd dashboard && npm install`.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    if port == api_port:
+        typer.echo("error: --port and --api-port must be different", err=True)
+        raise typer.Exit(2)
+
+    backend_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "redesmyn.api:app",
+        "--host",
+        host,
+        "--port",
+        str(api_port),
+    ]
+    if reload:
+        backend_cmd.extend(
+            [
+                "--reload",
+                "--reload-dir",
+                str(ctx.repo_root / "redesmyn"),
+            ]
+        )
+
+    dashboard_cmd = [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--strictPort",
+    ]
+
+    backend_env = _with_prepend_pythonpath(os.environ.copy(), ctx.repo_root)
+    dashboard_env = os.environ.copy()
+    dashboard_env["REDESMYN_DAEMON_ORIGIN"] = f"http://{host}:{api_port}"
+
+    typer.echo(f"Dashboard: http://{host}:{port}/")
+    typer.echo(f"API:       http://{host}:{port}/v1/ (proxied to :{api_port})")
+
+    backend_proc = subprocess.Popen(
+        backend_cmd,
+        cwd=str(ctx.repo_root),
+        env=backend_env,
+        start_new_session=True,
+    )
+    dashboard_proc = subprocess.Popen(
+        dashboard_cmd,
+        cwd=str(ctx.repo_root / "dashboard"),
+        env=dashboard_env,
+        start_new_session=True,
+    )
+
+    procs: list[tuple[str, subprocess.Popen[str] | subprocess.Popen[bytes]]] = [
+        ("daemon", backend_proc),
+        ("dashboard", dashboard_proc),
+    ]
+
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
+    try:
+        while True:
+            for name, proc in procs:
+                code = proc.poll()
+                if code is None:
+                    continue
+                typer.echo(f"{name} exited ({code}); stopping…", err=True)
+                for _, other in procs:
+                    _terminate_process(other, signal.SIGTERM)
+                for _, other in procs:
+                    try:
+                        other.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        _terminate_process(other, kill_signal)
+                raise typer.Exit(code)
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        typer.echo("Stopping…", err=True)
+        for _, proc in procs:
+            _terminate_process(proc, signal.SIGTERM)
+        for _, proc in procs:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _terminate_process(proc, kill_signal)
+        raise typer.Exit(130) from None
 
 
 @daemon_app.command("run")

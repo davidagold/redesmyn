@@ -3,6 +3,9 @@ import react from "@vitejs/plugin-react"
 import { fileURLToPath } from "node:url"
 import { defineConfig } from "vite"
 
+const daemonOrigin =
+  process.env.REDESMYN_DAEMON_ORIGIN ?? "http://127.0.0.1:9234"
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -13,7 +16,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/v1": "http://127.0.0.1:9234",
+      "/v1": daemonOrigin,
     },
   },
 })
