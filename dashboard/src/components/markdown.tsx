@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from "react"
 type MarkdownProps = {
   content: string
   omitFirstHeading?: boolean
+  omitMetadataSection?: boolean
 }
 
 type Block = {
@@ -119,6 +120,40 @@ function parseMarkdown(content: string): Block[] {
   return blocks
 }
 
+function stripMetadataSection(content: string): string {
+  const lines = content.replaceAll("\r\n", "\n").split("\n")
+  const start = lines.findIndex((line) => line.match(/^##\s+Metadata\s*$/i))
+  if (start === -1) {
+    return content
+  }
+
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? ""
+    if (line.match(/^#{1,2}\s+/)) {
+      end = i
+      break
+    }
+  }
+
+  const before = lines.slice(0, start)
+  const after = lines.slice(end)
+
+  while (before.length && !before[before.length - 1]?.trim()) {
+    before.pop()
+  }
+  while (after.length && !after[0]?.trim()) {
+    after.shift()
+  }
+
+  const joined =
+    after.length && before.length
+      ? [...before, "", ...after].join("\n")
+      : [...before, ...after].join("\n")
+
+  return joined.trim() ? `${joined.trim()}\n` : ""
+}
+
 function renderInline(text: string): ReactNode[] {
   const pattern = /(`[^`]+`)|(\[[^\]]+\]\([^)]+\))|(\*\*[^*]+\*\*)|(\*[^*]+\*)/g
   const parts: ReactNode[] = []
@@ -183,8 +218,13 @@ function renderInline(text: string): ReactNode[] {
   return parts
 }
 
-export function Markdown({ content, omitFirstHeading }: MarkdownProps) {
-  let blocks = parseMarkdown(content)
+export function Markdown({
+  content,
+  omitFirstHeading,
+  omitMetadataSection,
+}: MarkdownProps) {
+  const filtered = omitMetadataSection ? stripMetadataSection(content) : content
+  let blocks = parseMarkdown(filtered)
   if (
     omitFirstHeading &&
     blocks[0]?.type === "heading" &&
