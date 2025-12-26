@@ -4,11 +4,11 @@ import {
   type DefaultEdgeOptions,
   type Edge,
   type Node,
-  type NodeMouseHandler,
   type ReactFlowInstance,
 } from "@xyflow/react"
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
+import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeData } from "./FlowBranchNode"
 import { layoutTree } from "./flowLayout"
 
@@ -18,8 +18,10 @@ interface GraphViewProps {
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
   selectedNodeId: number | null
+  selectedEdgeId: string | null
   epicSlug?: string | null
   onSelectNode: (nodeId: number) => void
+  onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
 }
 
@@ -29,11 +31,14 @@ export function GraphView({
   tasksById,
   agentsById,
   selectedNodeId,
+  selectedEdgeId,
   epicSlug,
   onSelectNode,
+  onSelectEdge,
   onClearSelection,
 }: GraphViewProps) {
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -118,15 +123,28 @@ export function GraphView({
       if (graphNode.parentNodeId === null) {
         continue
       }
+      const edgeId = makeEdgeId(graphNode.parentNodeId, graphNode.id)
+      const isSelected = selectedEdgeId === edgeId
+      const isHovered = hoveredEdgeId === edgeId
       mapped.push({
-        id: `parent:${graphNode.parentNodeId}->${graphNode.id}`,
+        id: edgeId,
         source: String(graphNode.parentNodeId),
         target: String(graphNode.id),
         type: "smoothstep",
+        selectable: true,
+        focusable: true,
+        selected: isSelected,
+        interactionWidth: 24,
+        className: "cursor-pointer",
+        style: {
+          stroke: isSelected || isHovered ? "var(--ring)" : "var(--border)",
+          strokeWidth: isSelected ? 2.5 : isHovered ? 2 : 1.25,
+          strokeOpacity: isSelected ? 1 : isHovered ? 0.75 : 0.45,
+        },
       })
     }
     return mapped
-  }, [nodes])
+  }, [hoveredEdgeId, nodes, selectedEdgeId])
 
   useEffect(() => {
     if (!flow || !nodes.length) {
@@ -134,14 +152,6 @@ export function GraphView({
     }
     flow.fitView({ padding: 0.2, duration: 200 })
   }, [flow, nodes.length])
-
-  const onNodeClick: NodeMouseHandler = (_, node) => {
-    const nodeId = Number(node.id)
-    if (Number.isNaN(nodeId)) {
-      return
-    }
-    onSelectNode(nodeId)
-  }
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
@@ -156,8 +166,22 @@ export function GraphView({
             nodesDraggable={false}
             nodesConnectable={false}
             onInit={setFlow}
-            onNodeClick={onNodeClick}
             onPaneClick={onClearSelection}
+            onEdgeClick={(e, edge) => {
+              e.stopPropagation()
+              const fromId = Number(edge.source)
+              const toId = Number(edge.target)
+              if (Number.isNaN(fromId) || Number.isNaN(toId)) {
+                return
+              }
+              onSelectEdge(fromId, toId)
+            }}
+            onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+            onEdgeMouseLeave={(_, edge) => {
+              setHoveredEdgeId((current) =>
+                current === edge.id ? null : current,
+              )
+            }}
             elevateEdgesOnSelect
             defaultEdgeOptions={defaultEdgeOptions}
             style={

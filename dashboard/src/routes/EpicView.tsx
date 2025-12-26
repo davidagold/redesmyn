@@ -7,7 +7,7 @@ import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
 import { useGraph } from "@/hooks/useGraph"
-import { formatBranchName } from "@/lib/graph-utils"
+import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { ChevronRight } from "lucide-react"
 
 export function EpicView() {
@@ -16,6 +16,24 @@ export function EpicView() {
   const epicSlug = params.epicSlug as string | undefined
   const nodeIdParam = params.nodeId as string | undefined
   const nodeId = nodeIdParam ? parseInt(nodeIdParam, 10) : null
+  const fromNodeIdParam = params.fromNodeId as string | undefined
+  const toNodeIdParam = params.toNodeId as string | undefined
+  const parsedFromNodeId = fromNodeIdParam
+    ? parseInt(fromNodeIdParam, 10)
+    : null
+  const parsedToNodeId = toNodeIdParam ? parseInt(toNodeIdParam, 10) : null
+  const fromNodeId =
+    parsedFromNodeId !== null && !Number.isNaN(parsedFromNodeId)
+      ? parsedFromNodeId
+      : null
+  const toNodeId =
+    parsedToNodeId !== null && !Number.isNaN(parsedToNodeId)
+      ? parsedToNodeId
+      : null
+  const selectedEdgeId =
+    fromNodeId !== null && toNodeId !== null
+      ? makeEdgeId(fromNodeId, toNodeId)
+      : null
 
   const {
     epics,
@@ -54,9 +72,50 @@ export function EpicView() {
     return tasksById.get(selectedNode.primaryTaskId) ?? null
   }, [selectedNode, tasksById])
 
-  const selectedLabel =
-    selectedTask?.title ??
-    (selectedNode ? formatBranchName(selectedNode.branchName, epicSlug) : null)
+  const selectedEdge = useMemo(() => {
+    if (
+      fromNodeId === null ||
+      toNodeId === null ||
+      Number.isNaN(fromNodeId) ||
+      Number.isNaN(toNodeId)
+    ) {
+      return null
+    }
+    const fromNode = nodesById.get(fromNodeId) ?? null
+    const toNode = nodesById.get(toNodeId) ?? null
+    if (!fromNode || !toNode) {
+      return null
+    }
+
+    const fromTask =
+      fromNode.primaryTaskId !== null
+        ? (tasksById.get(fromNode.primaryTaskId) ?? null)
+        : null
+    const toTask =
+      toNode.primaryTaskId !== null
+        ? (tasksById.get(toNode.primaryTaskId) ?? null)
+        : null
+
+    const fromLabel =
+      fromTask?.title ?? formatBranchName(fromNode.branchName, epicSlug)
+    const toLabel =
+      toTask?.title ?? formatBranchName(toNode.branchName, epicSlug)
+
+    return {
+      id: makeEdgeId(fromNode.id, toNode.id),
+      fromNodeId: fromNode.id,
+      toNodeId: toNode.id,
+      fromLabel,
+      toLabel,
+    }
+  }, [epicSlug, fromNodeId, nodesById, tasksById, toNodeId])
+
+  const selectedLabel = selectedNode
+    ? (selectedTask?.title ??
+      formatBranchName(selectedNode.branchName, epicSlug))
+    : selectedEdge
+      ? `${selectedEdge.fromLabel} → ${selectedEdge.toLabel}`
+      : null
 
   const loading = epicsLoading || graphLoading
   const error = epicsError || graphError
@@ -70,20 +129,33 @@ export function EpicView() {
         setEpicMenuOpen(false)
         return
       }
-      if (nodeId !== null && epicSlug) {
+      if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
         void navigate({ to: "/$epicSlug", params: { epicSlug } })
       }
     }
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [epicMenuOpen, nodeId, epicSlug, navigate])
+  }, [epicMenuOpen, nodeId, epicSlug, navigate, selectedEdgeId])
 
   function handleSelectNode(id: number) {
     if (epicSlug) {
       void navigate({
         to: "/$epicSlug/$nodeId",
         params: { epicSlug, nodeId: String(id) },
+      })
+    }
+  }
+
+  function handleSelectEdge(fromId: number, toId: number) {
+    if (epicSlug) {
+      void navigate({
+        to: "/$epicSlug/e/$fromNodeId/$toNodeId",
+        params: {
+          epicSlug,
+          fromNodeId: String(fromId),
+          toNodeId: String(toId),
+        },
       })
     }
   }
@@ -162,12 +234,18 @@ export function EpicView() {
             tasksById={tasksById}
             agentsById={agentsById}
             selectedNodeId={nodeId}
+            selectedEdgeId={selectedEdgeId}
             epicSlug={epicSlug}
             onSelectNode={handleSelectNode}
+            onSelectEdge={handleSelectEdge}
             onClearSelection={handleClearSelection}
           />
 
-          <DetailsPanel open={!!selectedNode} task={selectedTask} />
+          <DetailsPanel
+            open={!!selectedNode || !!selectedEdge}
+            task={selectedTask}
+            edge={selectedEdge}
+          />
         </div>
       ) : (
         <div className="flex-1 p-6 text-sm text-muted-foreground">

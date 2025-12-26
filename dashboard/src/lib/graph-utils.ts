@@ -17,6 +17,10 @@ export function formatBranchName(
     : branchName
 }
 
+export function makeEdgeId(fromNodeId: number, toNodeId: number): string {
+  return `edge:${fromNodeId}:${toNodeId}`
+}
+
 export function buildTasksMap(tasks: Task[]): Map<number, Task> {
   const map = new Map<number, Task>()
   for (const task of tasks) {
