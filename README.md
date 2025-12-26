@@ -9,6 +9,7 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 - Python 3.11+
 - Node (see `.nvmrc`; Vite currently expects Node `>=22.12.0`)
 - `uv` (install via Homebrew: `brew install uv`)
+- Optional: `hk` (git hooks manager; install via Homebrew: `brew install hk`)
 
 **Dev (recommended)**
 
@@ -16,6 +17,7 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
   - If `rn` isn’t installed yet: `uv run rn dev`
   - Dashboard: `http://127.0.0.1:9234/` (Vite)
   - API: `http://127.0.0.1:9234/v1/*` (proxied to the daemon on `:9235`)
+- Install pre-commit formatting hooks (one-time): `just hooks` (or `hk install`)
 
 **Backend**
 

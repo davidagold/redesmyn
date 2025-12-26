@@ -13,6 +13,9 @@ install:
 dev:
     uv run rn dev
 
+hooks:
+    hk install
+
 format:
     uv run ruff format .
     cd dashboard && npm run format
@@ -25,4 +28,3 @@ check:
 
 run:
     rn daemon run
-
