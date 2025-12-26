@@ -23,6 +23,57 @@
         "title": "AckReleaseResponse",
         "type": "object"
       },
+      "AgentResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "status",
+          "lastSeenAt",
+          "createdAt"
+        ],
+        "title": "AgentResponse",
+        "type": "object"
+      },
+      "AgentStatus": {
+        "enum": [
+          "idle",
+          "running",
+          "blocked",
+          "error"
+        ],
+        "title": "AgentStatus",
+        "type": "string"
+      },
       "ApiStatusResponse": {
         "properties": {
           "block": {
@@ -191,6 +242,132 @@
         "title": "CommandReleaseResponse",
         "type": "object"
       },
+      "EpicGraphResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentResponse"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "epic": {
+            "$ref": "#/components/schemas/EpicResponse"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskResponse"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "epic",
+          "tasks",
+          "nodes",
+          "agents"
+        ],
+        "title": "EpicGraphResponse",
+        "type": "object"
+      },
+      "EpicResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "linearProjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearprojectid"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repositoryId": {
+            "title": "Repositoryid",
+            "type": "integer"
+          },
+          "rootBranch": {
+            "title": "Rootbranch",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "repositoryId",
+          "name",
+          "slug",
+          "rootBranch",
+          "linearProjectId",
+          "createdAt"
+        ],
+        "title": "EpicResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "LinearStatusResponse": {
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "connectedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectedat"
+          }
+        },
+        "required": [
+          "connected",
+          "connectedAt"
+        ],
+        "title": "LinearStatusResponse",
+        "type": "object"
+      },
       "ManualReleaseResponse": {
         "properties": {
           "type": {
@@ -202,6 +379,281 @@
         },
         "title": "ManualReleaseResponse",
         "type": "object"
+      },
+      "NodeResponse": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "branchName": {
+            "title": "Branchname",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "epicId": {
+            "title": "Epicid",
+            "type": "integer"
+          },
+          "githubPrId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubprid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "linearIssueId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearissueid"
+          },
+          "parentNodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentnodeid"
+          },
+          "primaryTaskId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primarytaskid"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "worktreePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktreepath"
+          }
+        },
+        "required": [
+          "id",
+          "epicId",
+          "branchName",
+          "parentNodeId",
+          "agentId",
+          "worktreePath",
+          "primaryTaskId",
+          "githubPrId",
+          "linearIssueId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "NodeResponse",
+        "type": "object"
+      },
+      "TaskAuthority": {
+        "enum": [
+          "local",
+          "linear",
+          "github"
+        ],
+        "title": "TaskAuthority",
+        "type": "string"
+      },
+      "TaskResponse": {
+        "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/TaskAuthority"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "epicId": {
+            "title": "Epicid",
+            "type": "integer"
+          },
+          "githubIssueId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubissueid"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "linearIssueId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearissueid"
+          },
+          "localPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Localpath"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TaskSource"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "epicId",
+          "title",
+          "body",
+          "source",
+          "authority",
+          "state",
+          "nodeId",
+          "linearIssueId",
+          "githubIssueId",
+          "localPath",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TaskResponse",
+        "type": "object"
+      },
+      "TaskSource": {
+        "enum": [
+          "local",
+          "linear",
+          "github"
+        ],
+        "title": "TaskSource",
+        "type": "string"
+      },
+      "TaskState": {
+        "enum": [
+          "todo",
+          "in_progress",
+          "blocked",
+          "done"
+        ],
+        "title": "TaskState",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
       }
     }
   },
@@ -211,6 +663,106 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/epics": {
+      "get": {
+        "operationId": "list_epics_v1_epics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EpicResponse"
+                  },
+                  "title": "Response List Epics V1 Epics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Epics"
+      }
+    },
+    "/v1/epics/{epic}": {
+      "get": {
+        "operationId": "get_epic_v1_epics__epic__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Epic"
+      }
+    },
+    "/v1/epics/{epic}/graph": {
+      "get": {
+        "operationId": "epic_graph_v1_epics__epic__graph_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicGraphResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Epic Graph"
+      }
+    },
     "/v1/healthz": {
       "get": {
         "operationId": "healthz_v1_healthz_get",
@@ -231,6 +783,24 @@
           }
         },
         "summary": "Healthz"
+      }
+    },
+    "/v1/linear/status": {
+      "get": {
+        "operationId": "linear_status_v1_linear_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Linear Status"
       }
     },
     "/v1/status": {

@@ -4,160 +4,479 @@
  */
 
 export interface paths {
-  "/v1/healthz": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Healthz */
-    get: operations["healthz_v1_healthz_get"]
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  "/v1/status": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** Api Status */
-    get: operations["api_status_v1_status_get"]
-    put?: never
-    post?: never
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
+    "/v1/epics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Epics */
+        get: operations["list_epics_v1_epics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/epics/{epic}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Epic */
+        get: operations["get_epic_v1_epics__epic__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/epics/{epic}/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Epic Graph */
+        get: operations["epic_graph_v1_epics__epic__graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Healthz */
+        get: operations["healthz_v1_healthz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/linear/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Linear Status */
+        get: operations["linear_status_v1_linear_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Api Status */
+        get: operations["api_status_v1_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
-export type webhooks = Record<string, never>
+export type webhooks = Record<string, never>;
 export interface components {
-  schemas: {
-    /** AckReleaseResponse */
-    AckReleaseResponse: {
-      /** Requiredagentids */
-      requiredAgentIds: number[]
-      /**
-       * @description discriminator enum property added by openapi-typescript
-       * @enum {string}
-       */
-      type: "acks"
-    }
-    /** ApiStatusResponse */
-    ApiStatusResponse: {
-      block: components["schemas"]["BlockStatusResponse"] | null
-      /** Dbpath */
-      dbPath: string
-      /** Defaultbranch */
-      defaultBranch: string | null
-      /** Reporoot */
-      repoRoot: string
-    }
-    /**
-     * BlockMode
-     * @enum {string}
-     */
-    BlockMode: "lax" | "strict"
-    /**
-     * BlockPolicy
-     * @enum {string}
-     */
-    BlockPolicy: "git_mutations" | "daemon_mutations"
-    /** BlockScopeResponse */
-    BlockScopeResponse: {
-      /** Frombranch */
-      fromBranch: string | null
-      /** Repo */
-      repo: boolean
-      /** Tobranch */
-      toBranch: string | null
-    }
-    /** BlockStatusResponse */
-    BlockStatusResponse: {
-      mode: components["schemas"]["BlockMode"]
-      policy: components["schemas"]["BlockPolicy"]
-      /** Reason */
-      reason: string | null
-      /** Release */
-      release: components["schemas"]["ManualReleaseResponse"] | components["schemas"]["CommandReleaseResponse"] | components["schemas"]["AckReleaseResponse"]
-      scope: components["schemas"]["BlockScopeResponse"]
-    }
-    /** CommandReleaseResponse */
-    CommandReleaseResponse: {
-      /** Commandid */
-      commandId: number
-      /**
-       * @description discriminator enum property added by openapi-typescript
-       * @enum {string}
-       */
-      type: "command"
-    }
-    /** ManualReleaseResponse */
-    ManualReleaseResponse: {
-      /**
-       * @description discriminator enum property added by openapi-typescript
-       * @enum {string}
-       */
-      type: "manual"
-    }
-  }
-  responses: never
-  parameters: never
-  requestBodies: never
-  headers: never
-  pathItems: never
+    schemas: {
+        /** AckReleaseResponse */
+        AckReleaseResponse: {
+            /** Requiredagentids */
+            requiredAgentIds: number[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "acks";
+        };
+        /** AgentResponse */
+        AgentResponse: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Displayname */
+            displayName: string;
+            /** Id */
+            id: number;
+            /** Lastseenat */
+            lastSeenAt: string | null;
+            status: components["schemas"]["AgentStatus"];
+        };
+        /**
+         * AgentStatus
+         * @enum {string}
+         */
+        AgentStatus: "idle" | "running" | "blocked" | "error";
+        /** ApiStatusResponse */
+        ApiStatusResponse: {
+            block: components["schemas"]["BlockStatusResponse"] | null;
+            /** Dbpath */
+            dbPath: string;
+            /** Defaultbranch */
+            defaultBranch: string | null;
+            /** Reporoot */
+            repoRoot: string;
+        };
+        /**
+         * BlockMode
+         * @enum {string}
+         */
+        BlockMode: "lax" | "strict";
+        /**
+         * BlockPolicy
+         * @enum {string}
+         */
+        BlockPolicy: "git_mutations" | "daemon_mutations";
+        /** BlockScopeResponse */
+        BlockScopeResponse: {
+            /** Frombranch */
+            fromBranch: string | null;
+            /** Repo */
+            repo: boolean;
+            /** Tobranch */
+            toBranch: string | null;
+        };
+        /** BlockStatusResponse */
+        BlockStatusResponse: {
+            mode: components["schemas"]["BlockMode"];
+            policy: components["schemas"]["BlockPolicy"];
+            /** Reason */
+            reason: string | null;
+            /** Release */
+            release: components["schemas"]["ManualReleaseResponse"] | components["schemas"]["CommandReleaseResponse"] | components["schemas"]["AckReleaseResponse"];
+            scope: components["schemas"]["BlockScopeResponse"];
+        };
+        /** CommandReleaseResponse */
+        CommandReleaseResponse: {
+            /** Commandid */
+            commandId: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "command";
+        };
+        /** EpicGraphResponse */
+        EpicGraphResponse: {
+            /** Agents */
+            agents: components["schemas"]["AgentResponse"][];
+            epic: components["schemas"]["EpicResponse"];
+            /** Nodes */
+            nodes: components["schemas"]["NodeResponse"][];
+            /** Tasks */
+            tasks: components["schemas"]["TaskResponse"][];
+        };
+        /** EpicResponse */
+        EpicResponse: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Linearprojectid */
+            linearProjectId: string | null;
+            /** Name */
+            name: string;
+            /** Repositoryid */
+            repositoryId: number;
+            /** Rootbranch */
+            rootBranch: string;
+            /** Slug */
+            slug: string;
+        };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
+        /** LinearStatusResponse */
+        LinearStatusResponse: {
+            /** Connected */
+            connected: boolean;
+            /** Connectedat */
+            connectedAt: string | null;
+        };
+        /** ManualReleaseResponse */
+        ManualReleaseResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "manual";
+        };
+        /** NodeResponse */
+        NodeResponse: {
+            /** Agentid */
+            agentId: number | null;
+            /** Branchname */
+            branchName: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Epicid */
+            epicId: number;
+            /** Githubprid */
+            githubPrId: string | null;
+            /** Id */
+            id: number;
+            /** Linearissueid */
+            linearIssueId: string | null;
+            /** Parentnodeid */
+            parentNodeId: number | null;
+            /** Primarytaskid */
+            primaryTaskId: number | null;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Worktreepath */
+            worktreePath: string | null;
+        };
+        /**
+         * TaskAuthority
+         * @enum {string}
+         */
+        TaskAuthority: "local" | "linear" | "github";
+        /** TaskResponse */
+        TaskResponse: {
+            authority: components["schemas"]["TaskAuthority"];
+            /** Body */
+            body: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Epicid */
+            epicId: number;
+            /** Githubissueid */
+            githubIssueId: string | null;
+            /** Id */
+            id: number;
+            /** Linearissueid */
+            linearIssueId: string | null;
+            /** Localpath */
+            localPath: string | null;
+            /** Nodeid */
+            nodeId: number | null;
+            source: components["schemas"]["TaskSource"];
+            state: components["schemas"]["TaskState"];
+            /** Title */
+            title: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /**
+         * TaskSource
+         * @enum {string}
+         */
+        TaskSource: "local" | "linear" | "github";
+        /**
+         * TaskState
+         * @enum {string}
+         */
+        TaskState: "todo" | "in_progress" | "blocked" | "done";
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-export type $defs = Record<string, never>
+export type $defs = Record<string, never>;
 export interface operations {
-  healthz_v1_healthz_get: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": {
-            [key: string]: string
-          }
-        }
-      }
-    }
-  }
-  api_status_v1_status_get: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["ApiStatusResponse"]
-        }
-      }
-    }
-  }
+    list_epics_v1_epics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EpicResponse"][];
+                };
+            };
+        };
+    };
+    get_epic_v1_epics__epic__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epic: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EpicResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    epic_graph_v1_epics__epic__graph_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                epic: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EpicGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    healthz_v1_healthz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    linear_status_v1_linear_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinearStatusResponse"];
+                };
+            };
+        };
+    };
+    api_status_v1_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiStatusResponse"];
+                };
+            };
+        };
+    };
 }
