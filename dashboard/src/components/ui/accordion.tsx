@@ -1,7 +1,7 @@
 import { Accordion as AccordionPrimitive } from "@base-ui/react/accordion"
 
 import { cn } from "@/lib/utils"
-import { ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { ChevronRightIcon } from "lucide-react"
 
 function Accordion({ className, ...props }: AccordionPrimitive.Root.Props) {
   return (
@@ -33,20 +33,13 @@ function AccordionTrigger({
       <AccordionPrimitive.Trigger
         data-slot="accordion-trigger"
         className={cn(
-          "**:data-[slot=accordion-trigger-icon]:text-muted-foreground gap-6 p-2 text-left text-xs/relaxed font-medium hover:underline **:data-[slot=accordion-trigger-icon]:ml-auto **:data-[slot=accordion-trigger-icon]:size-4 group/accordion-trigger relative flex flex-1 items-start justify-between border border-transparent transition-all outline-none disabled:pointer-events-none disabled:opacity-50",
+          "group/accordion-trigger relative flex flex-1 items-center gap-1.5 p-2 text-left text-xs/relaxed font-medium outline-none transition-colors hover:underline disabled:pointer-events-none disabled:opacity-50",
           className,
         )}
         {...props}
       >
+        <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out group-aria-expanded/accordion-trigger:rotate-90" />
         {children}
-        <ChevronDownIcon
-          data-slot="accordion-trigger-icon"
-          className="pointer-events-none shrink-0 group-aria-expanded/accordion-trigger:hidden"
-        />
-        <ChevronUpIcon
-          data-slot="accordion-trigger-icon"
-          className="pointer-events-none hidden shrink-0 group-aria-expanded/accordion-trigger:inline"
-        />
       </AccordionPrimitive.Trigger>
     </AccordionPrimitive.Header>
   )
@@ -60,16 +53,18 @@ function AccordionContent({
   return (
     <AccordionPrimitive.Panel
       data-slot="accordion-content"
-      className="h-(--accordion-panel-height) data-ending-style:h-0 data-starting-style:h-0 overflow-hidden px-2 text-xs/relaxed transition-[height] duration-150 ease-out"
+      className="grid grid-rows-[0fr] text-xs/relaxed transition-[grid-template-rows] duration-150 ease-out data-[open]:grid-rows-[1fr]"
       {...props}
     >
-      <div
-        className={cn(
-          "pt-0 pb-4 [&_a]:hover:text-foreground [&_a]:underline [&_a]:underline-offset-3 [&_p:not(:last-child)]:mb-4",
-          className,
-        )}
-      >
-        {children}
+      <div className="overflow-hidden">
+        <div
+          className={cn(
+            "px-2 pt-0 pb-4 [&_a]:hover:text-foreground [&_a]:underline [&_a]:underline-offset-3 [&_p:not(:last-child)]:mb-4",
+            className,
+          )}
+        >
+          {children}
+        </div>
       </div>
     </AccordionPrimitive.Panel>
   )
