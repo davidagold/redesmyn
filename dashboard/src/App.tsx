@@ -210,7 +210,7 @@ function App() {
 
   return (
     <div className="h-screen w-screen bg-background text-foreground">
-      <div className="flex h-full gap-3 p-3">
+      <div className="flex h-full gap-2 p-2">
         <aside className="flex w-56 shrink-0 flex-col gap-4">
           <div className="relative">
             <Button
@@ -279,8 +279,8 @@ function App() {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-background shadow">
-          <header className="flex items-center justify-between gap-3 border-b bg-background/80 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+          <header className="flex items-center justify-between gap-3 border-b bg-card/80 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/60">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
                 <Button
@@ -354,7 +354,7 @@ function App() {
             </main>
 
             <div
-              className={`relative overflow-hidden bg-background transition-[width] duration-200 ease-out ${
+              className={`relative overflow-hidden bg-card transition-[width] duration-200 ease-out ${
                 selectedNode ? "w-[32rem] border-l" : "w-0"
               }`}
             >
@@ -434,7 +434,7 @@ function App() {
                       </CardHeader>
                       <CardContent className="grid gap-3">
                         {selectedTask?.readme ? (
-                          <div className="max-h-[36rem] overflow-auto rounded-md border bg-background p-3">
+                          <div className="max-h-[36rem] overflow-auto rounded-md border bg-muted p-3">
                             <Markdown
                               content={selectedTask.readme}
                               omitFirstHeading
