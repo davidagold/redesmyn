@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 
 import typer
@@ -27,6 +29,8 @@ from redesmyn.db import (
     create_engine,
     create_sessionmaker,
 )
+from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
+from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import BlockPolicy, TaskAuthority, TaskSource, TaskState
 from redesmyn.integrations.linear import (
     LinearClient,
@@ -43,6 +47,7 @@ from redesmyn.repo import (
     current_branch,
     git_worktree_add,
 )
+from redesmyn.strings import slugify
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
@@ -55,6 +60,101 @@ task_app = typer.Typer(add_completion=False, help="Task management.")
 node_app = typer.Typer(add_completion=False, help="Node/branch graph management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
+
+
+@dataclass(slots=True)
+class SyncStats:
+    epics_created: int = 0
+    epics_updated: int = 0
+    tasks_created: int = 0
+    tasks_updated: int = 0
+    nodes_created: int = 0
+    nodes_updated: int = 0
+
+
+@app.command()
+def sync(
+    from_: str | None = typer.Option(
+        None,
+        "--from",
+        help="Sync source (local|linear).",
+        show_choices=True,
+        case_sensitive=False,
+    ),
+    to: str | None = typer.Option(
+        None,
+        "--to",
+        help="Sync target (linear).",
+        show_choices=True,
+        case_sensitive=False,
+    ),
+    epic: str | None = typer.Option(
+        None, help="Epic slug or id (defaults if only one epic)."
+    ),
+    project: str | None = typer.Option(
+        None, "--project", help="Linear project id (when syncing from/to Linear)."
+    ),
+    create_nodes: bool = typer.Option(
+        True,
+        "--create-nodes/--no-create-nodes",
+        help="Create/update nodes in the branch graph.",
+    ),
+) -> None:
+    """Synchronize between local task docs, Linear, and the DB projection."""
+    if from_ and to:
+        typer.echo("error: pass only one of --from or --to", err=True)
+        raise typer.Exit(2)
+    if not from_ and not to:
+        typer.echo(
+            "error: missing direction; pass --from local|linear or --to linear", err=True
+        )
+        raise typer.Exit(2)
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if from_:
+        src = from_.lower()
+        if src == "local":
+            stats = asyncio.run(
+                _sync_from_local(ctx, epic=epic, create_nodes=create_nodes)
+            )
+            typer.echo(
+                "Synced from local: "
+                f"epics +{stats.epics_created}/~{stats.epics_updated}, "
+                f"tasks +{stats.tasks_created}/~{stats.tasks_updated}, "
+                f"nodes +{stats.nodes_created}/~{stats.nodes_updated}"
+            )
+            return
+        if src == "linear":
+            stats = asyncio.run(
+                _sync_from_linear(
+                    ctx,
+                    epic=epic,
+                    project=project,
+                    create_nodes=create_nodes,
+                )
+            )
+            typer.echo(
+                "Synced from Linear: "
+                f"epics +{stats.epics_created}/~{stats.epics_updated}, "
+                f"tasks +{stats.tasks_created}/~{stats.tasks_updated}, "
+                f"nodes +{stats.nodes_created}/~{stats.nodes_updated}"
+            )
+            return
+        typer.echo("error: --from must be one of: local, linear", err=True)
+        raise typer.Exit(2)
+
+    dst = (to or "").lower()
+    if dst == "linear":
+        typer.echo("error: sync --to linear is not implemented yet", err=True)
+        raise typer.Exit(2)
+    typer.echo("error: --to must be one of: linear", err=True)
+    raise typer.Exit(2)
 
 
 @app.command()
@@ -76,21 +176,6 @@ def init(
     asyncio.run(init_repo(ctx))
     typer.echo(f"Initialized: {ctx.state_dir}")
     typer.echo(f"DB: {ctx.db_path}")
-
-
-def _slugify(value: str) -> str:
-    slug_chars: list[str] = []
-    prev_dash = False
-    for ch in value.strip().lower():
-        if ch.isalnum():
-            slug_chars.append(ch)
-            prev_dash = False
-            continue
-        if ch in {" ", "-", "_"} and not prev_dash:
-            slug_chars.append("-")
-            prev_dash = True
-    slug = "".join(slug_chars).strip("-")
-    return slug or "epic"
 
 
 def _ensure_initialized(ctx: RepoContext) -> None:
@@ -169,6 +254,384 @@ async def _resolve_epic(ctx: RepoContext, *, epic: str | None) -> Epic:
             return row
     finally:
         await engine.dispose()
+
+
+_LOCAL_TASK_ID_RE = re.compile(r"^T-(?P<id>\d+)$")
+
+
+def _infer_single_epic_slug_from_fs(repo_root: Path) -> str | None:
+    epics_dir = repo_root / "epics"
+    if not epics_dir.exists():
+        return None
+    slugs = [p.name for p in epics_dir.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    if len(slugs) == 1:
+        return slugs[0]
+    return None
+
+
+async def _sync_from_local(
+    ctx: RepoContext,
+    *,
+    epic: str | None,
+    create_nodes: bool,
+) -> SyncStats:
+    epic_fs = _infer_single_epic_slug_from_fs(ctx.repo_root)
+    requested = epic or epic_fs
+
+    engine = create_engine(ctx.db_path)
+    stats = SyncStats()
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            repo = await session.scalar(
+                select(Repository).where(Repository.repo_root == str(ctx.repo_root))
+            )
+            if repo is None:
+                raise NotInitializedError(
+                    "Redesmyn is not initialized in this repo. Run `rn init`."
+                )
+
+            epic_row: Epic | None = None
+            if requested is None:
+                epics = list(
+                    await session.scalars(
+                        select(Epic)
+                        .where(Epic.repository_id == repo.id)
+                        .order_by(Epic.id)
+                    )
+                )
+                if len(epics) == 1:
+                    epic_row = epics[0]
+                elif len(epics) > 1:
+                    raise typer.BadParameter("Multiple epics found; pass --epic <slug|id>.")
+                else:
+                    raise typer.BadParameter("No epics found; create one with `rn epic create`.")
+
+            if epic_row is None and requested is not None:
+                if requested.isdigit():
+                    epic_row = await session.get(Epic, int(requested))
+                else:
+                    epic_row = await session.scalar(
+                        select(Epic).where(
+                            Epic.repository_id == repo.id,
+                            Epic.slug == requested,
+                        )
+                    )
+
+            epic_slug = epic_row.slug if epic_row is not None else requested
+            if not epic_slug:
+                raise typer.BadParameter("Could not infer epic; pass --epic <slug|id>.")
+
+            epic_readme = ctx.repo_root / "epics" / epic_slug / "README.md"
+            if not epic_readme.exists():
+                raise typer.BadParameter(f"Epic doc not found: {epic_readme}")
+
+            try:
+                epic_doc = load_epic_doc(epic_readme)
+            except DocLoadError as e:
+                raise typer.BadParameter(str(e)) from e
+
+            if epic_row is None:
+                epic_row = Epic(
+                    repository_id=repo.id,
+                    name=epic_doc.metadata.name,
+                    slug=epic_doc.metadata.slug,
+                    root_branch=epic_doc.metadata.root_branch,
+                    linear_project_id=epic_doc.metadata.linear_project_id,
+                )
+                session.add(epic_row)
+                await session.flush()
+                stats.epics_created += 1
+            else:
+                updated = False
+                if epic_row.name != epic_doc.metadata.name:
+                    epic_row.name = epic_doc.metadata.name
+                    updated = True
+                if epic_row.root_branch != epic_doc.metadata.root_branch:
+                    epic_row.root_branch = epic_doc.metadata.root_branch
+                    updated = True
+                if (
+                    epic_doc.metadata.linear_project_id is not None
+                    and epic_row.linear_project_id != epic_doc.metadata.linear_project_id
+                ):
+                    epic_row.linear_project_id = epic_doc.metadata.linear_project_id
+                    updated = True
+                if updated:
+                    stats.epics_updated += 1
+
+            tasks_dir = ctx.repo_root / "epics" / epic_row.slug / "tasks"
+            task_readmes = (
+                sorted(tasks_dir.glob("*/README.md")) if tasks_dir.exists() else []
+            )
+
+            task_docs = []
+            for readme in task_readmes:
+                try:
+                    task_docs.append(load_task_doc(readme))
+                except DocLoadError as e:
+                    raise typer.BadParameter(str(e)) from e
+
+            node_by_ref: dict[str, Node] = {}
+            node_by_path: dict[Path, Node] = {}
+
+            for doc in task_docs:
+                if doc.title is None:
+                    raise typer.BadParameter(f"Task doc missing title (H1): {doc.path}")
+
+                meta = doc.metadata
+                linear_issue_id = meta.linear.issue_id if meta.linear else None
+                linear_identifier = meta.linear.identifier if meta.linear else None
+                rel_path = str(doc.path.relative_to(ctx.repo_root))
+
+                task: Task | None = None
+                if linear_issue_id:
+                    task = await session.scalar(
+                        select(Task).where(
+                            Task.epic_id == epic_row.id,
+                            Task.linear_issue_id == linear_issue_id,
+                        )
+                    )
+
+                if task is None and meta.id:
+                    m = _LOCAL_TASK_ID_RE.match(meta.id.strip())
+                    if m:
+                        candidate = await session.get(Task, int(m.group("id")))
+                        if candidate is not None and candidate.epic_id == epic_row.id:
+                            task = candidate
+
+                if task is None:
+                    task = await session.scalar(
+                        select(Task).where(
+                            Task.epic_id == epic_row.id,
+                            Task.local_path == rel_path,
+                        )
+                    )
+
+                if task is None:
+                    task = Task(
+                        epic_id=epic_row.id,
+                        title=doc.title,
+                        body=doc.markdown,
+                        source=TaskSource.Linear if linear_issue_id else TaskSource.Local,
+                        state=TaskState.Todo,
+                        linear_issue_id=linear_issue_id,
+                        local_path=rel_path,
+                    )
+                    session.add(task)
+                    await session.flush()
+                    stats.tasks_created += 1
+                else:
+                    updated = False
+                    if task.title != doc.title:
+                        task.title = doc.title
+                        updated = True
+                    if task.body != doc.markdown:
+                        task.body = doc.markdown
+                        updated = True
+                    if task.local_path != rel_path:
+                        task.local_path = rel_path
+                        updated = True
+                    if linear_issue_id and task.linear_issue_id != linear_issue_id:
+                        task.linear_issue_id = linear_issue_id
+                        task.source = TaskSource.Linear
+                        updated = True
+                    if updated:
+                        stats.tasks_updated += 1
+
+                if not create_nodes:
+                    continue
+
+                branch = meta.node.branch if meta.node and meta.node.branch else None
+                if not branch:
+                    identifier = linear_identifier or meta.id or f"task-{task.id}"
+                    short = slugify(doc.title, fallback="task")[:60].strip("-") or "task"
+                    branch = f"rn/{epic_row.slug}/{identifier}-{short}"
+
+                node = await session.scalar(
+                    select(Node).where(
+                        Node.epic_id == epic_row.id,
+                        Node.branch_name == branch,
+                    )
+                )
+                if node is None:
+                    node = Node(
+                        epic_id=epic_row.id,
+                        branch_name=branch,
+                        linear_issue_id=linear_issue_id,
+                    )
+                    session.add(node)
+                    await session.flush()
+                    stats.nodes_created += 1
+                else:
+                    updated = False
+                    if linear_issue_id and node.linear_issue_id != linear_issue_id:
+                        node.linear_issue_id = linear_issue_id
+                        updated = True
+                    if updated:
+                        stats.nodes_updated += 1
+
+                task.node_id = node.id
+                node.primary_task_id = task.id
+                node_by_path[doc.path] = node
+
+                for ref in (meta.id, linear_identifier, linear_issue_id):
+                    if not ref:
+                        continue
+                    existing = node_by_ref.get(ref)
+                    if existing is not None and existing.id != node.id:
+                        raise typer.BadParameter(
+                            f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
+                        )
+                    node_by_ref[ref] = node
+
+            if create_nodes:
+                for doc in task_docs:
+                    node = node_by_path.get(doc.path)
+                    if node is None:
+                        continue
+                    parent_ref = doc.metadata.stacked_on
+                    if not parent_ref:
+                        node.parent_node_id = None
+                        continue
+                    parent_node = node_by_ref.get(parent_ref)
+                    if parent_node is None:
+                        raise typer.BadParameter(
+                            f"Unknown stacked_on ref {parent_ref!r} in {doc.path}"
+                        )
+                    node.parent_node_id = parent_node.id
+
+            await session.commit()
+            return stats
+    finally:
+        await engine.dispose()
+
+
+async def _sync_from_linear(
+    ctx: RepoContext,
+    *,
+    epic: str | None,
+    project: str | None,
+    create_nodes: bool,
+) -> SyncStats:
+    auth = await _load_linear_auth(ctx)
+    if auth is None:
+        raise typer.BadParameter("Linear is not connected. Run `rn linear auth`.")
+
+    epic_row = await _resolve_epic(ctx, epic=epic)
+
+    project_id = project or epic_row.linear_project_id
+    if not project_id:
+        epic_readme = ctx.repo_root / "epics" / epic_row.slug / "README.md"
+        if epic_readme.exists():
+            try:
+                epic_doc = load_epic_doc(epic_readme)
+                project_id = epic_doc.metadata.linear_project_id
+            except DocLoadError:
+                project_id = None
+
+    if not project_id:
+        raise typer.BadParameter(
+            "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
+        )
+
+    client = LinearClient(access_token=auth.access_token)
+    issues = await fetch_project_issues(client, project_id=project_id)
+    try:
+        relations = await fetch_project_issue_relations(client, project_id=project_id)
+    except Exception as e:
+        typer.echo(
+            f"warning: could not fetch issue relations; parent inference disabled ({e})",
+            err=True,
+        )
+        relations = []
+
+    issue_by_id = {i.id: i for i in issues}
+    blockers_by_issue: dict[str, list[str]] = {i.id: [] for i in issues}
+    for rel in relations:
+        rel_type = rel.type.lower()
+        if rel_type == "blocks":
+            if rel.related_issue_id in blockers_by_issue:
+                blockers_by_issue[rel.related_issue_id].append(rel.issue_id)
+            continue
+        if rel_type in {"blocked_by", "blockedby"} and rel.issue_id in blockers_by_issue:
+            blockers_by_issue[rel.issue_id].append(rel.related_issue_id)
+
+    parent_issue_by_issue: dict[str, str | None] = {}
+    for issue_id, blockers in blockers_by_issue.items():
+        if not blockers:
+            parent_issue_by_issue[issue_id] = None
+            continue
+        if len(blockers) > 1:
+            raise typer.BadParameter(
+                f"Linear issue {issue_id} has multiple blockers; choose a parent explicitly (v0)"
+            )
+        parent = blockers[0]
+        if parent not in issue_by_id:
+            raise typer.BadParameter(
+                f"Linear issue {issue_id} blocker {parent} is outside the imported project (v0)"
+            )
+        parent_issue_by_issue[issue_id] = parent
+
+    epic_dir = ctx.repo_root / "epics" / epic_row.slug
+    tasks_dir = epic_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    epic_readme = epic_dir / "README.md"
+    if epic_readme.exists():
+        markdown = epic_readme.read_text(encoding="utf-8")
+        yaml_data = {
+            "slug": epic_row.slug,
+            "name": epic_row.name,
+            "root_branch": epic_row.root_branch,
+            "linear": {"project_id": project_id},
+        }
+        epic_readme.write_text(
+            upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
+        )
+
+    def _branch_name(identifier: str, title: str) -> str:
+        short = slugify(title, fallback="task")[:60].strip("-") or "task"
+        return f"rn/{epic_row.slug}/{identifier}-{short}"
+
+    for issue in issues:
+        parent_issue_id = parent_issue_by_issue.get(issue.id)
+        parent_identifier = (
+            issue_by_id[parent_issue_id].identifier if parent_issue_id else None
+        )
+
+        readme = tasks_dir / issue.identifier / "README.md"
+        readme.parent.mkdir(parents=True, exist_ok=True)
+
+        if readme.exists():
+            markdown = readme.read_text(encoding="utf-8")
+        else:
+            markdown = f"# {issue.identifier} {issue.title}\n\n## Brief (local)\n\n"
+
+        yaml_data = {
+            "id": None,
+            "group_under": None,
+            "stacked_on": parent_identifier,
+            "must_land_after": [],
+            "linear": {"issue_id": issue.id, "identifier": issue.identifier},
+            "node": {"branch": _branch_name(issue.identifier, issue.title)},
+        }
+        markdown = upsert_metadata_yaml(markdown, yaml_data=yaml_data)
+
+        synced_lines: list[str] = []
+        if issue.state_type:
+            synced_lines.append(f"State: {issue.state_type}")
+        if issue.description:
+            synced_lines.append("")
+            synced_lines.append(issue.description.strip())
+
+        markdown = upsert_synced_section(
+            markdown,
+            title="Synced (from Linear)",
+            content="\n".join(synced_lines).rstrip(),
+        )
+        readme.write_text(markdown, encoding="utf-8")
+
+    return await _sync_from_local(ctx, epic=epic_row.slug, create_nodes=create_nodes)
 
 
 def _default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
@@ -307,7 +770,7 @@ def epic_create(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    slug_value = slug or _slugify(name)
+    slug_value = slug or slugify(name, fallback="epic")
 
     async def _run() -> Epic:
         repo = await _require_repo_row(ctx)
@@ -919,7 +1382,7 @@ def linear_import(
     issues_sorted = sorted(issues, key=lambda issue: _depth(issue.id, stack=set()))
 
     def _branch_name(identifier: str, title: str) -> str:
-        slug = _slugify(title)[:60].strip("-") or "task"
+        slug = slugify(title, fallback="task")[:60].strip("-") or "task"
         return f"rn/{epic_row.slug}/{identifier}-{slug}"
 
     async def _apply() -> None:
