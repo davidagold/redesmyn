@@ -225,7 +225,7 @@ function App() {
       : null)
 
   return (
-    <div className="h-screen w-screen bg-background text-foreground">
+    <div className="h-screen w-screen bg-surface text-foreground">
       <div className="flex h-full gap-2 p-2">
         <aside className="flex w-56 shrink-0 flex-col gap-4">
           <div className="relative flex h-10 items-center">
@@ -296,8 +296,8 @@ function App() {
         </aside>
 
         {/* TODO: Make the bottom-right corner radius match the containing window. */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm rounded-br-xl border border-border/60 bg-card shadow-sm">
-          <header className="flex h-10 items-center justify-between gap-3 border-b bg-card/80 px-4 py-0 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm rounded-br-xl border border-border/60 bg-background shadow-sm">
+          <header className="flex h-10 items-center justify-between gap-3 border-b px-4 py-0">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
                 <Button
@@ -374,7 +374,7 @@ function App() {
             </main>
 
             <aside
-              className={`absolute inset-y-0 right-0 z-20 w-[32rem] border-l bg-card shadow-lg transition-transform duration-200 ease-out ${
+              className={`absolute inset-y-0 right-0 z-20 w-[32rem] border-l bg-background shadow-lg transition-transform duration-200 ease-out ${
                 selectedNode ? "translate-x-0" : "translate-x-full"
               } ${selectedNode ? "" : "pointer-events-none"}`}
             >
