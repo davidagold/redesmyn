@@ -16,7 +16,7 @@ local formatters = new Mapping<String, Step> {
             "dashboard/**/*.json",
         )
         check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
-        fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
+        fix = "dashboard/node_modules/.bin/oxfmt {{files}} && git add {{files}}"
     }
 }
 
