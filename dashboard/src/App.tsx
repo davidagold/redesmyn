@@ -1,12 +1,11 @@
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { fetchEpicGraph, fetchEpics, type Epic, type EpicGraph } from "@/api"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Markdown } from "@/components/markdown"
@@ -28,58 +27,6 @@ function formatBranchName(branchName: string, epicSlug?: string | null) {
   return branchName.startsWith(prefix)
     ? branchName.slice(prefix.length)
     : branchName
-}
-
-type DetailsSectionProps = {
-  title: string
-  defaultOpen?: boolean
-  actions?: ReactNode
-  children: ReactNode
-}
-
-function DetailsSection({
-  title,
-  defaultOpen = false,
-  actions,
-  children,
-}: DetailsSectionProps) {
-  const [open, setOpen] = useState(defaultOpen)
-  const contentId = useId()
-
-  return (
-    <section className="border-b border-border/60 last:border-b-0">
-      <div className="flex items-center gap-2 px-4 py-2">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground hover:text-foreground"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-controls={contentId}
-        >
-          <ChevronDown
-            className={`h-4 w-4 shrink-0 transition-transform ${
-              open ? "rotate-0" : "-rotate-90"
-            }`}
-            aria-hidden="true"
-          />
-          <span className="truncate">{title}</span>
-        </button>
-        {actions ? (
-          <div className="flex items-center gap-1">{actions}</div>
-        ) : null}
-      </div>
-
-      <div
-        className={`grid transition-[grid-template-rows] duration-200 ease-out ${
-          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        }`}
-      >
-        <div id={contentId} className="overflow-hidden px-4 pb-4">
-          {children}
-        </div>
-      </div>
-    </section>
-  )
 }
 
 function App() {
@@ -284,7 +231,6 @@ function App() {
           <div className="relative flex h-10 items-center">
             <Button
               variant="ghost"
-              size="menubar"
               className="w-fit gap-2"
               onClick={() => setProjectMenuOpen((open) => !open)}
               aria-expanded={projectMenuOpen}
@@ -355,7 +301,6 @@ function App() {
               {selectedEpic ? (
                 <Button
                   variant="ghost"
-                  size="menubar"
                   className="w-fit"
                   onClick={() => setSelectedNodeId(null)}
                 >
@@ -377,7 +322,6 @@ function App() {
 
             <Button
               variant="outline"
-              size="menubar"
               onClick={() => void refresh(selectedEpicId)}
               disabled={loading}
             >
@@ -434,38 +378,41 @@ function App() {
               } ${selectedNode ? "" : "pointer-events-none"}`}
             >
               <div
-                className={`h-full overflow-auto transition-opacity duration-150 ease-out ${
+                className={`relative h-full overflow-auto transition-opacity duration-150 ease-out ${
                   selectedNode ? "opacity-100" : "opacity-0"
                 }`}
               >
-                <div className="flex flex-col pt-2">
-                  <DetailsSection
-                    title="README"
-                    defaultOpen
-                    actions={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Close details"
-                        className="h-8 w-8"
-                        onClick={() => setSelectedNodeId(null)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    }
-                  >
-                    {selectedTask?.readme ? (
-                      <Markdown
-                        content={selectedTask.readme}
-                        omitFirstHeading
-                        omitMetadataSection
-                      />
-                    ) : (
-                      <div className="text-sm text-muted-foreground">
-                        No README.
-                      </div>
-                    )}
-                  </DetailsSection>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close details"
+                  className="absolute right-3 top-3 z-10"
+                  onClick={() => setSelectedNodeId(null)}
+                >
+                  <X />
+                </Button>
+
+                <div className="p-3">
+                  <Accordion defaultValue={["readme"]}>
+                    <AccordionItem value="readme">
+                      <AccordionTrigger className="pr-10">
+                        README
+                      </AccordionTrigger>
+                      <AccordionContent className="pt-3">
+                        {selectedTask?.readme ? (
+                          <Markdown
+                            content={selectedTask.readme}
+                            omitFirstHeading
+                            omitMetadataSection
+                          />
+                        ) : (
+                          <div className="text-muted-foreground">
+                            No README.
+                          </div>
+                        )}
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
                 </div>
               </div>
             </aside>
