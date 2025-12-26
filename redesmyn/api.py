@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
 
@@ -61,6 +62,18 @@ class App(FastAPI):
     state: AppState
 
 
+class DashboardStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope) -> Response:  # type: ignore[override]
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            if path and "." in Path(path).name:
+                raise
+            return await super().get_response("index.html", scope)
+
+
 @asynccontextmanager
 async def lifespan(app: App):
     ctx = get_repo_context()
@@ -70,17 +83,17 @@ async def lifespan(app: App):
     app.state.engine = create_engine(ctx.db_path)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.linear_oauth_states = {}
-    maybe_mount_dashboard(app, ctx.repo_root)
+    maybe_mount_dashboard(app, ctx.worktree_root)
 
     yield
 
     await app.state.engine.dispose()
 
 
-def maybe_mount_dashboard(app_: FastAPI, repo_root: Path) -> None:
-    if (dist_path := _dist_path(repo_root)).is_dir():
+def maybe_mount_dashboard(app_: FastAPI, worktree_root: Path) -> None:
+    if (dist_path := _dist_path(worktree_root)).is_dir():
         app_.mount(
-            "/", StaticFiles(directory=str(dist_path), html=True), name="dashboard"
+            "/", DashboardStaticFiles(directory=str(dist_path)), name="dashboard"
         )
 
 
@@ -266,7 +279,7 @@ async def linear_oauth_callback(
 @app.get("/", include_in_schema=False)
 async def index() -> Response:
     ctx = app.state.ctx
-    index_html = ctx.repo_root / "dashboard" / "dist" / "index.html"
+    index_html = ctx.worktree_root / "dashboard" / "dist" / "index.html"
     if index_html.is_file():
         return FileResponse(str(index_html))
 
