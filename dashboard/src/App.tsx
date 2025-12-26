@@ -222,9 +222,10 @@ function App() {
     <div className="h-screen w-screen bg-background text-foreground">
       <div className="flex h-full gap-2 p-2">
         <aside className="flex w-56 shrink-0 flex-col gap-4">
-          <div className="relative flex h-9 items-center">
+          <div className="relative flex h-10 items-center">
             <Button
               variant="ghost"
+              size="menubar"
               className="w-fit gap-2"
               onClick={() => setProjectMenuOpen((open) => !open)}
               aria-expanded={projectMenuOpen}
@@ -290,13 +291,13 @@ function App() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
-          <header className="flex h-9 items-center justify-between gap-3 border-b bg-card/80 px-4 py-0 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+          <header className="flex h-10 items-center justify-between gap-3 border-b bg-card/80 px-4 py-0 backdrop-blur supports-[backdrop-filter]:bg-card/60">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
                 <Button
                   variant="ghost"
                   size="menubar"
-                  className="w-fit px-2"
+                  className="w-fit"
                   onClick={() => setSelectedNodeId(null)}
                 >
                   {selectedEpic.slug}
