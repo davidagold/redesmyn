@@ -7,10 +7,7 @@ function Accordion({ className, ...props }: AccordionPrimitive.Root.Props) {
   return (
     <AccordionPrimitive.Root
       data-slot="accordion"
-      className={cn(
-        "overflow-hidden rounded-md border flex w-full flex-col",
-        className,
-      )}
+      className={cn("flex w-full flex-col", className)}
       {...props}
     />
   )
@@ -20,7 +17,10 @@ function AccordionItem({ className, ...props }: AccordionPrimitive.Item.Props) {
   return (
     <AccordionPrimitive.Item
       data-slot="accordion-item"
-      className={cn("data-open:bg-muted/50 not-last:border-b", className)}
+      className={cn(
+        "data-open:bg-muted/20 not-last:border-b not-last:border-border/60",
+        className,
+      )}
       {...props}
     />
   )

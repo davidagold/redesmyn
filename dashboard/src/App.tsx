@@ -15,7 +15,7 @@ import {
   setStoredThemePreference,
   type ThemePreference,
 } from "@/lib/theme"
-import { ChevronDown, ChevronRight, Monitor, Moon, Sun, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Monitor, Moon, Sun } from "lucide-react"
 
 type GraphNode = EpicGraph["nodes"][number]
 
@@ -295,7 +295,8 @@ function App() {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
+        {/* TODO: Make the bottom-right corner radius match the containing window. */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm rounded-br-xl border border-border/60 bg-card shadow-sm">
           <header className="flex h-10 items-center justify-between gap-3 border-b bg-card/80 px-4 py-0 backdrop-blur supports-[backdrop-filter]:bg-card/60">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
@@ -378,26 +379,14 @@ function App() {
               } ${selectedNode ? "" : "pointer-events-none"}`}
             >
               <div
-                className={`relative h-full overflow-auto transition-opacity duration-150 ease-out ${
+                className={`h-full overflow-auto transition-opacity duration-150 ease-out ${
                   selectedNode ? "opacity-100" : "opacity-0"
                 }`}
               >
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Close details"
-                  className="absolute right-3 top-3 z-10"
-                  onClick={() => setSelectedNodeId(null)}
-                >
-                  <X />
-                </Button>
-
                 <div className="p-3">
-                  <Accordion defaultValue={["readme"]}>
+                  <Accordion defaultValue={["readme"]} className="border-0">
                     <AccordionItem value="readme">
-                      <AccordionTrigger className="pr-10">
-                        README
-                      </AccordionTrigger>
+                      <AccordionTrigger>README</AccordionTrigger>
                       <AccordionContent className="pt-3">
                         {selectedTask?.readme ? (
                           <Markdown
