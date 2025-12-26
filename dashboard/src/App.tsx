@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { fetchEpicGraph, fetchEpics, type Epic, type EpicGraph } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Markdown } from "@/components/markdown"
 import {
   applyThemePreference,
@@ -130,13 +130,6 @@ function App() {
     return tasksById.get(selectedNode.primaryTaskId) ?? null
   }, [selectedNode, tasksById])
 
-  const selectedAgent = useMemo(() => {
-    if (!selectedNode || selectedNode.agentId === null) {
-      return null
-    }
-    return agentsById.get(selectedNode.agentId) ?? null
-  }, [selectedNode, agentsById])
-
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") {
@@ -167,8 +160,9 @@ function App() {
       <div key={node.id} style={{ paddingLeft: depth * 16 }}>
         <Card
           data-node-card
-          className={`cursor-pointer transition-colors hover:bg-accent/40 ${selectedNodeId === node.id ? "ring-2 ring-ring" : ""
-            }`}
+          className={`cursor-pointer transition-colors hover:bg-accent/40 ${
+            selectedNodeId === node.id ? "ring-2 ring-ring" : ""
+          }`}
           onClick={() => setSelectedNodeId(node.id)}
           role="button"
           tabIndex={0}
@@ -211,7 +205,7 @@ function App() {
     <div className="h-screen w-screen bg-background text-foreground">
       <div className="flex h-full gap-2 p-2">
         <aside className="flex w-56 shrink-0 flex-col gap-4">
-          <div className="relative">
+          <div className="relative flex h-9 items-center">
             <Button
               variant="ghost"
               className="w-fit gap-2"
@@ -278,8 +272,8 @@ function App() {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm rounded-br-xl border border-border/60 bg-card shadow-sm">
-          <header className="flex items-center justify-between gap-3 border-b bg-card/80 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm">
+          <header className="flex h-9 items-center justify-between gap-3 border-b bg-card/80 px-4 py-0 backdrop-blur supports-[backdrop-filter]:bg-card/60">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
                 <Button
@@ -315,7 +309,7 @@ function App() {
             </div>
           ) : null}
 
-          <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-h-0 flex-1">
             <main className="relative min-w-0 flex-1 overflow-hidden">
               <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:radial-gradient(var(--border)_1px,transparent_1px)] [background-size:32px_32px]" />
               <div
@@ -352,102 +346,39 @@ function App() {
               </div>
             </main>
 
-            <div
-              className={`relative overflow-hidden bg-card transition-[width] duration-200 ease-out ${selectedNode ? "w-[32rem] border-l" : "w-0"
-                }`}
+            <aside
+              className={`absolute inset-y-0 right-0 z-20 w-[32rem] border-l bg-card shadow-lg transition-transform duration-200 ease-out ${
+                selectedNode ? "translate-x-0" : "translate-x-full"
+              } ${selectedNode ? "" : "pointer-events-none"}`}
             >
-              <div
-                className={`h-full w-[32rem] ${selectedNode ? "opacity-100" : "opacity-0"
-                  } transition-opacity duration-150 ease-out ${selectedNode ? "" : "pointer-events-none"
-                  }`}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close details"
+                className="absolute right-3 top-3"
+                onClick={() => setSelectedNodeId(null)}
               >
-                <div className="flex items-center justify-between border-b px-4 py-2">
-                  <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
-                    {selectedNode?.branchName ?? ""}
-                    {selectedAgent ? ` · ${selectedAgent.displayName}` : ""}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Close details"
-                    onClick={() => setSelectedNodeId(null)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
+                <X className="h-4 w-4" />
+              </Button>
 
-                <div className="h-full overflow-auto p-4">
-                  <div className="grid gap-4">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-sm">Properties</CardTitle>
-                      </CardHeader>
-                      <CardContent className="grid gap-3">
-                        <dl className="grid grid-cols-1 gap-3 text-sm">
-                          <div className="grid gap-1">
-                            <dt className="text-xs text-muted-foreground">
-                              Node
-                            </dt>
-                            <dd className="font-mono">
-                              {selectedNode?.id ?? ""}
-                            </dd>
-                          </div>
-                          {selectedTask ? (
-                            <>
-                              <div className="grid gap-1">
-                                <dt className="text-xs text-muted-foreground">
-                                  State
-                                </dt>
-                                <dd className="font-mono">
-                                  {selectedTask.state}
-                                </dd>
-                              </div>
-                              <div className="grid gap-1">
-                                <dt className="text-xs text-muted-foreground">
-                                  Source
-                                </dt>
-                                <dd className="font-mono">
-                                  {selectedTask.source}
-                                </dd>
-                              </div>
-                              <div className="grid gap-1">
-                                <dt className="text-xs text-muted-foreground">
-                                  Authority
-                                </dt>
-                                <dd className="font-mono">
-                                  {selectedTask.authority}
-                                </dd>
-                              </div>
-                            </>
-                          ) : null}
-                        </dl>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-sm">README</CardTitle>
-                      </CardHeader>
-                      <CardContent className="grid gap-3">
-                        {selectedTask?.readme ? (
-                          <div className="max-h-[36rem] overflow-auto rounded-md border bg-muted p-3">
-                            <Markdown
-                              content={selectedTask.readme}
-                              omitFirstHeading
-                              omitMetadataSection
-                            />
-                          </div>
-                        ) : (
-                          <div className="text-sm text-muted-foreground">
-                            No README.
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
+              <div
+                className={`h-full overflow-auto p-4 pt-12 transition-opacity duration-150 ease-out ${
+                  selectedNode ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                {selectedTask?.readme ? (
+                  <Markdown
+                    content={selectedTask.readme}
+                    omitFirstHeading
+                    omitMetadataSection
+                  />
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    No README.
                   </div>
-                </div>
+                )}
               </div>
-            </div>
+            </aside>
           </div>
         </div>
       </div>
