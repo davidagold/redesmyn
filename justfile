@@ -5,6 +5,9 @@ default: check
 install:
     uv sync
     uv tool install --editable . --force
+    @if [ ! -d dashboard/node_modules ]; then cd dashboard && npm ci; fi
+    cd dashboard && npm run api:update
+    cd dashboard && npm run build
     @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
 
 format:
