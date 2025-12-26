@@ -125,3 +125,57 @@
     @apply bg-background text-foreground;
   }
 }
+
+/*
+ * `tw-animate-css` defines accordion keyframes in terms of Radix/other libs'
+ * CSS vars (e.g. `--radix-accordion-content-height`), but Base UI uses
+ * `--accordion-panel-height`. Override the keyframes so `animate-accordion-*`
+ * works for both.
+ */
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(
+      --accordion-panel-height,
+      var(
+        --radix-accordion-content-height,
+        var(
+          --bits-accordion-content-height,
+          var(
+            --reka-accordion-content-height,
+            var(
+              --kb-accordion-content-height,
+              var(--ngp-accordion-content-height, auto)
+            )
+          )
+        )
+      )
+    );
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(
+      --accordion-panel-height,
+      var(
+        --radix-accordion-content-height,
+        var(
+          --bits-accordion-content-height,
+          var(
+            --reka-accordion-content-height,
+            var(
+              --kb-accordion-content-height,
+              var(--ngp-accordion-content-height, auto)
+            )
+          )
+        )
+      )
+    );
+  }
+  to {
+    height: 0;
+  }
+}
