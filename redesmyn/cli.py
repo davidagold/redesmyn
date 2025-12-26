@@ -818,10 +818,11 @@ def dev(
 
     backend_env = _with_prepend_pythonpath(os.environ.copy(), ctx.repo_root)
     dashboard_env = os.environ.copy()
-    dashboard_env["REDESMYN_DAEMON_ORIGIN"] = f"http://{host}:{api_port}"
+    dashboard_env.setdefault("REDESMYN_DAEMON_ORIGIN", f"http://{host}:{api_port}")
+    daemon_origin = dashboard_env["REDESMYN_DAEMON_ORIGIN"]
 
     typer.echo(f"Dashboard: http://{host}:{port}/")
-    typer.echo(f"API:       http://{host}:{port}/v1/ (proxied to :{api_port})")
+    typer.echo(f"API:       http://{host}:{port}/v1/ (proxied to {daemon_origin})")
 
     backend_proc = subprocess.Popen(
         backend_cmd,
