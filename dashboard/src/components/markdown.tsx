@@ -122,15 +122,32 @@ function parseMarkdown(content: string): Block[] {
 
 function stripMetadataSection(content: string): string {
   const lines = content.replaceAll("\r\n", "\n").split("\n")
-  const start = lines.findIndex((line) => line.match(/^##\s+Metadata\s*$/i))
-  if (start === -1) {
+  let start = -1
+  let startLevel = 0
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ""
+    const match = line.match(/^(#{1,6})\s+Metadata\s*$/i)
+    if (!match) {
+      continue
+    }
+    start = i
+    startLevel = match[1]?.length ?? 0
+    break
+  }
+
+  if (start === -1 || startLevel === 0) {
     return content
   }
 
   let end = lines.length
   for (let i = start + 1; i < lines.length; i += 1) {
     const line = lines[i] ?? ""
-    if (line.match(/^#{1,2}\s+/)) {
+    const heading = line.match(/^(#{1,6})\s+/)
+    if (!heading) {
+      continue
+    }
+    const level = heading[1]?.length ?? 0
+    if (level <= startLevel) {
       end = i
       break
     }
