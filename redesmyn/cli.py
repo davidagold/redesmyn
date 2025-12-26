@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 import shutil
 import signal
 import subprocess
@@ -262,9 +261,6 @@ async def _resolve_epic(ctx: RepoContext, *, epic: str | None) -> Epic:
         await engine.dispose()
 
 
-_LOCAL_TASK_ID_RE = re.compile(r"^T-(?P<id>\d+)$")
-
-
 def _infer_single_epic_slug_from_fs(repo_root: Path) -> str | None:
     epics_dir = repo_root / "epics"
     if not epics_dir.exists():
@@ -404,13 +400,6 @@ async def _sync_from_local(
                             Task.linear_issue_id == linear_issue_id,
                         )
                     )
-
-                if task is None and meta.id:
-                    m = _LOCAL_TASK_ID_RE.match(meta.id.strip())
-                    if m:
-                        candidate = await session.get(Task, int(m.group("id")))
-                        if candidate is not None and candidate.epic_id == epic_row.id:
-                            task = candidate
 
                 if task is None:
                     task = await session.scalar(
