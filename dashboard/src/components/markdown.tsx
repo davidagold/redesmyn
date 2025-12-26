@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react"
 
 type MarkdownProps = {
   content: string
+  omitFirstHeading?: boolean
 }
 
 type Block = {
@@ -182,8 +183,15 @@ function renderInline(text: string): ReactNode[] {
   return parts
 }
 
-export function Markdown({ content }: MarkdownProps) {
-  const blocks = parseMarkdown(content)
+export function Markdown({ content, omitFirstHeading }: MarkdownProps) {
+  let blocks = parseMarkdown(content)
+  if (
+    omitFirstHeading &&
+    blocks[0]?.type === "heading" &&
+    blocks[0].level === 1
+  ) {
+    blocks = blocks.slice(1)
+  }
 
   return (
     <div className="grid gap-3 text-sm leading-relaxed text-foreground">

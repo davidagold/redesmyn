@@ -16,7 +16,7 @@ import {
   setStoredThemePreference,
   type ThemePreference,
 } from "@/lib/theme"
-import { ChevronDown, Monitor, Moon, Sun } from "lucide-react"
+import { ChevronDown, Monitor, Moon, Sun, X } from "lucide-react"
 
 type GraphNode = EpicGraph["nodes"][number]
 
@@ -29,6 +29,7 @@ function App() {
   const [selectedEpicId, setSelectedEpicId] = useState<number | null>(null)
   const [graph, setGraph] = useState<EpicGraph | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null)
+  const [projectDrawerOpen, setProjectDrawerOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -69,6 +70,7 @@ function App() {
       setSelectedEpicId(epicId)
       setGraph(epicId === null ? null : await fetchEpicGraph(epicId))
       setSelectedNodeId(null)
+      setProjectDrawerOpen(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -147,6 +149,24 @@ function App() {
     return agentsById.get(selectedNode.agentId) ?? null
   }, [selectedNode, agentsById])
 
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") {
+        return
+      }
+      if (projectDrawerOpen) {
+        setProjectDrawerOpen(false)
+        return
+      }
+      if (selectedNodeId !== null) {
+        setSelectedNodeId(null)
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [projectDrawerOpen, selectedNodeId])
+
   function renderNode(node: GraphNode, depth: number) {
     const task =
       node.primaryTaskId !== null
@@ -158,6 +178,7 @@ function App() {
     return (
       <div key={node.id} style={{ paddingLeft: depth * 16 }}>
         <Card
+          data-node-card
           className={`cursor-pointer transition-colors hover:bg-accent/40 ${
             selectedNodeId === node.id ? "ring-2 ring-ring" : ""
           }`}
@@ -197,54 +218,34 @@ function App() {
   const themeIcon =
     theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />
 
-  const breadcrumbs = useMemo(() => {
-    const items: string[] = []
-    if (selectedEpic) {
-      items.push(`Epic: ${selectedEpic.slug}`)
-    }
-    if (selectedNode) {
-      items.push(`Branch: ${selectedNode.branchName}`)
-    }
-    if (selectedTask) {
-      items.push(`Task: ${selectedTask.title}`)
-    }
-    return items
-  }, [selectedEpic, selectedNode, selectedTask])
+  const selectedLabel = selectedTask?.title ?? selectedNode?.branchName ?? null
 
   return (
     <div className="h-screen w-screen bg-background text-foreground">
-      <div className="grid h-full grid-cols-[minmax(14rem,18rem)_1fr_minmax(18rem,24rem)]">
-        <aside className="flex min-w-0 flex-col border-r bg-sidebar text-sidebar-foreground">
-          <div className="p-4">
-            <div className="text-xs font-medium text-muted-foreground">
-              Project
-            </div>
-            {epics.length ? (
-              <div className="relative mt-2">
-                <select
-                  className="h-9 w-full appearance-none rounded-md border bg-background px-3 pr-10 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={selectedEpicId ?? ""}
-                  onChange={(e) => void refresh(Number(e.target.value))}
-                  disabled={loading}
-                >
-                  {epics.map((epic) => (
-                    <option key={epic.id} value={epic.id}>
-                      {epic.slug}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              </div>
-            ) : (
-              <div className="mt-2 text-sm text-muted-foreground">
-                No projects.
-              </div>
-            )}
+      <div className="flex h-full flex-col">
+        <header className="flex items-center justify-between gap-3 border-b bg-background px-4 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              className="w-fit gap-2"
+              onClick={() => setProjectDrawerOpen((open) => !open)}
+              disabled={!epics.length}
+            >
+              <span className="truncate">
+                {selectedEpic?.slug ??
+                  (epics.length ? "Choose project" : "No projects")}
+              </span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </Button>
+            {selectedLabel ? (
+              <>
+                <span className="text-muted-foreground/60">/</span>
+                <span className="truncate text-sm">{selectedLabel}</span>
+              </>
+            ) : null}
           </div>
 
-          <nav className="flex-1" />
-
-          <div className="flex items-center justify-between border-t p-3">
+          <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -262,30 +263,6 @@ function App() {
             >
               {themeIcon}
             </Button>
-          </div>
-        </aside>
-
-        <main className="flex min-w-0 flex-col">
-          <header className="flex items-center justify-between gap-3 border-b bg-background/80 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-            <div className="min-w-0 text-sm">
-              {breadcrumbs.length ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
-                  {breadcrumbs.map((item, idx) => (
-                    <div key={item} className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-foreground">{item}</span>
-                      {idx < breadcrumbs.length - 1 ? (
-                        <span className="text-muted-foreground/60">/</span>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <span className="text-muted-foreground">No selection</span>
-              )}
-              {error ? (
-                <div className="mt-1 text-xs text-destructive">{error}</div>
-              ) : null}
-            </div>
             <Button
               variant="outline"
               onClick={() => void refresh(selectedEpicId)}
@@ -293,11 +270,104 @@ function App() {
             >
               {loading ? "Refreshing…" : "Refresh"}
             </Button>
-          </header>
+          </div>
+        </header>
 
-          <div className="relative flex-1 overflow-hidden">
-            <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(var(--border)_1px,transparent_1px)] [background-size:24px_24px]" />
-            <div className="relative h-full overflow-auto p-6">
+        {error ? (
+          <div className="border-b px-4 py-2 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="relative flex min-h-0 flex-1">
+          {projectDrawerOpen ? (
+            <button
+              type="button"
+              aria-label="Close project drawer"
+              className="absolute inset-0 z-10 cursor-default bg-background/50 backdrop-blur-sm"
+              onClick={() => setProjectDrawerOpen(false)}
+            />
+          ) : null}
+
+          <aside
+            className={`absolute inset-y-0 left-0 z-20 w-80 border-r bg-sidebar text-sidebar-foreground shadow-lg transition-transform duration-200 ease-out ${
+              projectDrawerOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
+          >
+            <div className="grid gap-4 p-4">
+              <div className="text-xs font-medium text-muted-foreground">
+                Projects
+              </div>
+
+              {epics.length ? (
+                <div className="grid gap-1">
+                  {epics.map((epic) => (
+                    <Button
+                      key={epic.id}
+                      variant={
+                        epic.id === selectedEpicId ? "secondary" : "ghost"
+                      }
+                      className="w-fit justify-start"
+                      onClick={() => void refresh(epic.id)}
+                      disabled={loading}
+                    >
+                      {epic.slug}
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  No projects.
+                </div>
+              )}
+
+              {status ? (
+                <div className="mt-4 grid gap-2 border-t pt-4 text-xs text-muted-foreground">
+                  <div className="grid gap-0.5">
+                    <div>Repo</div>
+                    <div className="break-all font-mono text-[11px] text-foreground/90">
+                      {status.repoRoot}
+                    </div>
+                  </div>
+                  <div className="grid gap-0.5">
+                    <div>DB</div>
+                    <div className="break-all font-mono text-[11px] text-foreground/90">
+                      {status.dbPath}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-3 top-3"
+              aria-label="Close project drawer"
+              onClick={() => setProjectDrawerOpen(false)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </aside>
+
+          <main className="relative min-w-0 flex-1 overflow-hidden">
+            <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px]" />
+            <div
+              className="relative h-full overflow-auto p-6"
+              onClick={(e) => {
+                if (!(e.target instanceof Node)) {
+                  return
+                }
+                const el =
+                  e.target instanceof Element
+                    ? e.target
+                    : e.target.parentElement
+                if (el?.closest("[data-node-card]")) {
+                  return
+                }
+                setSelectedNodeId(null)
+              }}
+            >
               {graph ? (
                 <div className="grid gap-3">
                   {rootNodes.length ? (
@@ -314,121 +384,94 @@ function App() {
                 </div>
               )}
             </div>
-          </div>
-        </main>
+          </main>
 
-        <aside className="flex min-w-0 flex-col border-l">
-          <header className="border-b px-4 py-2 text-sm font-medium">
-            Details
-          </header>
-          <div className="flex-1 overflow-auto p-4">
-            {selectedNode ? (
-              <div className="grid gap-4">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Branch</CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid gap-3">
-                    <dl className="grid grid-cols-1 gap-3 text-sm">
-                      <div className="grid gap-1">
-                        <dt className="text-xs text-muted-foreground">Name</dt>
-                        <dd className="break-all font-mono">
-                          {selectedNode.branchName}
-                        </dd>
-                      </div>
-                      <div className="grid gap-1">
-                        <dt className="text-xs text-muted-foreground">Node</dt>
-                        <dd className="font-mono">{selectedNode.id}</dd>
-                      </div>
-                      {selectedAgent ? (
+          {selectedNode ? (
+            <aside className="w-[30rem] min-w-0 border-l lg:w-[32rem]">
+              <div className="flex items-center justify-between border-b px-4 py-2">
+                <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                  {selectedNode.branchName}
+                  {selectedAgent ? ` · ${selectedAgent.displayName}` : ""}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close details"
+                  onClick={() => setSelectedNodeId(null)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="h-full overflow-auto p-4">
+                <div className="grid gap-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">Properties</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid gap-3">
+                      <dl className="grid grid-cols-1 gap-3 text-sm">
                         <div className="grid gap-1">
                           <dt className="text-xs text-muted-foreground">
-                            Agent
+                            Node
                           </dt>
-                          <dd className="font-mono">
-                            {selectedAgent.displayName}
-                          </dd>
+                          <dd className="font-mono">{selectedNode.id}</dd>
                         </div>
-                      ) : null}
-                    </dl>
-                  </CardContent>
-                </Card>
+                        {selectedTask ? (
+                          <>
+                            <div className="grid gap-1">
+                              <dt className="text-xs text-muted-foreground">
+                                State
+                              </dt>
+                              <dd className="font-mono">
+                                {selectedTask.state}
+                              </dd>
+                            </div>
+                            <div className="grid gap-1">
+                              <dt className="text-xs text-muted-foreground">
+                                Source
+                              </dt>
+                              <dd className="font-mono">
+                                {selectedTask.source}
+                              </dd>
+                            </div>
+                            <div className="grid gap-1">
+                              <dt className="text-xs text-muted-foreground">
+                                Authority
+                              </dt>
+                              <dd className="font-mono">
+                                {selectedTask.authority}
+                              </dd>
+                            </div>
+                          </>
+                        ) : null}
+                      </dl>
+                    </CardContent>
+                  </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Task</CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid gap-3">
-                    {selectedTask ? (
-                      <>
-                        <div className="grid gap-1">
-                          <div className="text-sm font-medium">
-                            {selectedTask.title}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {selectedTask.state} · {selectedTask.source} ·{" "}
-                            {selectedTask.authority}
-                          </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-sm">README</CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid gap-3">
+                      {selectedTask?.readme ? (
+                        <div className="max-h-[36rem] overflow-auto rounded-md border bg-muted p-3">
+                          <Markdown
+                            content={selectedTask.readme}
+                            omitFirstHeading
+                          />
                         </div>
-                        {selectedTask.readme ? (
-                          <div className="max-h-[36rem] overflow-auto rounded-md border bg-muted p-3">
-                            <Markdown content={selectedTask.readme} />
-                          </div>
-                        ) : (
-                          <div className="text-sm text-muted-foreground">
-                            No README.
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-sm text-muted-foreground">
-                        No task attached.
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          No README.
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               </div>
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Daemon Status</CardTitle>
-                </CardHeader>
-                <CardContent className="grid gap-4">
-                  <dl className="grid grid-cols-1 gap-4">
-                    <div className="grid gap-1">
-                      <dt className="text-xs text-muted-foreground">Repo</dt>
-                      <dd className="break-all font-mono text-sm">
-                        {status?.repoRoot ?? "—"}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1">
-                      <dt className="text-xs text-muted-foreground">DB</dt>
-                      <dd className="break-all font-mono text-sm">
-                        {status?.dbPath ?? "—"}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1">
-                      <dt className="text-xs text-muted-foreground">
-                        Default Branch
-                      </dt>
-                      <dd className="font-mono text-sm">
-                        {status?.defaultBranch ?? "—"}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1">
-                      <dt className="text-xs text-muted-foreground">Block</dt>
-                      <dd className="font-mono text-sm">
-                        {status?.block
-                          ? `${status.block.mode} (${status.block.reason ?? "n/a"})`
-                          : "none"}
-                      </dd>
-                    </div>
-                  </dl>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        </aside>
+            </aside>
+          ) : null}
+        </div>
       </div>
     </div>
   )
