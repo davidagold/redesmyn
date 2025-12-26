@@ -75,4 +75,3 @@ def load_task_doc(path: Path) -> TaskDoc:
     return TaskDoc(
         path=path, markdown=markdown, metadata=metadata, title=_extract_title(markdown)
     )
-

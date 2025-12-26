@@ -19,7 +19,7 @@ export function prefersDarkMode(): boolean {
 }
 
 export function applyThemePreference(value: ThemePreference): void {
-  const shouldBeDark = value === "dark" || (value === "system" && prefersDarkMode())
+  const shouldBeDark =
+    value === "dark" || (value === "system" && prefersDarkMode())
   document.documentElement.classList.toggle("dark", shouldBeDark)
 }
-

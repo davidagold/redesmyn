@@ -236,7 +236,9 @@ async def linear_oauth_callback(
     settings = load_settings(repo_root=app.state.ctx.repo_root)
     redirect_uri = linear_redirect_uri(settings)
     try:
-        token = await exchange_code_for_token(settings, code=code, redirect_uri=redirect_uri)
+        token = await exchange_code_for_token(
+            settings, code=code, redirect_uri=redirect_uri
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

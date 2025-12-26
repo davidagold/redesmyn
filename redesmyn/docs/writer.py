@@ -93,7 +93,5 @@ def upsert_synced_section(markdown: str, *, title: str, content: str) -> str:
         start_end = start + len(SYNC_START)
         return markdown[:start_end] + "\n" + body + markdown[end:]
 
-    section = (
-        f"\n## {title}\n\n{SYNC_START}\n{body}{SYNC_END}\n"
-    )
+    section = f"\n## {title}\n\n{SYNC_START}\n{body}{SYNC_END}\n"
     return markdown.rstrip() + section

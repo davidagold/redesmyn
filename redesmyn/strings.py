@@ -14,4 +14,3 @@ def slugify(value: str, *, fallback: str = "item") -> str:
             prev_dash = True
     slug = "".join(slug_chars).strip("-")
     return slug or fallback
-

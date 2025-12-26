@@ -117,14 +117,18 @@ class LinearClient:
     def __init__(self, *, access_token: str):
         self._access_token = access_token
 
-    async def graphql(self, query: str, variables: dict[str, object] | None = None) -> dict[str, Any]:
+    async def graphql(
+        self, query: str, variables: dict[str, object] | None = None
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                LINEAR_GRAPHQL_URL, json={"query": query, "variables": variables or {}}, headers=headers
+                LINEAR_GRAPHQL_URL,
+                json={"query": query, "variables": variables or {}},
+                headers=headers,
             )
             resp.raise_for_status()
             payload: dict[str, Any] = resp.json()

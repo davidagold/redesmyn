@@ -63,4 +63,3 @@ class TaskMetadata(BaseModel):
         if isinstance(value, str):
             return [v.strip() for v in value.split(",") if v.strip()]
         return value
-

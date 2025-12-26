@@ -24,7 +24,9 @@ export async function fetchEpics(): Promise<Epic[]> {
   return response.json() as Promise<Epic[]>
 }
 
-export async function fetchEpicGraph(epic: string | number): Promise<EpicGraph> {
+export async function fetchEpicGraph(
+  epic: string | number,
+): Promise<EpicGraph> {
   const response = await fetch(`/v1/epics/${epic}/graph`, {
     headers: { Accept: "application/json" },
   })

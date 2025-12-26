@@ -106,7 +106,8 @@ def sync(
         raise typer.Exit(2)
     if not from_ and not to:
         typer.echo(
-            "error: missing direction; pass --from local|linear or --to linear", err=True
+            "error: missing direction; pass --from local|linear or --to linear",
+            err=True,
         )
         raise typer.Exit(2)
 
@@ -263,7 +264,9 @@ def _infer_single_epic_slug_from_fs(repo_root: Path) -> str | None:
     epics_dir = repo_root / "epics"
     if not epics_dir.exists():
         return None
-    slugs = [p.name for p in epics_dir.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    slugs = [
+        p.name for p in epics_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
+    ]
     if len(slugs) == 1:
         return slugs[0]
     return None
@@ -303,9 +306,13 @@ async def _sync_from_local(
                 if len(epics) == 1:
                     epic_row = epics[0]
                 elif len(epics) > 1:
-                    raise typer.BadParameter("Multiple epics found; pass --epic <slug|id>.")
+                    raise typer.BadParameter(
+                        "Multiple epics found; pass --epic <slug|id>."
+                    )
                 else:
-                    raise typer.BadParameter("No epics found; create one with `rn epic create`.")
+                    raise typer.BadParameter(
+                        "No epics found; create one with `rn epic create`."
+                    )
 
             if epic_row is None and requested is not None:
                 if requested.isdigit():
@@ -352,7 +359,8 @@ async def _sync_from_local(
                     updated = True
                 if (
                     epic_doc.metadata.linear_project_id is not None
-                    and epic_row.linear_project_id != epic_doc.metadata.linear_project_id
+                    and epic_row.linear_project_id
+                    != epic_doc.metadata.linear_project_id
                 ):
                     epic_row.linear_project_id = epic_doc.metadata.linear_project_id
                     updated = True
@@ -412,7 +420,9 @@ async def _sync_from_local(
                         epic_id=epic_row.id,
                         title=doc.title,
                         body=doc.markdown,
-                        source=TaskSource.Linear if linear_issue_id else TaskSource.Local,
+                        source=TaskSource.Linear
+                        if linear_issue_id
+                        else TaskSource.Local,
                         state=TaskState.Todo,
                         linear_issue_id=linear_issue_id,
                         local_path=rel_path,
@@ -444,7 +454,9 @@ async def _sync_from_local(
                 branch = meta.node.branch if meta.node and meta.node.branch else None
                 if not branch:
                     identifier = linear_identifier or meta.id or f"task-{task.id}"
-                    short = slugify(doc.title, fallback="task")[:60].strip("-") or "task"
+                    short = (
+                        slugify(doc.title, fallback="task")[:60].strip("-") or "task"
+                    )
                     branch = f"rn/{epic_row.slug}/{identifier}-{short}"
 
                 node = await session.scalar(
@@ -553,7 +565,10 @@ async def _sync_from_linear(
             if rel.related_issue_id in blockers_by_issue:
                 blockers_by_issue[rel.related_issue_id].append(rel.issue_id)
             continue
-        if rel_type in {"blocked_by", "blockedby"} and rel.issue_id in blockers_by_issue:
+        if (
+            rel_type in {"blocked_by", "blockedby"}
+            and rel.issue_id in blockers_by_issue
+        ):
             blockers_by_issue[rel.issue_id].append(rel.related_issue_id)
 
     parent_issue_by_issue: dict[str, str | None] = {}
@@ -1209,7 +1224,9 @@ def linear_auth(
 
     settings = load_settings(repo_root=get_repo_context().repo_root)
     if not settings.linear_client_id or not settings.linear_client_secret:
-        redirect_uri = f"http://{settings.api_host}:{settings.api_port}/v1/linear/oauth/callback"
+        redirect_uri = (
+            f"http://{settings.api_host}:{settings.api_port}/v1/linear/oauth/callback"
+        )
         typer.echo(
             "error: Linear OAuth is not configured. Create a Linear OAuth app and set:\n"
             "  REDESMYN_LINEAR_CLIENT_ID\n"
@@ -1236,7 +1253,9 @@ def linear_auth(
             start = asyncio.get_event_loop().time()
             while True:
                 if asyncio.get_event_loop().time() - start > timeout_seconds:
-                    raise typer.BadParameter("Timed out waiting for Linear authorization")
+                    raise typer.BadParameter(
+                        "Timed out waiting for Linear authorization"
+                    )
 
                 try:
                     resp = await client.get(status_url)
@@ -1305,7 +1324,9 @@ def linear_import(
         None, help="Epic slug or id (defaults if only one epic)."
     ),
     create_nodes: bool = typer.Option(
-        True, "--create-nodes/--no-create-nodes", help="Create nodes/branches by default."
+        True,
+        "--create-nodes/--no-create-nodes",
+        help="Create nodes/branches by default.",
     ),
 ) -> None:
     try:
@@ -1463,7 +1484,9 @@ def linear_import(
                     )
                     node.parent_node_id = parent_node.id if parent_node else None
 
-                    base_ref = parent_node.branch_name if parent_node else epic_db.root_branch
+                    base_ref = (
+                        parent_node.branch_name if parent_node else epic_db.root_branch
+                    )
                     if node.worktree_path is None:
                         branch = node.branch_name
                         worktree_path = _default_worktree_path(ctx, branch=branch)
