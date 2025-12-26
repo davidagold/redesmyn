@@ -21,6 +21,10 @@ def _run_git(
 
 
 def find_repo_root(*, cwd: Path | None = None) -> Path:
+    return worktree_root(cwd=cwd)
+
+
+def canonical_repo_root(*, cwd: Path | None = None) -> Path:
     proc = _run_git(["worktree", "list", "--porcelain"], cwd=cwd)
     if proc.returncode == 0:
         candidates: list[Path] = []
@@ -35,10 +39,7 @@ def find_repo_root(*, cwd: Path | None = None) -> Path:
         if candidates:
             return candidates[0]
 
-    fallback = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
-    if fallback.returncode != 0:
-        raise NotAGitRepositoryError(fallback.stderr.strip() or "Not a git repository")
-    return Path(fallback.stdout.strip())
+    return worktree_root(cwd=cwd)
 
 
 def worktree_root(*, cwd: Path | None = None) -> Path:
