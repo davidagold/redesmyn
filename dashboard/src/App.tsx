@@ -9,9 +9,17 @@ import {
   setStoredThemePreference,
   type ThemePreference,
 } from "@/lib/theme"
-import { ChevronDown, Monitor, Moon, Sun, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Monitor, Moon, Sun, X } from "lucide-react"
 
 type GraphNode = EpicGraph["nodes"][number]
+
+function formatBranchName(branchName: string, epicSlug?: string | null) {
+  if (!epicSlug) {
+    return branchName
+  }
+  const prefix = `rn/${epicSlug}/`
+  return branchName.startsWith(prefix) ? branchName.slice(prefix.length) : branchName
+}
 
 function App() {
   const [theme, setTheme] = useState<ThemePreference>(
@@ -155,6 +163,7 @@ function App() {
         : undefined
     const agent =
       node.agentId !== null ? agentsById.get(node.agentId) : undefined
+    const branchLabel = formatBranchName(node.branchName, selectedEpic?.slug)
 
     return (
       <div key={node.id} style={{ paddingLeft: depth * 16 }}>
@@ -175,7 +184,9 @@ function App() {
         >
           <CardContent className="grid gap-1 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-mono text-sm">{node.branchName}</div>
+              <div className="font-mono text-sm" title={node.branchName}>
+                {branchLabel}
+              </div>
               <div className="text-xs text-muted-foreground">
                 node {node.id}
                 {agent ? ` · agent: ${agent.displayName}` : ""}
@@ -199,7 +210,11 @@ function App() {
   const themeIcon =
     theme === "dark" ? <Moon /> : theme === "light" ? <Sun /> : <Monitor />
 
-  const selectedLabel = selectedTask?.title ?? selectedNode?.branchName ?? null
+  const selectedLabel =
+    selectedTask?.title ??
+    (selectedNode
+      ? formatBranchName(selectedNode.branchName, selectedEpic?.slug)
+      : null)
 
   return (
     <div className="h-screen w-screen bg-background text-foreground">
@@ -288,7 +303,10 @@ function App() {
               )}
               {selectedLabel ? (
                 <>
-                  <span className="text-muted-foreground/60">/</span>
+                  <ChevronRight
+                    className="h-4 w-4 shrink-0 text-muted-foreground/60"
+                    aria-hidden="true"
+                  />
                   <span className="truncate">{selectedLabel}</span>
                 </>
               ) : null}
