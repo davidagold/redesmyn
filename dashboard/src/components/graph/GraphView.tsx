@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeData } from "./FlowBranchNode"
-import { layoutTree } from "./flowLayout"
+import { type FlowPosition, layoutTree } from "./flowLayout"
 
 interface GraphViewProps {
   rootNodes: GraphNode[]
@@ -90,7 +90,7 @@ export function GraphView({
     }
 
     path.reverse()
-    const positions = new Map<number, { x: number y: number }>()
+    const positions = new Map<number, FlowPosition>()
     const xOffset = 40
     const yOffset = 40
     const xStep = 360
