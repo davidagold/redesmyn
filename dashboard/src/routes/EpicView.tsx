@@ -42,6 +42,7 @@ export function EpicView() {
     refresh: refreshEpics,
   } = useEpics()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
+  const [focusMode, setFocusMode] = useState(false)
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -122,21 +123,39 @@ export function EpicView() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== "Escape") {
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.isContentEditable ||
+          e.target.tagName === "INPUT" ||
+          e.target.tagName === "TEXTAREA" ||
+          e.target.tagName === "SELECT")
+      ) {
         return
       }
-      if (epicMenuOpen) {
-        setEpicMenuOpen(false)
+
+      if (e.key === "Escape") {
+        if (epicMenuOpen) {
+          setEpicMenuOpen(false)
+          return
+        }
+        if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
+          setFocusMode(false)
+          void navigate({ to: "/$epicSlug", params: { epicSlug } })
+        }
         return
       }
-      if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
-        void navigate({ to: "/$epicSlug", params: { epicSlug } })
+
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (!selectedNode) {
+          return
+        }
+        setFocusMode((enabled) => !enabled)
       }
     }
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [epicMenuOpen, nodeId, epicSlug, navigate, selectedEdgeId])
+  }, [epicMenuOpen, epicSlug, navigate, nodeId, selectedEdgeId, selectedNode])
 
   function handleSelectNode(id: number) {
     if (epicSlug) {
@@ -148,6 +167,7 @@ export function EpicView() {
   }
 
   function handleSelectEdge(fromId: number, toId: number) {
+    setFocusMode(false)
     if (epicSlug) {
       void navigate({
         to: "/$epicSlug/e/$fromNodeId/$toNodeId",
@@ -161,6 +181,7 @@ export function EpicView() {
   }
 
   function handleClearSelection() {
+    setFocusMode(false)
     if (epicSlug) {
       void navigate({ to: "/$epicSlug", params: { epicSlug } })
     }
@@ -235,6 +256,7 @@ export function EpicView() {
             agentsById={agentsById}
             selectedNodeId={nodeId}
             selectedEdgeId={selectedEdgeId}
+            focusMode={focusMode}
             epicSlug={epicSlug}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}

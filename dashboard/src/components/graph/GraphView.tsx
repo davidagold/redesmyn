@@ -19,6 +19,7 @@ interface GraphViewProps {
   agentsById: Map<number, Agent>
   selectedNodeId: number | null
   selectedEdgeId: string | null
+  focusMode: boolean
   epicSlug?: string | null
   onSelectNode: (nodeId: number) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
@@ -32,6 +33,7 @@ export function GraphView({
   agentsById,
   selectedNodeId,
   selectedEdgeId,
+  focusMode,
   epicSlug,
   onSelectNode,
   onSelectEdge,
@@ -51,16 +53,71 @@ export function GraphView({
     [],
   )
 
-  const positions = useMemo(
-    () =>
-      layoutTree(rootNodes, childrenByParent, {
-        xSpacing: 360,
-        ySpacing: 140,
-        xOffset: 40,
-        yOffset: 40,
-      }),
-    [childrenByParent, rootNodes],
-  )
+  const nodesById = useMemo(() => {
+    const map = new Map<number, GraphNode>()
+    for (const node of rootNodes) {
+      map.set(node.id, node)
+    }
+    for (const group of childrenByParent.values()) {
+      for (const node of group) {
+        map.set(node.id, node)
+      }
+    }
+    return map
+  }, [childrenByParent, rootNodes])
+
+  const focusPositions = useMemo(() => {
+    if (!focusMode || selectedNodeId === null) {
+      return null
+    }
+
+    const path: GraphNode[] = []
+    const visited = new Set<number>()
+    let currentId: number | null = selectedNodeId
+
+    while (currentId !== null && !visited.has(currentId)) {
+      visited.add(currentId)
+      const node: GraphNode | null = nodesById.get(currentId) ?? null
+      if (!node) {
+        break
+      }
+      path.push(node)
+      currentId = node.parentNodeId ?? null
+    }
+
+    if (!path.length) {
+      return null
+    }
+
+    path.reverse()
+    const positions = new Map<number, { x: number y: number }>()
+    const xOffset = 40
+    const yOffset = 40
+    const xStep = 360
+    const yStep = 180
+
+    for (let i = 0; i < path.length; i += 1) {
+      const node = path[i]
+      positions.set(node.id, {
+        x: xOffset + i * xStep,
+        y: yOffset + i * yStep,
+      })
+    }
+
+    return positions
+  }, [focusMode, nodesById, selectedNodeId])
+
+  const positions = useMemo(() => {
+    if (focusPositions) {
+      return focusPositions
+    }
+    return layoutTree(rootNodes, childrenByParent, {
+      xSpacing: 360,
+      ySpacing: 140,
+      xOffset: 40,
+      yOffset: 40,
+    })
+  }, [childrenByParent, focusPositions, rootNodes])
 
   const nodes = useMemo(() => {
     const mapped: Node<FlowBranchNodeData>[] = []
@@ -118,9 +175,13 @@ export function GraphView({
 
   const edges = useMemo(() => {
     const mapped: Edge[] = []
+    const visibleNodeIds = new Set(nodes.map((node) => node.id))
     for (const node of nodes) {
       const graphNode = node.data.node
       if (graphNode.parentNodeId === null) {
+        continue
+      }
+      if (!visibleNodeIds.has(String(graphNode.parentNodeId))) {
         continue
       }
       const edgeId = makeEdgeId(graphNode.parentNodeId, graphNode.id)
