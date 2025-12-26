@@ -167,9 +167,8 @@ function App() {
       <div key={node.id} style={{ paddingLeft: depth * 16 }}>
         <Card
           data-node-card
-          className={`cursor-pointer transition-colors hover:bg-accent/40 ${
-            selectedNodeId === node.id ? "ring-2 ring-ring" : ""
-          }`}
+          className={`cursor-pointer transition-colors hover:bg-accent/40 ${selectedNodeId === node.id ? "ring-2 ring-ring" : ""
+            }`}
           onClick={() => setSelectedNodeId(node.id)}
           role="button"
           tabIndex={0}
@@ -279,7 +278,7 @@ function App() {
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-sm rounded-br-xl border border-border/60 bg-card shadow-sm">
           <header className="flex items-center justify-between gap-3 border-b bg-card/80 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/60">
             <div className="flex min-w-0 items-center gap-2 text-sm">
               {selectedEpic ? (
@@ -354,16 +353,13 @@ function App() {
             </main>
 
             <div
-              className={`relative overflow-hidden bg-card transition-[width] duration-200 ease-out ${
-                selectedNode ? "w-[32rem] border-l" : "w-0"
-              }`}
+              className={`relative overflow-hidden bg-card transition-[width] duration-200 ease-out ${selectedNode ? "w-[32rem] border-l" : "w-0"
+                }`}
             >
               <div
-                className={`h-full w-[32rem] ${
-                  selectedNode ? "opacity-100" : "opacity-0"
-                } transition-opacity duration-150 ease-out ${
-                  selectedNode ? "" : "pointer-events-none"
-                }`}
+                className={`h-full w-[32rem] ${selectedNode ? "opacity-100" : "opacity-0"
+                  } transition-opacity duration-150 ease-out ${selectedNode ? "" : "pointer-events-none"
+                  }`}
               >
                 <div className="flex items-center justify-between border-b px-4 py-2">
                   <div className="min-w-0 truncate font-mono text-xs text-muted-foreground">
