@@ -4,7 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <meta name="color-scheme" content="dark light" />
+    <script>
+      ;(() => {
+        try {
+          const key = "redesmyn-theme"
+          const value = localStorage.getItem(key) || "dark"
+          const systemDark = window.matchMedia(
+            "(prefers-color-scheme: dark)",
+          ).matches
+          const shouldBeDark = value === "dark" || (value === "system" && systemDark)
+          document.documentElement.classList.toggle("dark", shouldBeDark)
+        } catch {
+          document.documentElement.classList.add("dark")
+        }
+      })()
+    </script>
+    <title>Redesmyn</title>
   </head>
   <body>
     <div id="root"></div>

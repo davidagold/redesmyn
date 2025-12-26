@@ -9,16 +9,45 @@ import {
 } from "@/api"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  applyThemePreference,
+  getStoredThemePreference,
+  setStoredThemePreference,
+  type ThemePreference,
+} from "@/lib/theme"
+import { Monitor, Moon, Sun } from "lucide-react"
 
 type GraphNode = EpicGraph["nodes"][number]
 
 function App() {
+  const [theme, setTheme] = useState<ThemePreference>(
+    () => getStoredThemePreference() ?? "dark",
+  )
   const [status, setStatus] = useState<ApiStatus | null>(null)
   const [epics, setEpics] = useState<Epic[]>([])
   const [selectedEpicId, setSelectedEpicId] = useState<number | null>(null)
   const [graph, setGraph] = useState<EpicGraph | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    applyThemePreference(theme)
+    setStoredThemePreference(theme)
+  }, [theme])
+
+  useEffect(() => {
+    if (theme !== "system") {
+      return
+    }
+    const media = window.matchMedia("(prefers-color-scheme: dark)")
+    const handler = () => applyThemePreference(theme)
+    media.addEventListener?.("change", handler)
+    media.addListener?.(handler)
+    return () => {
+      media.removeEventListener?.("change", handler)
+      media.removeListener?.(handler)
+    }
+  }, [theme])
 
   const refresh = useCallback(async (epicIdOverride?: number | null) => {
     setLoading(true)
@@ -111,14 +140,46 @@ function App() {
     )
   }
 
+  const themeIcon =
+    theme === "dark" ? (
+      <Moon />
+    ) : theme === "light" ? (
+      <Sun />
+    ) : (
+      <Monitor />
+    )
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
         <header className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">Redesmyn</h1>
-          <Button onClick={() => void refresh(selectedEpicId)} disabled={loading}>
-            {loading ? "Refreshing…" : "Refresh"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              title={`Theme: ${theme}`}
+              aria-label={`Theme: ${theme}`}
+              onClick={() =>
+                setTheme(
+                  theme === "dark"
+                    ? "light"
+                    : theme === "light"
+                      ? "system"
+                      : "dark",
+                )
+              }
+            >
+              {themeIcon}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void refresh(selectedEpicId)}
+              disabled={loading}
+            >
+              {loading ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
         </header>
 
         {error ? <div className="text-sm text-destructive">{error}</div> : null}
