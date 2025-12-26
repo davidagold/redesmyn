@@ -50,14 +50,14 @@
 :root {
   --radius: 0.625rem;
   /* Rose Pine Dawn (light). */
-  --background: #faf4ed;
+  --background: #fefdfb;
   --foreground: #575279;
-  --card: #fffaf3;
+  --card: #fefdfb;
   --card-foreground: #575279;
-  --popover: #fffaf3;
+  --popover: #fefdfb;
   --popover-foreground: #575279;
   --primary: #907aa9;
-  --primary-foreground: #faf4ed;
+  --primary-foreground: #fefdfb;
   --secondary: #f2e9e1;
   --secondary-foreground: #575279;
   --muted: #f4ede8;
@@ -73,15 +73,15 @@
   --chart-3: #56949f;
   --chart-4: #d7827e;
   --chart-5: #b4637a;
-  --sidebar: #fffaf3;
+  --sidebar: #fefdfb;
   --sidebar-foreground: #575279;
   --sidebar-primary: #907aa9;
-  --sidebar-primary-foreground: #faf4ed;
+  --sidebar-primary-foreground: #fefdfb;
   --sidebar-accent: #f2e9e1;
   --sidebar-accent-foreground: #575279;
   --sidebar-border: #dfdad9;
   --sidebar-ring: #907aa9;
-  --surface: #f2e9de;
+  --surface: #f7f6f4;
 }
 
 .dark {
