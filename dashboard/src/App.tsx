@@ -373,32 +373,36 @@ function App() {
                 selectedNode ? "translate-x-0" : "translate-x-full"
               } ${selectedNode ? "" : "pointer-events-none"}`}
             >
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Close details"
-                className="absolute right-3 top-3"
-                onClick={() => setSelectedNodeId(null)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+              <div className="flex h-full flex-col">
+                <div className="flex h-9 items-center justify-end gap-2 border-b bg-card/80 px-2 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Close details"
+                    className="h-8 w-8"
+                    onClick={() => setSelectedNodeId(null)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
 
-              <div
-                className={`h-full overflow-auto p-4 pt-12 transition-opacity duration-150 ease-out ${
-                  selectedNode ? "opacity-100" : "opacity-0"
-                }`}
-              >
-                {selectedTask?.readme ? (
-                  <Markdown
-                    content={selectedTask.readme}
-                    omitFirstHeading
-                    omitMetadataSection
-                  />
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    No README.
-                  </div>
-                )}
+                <div
+                  className={`min-h-0 flex-1 overflow-auto p-4 transition-opacity duration-150 ease-out ${
+                    selectedNode ? "opacity-100" : "opacity-0"
+                  }`}
+                >
+                  {selectedTask?.readme ? (
+                    <Markdown
+                      content={selectedTask.readme}
+                      omitFirstHeading
+                      omitMetadataSection
+                    />
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      No README.
+                    </div>
+                  )}
+                </div>
               </div>
             </aside>
           </div>
