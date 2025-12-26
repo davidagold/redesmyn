@@ -107,7 +107,7 @@ When importing from Linear:
   - `group_under` (optional; grouping only)
   - `stacked_on` (optional; defines node parent/topology)
   - `must_land_after` (optional list; additional merge-order constraints)
-  - `linear.issue_id` / `linear.identifier` (optional; filled after `rn sync from linear` / `rn sync to linear`)
+  - `linear.issue_id` / `linear.identifier` (optional; filled after `rn sync --from linear` / `rn sync --to linear`)
   - `github.issue_id` / `github.issue_key` (optional; seam for later)
   - `node.branch` (optional; filled when linked/created)
 - Body conventions (v0):
