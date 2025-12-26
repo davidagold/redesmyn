@@ -86,11 +86,24 @@ def maybe_mount_dashboard(app_: FastAPI, repo_root: Path) -> None:
 
 app = App(title="Redesmyn", lifespan=lifespan)
 v1 = APIRouter(prefix="/v1")
+legacy = APIRouter(prefix="/api")
 
 
 @v1.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@legacy.get("/status", response_model=ApiStatusResponse, include_in_schema=False)
+async def legacy_api_status() -> ApiStatusResponse:
+    return await api_status()
+
+
+@legacy.get(
+    "/linear/status", response_model=LinearStatusResponse, include_in_schema=False
+)
+async def legacy_linear_status() -> LinearStatusResponse:
+    return await linear_status()
 
 
 async def _repo_id(session: AsyncSession) -> int | None:
@@ -316,3 +329,4 @@ async def api_status() -> ApiStatusResponse:
 
 
 app.include_router(v1)
+app.include_router(legacy)
