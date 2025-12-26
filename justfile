@@ -19,3 +19,7 @@ check:
     uv run ty check .
     cd dashboard && npm run lint
     cd dashboard && npm run typecheck
+
+run:
+    rn daemon run
+
