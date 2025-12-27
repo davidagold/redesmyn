@@ -43,6 +43,7 @@ We will use Redesmyn to build Redesmyn.
 - **Task**: A unit of planned work (typically backed by a Linear issue; optionally a GitHub issue) that can be linked to a node.
 - **Node / Branch Node**: A branch in the epic’s branch graph with a single parent (except the root).
 - **Branch Graph**: The topology of nodes for an epic. It is a tree (one parent per node); visually a DAG when including commit ancestry.
+- **Graph axes / motion**: The trunk is the base branch timeline; the horizontal axis expresses merge-order. Tasks drift from **left (more dependencies / potential blockers)** to **right (fewer blockers)** as they become merge-ready, then merge/ff back into the base branch.
 - **Stack**: A path through the branch graph from an upstream node to a connected leaf node. Stacks can overlap (shared prefix) and are primarily a focus/view concept.
 - **Agent**: An external worker (Codex, Claude Code, etc.) assigned to a node.
 - **Daemon**: The local long-running orchestrator managing state, locks, commands, and integrations.
