@@ -19,19 +19,19 @@ const indexRoute = createRoute({
 
 const epicRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/$epicSlug",
+  path: "$epicSlug",
   component: EpicView,
 })
 
 const edgeRoute = createRoute({
   getParentRoute: () => epicRoute,
-  path: "/e/$fromNodeId/$toNodeId",
+  path: "e/$fromNodeId/$toNodeId",
   component: () => null,
 })
 
 const nodeRoute = createRoute({
   getParentRoute: () => epicRoute,
-  path: "/$nodeId",
+  path: "$nodeId",
   component: () => null,
 })
 
