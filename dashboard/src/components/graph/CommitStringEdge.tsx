@@ -7,6 +7,7 @@ import {
   type EdgeProps,
 } from "@xyflow/react"
 import type { CSSProperties } from "react"
+import { edgeLodBand, GRAPH_EDGE_STYLE_ANIMATION_MS } from "./graphConfig"
 
 export type CommitStringEdgeData = {
   commitCount?: number | null
@@ -16,17 +17,17 @@ export type CommitStringEdgeData = {
 
 export type CommitStringFlowEdge = Edge<CommitStringEdgeData, "commitString">
 
-const selectZoom = (state: { transform: [number, number, number] }) =>
-  state.transform[2]
+const selectEdgeLod = (state: { transform: [number, number, number] }) =>
+  edgeLodBand(state.transform[2])
 
-function dashPattern(commitCount: number, zoom: number): string | undefined {
+function dashPattern(commitCount: number): string | undefined {
   if (!Number.isFinite(commitCount) || commitCount <= 0) {
     return undefined
   }
 
   const clamped = Math.min(commitCount, 50)
   const density = 1 + clamped / 12
-  const dash = Math.max(2, Math.round(2.5 / zoom))
+  const dash = 2
   const gap = Math.max(2, Math.round(10 / density))
   return `${dash} ${gap}`
 }
@@ -43,10 +44,10 @@ export function CommitStringEdge({
   data,
   style,
 }: EdgeProps<CommitStringFlowEdge>) {
-  const zoom = useStore(selectZoom)
+  const lod = useStore(selectEdgeLod)
   const commitCount = data?.commitCount ?? null
-  const showLabel = commitCount !== null && zoom >= 0.8
-  const showTicks = commitCount !== null && zoom >= 1.05
+  const showLabel = commitCount !== null && lod >= 1
+  const showTicks = commitCount !== null && lod >= 2
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -60,9 +61,8 @@ export function CommitStringEdge({
 
   const edgeStyle: CSSProperties = {
     ...style,
-    strokeDasharray: showTicks
-      ? dashPattern(commitCount ?? 0, zoom)
-      : undefined,
+    transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-width ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
+    strokeDasharray: showTicks ? dashPattern(commitCount ?? 0) : undefined,
   }
 
   return (
