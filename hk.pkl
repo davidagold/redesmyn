@@ -3,6 +3,7 @@ amends "package://github.com/jdx/hk/releases/download/v1.28.0/hk@1.28.0#/Config.
 local formatters = new Mapping<String, Step> {
     ["ruff_format"] {
         glob = List("**/*.py", "**/*.pyi")
+        stage = List("**/*.py", "**/*.pyi")
         check = "uv run ruff format --check {{files}}"
         fix = "uv run ruff format {{files}}"
     }
@@ -15,8 +16,15 @@ local formatters = new Mapping<String, Step> {
             "dashboard/**/*.jsx",
             "dashboard/**/*.json",
         )
+        stage = List(
+            "dashboard/**/*.ts",
+            "dashboard/**/*.tsx",
+            "dashboard/**/*.js",
+            "dashboard/**/*.jsx",
+            "dashboard/**/*.json",
+        )
         check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
-        fix = "dashboard/node_modules/.bin/oxfmt {{files}} && git add {{files}}"
+        fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
     }
 }
 
