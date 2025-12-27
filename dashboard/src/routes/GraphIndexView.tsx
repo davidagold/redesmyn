@@ -1,19 +1,25 @@
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect } from "react"
+import { useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { Button } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
 
-export function IndexView() {
+export function GraphIndexView() {
   const navigate = useNavigate()
   const { epics, loading, error, refresh } = useEpics()
+  const [menuOpen, setMenuOpen] = useState(false)
 
-  useEffect(() => {
-    if (epics.length > 0) {
-      void navigate({ to: "/$epicSlug", params: { epicSlug: epics[0].slug } })
+  function handleSelectEpic(epicId: number) {
+    const epic = epics.find((e) => e.id === epicId)
+    if (epic) {
+      void navigate({
+        to: "/graph/$epicSlug",
+        params: { epicSlug: epic.slug },
+      })
     }
-  }, [epics, navigate])
+    setMenuOpen(false)
+  }
 
   return (
     <ContentPanel>
@@ -24,18 +30,10 @@ export function IndexView() {
             selectedEpic={null}
             selectedEpicId={null}
             loading={loading}
-            menuOpen={false}
-            onMenuToggle={() => {}}
-            onMenuClose={() => {}}
-            onSelectEpic={(epicId) => {
-              const epic = epics.find((e) => e.id === epicId)
-              if (epic) {
-                void navigate({
-                  to: "/$epicSlug",
-                  params: { epicSlug: epic.slug },
-                })
-              }
-            }}
+            menuOpen={menuOpen}
+            onMenuToggle={() => setMenuOpen((open) => !open)}
+            onMenuClose={() => setMenuOpen(false)}
+            onSelectEpic={handleSelectEpic}
           />
         </div>
 

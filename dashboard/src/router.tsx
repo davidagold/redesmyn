@@ -2,10 +2,11 @@ import {
   createRouter,
   createRootRoute,
   createRoute,
+  redirect,
 } from "@tanstack/react-router"
 import { RootLayout } from "@/components/layout/RootLayout"
 import { EpicView } from "@/routes/EpicView"
-import { IndexView } from "@/routes/IndexView"
+import { GraphIndexView } from "@/routes/GraphIndexView"
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -14,11 +15,27 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: IndexView,
+  beforeLoad: () => {
+    throw redirect({ to: "/graph" })
+  },
 })
 
-const epicRoute = createRoute({
+// Layout route for /graph/* - no component, just passes through to children
+const graphRoute = createRoute({
   getParentRoute: () => rootRoute,
+  path: "graph",
+})
+
+// Index route for /graph (no epic selected)
+const graphIndexRoute = createRoute({
+  getParentRoute: () => graphRoute,
+  path: "/",
+  component: GraphIndexView,
+})
+
+// Route for /graph/$epicSlug
+const epicRoute = createRoute({
+  getParentRoute: () => graphRoute,
   path: "$epicSlug",
   component: EpicView,
 })
@@ -37,7 +54,10 @@ const nodeRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  epicRoute.addChildren([edgeRoute, nodeRoute]),
+  graphRoute.addChildren([
+    graphIndexRoute,
+    epicRoute.addChildren([edgeRoute, nodeRoute]),
+  ]),
 ])
 
 export const router = createRouter({ routeTree })

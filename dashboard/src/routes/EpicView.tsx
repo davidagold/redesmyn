@@ -140,7 +140,7 @@ export function EpicView() {
         }
         if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
           setFocusMode(false)
-          void navigate({ to: "/$epicSlug", params: { epicSlug } })
+          void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
         }
         return
       }
@@ -160,7 +160,7 @@ export function EpicView() {
   function handleSelectNode(id: number) {
     if (epicSlug) {
       void navigate({
-        to: "/$epicSlug/$nodeId",
+        to: "/graph/$epicSlug/$nodeId",
         params: { epicSlug, nodeId: String(id) },
       })
     }
@@ -170,7 +170,7 @@ export function EpicView() {
     setFocusMode(false)
     if (epicSlug) {
       void navigate({
-        to: "/$epicSlug/e/$fromNodeId/$toNodeId",
+        to: "/graph/$epicSlug/e/$fromNodeId/$toNodeId",
         params: {
           epicSlug,
           fromNodeId: String(fromId),
@@ -183,14 +183,14 @@ export function EpicView() {
   function handleClearSelection() {
     setFocusMode(false)
     if (epicSlug) {
-      void navigate({ to: "/$epicSlug", params: { epicSlug } })
+      void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
     }
   }
 
   function handleSelectEpic(epicId: number) {
     const epic = epics.find((e) => e.id === epicId)
     if (epic) {
-      void navigate({ to: "/$epicSlug", params: { epicSlug: epic.slug } })
+      void navigate({ to: "/graph/$epicSlug", params: { epicSlug: epic.slug } })
     }
     setEpicMenuOpen(false)
   }
