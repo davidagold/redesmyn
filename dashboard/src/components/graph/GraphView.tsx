@@ -6,7 +6,15 @@ import {
   type Edge,
   type ReactFlowInstance,
 } from "@xyflow/react"
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react"
 import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
@@ -79,6 +87,12 @@ interface Viewport {
   x: number
   y: number
   zoom: number
+}
+
+interface ViewportAnimation {
+  id: number
+  to: Viewport
+  duration: number
 }
 
 interface GraphBounds {
@@ -202,6 +216,9 @@ export function GraphView({
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
   const [layoutVersion, setLayoutVersion] = useState(0)
+  const viewportAnimationIdRef = useRef(0)
+  const [viewportAnimation, setViewportAnimation] =
+    useState<ViewportAnimation | null>(null)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -212,6 +229,34 @@ export function GraphView({
       },
     }),
     [],
+  )
+
+  const queueViewportAnimation = useCallback(
+    (nextViewport: Viewport, duration: number) => {
+      if (!flow) {
+        return
+      }
+      const currentViewport = flow.getViewport()
+      if (viewportMatches(currentViewport, nextViewport)) {
+        return
+      }
+      setViewportAnimation((current) => {
+        if (
+          current &&
+          current.duration === duration &&
+          viewportMatches(current.to, nextViewport)
+        ) {
+          return current
+        }
+        viewportAnimationIdRef.current += 1
+        return {
+          id: viewportAnimationIdRef.current,
+          to: nextViewport,
+          duration,
+        }
+      })
+    },
+    [flow],
   )
 
   const nodesById = useMemo(() => {
@@ -479,15 +524,35 @@ export function GraphView({
   useEffect(() => {
     const from = positionsRef.current
     const to = targetPositions
+    const positionsAreSame = positionsMatch(from, to)
+    const canAnimatePositions =
+      !positionsAreSame &&
+      from.size > 0 &&
+      to.size > 0 &&
+      GRAPH_LAYOUT_ANIMATION_MS > 0
+    const shouldSetPositionsImmediately =
+      !positionsAreSame && !canAnimatePositions
+    const canAnimateViewport = Boolean(flow && viewportAnimation)
 
-    if (positionsMatch(from, to)) {
+    if (!canAnimatePositions && !canAnimateViewport) {
+      if (shouldSetPositionsImmediately) {
+        setPositions(to)
+      }
       return
     }
 
-    if (!from.size || !to.size || GRAPH_LAYOUT_ANIMATION_MS <= 0) {
+    if (shouldSetPositionsImmediately) {
       setPositions(to)
-      return
     }
+
+    const viewportRequest = viewportAnimation
+    const fromViewport = canAnimateViewport && flow ? flow.getViewport() : null
+    const toViewport = canAnimateViewport ? (viewportRequest?.to ?? null) : null
+    const viewportDuration =
+      canAnimatePositions && viewportRequest
+        ? GRAPH_LAYOUT_ANIMATION_MS
+        : (viewportRequest?.duration ?? 0)
+    const requestId = viewportRequest?.id
 
     let frame: number | null = null
     const startedAt = performance.now()
@@ -498,21 +563,54 @@ export function GraphView({
 
     function step(now: number) {
       const elapsed = now - startedAt
-      const t = Math.min(1, elapsed / GRAPH_LAYOUT_ANIMATION_MS)
-      const eased = easeOutCubic(t)
-      const next = new Map<number, FlowPosition>()
+      let positionsDone = true
+      let viewportDone = true
 
-      for (const [nodeId, target] of to) {
-        const start = from.get(nodeId) ?? target
-        next.set(nodeId, {
-          x: start.x + (target.x - start.x) * eased,
-          y: start.y + (target.y - start.y) * eased,
-        })
+      if (canAnimatePositions) {
+        const t = Math.min(1, elapsed / GRAPH_LAYOUT_ANIMATION_MS)
+        const eased = easeOutCubic(t)
+        const next = new Map<number, FlowPosition>()
+
+        for (const [nodeId, target] of to) {
+          const start = from.get(nodeId) ?? target
+          next.set(nodeId, {
+            x: start.x + (target.x - start.x) * eased,
+            y: start.y + (target.y - start.y) * eased,
+          })
+        }
+
+        setPositions(next)
+        positionsDone = t >= 1
       }
 
-      setPositions(next)
-      if (t < 1) {
+      if (canAnimateViewport && fromViewport && toViewport && flow) {
+        const t =
+          viewportDuration > 0 ? Math.min(1, elapsed / viewportDuration) : 1
+        const eased = easeOutCubic(t)
+        flow.setViewport(
+          {
+            x: fromViewport.x + (toViewport.x - fromViewport.x) * eased,
+            y: fromViewport.y + (toViewport.y - fromViewport.y) * eased,
+            zoom:
+              fromViewport.zoom + (toViewport.zoom - fromViewport.zoom) * eased,
+          },
+          { duration: 0 },
+        )
+        viewportDone = t >= 1
+      }
+
+      if (!positionsDone || !viewportDone) {
         frame = requestAnimationFrame(step)
+        return
+      }
+
+      if (canAnimateViewport && requestId !== undefined) {
+        setViewportAnimation((current) =>
+          current?.id === requestId ? null : current,
+        )
+      }
+      if (canAnimatePositions) {
+        setPositions(to)
       }
     }
 
@@ -522,7 +620,7 @@ export function GraphView({
         cancelAnimationFrame(frame)
       }
     }
-  }, [targetPositions])
+  }, [flow, targetPositions, viewportAnimation])
 
   const selectedEdgeNodeIds = useMemo(() => {
     if (!selectedEdgeId || !selectedEdgeId.startsWith("edge:")) {
@@ -709,7 +807,7 @@ export function GraphView({
     return mapped
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const wasSelected = previousHasSelectionRef.current
     previousHasSelectionRef.current = hasSelection
 
@@ -727,15 +825,18 @@ export function GraphView({
         return
       }
       const nextViewport = computeFitViewport(bounds, rect, 0)
-      const currentViewport = flow.getViewport()
-      if (viewportMatches(currentViewport, nextViewport)) {
-        return
-      }
-      flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
+      queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
     }
-  }, [flow, hasSelection, nodes.length, targetPositions, trunkLayout])
+  }, [
+    flow,
+    hasSelection,
+    nodes.length,
+    queueViewportAnimation,
+    targetPositions,
+    trunkLayout,
+  ])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!flow || selectedNodeId === null || focusPositions) {
       return
     }
@@ -808,16 +909,13 @@ export function GraphView({
         : visibleCenterY - centerY * zoom
 
     const nextViewport = { x, y, zoom }
-    const currentViewport = flow.getViewport()
-    if (viewportMatches(currentViewport, nextViewport)) {
-      return
-    }
-    flow.setViewport(nextViewport, { duration: GRAPH_SELECTION_ANIMATION_MS })
+    queueViewportAnimation(nextViewport, GRAPH_SELECTION_ANIMATION_MS)
   }, [
     flow,
     focusPositions,
     selectedNodeId,
     selectionLens,
+    queueViewportAnimation,
     targetPositions,
     trunkLayout,
   ])
