@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@tanstack/react-router"
+import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
@@ -274,6 +274,8 @@ export function EpicView() {
           {loading ? "Loading graph..." : "No graph data available."}
         </div>
       )}
+
+      <Outlet />
     </ContentPanel>
   )
 }
