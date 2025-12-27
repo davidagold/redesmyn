@@ -511,7 +511,6 @@ export function GraphView({
             edges={edges}
             nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
             edgeTypes={{ commitString: CommitStringEdge }}
-            fitView
             nodesDraggable={false}
             nodesConnectable={false}
             onInit={setFlow}
