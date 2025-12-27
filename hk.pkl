@@ -28,12 +28,30 @@ local formatters = new Mapping<String, Step> {
     }
 }
 
+local precommit_steps = (formatters) {
+    ["openapi_types"] {
+        glob = List(
+            "redesmyn/api.py",
+            "redesmyn/api/**/*.py",
+            "redesmyn/schemas/**/*.py",
+            "openapi/openapi.json",
+            "dashboard/src/api/v1.ts",
+        )
+        dir = "dashboard"
+        fix = "npm run api:update"
+        stage = List(
+            "dashboard/src/api/v1.ts",
+            "openapi/openapi.json",
+        )
+    }
+}
+
 hooks {
     ["pre-commit"] {
         fix = true
         stash = "git"
         stage = true
-        steps = formatters
+        steps = precommit_steps
     }
 
     ["fix"] {
