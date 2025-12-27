@@ -1,4 +1,4 @@
-import { useNavigate, useParams, useSearch } from "@tanstack/react-router"
+import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useEffect, useMemo, useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
@@ -10,29 +10,18 @@ import { useGraph } from "@/hooks/useGraph"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { ChevronRight } from "lucide-react"
 
-type EpicSearchParams = {
-  node?: string
-  from?: string
-  to?: string
-}
-
 export function EpicView() {
   const navigate = useNavigate()
   const params = useParams({ strict: false })
-  const search = useSearch({ strict: false }) as EpicSearchParams
   const epicSlug = params.epicSlug as string | undefined
-  const nodeIdParam = search.node
-  const parsedNodeId =
-    typeof nodeIdParam === "string" ? parseInt(nodeIdParam, 10) : null
-  const nodeId =
-    parsedNodeId !== null && !Number.isNaN(parsedNodeId) ? parsedNodeId : null
-
-  const fromNodeIdParam = nodeId === null ? search.from : undefined
-  const toNodeIdParam = nodeId === null ? search.to : undefined
-  const parsedFromNodeId =
-    typeof fromNodeIdParam === "string" ? parseInt(fromNodeIdParam, 10) : null
-  const parsedToNodeId =
-    typeof toNodeIdParam === "string" ? parseInt(toNodeIdParam, 10) : null
+  const nodeIdParam = params.nodeId as string | undefined
+  const nodeId = nodeIdParam ? parseInt(nodeIdParam, 10) : null
+  const fromNodeIdParam = params.fromNodeId as string | undefined
+  const toNodeIdParam = params.toNodeId as string | undefined
+  const parsedFromNodeId = fromNodeIdParam
+    ? parseInt(fromNodeIdParam, 10)
+    : null
+  const parsedToNodeId = toNodeIdParam ? parseInt(toNodeIdParam, 10) : null
   const fromNodeId =
     parsedFromNodeId !== null && !Number.isNaN(parsedFromNodeId)
       ? parsedFromNodeId
@@ -42,7 +31,7 @@ export function EpicView() {
       ? parsedToNodeId
       : null
   const selectedEdgeId =
-    nodeId === null && fromNodeId !== null && toNodeId !== null
+    fromNodeId !== null && toNodeId !== null
       ? makeEdgeId(fromNodeId, toNodeId)
       : null
 
@@ -151,11 +140,7 @@ export function EpicView() {
         }
         if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
           setFocusMode(false)
-          void navigate({
-            to: "/$epicSlug",
-            params: { epicSlug },
-            search: () => ({}),
-          })
+          void navigate({ to: "/$epicSlug", params: { epicSlug } })
         }
         return
       }
@@ -175,9 +160,8 @@ export function EpicView() {
   function handleSelectNode(id: number) {
     if (epicSlug) {
       void navigate({
-        to: "/$epicSlug",
-        params: { epicSlug },
-        search: () => ({ node: String(id) }),
+        to: "/$epicSlug/$nodeId",
+        params: { epicSlug, nodeId: String(id) },
       })
     }
   }
@@ -186,9 +170,12 @@ export function EpicView() {
     setFocusMode(false)
     if (epicSlug) {
       void navigate({
-        to: "/$epicSlug",
-        params: { epicSlug },
-        search: () => ({ from: String(fromId), to: String(toId) }),
+        to: "/$epicSlug/e/$fromNodeId/$toNodeId",
+        params: {
+          epicSlug,
+          fromNodeId: String(fromId),
+          toNodeId: String(toId),
+        },
       })
     }
   }
@@ -196,24 +183,15 @@ export function EpicView() {
   function handleClearSelection() {
     setFocusMode(false)
     if (epicSlug) {
-      void navigate({
-        to: "/$epicSlug",
-        params: { epicSlug },
-        search: () => ({}),
-      })
+      void navigate({ to: "/$epicSlug", params: { epicSlug } })
     }
   }
 
   function handleSelectEpic(epicId: number) {
     const epic = epics.find((e) => e.id === epicId)
     if (epic) {
-      void navigate({
-        to: "/$epicSlug",
-        params: { epicSlug: epic.slug },
-        search: () => ({}),
-      })
+      void navigate({ to: "/$epicSlug", params: { epicSlug: epic.slug } })
     }
-    setFocusMode(false)
     setEpicMenuOpen(false)
   }
 
@@ -296,6 +274,8 @@ export function EpicView() {
           {loading ? "Loading graph..." : "No graph data available."}
         </div>
       )}
+
+      <Outlet />
     </ContentPanel>
   )
 }

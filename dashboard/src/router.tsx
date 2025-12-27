@@ -23,7 +23,22 @@ const epicRoute = createRoute({
   component: EpicView,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, epicRoute])
+const edgeRoute = createRoute({
+  getParentRoute: () => epicRoute,
+  path: "e/$fromNodeId/$toNodeId",
+  component: () => null,
+})
+
+const nodeRoute = createRoute({
+  getParentRoute: () => epicRoute,
+  path: "$nodeId",
+  component: () => null,
+})
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  epicRoute.addChildren([edgeRoute, nodeRoute]),
+])
 
 export const router = createRouter({ routeTree })
 
