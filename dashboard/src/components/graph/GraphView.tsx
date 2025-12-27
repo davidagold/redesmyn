@@ -7,7 +7,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react"
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
+import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
@@ -16,6 +16,7 @@ import {
   DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
+  GRAPH_SELECTION_ANIMATION_MS,
   GRAPH_FIT_MAX_ZOOM,
   GRAPH_FIT_MIN_ZOOM,
   GRAPH_FIT_PADDING_PX,
@@ -23,7 +24,10 @@ import {
   GRAPH_NODE_WIDTH,
   GRAPH_PADDING,
   TRUNK_GAP,
-  TRUNK_HEIGHT,
+  TRUNK_COMMIT_PADDING,
+  TRUNK_COMMIT_SPACING,
+  TRUNK_LABEL_COLUMN,
+  TRUNK_THICKNESS,
 } from "./graphConfig"
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
@@ -34,6 +38,7 @@ interface GraphViewProps {
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
+  trunk?: TrunkTimeline | null
   selectedNodeId: number | null
   selectedEdgeId: string | null
   focusMode: boolean
@@ -50,6 +55,25 @@ type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
 const POSITION_EPSILON_PX = 0.25
 const VIEWPORT_EPSILON_PX = 0.5
 const VIEWPORT_EPSILON_ZOOM = 0.001
+
+type TrunkMark = {
+  type: "commit" | "base" | "ellipsis"
+  sha?: string
+  authorName?: string | null
+  authorEmail?: string | null
+  authoredAt?: string | null
+}
+
+type TrunkLayout = {
+  x: number
+  y: number
+  width: number
+  height: number
+  marks: TrunkMark[]
+  baseOffset: number
+  commitSpacing: number
+  commitPadding: number
+}
 
 interface Viewport {
   x: number
@@ -97,33 +121,31 @@ function viewportMatches(current: Viewport, next: Viewport) {
   )
 }
 
-function computeGraphBounds(positions: Map<number, FlowPosition>) {
-  if (!positions.size) {
+function computeGraphBounds(
+  positions: Map<number, FlowPosition>,
+  trunkLayout: TrunkLayout | null,
+) {
+  if (!positions.size && !trunkLayout) {
     return null
   }
   let minX = Number.POSITIVE_INFINITY
   let minY = Number.POSITIVE_INFINITY
   let maxX = Number.NEGATIVE_INFINITY
   let maxY = Number.NEGATIVE_INFINITY
-  let maxNodeX = 0
 
   for (const pos of positions.values()) {
     minX = Math.min(minX, pos.x)
     minY = Math.min(minY, pos.y)
     maxX = Math.max(maxX, pos.x + GRAPH_NODE_WIDTH)
     maxY = Math.max(maxY, pos.y + GRAPH_NODE_HEIGHT)
-    maxNodeX = Math.max(maxNodeX, pos.x)
   }
 
-  const trunkWidth = Math.max(
-    GRAPH_NODE_WIDTH,
-    maxNodeX + GRAPH_NODE_WIDTH - GRAPH_PADDING,
-  )
-
-  minX = Math.min(minX, GRAPH_PADDING)
-  minY = Math.min(minY, GRAPH_PADDING)
-  maxX = Math.max(maxX, GRAPH_PADDING + trunkWidth)
-  maxY = Math.max(maxY, GRAPH_PADDING + TRUNK_HEIGHT)
+  if (trunkLayout) {
+    minX = trunkLayout.x
+    minY = trunkLayout.y
+    maxX = Math.max(maxX, trunkLayout.x + trunkLayout.width)
+    maxY = Math.max(maxY, trunkLayout.y + trunkLayout.height)
+  }
 
   return { minX, minY, maxX, maxY }
 }
@@ -165,6 +187,7 @@ export function GraphView({
   childrenByParent,
   tasksById,
   agentsById,
+  trunk,
   selectedNodeId,
   selectedEdgeId,
   focusMode,
@@ -208,6 +231,86 @@ export function GraphView({
     () => [...nodesById.values()].sort((a, b) => a.id - b.id),
     [nodesById],
   )
+
+  const trunkMarks = useMemo(() => {
+    if (!trunk || !trunk.baseSha) {
+      return null
+    }
+    const marks: TrunkMark[] = []
+    const commitsAfter = trunk.commitsAfter ?? []
+    const commitsBefore = trunk.commitsBefore ?? []
+    const baseCommit = trunk.baseCommit ?? { sha: trunk.baseSha }
+
+    if (trunk.hasMoreAfter) {
+      marks.push({ type: "ellipsis" })
+    }
+    for (const commit of [...commitsAfter].reverse()) {
+      marks.push({
+        type: "commit",
+        sha: commit.sha,
+        authorName: commit.authorName ?? null,
+        authorEmail: commit.authorEmail ?? null,
+        authoredAt: commit.authoredAt ?? null,
+      })
+    }
+    marks.push({
+      type: "base",
+      sha: baseCommit.sha,
+      authorName: baseCommit.authorName ?? null,
+      authorEmail: baseCommit.authorEmail ?? null,
+      authoredAt: baseCommit.authoredAt ?? null,
+    })
+    for (const commit of commitsBefore) {
+      marks.push({
+        type: "commit",
+        sha: commit.sha,
+        authorName: commit.authorName ?? null,
+        authorEmail: commit.authorEmail ?? null,
+        authoredAt: commit.authoredAt ?? null,
+      })
+    }
+    if (trunk.hasMoreBefore) {
+      marks.push({ type: "ellipsis" })
+    }
+    const baseIndex = marks.findIndex((mark) => mark.type === "base")
+    return {
+      marks,
+      baseIndex: baseIndex >= 0 ? baseIndex : Math.floor(marks.length / 2),
+    }
+  }, [trunk])
+
+  const trunkColumnWidth = useMemo(
+    () => TRUNK_THICKNESS + TRUNK_LABEL_COLUMN,
+    [],
+  )
+
+  const trunkMetrics = useMemo(() => {
+    const marks = trunkMarks?.marks ?? []
+    const markCount = marks.length
+    const commitSpacing = TRUNK_COMMIT_SPACING
+    const commitPadding = TRUNK_COMMIT_PADDING
+    const spanHeight =
+      markCount > 1
+        ? commitPadding * 2 + (markCount - 1) * commitSpacing
+        : commitPadding * 2
+    const baseIndex = trunkMarks?.baseIndex ?? 0
+    const baseOffset =
+      markCount > 0 ? commitPadding + baseIndex * commitSpacing : commitPadding
+
+    return {
+      marks,
+      commitSpacing,
+      commitPadding,
+      spanHeight,
+      baseOffset,
+    }
+  }, [trunkMarks])
+
+  const layoutAnchorY = useMemo(() => {
+    const offset = trunkMetrics.baseOffset
+    const desired = GRAPH_PADDING + offset - GRAPH_NODE_HEIGHT / 2
+    return Math.max(GRAPH_PADDING, desired)
+  }, [trunkMetrics.baseOffset])
 
   const focusPositions = useMemo(() => {
     if (!focusMode || selectedNodeId === null) {
@@ -257,13 +360,14 @@ export function GraphView({
     }
 
     let cancelled = false
-    const yOffset = GRAPH_PADDING + TRUNK_HEIGHT + TRUNK_GAP
+    const yOffset = layoutAnchorY
+    const xOffset = GRAPH_PADDING + trunkColumnWidth + TRUNK_GAP
     ;(async () => {
       try {
         const positions = await layoutWithElk(graphNodes, childrenByParent, {
           nodeWidth: GRAPH_NODE_WIDTH,
           nodeHeight: GRAPH_NODE_HEIGHT,
-          xOffset: GRAPH_PADDING,
+          xOffset,
           yOffset,
         })
         if (!cancelled) {
@@ -281,7 +385,13 @@ export function GraphView({
     return () => {
       cancelled = true
     }
-  }, [childrenByParent, focusPositions, graphNodes])
+  }, [
+    childrenByParent,
+    focusPositions,
+    graphNodes,
+    layoutAnchorY,
+    trunkColumnWidth,
+  ])
 
   const basePositions = useMemo(() => {
     if (focusPositions) {
@@ -293,10 +403,17 @@ export function GraphView({
     return layoutTree(rootNodes, childrenByParent, {
       xSpacing: 360,
       ySpacing: 140,
-      xOffset: GRAPH_PADDING,
-      yOffset: GRAPH_PADDING + TRUNK_HEIGHT + TRUNK_GAP,
+      xOffset: GRAPH_PADDING + trunkColumnWidth + TRUNK_GAP,
+      yOffset: layoutAnchorY,
     })
-  }, [childrenByParent, elkPositions, focusPositions, rootNodes])
+  }, [
+    childrenByParent,
+    elkPositions,
+    focusPositions,
+    rootNodes,
+    layoutAnchorY,
+    trunkColumnWidth,
+  ])
 
   const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
   const hasSelectionRef = useRef(hasSelection)
@@ -423,32 +540,57 @@ export function GraphView({
     return new Set([fromId, toId])
   }, [selectedEdgeId])
 
+  const trunkLayout = useMemo<TrunkLayout | null>(() => {
+    if (focusPositions || basePositions.size === 0) {
+      return null
+    }
+    let maxY = GRAPH_PADDING
+    for (const pos of basePositions.values()) {
+      maxY = Math.max(maxY, pos.y)
+    }
+    const graphBottom = maxY + GRAPH_NODE_HEIGHT
+    const trunkHeight = Math.max(
+      trunkMetrics.spanHeight,
+      graphBottom - GRAPH_PADDING,
+    )
+
+    return {
+      x: GRAPH_PADDING,
+      y: GRAPH_PADDING,
+      width: trunkColumnWidth,
+      height: trunkHeight,
+      marks: trunkMetrics.marks,
+      baseOffset: trunkMetrics.baseOffset,
+      commitSpacing: trunkMetrics.commitSpacing,
+      commitPadding: trunkMetrics.commitPadding,
+    }
+  }, [basePositions, focusPositions, trunkColumnWidth, trunkMetrics])
+
   const nodes = useMemo(() => {
     const mapped: GraphFlowNode[] = []
-    const includeTrunk = !focusPositions && positions.size > 0
-    if (includeTrunk) {
-      let maxX = 0
-      for (const pos of positions.values()) {
-        maxX = Math.max(maxX, pos.x)
-      }
-      const trunkWidth = Math.max(
-        GRAPH_NODE_WIDTH,
-        maxX + GRAPH_NODE_WIDTH - GRAPH_PADDING,
-      )
-
+    const includeTrunk = !focusPositions && positions.size > 0 && trunkLayout
+    if (includeTrunk && trunkLayout) {
       mapped.push({
         id: TRUNK_NODE_ID,
         type: "trunk",
-        position: { x: GRAPH_PADDING, y: GRAPH_PADDING },
-        data: {},
+        position: { x: trunkLayout.x, y: trunkLayout.y },
+        data: {
+          marks: trunkLayout.marks,
+          baseOffset: trunkLayout.baseOffset,
+          commitSpacing: trunkLayout.commitSpacing,
+          commitPadding: trunkLayout.commitPadding,
+          lineWidth: TRUNK_THICKNESS,
+          labelOffset: TRUNK_THICKNESS + 12,
+        },
         draggable: false,
         selectable: false,
         focusable: false,
+        sourcePosition: Position.Right,
         style: {
-          width: trunkWidth,
-          height: TRUNK_HEIGHT,
+          width: trunkLayout.width,
+          height: trunkLayout.height,
         },
-        className: "pointer-events-none",
+        className: "select-none",
       } satisfies TrunkNodeType)
     }
 
@@ -502,6 +644,7 @@ export function GraphView({
     selectedEdgeNodeIds,
     selectedNodeId,
     tasksById,
+    trunkLayout,
   ])
 
   const edges = useMemo(() => {
@@ -511,6 +654,7 @@ export function GraphView({
         mapped.push({
           id: `trunk:${root.id}`,
           source: TRUNK_NODE_ID,
+          sourceHandle: "base",
           target: String(root.id),
           type: "smoothstep",
           selectable: false,
@@ -578,7 +722,7 @@ export function GraphView({
       if (!rect || rect.width <= 0 || rect.height <= 0) {
         return
       }
-      const bounds = computeGraphBounds(targetPositions)
+      const bounds = computeGraphBounds(targetPositions, trunkLayout)
       if (!bounds) {
         return
       }
@@ -589,7 +733,7 @@ export function GraphView({
       }
       flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
     }
-  }, [flow, hasSelection, nodes.length, targetPositions])
+  }, [flow, hasSelection, nodes.length, targetPositions, trunkLayout])
 
   useEffect(() => {
     if (!flow || selectedNodeId === null || focusPositions) {
@@ -645,16 +789,22 @@ export function GraphView({
     const visibleCenterX = (rect.width - DETAILS_PANEL_WIDTH_PX) / 2
     const visibleCenterY = rect.height / 2
 
-    const x = visibleCenterX - centerX * zoom
-    const desiredTrunkScreenY = GRAPH_PADDING
-    const trunkWorldY = GRAPH_PADDING
-    const trunkAnchorY = desiredTrunkScreenY - trunkWorldY * zoom
+    const desiredTrunkScreenX = GRAPH_PADDING
+    const trunkWorldX = trunkLayout?.x ?? GRAPH_PADDING
+    const trunkAnchorX = desiredTrunkScreenX - trunkWorldX * zoom
+
+    const xMin = padding - minX * zoom
+    const xMax = rect.width - DETAILS_PANEL_WIDTH_PX - padding - maxX * zoom
+    const x =
+      xMin <= xMax
+        ? Math.min(xMax, Math.max(xMin, trunkAnchorX))
+        : visibleCenterX - centerX * zoom
 
     const yMin = padding - minY * zoom
     const yMax = rect.height - padding - maxY * zoom
     const y =
       yMin <= yMax
-        ? Math.min(yMax, Math.max(yMin, trunkAnchorY))
+        ? Math.min(yMax, Math.max(yMin, visibleCenterY - centerY * zoom))
         : visibleCenterY - centerY * zoom
 
     const nextViewport = { x, y, zoom }
@@ -662,8 +812,15 @@ export function GraphView({
     if (viewportMatches(currentViewport, nextViewport)) {
       return
     }
-    flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
-  }, [flow, focusPositions, selectedNodeId, selectionLens, targetPositions])
+    flow.setViewport(nextViewport, { duration: GRAPH_SELECTION_ANIMATION_MS })
+  }, [
+    flow,
+    focusPositions,
+    selectedNodeId,
+    selectionLens,
+    targetPositions,
+    trunkLayout,
+  ])
 
   useEffect(() => {
     if (!flow || !nodes.length) {

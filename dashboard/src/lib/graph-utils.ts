@@ -3,6 +3,7 @@ import type { EpicGraph } from "@/api"
 export type GraphNode = EpicGraph["nodes"][number]
 export type Task = EpicGraph["tasks"][number]
 export type Agent = EpicGraph["agents"][number]
+export type TrunkTimeline = EpicGraph["trunk"]
 
 export function formatBranchName(
   branchName: string,

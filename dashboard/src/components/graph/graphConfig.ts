@@ -1,12 +1,16 @@
 export const GRAPH_LAYOUT_ANIMATION_MS = 260
+export const GRAPH_SELECTION_ANIMATION_MS = 180
 export const GRAPH_EDGE_STYLE_ANIMATION_MS = 150
 
 export const GRAPH_NODE_WIDTH = 320
 export const GRAPH_NODE_HEIGHT = 96
 export const GRAPH_PADDING = 40
 
-export const TRUNK_HEIGHT = 2
+export const TRUNK_THICKNESS = 2
 export const TRUNK_GAP = 56
+export const TRUNK_COMMIT_PADDING = 18
+export const TRUNK_COMMIT_SPACING = 30
+export const TRUNK_LABEL_COLUMN = 120
 
 export const DETAILS_PANEL_WIDTH_PX = 32 * 16
 export const GRAPH_FIT_PADDING_PX = 72

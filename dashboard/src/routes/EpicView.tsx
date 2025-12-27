@@ -254,6 +254,7 @@ export function EpicView() {
             childrenByParent={childrenByParent}
             tasksById={tasksById}
             agentsById={agentsById}
+            trunk={graph.trunk ?? null}
             selectedNodeId={nodeId}
             selectedEdgeId={selectedEdgeId}
             focusMode={focusMode}
