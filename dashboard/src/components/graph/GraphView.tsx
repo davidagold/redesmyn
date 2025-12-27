@@ -1,15 +1,17 @@
 import { DotGrid } from "@/components/ui/dot-grid"
 import {
+  Position,
   ReactFlow,
   type DefaultEdgeOptions,
   type Edge,
-  type Node,
   type ReactFlowInstance,
 } from "@xyflow/react"
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
-import { FlowBranchNode, type FlowBranchNodeData } from "./FlowBranchNode"
+import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
+import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
+import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
 
 interface GraphViewProps {
@@ -26,6 +28,15 @@ interface GraphViewProps {
   onClearSelection: () => void
 }
 
+const NODE_WIDTH = 320
+const NODE_HEIGHT = 96
+const GRAPH_PADDING = 40
+const TRUNK_HEIGHT = 2
+const TRUNK_GAP = 56
+const TRUNK_NODE_ID = "trunk"
+
+type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
+
 export function GraphView({
   rootNodes,
   childrenByParent,
@@ -41,6 +52,9 @@ export function GraphView({
 }: GraphViewProps) {
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+  const [elkPositions, setElkPositions] =
+    useState<Map<number, FlowPosition> | null>(null)
+  const [layoutVersion, setLayoutVersion] = useState(0)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -65,6 +79,11 @@ export function GraphView({
     }
     return map
   }, [childrenByParent, rootNodes])
+
+  const graphNodes = useMemo(
+    () => [...nodesById.values()].sort((a, b) => a.id - b.id),
+    [nodesById],
+  )
 
   const focusPositions = useMemo(() => {
     if (!focusMode || selectedNodeId === null) {
@@ -107,30 +126,82 @@ export function GraphView({
     return positions
   }, [focusMode, nodesById, selectedNodeId])
 
+  useEffect(() => {
+    if (focusPositions || !graphNodes.length) {
+      setElkPositions(null)
+      return
+    }
+
+    let cancelled = false
+    const yOffset = GRAPH_PADDING + TRUNK_HEIGHT + TRUNK_GAP
+    ;(async () => {
+      try {
+        const positions = await layoutWithElk(graphNodes, childrenByParent, {
+          nodeWidth: NODE_WIDTH,
+          nodeHeight: NODE_HEIGHT,
+          xOffset: GRAPH_PADDING,
+          yOffset,
+        })
+        if (!cancelled) {
+          setElkPositions(positions)
+          setLayoutVersion((v) => v + 1)
+        }
+      } catch {
+        if (!cancelled) {
+          setElkPositions(null)
+          setLayoutVersion((v) => v + 1)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [childrenByParent, focusPositions, graphNodes])
+
   const positions = useMemo(() => {
     if (focusPositions) {
       return focusPositions
     }
+    if (elkPositions) {
+      return elkPositions
+    }
     return layoutTree(rootNodes, childrenByParent, {
       xSpacing: 360,
       ySpacing: 140,
-      xOffset: 40,
-      yOffset: 40,
+      xOffset: GRAPH_PADDING,
+      yOffset: GRAPH_PADDING + TRUNK_HEIGHT + TRUNK_GAP,
     })
-  }, [childrenByParent, focusPositions, rootNodes])
+  }, [childrenByParent, elkPositions, focusPositions, rootNodes])
 
   const nodes = useMemo(() => {
-    const mapped: Node<FlowBranchNodeData>[] = []
+    const mapped: GraphFlowNode[] = []
+    const includeTrunk = !focusPositions && positions.size > 0
+    if (includeTrunk) {
+      let maxX = 0
+      for (const pos of positions.values()) {
+        maxX = Math.max(maxX, pos.x)
+      }
+      const trunkWidth = Math.max(NODE_WIDTH, maxX + NODE_WIDTH - GRAPH_PADDING)
+
+      mapped.push({
+        id: TRUNK_NODE_ID,
+        type: "trunk",
+        position: { x: GRAPH_PADDING, y: GRAPH_PADDING },
+        data: {},
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        style: {
+          width: trunkWidth,
+          height: TRUNK_HEIGHT,
+        },
+        className: "pointer-events-none",
+      } satisfies TrunkNodeType)
+    }
+
     for (const [nodeId, pos] of positions) {
-      const node = rootNodes.find((n) => n.id === nodeId) ?? null
-      // Note: positions is computed from the same root/children inputs, so every id
-      // should be present in those arrays; this fallback is defensive only.
-      const graphNode =
-        node ??
-        Array.from(childrenByParent.values())
-          .flat()
-          .find((n) => n.id === nodeId) ??
-        null
+      const graphNode = nodesById.get(nodeId) ?? null
       if (!graphNode) {
         continue
       }
@@ -159,25 +230,56 @@ export function GraphView({
         draggable: false,
         focusable: true,
         selected: selectedNodeId === graphNode.id,
-      })
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
+        style: {
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+        },
+      } satisfies FlowBranchNodeType)
     }
     return mapped
   }, [
     agentsById,
-    childrenByParent,
     epicSlug,
+    focusPositions,
     onSelectNode,
+    nodesById,
     positions,
-    rootNodes,
     selectedNodeId,
     tasksById,
   ])
 
   const edges = useMemo(() => {
     const mapped: Edge[] = []
+    if (!focusPositions) {
+      for (const root of rootNodes) {
+        mapped.push({
+          id: `trunk:${root.id}`,
+          source: TRUNK_NODE_ID,
+          target: String(root.id),
+          type: "smoothstep",
+          selectable: false,
+          focusable: false,
+          interactionWidth: 0,
+          style: {
+            stroke: "var(--border)",
+            strokeOpacity: 0.35,
+            strokeWidth: 1.25,
+          },
+        })
+      }
+    }
+
     const visibleNodeIds = new Set(nodes.map((node) => node.id))
     for (const node of nodes) {
+      if (node.type !== "branch") {
+        continue
+      }
       const graphNode = node.data.node
+      if (!graphNode) {
+        continue
+      }
       if (graphNode.parentNodeId === null) {
         continue
       }
@@ -205,14 +307,14 @@ export function GraphView({
       })
     }
     return mapped
-  }, [hoveredEdgeId, nodes, selectedEdgeId])
+  }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
   useEffect(() => {
     if (!flow || !nodes.length) {
       return
     }
     flow.fitView({ padding: 0.2, duration: 200 })
-  }, [flow, nodes.length])
+  }, [flow, layoutVersion, nodes.length])
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
@@ -222,13 +324,16 @@ export function GraphView({
           <ReactFlow
             nodes={nodes}
             edges={edges}
-            nodeTypes={{ branch: FlowBranchNode }}
+            nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
             fitView
             nodesDraggable={false}
             nodesConnectable={false}
             onInit={setFlow}
             onPaneClick={onClearSelection}
             onEdgeClick={(e, edge) => {
+              if (!edge.id.startsWith("edge:")) {
+                return
+              }
               e.stopPropagation()
               const fromId = Number(edge.source)
               const toId = Number(edge.target)
@@ -237,8 +342,15 @@ export function GraphView({
               }
               onSelectEdge(fromId, toId)
             }}
-            onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+            onEdgeMouseEnter={(_, edge) => {
+              if (edge.id.startsWith("edge:")) {
+                setHoveredEdgeId(edge.id)
+              }
+            }}
             onEdgeMouseLeave={(_, edge) => {
+              if (!edge.id.startsWith("edge:")) {
+                return
+              }
               setHoveredEdgeId((current) =>
                 current === edge.id ? null : current,
               )
