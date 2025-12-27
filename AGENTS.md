@@ -15,3 +15,4 @@
 ## Dashboard UI Conventions
 
 - Avoid adding borders to every card/panel; too many lines makes the UI feel busy and distracts from the information. Prefer spacing and subtle rules/separators; reserve borders for elements that truly need to pop against their background.
+- Avoid inert property enumerations (e.g. “From/To” blocks that restate what the graph already shows). Prefer structured UI that leverages the graph (highlighting, selection states, breadcrumbs) and dedicate the Details panel to actionable content (contracts, messages, controls).
