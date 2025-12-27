@@ -49,14 +49,9 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const labelOffset = data.labelOffset ?? lineWidth + 12
   const arrowSize = 12
 
-  function renderCircle(emphasis: boolean) {
+  function renderCircle() {
     return (
-      <span
-        className={cn(
-          "h-2.5 w-2.5 rounded-full border",
-          emphasis ? "border-chart-2" : "border-foreground/60",
-        )}
-      />
+      <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
     )
   }
 
@@ -121,15 +116,8 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                   className="absolute flex cursor-default items-center gap-2 border-0 bg-transparent p-0 text-xs"
                   style={{ top: y }}
                 >
-                  {renderCircle(isBase)}
-                  <span
-                    className={cn(
-                      "font-mono",
-                      isBase ? "text-chart-2" : "text-foreground/70",
-                    )}
-                  >
-                    {sha}
-                  </span>
+                  {renderCircle()}
+                  <span className="font-mono text-foreground/70">{sha}</span>
                 </TooltipTrigger>
                 <TooltipContent
                   side="right"
