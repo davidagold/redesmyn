@@ -10,6 +10,7 @@ export const TRUNK_THICKNESS = 2
 export const TRUNK_GAP = 56
 export const TRUNK_COMMIT_PADDING = 18
 export const TRUNK_COMMIT_SPACING = 30
+export const TRUNK_COMMIT_ROW_HEIGHT = 16
 export const TRUNK_LABEL_COLUMN = 120
 
 export const DETAILS_PANEL_WIDTH_PX = 32 * 16

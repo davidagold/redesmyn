@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
+import { TRUNK_COMMIT_ROW_HEIGHT } from "./graphConfig"
 
 type TrunkMark = {
   type: "commit" | "base" | "ellipsis"
@@ -44,9 +45,10 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const marks = data.marks ?? []
   const commitSpacing = data.commitSpacing ?? 28
   const commitPadding = data.commitPadding ?? 16
-  const baseOffset = data.baseOffset ?? commitPadding
   const lineWidth = data.lineWidth ?? 2
   const labelOffset = data.labelOffset ?? lineWidth + 12
+  const rowHeight = TRUNK_COMMIT_ROW_HEIGHT
+  const baseOffset = data.baseOffset ?? commitPadding + rowHeight / 2
   const arrowSize = 12
 
   function renderCircle() {
@@ -99,7 +101,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                 <div
                   key={`ellipsis-${index}`}
                   className="absolute flex items-center text-xs text-foreground/50"
-                  style={{ top: y }}
+                  style={{ top: y, height: rowHeight }}
                 >
                   <span className="tracking-[0.2em]">···</span>
                 </div>
@@ -114,7 +116,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
               <Tooltip key={`${mark.type}-${mark.sha ?? index}`}>
                 <TooltipTrigger
                   className="absolute flex cursor-default items-center gap-2 border-0 bg-transparent p-0 text-xs"
-                  style={{ top: y }}
+                  style={{ top: y, height: rowHeight }}
                 >
                   {renderCircle()}
                   <span className="font-mono text-foreground/70">{sha}</span>

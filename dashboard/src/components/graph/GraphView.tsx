@@ -33,6 +33,7 @@ import {
   GRAPH_PADDING,
   TRUNK_GAP,
   TRUNK_COMMIT_PADDING,
+  TRUNK_COMMIT_ROW_HEIGHT,
   TRUNK_COMMIT_SPACING,
   TRUNK_LABEL_COLUMN,
   TRUNK_THICKNESS,
@@ -334,18 +335,23 @@ export function GraphView({
     const markCount = marks.length
     const commitSpacing = TRUNK_COMMIT_SPACING
     const commitPadding = TRUNK_COMMIT_PADDING
+    const rowHeight = TRUNK_COMMIT_ROW_HEIGHT
+    const rowCenterOffset = rowHeight / 2
     const spanHeight =
       markCount > 1
-        ? commitPadding * 2 + (markCount - 1) * commitSpacing
-        : commitPadding * 2
+        ? commitPadding * 2 + (markCount - 1) * commitSpacing + rowHeight
+        : commitPadding * 2 + rowHeight
     const baseIndex = trunkMarks?.baseIndex ?? 0
     const baseOffset =
-      markCount > 0 ? commitPadding + baseIndex * commitSpacing : commitPadding
+      markCount > 0
+        ? commitPadding + baseIndex * commitSpacing + rowCenterOffset
+        : commitPadding + rowCenterOffset
 
     return {
       marks,
       commitSpacing,
       commitPadding,
+      rowHeight,
       spanHeight,
       baseOffset,
     }
