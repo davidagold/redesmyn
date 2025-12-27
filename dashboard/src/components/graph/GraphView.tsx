@@ -23,6 +23,8 @@ import {
   GRAPH_NODE_WIDTH,
   GRAPH_PADDING,
   DIAGONAL_BIAS_SLOPE,
+  SELECTION_LENS_CORRIDOR_GAP_PX,
+  SELECTION_LENS_CORRIDOR_PADDING_PX,
   TRUNK_GAP,
   TRUNK_HEIGHT,
 } from "./graphConfig"
@@ -46,6 +48,13 @@ interface GraphViewProps {
 const TRUNK_NODE_ID = "trunk"
 
 type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
+
+type SelectionLens = {
+  focusPath: number[]
+  focusSet: Set<number>
+  focusRootId: number
+  focusEndId: number
+}
 
 export function GraphView({
   rootNodes,
@@ -186,22 +195,222 @@ export function GraphView({
   }, [childrenByParent, elkPositions, focusPositions, rootNodes])
 
   const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
-  const diagonalBiasEnabled = hasSelection && !focusPositions
+  const hasSelectionRef = useRef(hasSelection)
+
+  useEffect(() => {
+    hasSelectionRef.current = hasSelection
+  }, [hasSelection])
+
+  const selectionLens: SelectionLens | null = useMemo(() => {
+    if (selectedNodeId === null || focusPositions) {
+      return null
+    }
+
+    const visitedUpstream = new Set<number>()
+    let rootId: number = selectedNodeId
+    while (!visitedUpstream.has(rootId)) {
+      visitedUpstream.add(rootId)
+      const parentId = nodesById.get(rootId)?.parentNodeId ?? null
+      if (parentId === null) {
+        break
+      }
+      rootId = parentId
+    }
+
+    const focusPathUp: number[] = []
+    const visitedPath = new Set<number>()
+    let cursor: number | null = selectedNodeId
+    while (cursor !== null && !visitedPath.has(cursor)) {
+      visitedPath.add(cursor)
+      focusPathUp.push(cursor)
+      if (cursor === rootId) {
+        break
+      }
+      cursor = nodesById.get(cursor)?.parentNodeId ?? null
+    }
+
+    if (!focusPathUp.length || focusPathUp[focusPathUp.length - 1] !== rootId) {
+      return null
+    }
+
+    focusPathUp.reverse()
+
+    const visitedDownstream = new Set<number>(focusPathUp)
+    const focusPathDown: number[] = []
+    let endId: number = selectedNodeId
+    let downId: number = selectedNodeId
+
+    while (true) {
+      const children = childrenByParent.get(downId) ?? []
+      if (children.length !== 1) {
+        endId = downId
+        break
+      }
+      const nextId = children[0].id
+      if (visitedDownstream.has(nextId)) {
+        endId = downId
+        break
+      }
+      focusPathDown.push(nextId)
+      visitedDownstream.add(nextId)
+      downId = nextId
+    }
+
+    const focusPath = [...focusPathUp, ...focusPathDown]
+    return {
+      focusPath,
+      focusSet: new Set(focusPath),
+      focusRootId: rootId,
+      focusEndId: endId,
+    }
+  }, [childrenByParent, focusPositions, nodesById, selectedNodeId])
 
   const targetPositions = useMemo(() => {
-    if (!diagonalBiasEnabled) {
+    if (!selectionLens) {
       return basePositions
     }
 
-    const biased = new Map<number, FlowPosition>()
-    for (const [nodeId, pos] of basePositions) {
-      biased.set(nodeId, {
-        x: pos.x,
-        y: pos.y + pos.x * DIAGONAL_BIAS_SLOPE,
-      })
+    const { focusPath, focusRootId, focusSet } = selectionLens
+
+    const rootPos = basePositions.get(focusRootId)
+    if (!rootPos) {
+      return basePositions
     }
-    return biased
-  }, [basePositions, diagonalBiasEnabled])
+
+    const focusShiftById = new Map<number, number>()
+    const rootX = rootPos.x
+    for (const nodeId of focusPath) {
+      const pos = basePositions.get(nodeId)
+      if (!pos) {
+        continue
+      }
+      focusShiftById.set(nodeId, (pos.x - rootX) * DIAGONAL_BIAS_SLOPE)
+    }
+
+    let corridorTop = Number.POSITIVE_INFINITY
+    let corridorBottom = Number.NEGATIVE_INFINITY
+    for (const nodeId of focusPath) {
+      const pos = basePositions.get(nodeId)
+      if (!pos) {
+        continue
+      }
+      const shift = focusShiftById.get(nodeId) ?? 0
+      corridorTop = Math.min(corridorTop, pos.y + shift)
+      corridorBottom = Math.max(
+        corridorBottom,
+        pos.y + shift + GRAPH_NODE_HEIGHT,
+      )
+    }
+
+    if (!Number.isFinite(corridorTop) || !Number.isFinite(corridorBottom)) {
+      return basePositions
+    }
+
+    corridorTop -= SELECTION_LENS_CORRIDOR_PADDING_PX
+    corridorBottom += SELECTION_LENS_CORRIDOR_PADDING_PX
+
+    const focusAnchorMemo = new Map<number, number | null>()
+    function focusAnchorFor(nodeId: number): number | null {
+      if (focusAnchorMemo.has(nodeId)) {
+        return focusAnchorMemo.get(nodeId) ?? null
+      }
+      if (focusSet.has(nodeId)) {
+        focusAnchorMemo.set(nodeId, nodeId)
+        return nodeId
+      }
+      const parentId = nodesById.get(nodeId)?.parentNodeId ?? null
+      if (parentId === null) {
+        focusAnchorMemo.set(nodeId, null)
+        return null
+      }
+      const anchor = focusAnchorFor(parentId)
+      focusAnchorMemo.set(nodeId, anchor)
+      return anchor
+    }
+
+    const subtreeOffsetByNodeId = new Map<number, number>()
+
+    function collectSubtreeNodes(rootId: number): number[] {
+      const collected: number[] = []
+      const stack = [rootId]
+      const seen = new Set<number>()
+      while (stack.length) {
+        const next = stack.pop()
+        if (next === undefined || seen.has(next)) {
+          continue
+        }
+        seen.add(next)
+        collected.push(next)
+        const children = childrenByParent.get(next) ?? []
+        for (const child of children) {
+          stack.push(child.id)
+        }
+      }
+      return collected
+    }
+
+    for (const focusNodeId of focusPath) {
+      const focusPos = basePositions.get(focusNodeId)
+      if (!focusPos) {
+        continue
+      }
+
+      const focusShift = focusShiftById.get(focusNodeId) ?? 0
+      const focusY = focusPos.y + focusShift
+
+      const children = childrenByParent.get(focusNodeId) ?? []
+      for (const child of children) {
+        if (focusSet.has(child.id)) {
+          continue
+        }
+
+        const subtree = collectSubtreeNodes(child.id)
+        let minY = Number.POSITIVE_INFINITY
+        let maxY = Number.NEGATIVE_INFINITY
+        for (const nodeId of subtree) {
+          const pos = basePositions.get(nodeId)
+          if (!pos) {
+            continue
+          }
+          minY = Math.min(minY, pos.y + focusShift)
+          maxY = Math.max(maxY, pos.y + focusShift + GRAPH_NODE_HEIGHT)
+        }
+
+        if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
+          continue
+        }
+
+        if (maxY <= corridorTop || minY >= corridorBottom) {
+          continue
+        }
+
+        const childPos = basePositions.get(child.id)
+        const childY = (childPos?.y ?? focusPos.y) + focusShift
+        const pushDown = childY >= focusY
+        const offset = pushDown
+          ? corridorBottom - minY + SELECTION_LENS_CORRIDOR_GAP_PX
+          : corridorTop - maxY - SELECTION_LENS_CORRIDOR_GAP_PX
+
+        for (const nodeId of subtree) {
+          subtreeOffsetByNodeId.set(nodeId, offset)
+        }
+      }
+    }
+
+    const lensPositions = new Map<number, FlowPosition>()
+    for (const [nodeId, pos] of basePositions) {
+      const anchor = focusAnchorFor(nodeId)
+      if (anchor === null) {
+        lensPositions.set(nodeId, pos)
+        continue
+      }
+      const shift = focusShiftById.get(anchor) ?? 0
+      const offset = subtreeOffsetByNodeId.get(nodeId) ?? 0
+      lensPositions.set(nodeId, { x: pos.x, y: pos.y + shift + offset })
+    }
+
+    return lensPositions
+  }, [basePositions, childrenByParent, nodesById, selectionLens])
 
   const [positions, setPositions] =
     useState<Map<number, FlowPosition>>(targetPositions)
@@ -427,73 +636,7 @@ export function GraphView({
       return
     }
 
-    const upstream: number[] = []
-    const visited = new Set<number>()
-    let current: number | null = selectedNodeId
-    while (current !== null && !visited.has(current)) {
-      visited.add(current)
-      upstream.push(current)
-      const graphNode = nodesById.get(current)
-      current = graphNode?.parentNodeId ?? null
-    }
-    upstream.reverse()
-
-    const depthMemo = new Map<number, number>()
-    const nextChildMemo = new Map<number, number | null>()
-
-    function depthToLeaf(nodeId: number, stack: Set<number>): number {
-      if (depthMemo.has(nodeId)) {
-        return depthMemo.get(nodeId) ?? 0
-      }
-      if (stack.has(nodeId)) {
-        depthMemo.set(nodeId, 0)
-        nextChildMemo.set(nodeId, null)
-        return 0
-      }
-
-      stack.add(nodeId)
-      const children = childrenByParent.get(nodeId) ?? []
-      if (children.length === 0) {
-        depthMemo.set(nodeId, 0)
-        nextChildMemo.set(nodeId, null)
-        stack.delete(nodeId)
-        return 0
-      }
-
-      let bestChildId = children[0].id
-      let bestDepth = Number.POSITIVE_INFINITY
-      for (const child of children) {
-        const childDepth = depthToLeaf(child.id, stack) + 1
-        if (
-          childDepth < bestDepth ||
-          (childDepth === bestDepth && child.id < bestChildId)
-        ) {
-          bestDepth = childDepth
-          bestChildId = child.id
-        }
-      }
-
-      depthMemo.set(nodeId, bestDepth)
-      nextChildMemo.set(nodeId, bestChildId)
-      stack.delete(nodeId)
-      return bestDepth
-    }
-
-    depthToLeaf(selectedNodeId, new Set<number>())
-    const downstream: number[] = []
-    let downId = selectedNodeId
-    const seenDown = new Set<number>()
-    while (true) {
-      const nextId = nextChildMemo.get(downId) ?? null
-      if (nextId === null || seenDown.has(nextId)) {
-        break
-      }
-      downstream.push(nextId)
-      seenDown.add(nextId)
-      downId = nextId
-    }
-
-    const branchNodeIds = [...upstream, ...downstream]
+    const branchNodeIds = selectionLens?.focusPath ?? [selectedNodeId]
     let minX = Number.POSITIVE_INFINITY
     let minY = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
@@ -538,24 +681,31 @@ export function GraphView({
     const visibleCenterY = rect.height / 2
 
     const x = visibleCenterX - centerX * zoom
-    const y = visibleCenterY - centerY * zoom
+    const desiredTrunkScreenY = GRAPH_PADDING
+    const trunkWorldY = GRAPH_PADDING
+    const trunkAnchorY = desiredTrunkScreenY - trunkWorldY * zoom
+
+    const yMin = padding - minY * zoom
+    const yMax = rect.height - padding - maxY * zoom
+    const y =
+      yMin <= yMax
+        ? Math.min(yMax, Math.max(yMin, trunkAnchorY))
+        : visibleCenterY - centerY * zoom
 
     flow.setViewport({ x, y, zoom }, { duration: GRAPH_LAYOUT_ANIMATION_MS })
-  }, [
-    childrenByParent,
-    flow,
-    focusPositions,
-    nodesById,
-    selectedNodeId,
-    targetPositions,
-  ])
+  }, [flow, focusPositions, selectedNodeId, selectionLens, targetPositions])
 
   useEffect(() => {
-    if (!flow || !nodes.length || hasSelection) {
+    if (!flow || !nodes.length) {
       return
     }
+
+    if (hasSelectionRef.current) {
+      return
+    }
+
     flow.fitView({ padding: 0.2, duration: 200 })
-  }, [flow, hasSelection, layoutVersion, nodes.length])
+  }, [flow, layoutVersion, nodes.length])
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">

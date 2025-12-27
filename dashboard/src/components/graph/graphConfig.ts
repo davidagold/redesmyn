@@ -15,6 +15,9 @@ export const GRAPH_FIT_MAX_ZOOM = 1.2
 
 export const DIAGONAL_BIAS_SLOPE = 0.22
 
+export const SELECTION_LENS_CORRIDOR_PADDING_PX = 72
+export const SELECTION_LENS_CORRIDOR_GAP_PX = 56
+
 /**
  * Commit-string LOD is tied to zoom to keep large graphs responsive.
  *
