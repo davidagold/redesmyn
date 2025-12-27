@@ -6,12 +6,21 @@ import {
   type Edge,
   type ReactFlowInstance,
 } from "@xyflow/react"
-import { useEffect, useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
+import {
+  GRAPH_EDGE_STYLE_ANIMATION_MS,
+  GRAPH_LAYOUT_ANIMATION_MS,
+  GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_WIDTH,
+  GRAPH_PADDING,
+  TRUNK_GAP,
+  TRUNK_HEIGHT,
+} from "./graphConfig"
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
 
@@ -29,11 +38,6 @@ interface GraphViewProps {
   onClearSelection: () => void
 }
 
-const NODE_WIDTH = 320
-const NODE_HEIGHT = 96
-const GRAPH_PADDING = 40
-const TRUNK_HEIGHT = 2
-const TRUNK_GAP = 56
 const TRUNK_NODE_ID = "trunk"
 
 type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
@@ -138,8 +142,8 @@ export function GraphView({
     ;(async () => {
       try {
         const positions = await layoutWithElk(graphNodes, childrenByParent, {
-          nodeWidth: NODE_WIDTH,
-          nodeHeight: NODE_HEIGHT,
+          nodeWidth: GRAPH_NODE_WIDTH,
+          nodeHeight: GRAPH_NODE_HEIGHT,
           xOffset: GRAPH_PADDING,
           yOffset,
         })
@@ -160,7 +164,7 @@ export function GraphView({
     }
   }, [childrenByParent, focusPositions, graphNodes])
 
-  const positions = useMemo(() => {
+  const targetPositions = useMemo(() => {
     if (focusPositions) {
       return focusPositions
     }
@@ -175,6 +179,62 @@ export function GraphView({
     })
   }, [childrenByParent, elkPositions, focusPositions, rootNodes])
 
+  const [positions, setPositions] =
+    useState<Map<number, FlowPosition>>(targetPositions)
+  const positionsRef = useRef(targetPositions)
+
+  useEffect(() => {
+    positionsRef.current = positions
+  }, [positions])
+
+  useEffect(() => {
+    const from = positionsRef.current
+    const to = targetPositions
+
+    if (from === to) {
+      return
+    }
+
+    if (!from.size || !to.size || GRAPH_LAYOUT_ANIMATION_MS <= 0) {
+      setPositions(to)
+      return
+    }
+
+    let frame: number | null = null
+    const startedAt = performance.now()
+
+    function easeOutCubic(t: number) {
+      return 1 - Math.pow(1 - t, 3)
+    }
+
+    function step(now: number) {
+      const elapsed = now - startedAt
+      const t = Math.min(1, elapsed / GRAPH_LAYOUT_ANIMATION_MS)
+      const eased = easeOutCubic(t)
+      const next = new Map<number, FlowPosition>()
+
+      for (const [nodeId, target] of to) {
+        const start = from.get(nodeId) ?? target
+        next.set(nodeId, {
+          x: start.x + (target.x - start.x) * eased,
+          y: start.y + (target.y - start.y) * eased,
+        })
+      }
+
+      setPositions(next)
+      if (t < 1) {
+        frame = requestAnimationFrame(step)
+      }
+    }
+
+    frame = requestAnimationFrame(step)
+    return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame)
+      }
+    }
+  }, [targetPositions])
+
   const nodes = useMemo(() => {
     const mapped: GraphFlowNode[] = []
     const includeTrunk = !focusPositions && positions.size > 0
@@ -183,7 +243,10 @@ export function GraphView({
       for (const pos of positions.values()) {
         maxX = Math.max(maxX, pos.x)
       }
-      const trunkWidth = Math.max(NODE_WIDTH, maxX + NODE_WIDTH - GRAPH_PADDING)
+      const trunkWidth = Math.max(
+        GRAPH_NODE_WIDTH,
+        maxX + GRAPH_NODE_WIDTH - GRAPH_PADDING,
+      )
 
       mapped.push({
         id: TRUNK_NODE_ID,
@@ -234,8 +297,8 @@ export function GraphView({
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         style: {
-          width: NODE_WIDTH,
-          height: NODE_HEIGHT,
+          width: GRAPH_NODE_WIDTH,
+          height: GRAPH_NODE_HEIGHT,
         },
       } satisfies FlowBranchNodeType)
     }
@@ -267,6 +330,7 @@ export function GraphView({
             stroke: "var(--border)",
             strokeOpacity: 0.35,
             strokeWidth: 1.25,
+            transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
           },
         })
       }
@@ -304,6 +368,7 @@ export function GraphView({
           stroke: isSelected || isHovered ? "var(--ring)" : "var(--border)",
           strokeWidth: isSelected ? 2.5 : isHovered ? 2 : 1.25,
           strokeOpacity: isSelected ? 1 : isHovered ? 0.75 : 0.45,
+          transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-width ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
         },
       })
     }
