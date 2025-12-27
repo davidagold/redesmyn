@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from "@xyflow/react"
+import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { NodeCard } from "@/components/graph/NodeCard"
 import {
   formatBranchName,
@@ -25,13 +25,25 @@ export function FlowBranchNode({
   const branchLabel = formatBranchName(node.branchName, epicSlug)
 
   return (
-    <NodeCard
-      node={node}
-      task={task}
-      agent={agent}
-      branchLabel={branchLabel}
-      isSelected={selected}
-      onSelect={() => onSelectNode(node.id)}
-    />
+    <>
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="h-2 w-2 border-0 bg-transparent opacity-0"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="h-2 w-2 border-0 bg-transparent opacity-0"
+      />
+      <NodeCard
+        node={node}
+        task={task}
+        agent={agent}
+        branchLabel={branchLabel}
+        isSelected={selected}
+        onSelect={() => onSelectNode(node.id)}
+      />
+    </>
   )
 }
