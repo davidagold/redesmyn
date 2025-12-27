@@ -37,6 +37,11 @@ type LaidOutElkGraph = ElkGraph & {
   children?: LaidOutElkNode[]
 }
 
+type ElkEdgeRef = {
+  sourceId: number
+  targetId: number
+}
+
 const elk = new ELK()
 
 export async function layoutWithElk(
@@ -46,7 +51,7 @@ export async function layoutWithElk(
 ): Promise<Map<number, FlowPosition>> {
   const sortedNodes = [...nodes].sort((a, b) => a.id - b.id)
 
-  const edges: { sourceId: number targetId: number }[] = []
+  const edges: ElkEdgeRef[] = []
   for (const node of sortedNodes) {
     if (node.parentNodeId === null) {
       continue
