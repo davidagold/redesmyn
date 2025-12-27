@@ -120,5 +120,6 @@ test("applySelectionLens: keeps non-focused branches horizontal + non-overlappin
   assert.equal(y6, y9)
 
   // Parallel siblings below the focused corridor must be packed to avoid collisions.
+  assert.ok(y6 < y7, "expected vertical order to be preserved (6 above 7)")
   assertNoOverlapY(y6, y7, GRAPH_NODE_HEIGHT, SELECTION_LENS_CORRIDOR_GAP_PX)
 })

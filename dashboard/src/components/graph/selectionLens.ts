@@ -238,21 +238,20 @@ export function applySelectionLens(
   }
 
   const belowGroups = groups.sort((a, b) => {
-    const aMin = a.minY + a.offset
-    const bMin = b.minY + b.offset
-    if (aMin !== bMin) {
-      return aMin - bMin
+    if (a.minY !== b.minY) {
+      return a.minY - b.minY
     }
     return a.rootId - b.rootId
   })
 
   let cursorBelow = corridorBottom + SELECTION_LENS_CORRIDOR_GAP_PX
   for (const group of belowGroups) {
-    const minY = group.minY + group.offset
-    const maxY = group.maxY + group.offset
+    let minY = group.minY + group.offset
     if (minY < cursorBelow) {
       group.offset += cursorBelow - minY
+      minY = cursorBelow
     }
+    const maxY = group.maxY + group.offset
     cursorBelow = maxY + SELECTION_LENS_CORRIDOR_GAP_PX
   }
 
