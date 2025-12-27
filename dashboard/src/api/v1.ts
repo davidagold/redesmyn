@@ -198,6 +198,7 @@ export interface components {
       nodes: components["schemas"]["NodeResponse"][]
       /** Tasks */
       tasks: components["schemas"]["TaskResponse"][]
+      trunk?: components["schemas"]["TrunkTimelineResponse"] | null
     }
     /** EpicResponse */
     EpicResponse: {
@@ -317,6 +318,31 @@ export interface components {
      * @enum {string}
      */
     TaskState: "todo" | "in_progress" | "blocked" | "done"
+    /** TrunkCommitResponse */
+    TrunkCommitResponse: {
+      /** Authoremail */
+      authorEmail?: string | null
+      /** Authorname */
+      authorName?: string | null
+      /** Authoredat */
+      authoredAt?: string | null
+      /** Sha */
+      sha: string
+    }
+    /** TrunkTimelineResponse */
+    TrunkTimelineResponse: {
+      baseCommit?: components["schemas"]["TrunkCommitResponse"] | null
+      /** Basesha */
+      baseSha: string | null
+      /** Commitsafter */
+      commitsAfter: components["schemas"]["TrunkCommitResponse"][]
+      /** Commitsbefore */
+      commitsBefore: components["schemas"]["TrunkCommitResponse"][]
+      /** Hasmoreafter */
+      hasMoreAfter: boolean
+      /** Hasmorebefore */
+      hasMoreBefore: boolean
+    }
     /** ValidationError */
     ValidationError: {
       /** Location */

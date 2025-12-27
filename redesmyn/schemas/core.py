@@ -148,8 +148,25 @@ class LinearStatusResponse(ApiResponse):
     connected_at: datetime | None
 
 
+class TrunkCommitResponse(ApiResponse):
+    sha: str
+    author_name: str | None = None
+    author_email: str | None = None
+    authored_at: datetime | None = None
+
+
+class TrunkTimelineResponse(ApiResponse):
+    base_sha: str | None
+    base_commit: TrunkCommitResponse | None = None
+    commits_before: list[TrunkCommitResponse]
+    commits_after: list[TrunkCommitResponse]
+    has_more_before: bool
+    has_more_after: bool
+
+
 class EpicGraphResponse(ApiResponse):
     epic: EpicResponse
     tasks: list[TaskResponse]
     nodes: list[NodeResponse]
     agents: list[AgentResponse]
+    trunk: TrunkTimelineResponse | None = None

@@ -267,6 +267,16 @@
             },
             "title": "Tasks",
             "type": "array"
+          },
+          "trunk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrunkTimelineResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -621,6 +631,109 @@
         ],
         "title": "TaskState",
         "type": "string"
+      },
+      "TrunkCommitResponse": {
+        "properties": {
+          "authorEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authoremail"
+          },
+          "authorName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authorname"
+          },
+          "authoredAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authoredat"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha"
+        ],
+        "title": "TrunkCommitResponse",
+        "type": "object"
+      },
+      "TrunkTimelineResponse": {
+        "properties": {
+          "baseCommit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrunkCommitResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "baseSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basesha"
+          },
+          "commitsAfter": {
+            "items": {
+              "$ref": "#/components/schemas/TrunkCommitResponse"
+            },
+            "title": "Commitsafter",
+            "type": "array"
+          },
+          "commitsBefore": {
+            "items": {
+              "$ref": "#/components/schemas/TrunkCommitResponse"
+            },
+            "title": "Commitsbefore",
+            "type": "array"
+          },
+          "hasMoreAfter": {
+            "title": "Hasmoreafter",
+            "type": "boolean"
+          },
+          "hasMoreBefore": {
+            "title": "Hasmorebefore",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "baseSha",
+          "commitsBefore",
+          "commitsAfter",
+          "hasMoreBefore",
+          "hasMoreAfter"
+        ],
+        "title": "TrunkTimelineResponse",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {

@@ -36,6 +36,7 @@ from redesmyn.integrations.linear import (
     new_oauth_state,
 )
 from redesmyn.orchestrator import init_repo
+from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
@@ -47,6 +48,8 @@ from redesmyn.schemas.core import (
     NodeResponse,
     ReleaseConditionResponse,
     TaskResponse,
+    TrunkCommitResponse,
+    TrunkTimelineResponse,
 )
 from redesmyn.settings import load_settings
 
@@ -181,11 +184,72 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             else []
         )
 
+    trunk: TrunkTimelineResponse | None = None
+    try:
+        repo_root = app.state.ctx.repo_root
+        root_branch = epic_row.root_branch
+        commits = git_rev_list(repo_root, root_branch, first_parent=True)
+        base_sha = commits[0] if commits else None
+        if commits:
+            root_nodes = [n for n in nodes if n.parent_node_id is None]
+            merge_bases = {
+                mb
+                for mb in (
+                    git_merge_base(repo_root, root_branch, n.branch_name)
+                    for n in root_nodes
+                )
+                if mb
+            }
+            if merge_bases:
+                for sha in commits:
+                    if sha in merge_bases:
+                        base_sha = sha
+                        break
+
+            if base_sha:
+                try:
+                    base_index = commits.index(base_sha)
+                except ValueError:
+                    base_index = 0
+                    base_sha = commits[0]
+
+                limit = 4
+                newer = commits[:base_index]
+                older = commits[base_index + 1 :]
+
+                commits_before = older[:limit]
+                commits_after = list(reversed(newer))[:limit]
+
+                commit_info = git_commit_info(
+                    repo_root, [base_sha, *commits_before, *commits_after]
+                )
+
+                def build_commit(sha: str) -> TrunkCommitResponse:
+                    info = commit_info.get(sha, {})
+                    return TrunkCommitResponse(
+                        sha=sha,
+                        author_name=info.get("author_name"),
+                        author_email=info.get("author_email"),
+                        authored_at=info.get("authored_at"),
+                    )
+
+                trunk = TrunkTimelineResponse(
+                    base_sha=base_sha,
+                    base_commit=build_commit(base_sha),
+                    commits_before=[build_commit(sha) for sha in commits_before],
+                    commits_after=[build_commit(sha) for sha in commits_after],
+                    has_more_before=len(older) > limit,
+                    has_more_after=len(newer) > limit,
+                )
+    except Exception:
+        trunk = None
+
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
         nodes=[NodeResponse.model_validate(n, from_attributes=True) for n in nodes],
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
+        trunk=trunk,
     )
 
 

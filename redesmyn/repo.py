@@ -75,6 +75,67 @@ def branch_exists(repo_root: Path, branch_name: str) -> bool:
     return proc.returncode == 0
 
 
+def git_merge_base(repo_root: Path, ref_a: str, ref_b: str) -> str | None:
+    proc = _run_git(["merge-base", ref_a, ref_b], cwd=repo_root)
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def git_rev_list(
+    repo_root: Path,
+    ref: str,
+    *,
+    first_parent: bool = True,
+    max_count: int | None = None,
+) -> list[str]:
+    args = ["rev-list"]
+    if first_parent:
+        args.append("--first-parent")
+    if max_count is not None:
+        args.extend(["-n", str(max_count)])
+    args.append(ref)
+    proc = _run_git(args, cwd=repo_root)
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def git_commit_info(
+    repo_root: Path, shas: list[str]
+) -> dict[str, dict[str, str | None]]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for sha in shas:
+        if not sha or sha in seen:
+            continue
+        seen.add(sha)
+        unique.append(sha)
+
+    if not unique:
+        return {}
+
+    proc = _run_git(
+        ["show", "-s", "--format=%H%x1f%an%x1f%ae%x1f%aI", *unique], cwd=repo_root
+    )
+    if proc.returncode != 0:
+        return {}
+
+    info: dict[str, dict[str, str | None]] = {}
+    for line in proc.stdout.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) != 4:
+            continue
+        sha, author_name, author_email, authored_at = parts
+        info[sha] = {
+            "author_name": author_name or None,
+            "author_email": author_email or None,
+            "authored_at": authored_at or None,
+        }
+    return info
+
+
 class GitCommandError(RuntimeError):
     pass
 
