@@ -567,7 +567,6 @@ export function GraphView({
     const requestId = viewportRequest?.id
 
     let frame: number | null = null
-    let lastViewportUpdate = 0
     const startedAt = performance.now()
 
     function easeOutCubic(t: number) {
@@ -600,24 +599,15 @@ export function GraphView({
         const t =
           viewportDuration > 0 ? Math.min(1, elapsed / viewportDuration) : 1
         const eased = easeOutCubic(t)
-        // Throttle viewport updates to reduce per-frame layout work.
-        if (
-          t >= 1 ||
-          lastViewportUpdate === 0 ||
-          now - lastViewportUpdate >= 33
-        ) {
-          flow.setViewport(
-            {
-              x: fromViewport.x + (toViewport.x - fromViewport.x) * eased,
-              y: fromViewport.y + (toViewport.y - fromViewport.y) * eased,
-              zoom:
-                fromViewport.zoom +
-                (toViewport.zoom - fromViewport.zoom) * eased,
-            },
-            { duration: 0 },
-          )
-          lastViewportUpdate = now
-        }
+        flow.setViewport(
+          {
+            x: fromViewport.x + (toViewport.x - fromViewport.x) * eased,
+            y: fromViewport.y + (toViewport.y - fromViewport.y) * eased,
+            zoom:
+              fromViewport.zoom + (toViewport.zoom - fromViewport.zoom) * eased,
+          },
+          { duration: 0 },
+        )
         viewportDone = t >= 1
       }
 
