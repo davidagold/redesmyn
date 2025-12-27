@@ -8,6 +8,13 @@ export const GRAPH_PADDING = 40
 export const TRUNK_HEIGHT = 2
 export const TRUNK_GAP = 56
 
+export const DETAILS_PANEL_WIDTH_PX = 32 * 16
+export const GRAPH_FIT_PADDING_PX = 72
+export const GRAPH_FIT_MIN_ZOOM = 0.55
+export const GRAPH_FIT_MAX_ZOOM = 1.2
+
+export const DIAGONAL_BIAS_SLOPE = 0.22
+
 /**
  * Commit-string LOD is tied to zoom to keep large graphs responsive.
  *

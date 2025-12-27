@@ -13,11 +13,16 @@ import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
 import {
+  DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
+  GRAPH_FIT_MAX_ZOOM,
+  GRAPH_FIT_MIN_ZOOM,
+  GRAPH_FIT_PADDING_PX,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
   GRAPH_PADDING,
+  DIAGONAL_BIAS_SLOPE,
   TRUNK_GAP,
   TRUNK_HEIGHT,
 } from "./graphConfig"
@@ -56,6 +61,7 @@ export function GraphView({
   onClearSelection,
 }: GraphViewProps) {
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
@@ -164,7 +170,7 @@ export function GraphView({
     }
   }, [childrenByParent, focusPositions, graphNodes])
 
-  const targetPositions = useMemo(() => {
+  const basePositions = useMemo(() => {
     if (focusPositions) {
       return focusPositions
     }
@@ -178,6 +184,24 @@ export function GraphView({
       yOffset: GRAPH_PADDING + TRUNK_HEIGHT + TRUNK_GAP,
     })
   }, [childrenByParent, elkPositions, focusPositions, rootNodes])
+
+  const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
+  const diagonalBiasEnabled = hasSelection && !focusPositions
+
+  const targetPositions = useMemo(() => {
+    if (!diagonalBiasEnabled) {
+      return basePositions
+    }
+
+    const biased = new Map<number, FlowPosition>()
+    for (const [nodeId, pos] of basePositions) {
+      biased.set(nodeId, {
+        x: pos.x,
+        y: pos.y + pos.x * DIAGONAL_BIAS_SLOPE,
+      })
+    }
+    return biased
+  }, [basePositions, diagonalBiasEnabled])
 
   const [positions, setPositions] =
     useState<Map<number, FlowPosition>>(targetPositions)
@@ -235,6 +259,22 @@ export function GraphView({
     }
   }, [targetPositions])
 
+  const selectedEdgeNodeIds = useMemo(() => {
+    if (!selectedEdgeId || !selectedEdgeId.startsWith("edge:")) {
+      return null
+    }
+    const parts = selectedEdgeId.split(":")
+    if (parts.length !== 3) {
+      return null
+    }
+    const fromId = Number(parts[1])
+    const toId = Number(parts[2])
+    if (Number.isNaN(fromId) || Number.isNaN(toId)) {
+      return null
+    }
+    return new Set([fromId, toId])
+  }, [selectedEdgeId])
+
   const nodes = useMemo(() => {
     const mapped: GraphFlowNode[] = []
     const includeTrunk = !focusPositions && positions.size > 0
@@ -288,6 +328,7 @@ export function GraphView({
           task,
           agent,
           epicSlug,
+          edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
           onSelectNode,
         },
         selectable: true,
@@ -310,6 +351,7 @@ export function GraphView({
     onSelectNode,
     nodesById,
     positions,
+    selectedEdgeNodeIds,
     selectedNodeId,
     tasksById,
   ])
@@ -376,17 +418,150 @@ export function GraphView({
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
   useEffect(() => {
-    if (!flow || !nodes.length) {
+    if (!flow || selectedNodeId === null || focusPositions) {
+      return
+    }
+
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return
+    }
+
+    const upstream: number[] = []
+    const visited = new Set<number>()
+    let current: number | null = selectedNodeId
+    while (current !== null && !visited.has(current)) {
+      visited.add(current)
+      upstream.push(current)
+      const graphNode = nodesById.get(current)
+      current = graphNode?.parentNodeId ?? null
+    }
+    upstream.reverse()
+
+    const depthMemo = new Map<number, number>()
+    const nextChildMemo = new Map<number, number | null>()
+
+    function depthToLeaf(nodeId: number, stack: Set<number>): number {
+      if (depthMemo.has(nodeId)) {
+        return depthMemo.get(nodeId) ?? 0
+      }
+      if (stack.has(nodeId)) {
+        depthMemo.set(nodeId, 0)
+        nextChildMemo.set(nodeId, null)
+        return 0
+      }
+
+      stack.add(nodeId)
+      const children = childrenByParent.get(nodeId) ?? []
+      if (children.length === 0) {
+        depthMemo.set(nodeId, 0)
+        nextChildMemo.set(nodeId, null)
+        stack.delete(nodeId)
+        return 0
+      }
+
+      let bestChildId = children[0].id
+      let bestDepth = Number.POSITIVE_INFINITY
+      for (const child of children) {
+        const childDepth = depthToLeaf(child.id, stack) + 1
+        if (
+          childDepth < bestDepth ||
+          (childDepth === bestDepth && child.id < bestChildId)
+        ) {
+          bestDepth = childDepth
+          bestChildId = child.id
+        }
+      }
+
+      depthMemo.set(nodeId, bestDepth)
+      nextChildMemo.set(nodeId, bestChildId)
+      stack.delete(nodeId)
+      return bestDepth
+    }
+
+    depthToLeaf(selectedNodeId, new Set<number>())
+    const downstream: number[] = []
+    let downId = selectedNodeId
+    const seenDown = new Set<number>()
+    while (true) {
+      const nextId = nextChildMemo.get(downId) ?? null
+      if (nextId === null || seenDown.has(nextId)) {
+        break
+      }
+      downstream.push(nextId)
+      seenDown.add(nextId)
+      downId = nextId
+    }
+
+    const branchNodeIds = [...upstream, ...downstream]
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+
+    for (const nodeId of branchNodeIds) {
+      const pos = targetPositions.get(nodeId)
+      if (!pos) {
+        continue
+      }
+      minX = Math.min(minX, pos.x)
+      minY = Math.min(minY, pos.y)
+      maxX = Math.max(maxX, pos.x + GRAPH_NODE_WIDTH)
+      maxY = Math.max(maxY, pos.y + GRAPH_NODE_HEIGHT)
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+      return
+    }
+
+    const padding = GRAPH_FIT_PADDING_PX
+    const visibleWidth = Math.max(
+      1,
+      rect.width - DETAILS_PANEL_WIDTH_PX - padding * 2,
+    )
+    const visibleHeight = Math.max(1, rect.height - padding * 2)
+    const boundsWidth = Math.max(1, maxX - minX)
+    const boundsHeight = Math.max(1, maxY - minY)
+
+    const fitZoom = Math.min(
+      visibleWidth / boundsWidth,
+      visibleHeight / boundsHeight,
+    )
+    const zoom = Math.min(
+      GRAPH_FIT_MAX_ZOOM,
+      Math.max(GRAPH_FIT_MIN_ZOOM, fitZoom),
+    )
+
+    const centerX = (minX + maxX) / 2
+    const centerY = (minY + maxY) / 2
+    const visibleCenterX = (rect.width - DETAILS_PANEL_WIDTH_PX) / 2
+    const visibleCenterY = rect.height / 2
+
+    const x = visibleCenterX - centerX * zoom
+    const y = visibleCenterY - centerY * zoom
+
+    flow.setViewport({ x, y, zoom }, { duration: GRAPH_LAYOUT_ANIMATION_MS })
+  }, [
+    childrenByParent,
+    flow,
+    focusPositions,
+    nodesById,
+    selectedNodeId,
+    targetPositions,
+  ])
+
+  useEffect(() => {
+    if (!flow || !nodes.length || hasSelection) {
       return
     }
     flow.fitView({ padding: 0.2, duration: 200 })
-  }, [flow, layoutVersion, nodes.length])
+  }, [flow, hasSelection, layoutVersion, nodes.length])
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
       <DotGrid />
       {rootNodes.length > 0 ? (
-        <div className="relative h-full">
+        <div ref={containerRef} className="relative h-full">
           <ReactFlow
             nodes={nodes}
             edges={edges}

@@ -8,6 +8,7 @@ interface NodeCardProps {
   agent?: Agent
   branchLabel: string
   isSelected: boolean
+  isHighlighted?: boolean
   onSelect: () => void
 }
 
@@ -17,6 +18,7 @@ export function NodeCard({
   agent,
   branchLabel,
   isSelected,
+  isHighlighted = false,
   onSelect,
 }: NodeCardProps) {
   return (
@@ -24,7 +26,11 @@ export function NodeCard({
       data-node-card
       className={cn(
         "cursor-pointer transition-colors hover:bg-accent/40",
-        isSelected && "ring-2 ring-ring",
+        isSelected
+          ? "ring-2 ring-ring"
+          : isHighlighted
+            ? "ring-1 ring-ring/60"
+            : null,
       )}
       onClick={onSelect}
       role="button"

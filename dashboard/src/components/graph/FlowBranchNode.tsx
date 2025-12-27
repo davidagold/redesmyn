@@ -12,6 +12,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   task?: Task
   agent?: Agent
   epicSlug?: string | null
+  edgeHighlighted?: boolean
   onSelectNode: (nodeId: number) => void
 }
 
@@ -21,7 +22,7 @@ export function FlowBranchNode({
   data,
   selected,
 }: NodeProps<FlowBranchNodeType>) {
-  const { node, task, agent, epicSlug, onSelectNode } = data
+  const { node, task, agent, epicSlug, edgeHighlighted, onSelectNode } = data
   const branchLabel = formatBranchName(node.branchName, epicSlug)
 
   return (
@@ -42,6 +43,7 @@ export function FlowBranchNode({
         agent={agent}
         branchLabel={branchLabel}
         isSelected={selected}
+        isHighlighted={edgeHighlighted}
         onSelect={() => onSelectNode(node.id)}
       />
     </>
