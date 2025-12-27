@@ -187,6 +187,8 @@ export function GraphView({
 
   const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
   const hasSelectionRef = useRef(hasSelection)
+  const previousHasSelectionRef = useRef(hasSelection)
+  const deselectFitTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     hasSelectionRef.current = hasSelection
@@ -419,6 +421,33 @@ export function GraphView({
     }
     return mapped
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
+
+  useEffect(() => {
+    if (deselectFitTimeoutRef.current !== null) {
+      window.clearTimeout(deselectFitTimeoutRef.current)
+      deselectFitTimeoutRef.current = null
+    }
+
+    const wasSelected = previousHasSelectionRef.current
+    previousHasSelectionRef.current = hasSelection
+
+    if (!flow || nodes.length === 0) {
+      return
+    }
+
+    if (wasSelected && !hasSelection) {
+      deselectFitTimeoutRef.current = window.setTimeout(() => {
+        flow.fitView({ padding: 0.2, duration: 200 })
+      }, GRAPH_LAYOUT_ANIMATION_MS)
+    }
+
+    return () => {
+      if (deselectFitTimeoutRef.current !== null) {
+        window.clearTimeout(deselectFitTimeoutRef.current)
+        deselectFitTimeoutRef.current = null
+      }
+    }
+  }, [flow, hasSelection, nodes.length])
 
   useEffect(() => {
     if (!flow || selectedNodeId === null || focusPositions) {
