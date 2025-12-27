@@ -51,6 +51,19 @@ const POSITION_EPSILON_PX = 0.25
 const VIEWPORT_EPSILON_PX = 0.5
 const VIEWPORT_EPSILON_ZOOM = 0.001
 
+interface Viewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+interface GraphBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
 function positionsMatch(
   from: Map<number, FlowPosition>,
   to: Map<number, FlowPosition>,
@@ -76,10 +89,7 @@ function positionsMatch(
   return true
 }
 
-function viewportMatches(
-  current: { x: number y: number zoom: number },
-  next: { x: number y: number zoom: number },
-) {
+function viewportMatches(current: Viewport, next: Viewport) {
   return (
     Math.abs(current.x - next.x) <= VIEWPORT_EPSILON_PX &&
     Math.abs(current.y - next.y) <= VIEWPORT_EPSILON_PX &&
@@ -119,7 +129,7 @@ function computeGraphBounds(positions: Map<number, FlowPosition>) {
 }
 
 function computeFitViewport(
-  bounds: { minX: number minY: number maxX: number maxY: number },
+  bounds: GraphBounds,
   rect: DOMRect,
   reserveWidth: number,
 ) {
