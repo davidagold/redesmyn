@@ -51,9 +51,25 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const baseOffset = data.baseOffset ?? commitPadding + rowHeight / 2
   const arrowSize = 12
 
-  function renderCircle() {
+  function renderMarker(emphasis: boolean) {
+    if (!emphasis) {
+      return (
+        <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
+      )
+    }
     return (
-      <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 10 10"
+        className="h-2.5 w-2.5 text-foreground/70"
+      >
+        <path
+          d="M5 0.75 L9.25 5 L5 9.25 L0.75 5 Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.1"
+        />
+      </svg>
     )
   }
 
@@ -118,8 +134,17 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                   className="absolute flex cursor-default items-center gap-2 border-0 bg-transparent p-0 text-xs"
                   style={{ top: y, height: rowHeight }}
                 >
-                  {renderCircle()}
-                  <span className="font-mono text-foreground/70">{sha}</span>
+                  {renderMarker(isBase)}
+                  <span
+                    className={cn(
+                      "font-mono",
+                      isBase
+                        ? "text-foreground/80 font-medium"
+                        : "text-foreground/70",
+                    )}
+                  >
+                    {sha}
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent
                   side="right"
