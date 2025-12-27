@@ -94,6 +94,7 @@ test("computeSelectionLens: ignores single-node spans", () => {
   const { nodesById, childrenByParent } = buildGraph()
 
   assert.equal(computeSelectionLens(4, nodesById, childrenByParent), null)
+  assert.equal(computeSelectionLens(7, nodesById, childrenByParent), null)
   assert.ok(computeSelectionLens(5, nodesById, childrenByParent))
 })
 

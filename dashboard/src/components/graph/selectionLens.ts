@@ -111,7 +111,7 @@ export function computeSelectionLens(
   if (!span) {
     return null
   }
-  return span.focusPath.length > 1 ? span : null
+  return span.focusPath.length >= 3 ? span : null
 }
 
 function collectSubtreeNodes<T extends NodeLike>(
@@ -181,7 +181,6 @@ export function applySelectionLens(
     return basePositions
   }
 
-  corridorTop -= SELECTION_LENS_CORRIDOR_PADDING_PX
   corridorBottom += SELECTION_LENS_CORRIDOR_PADDING_PX
 
   const groups: SideGroup[] = []
@@ -195,6 +194,12 @@ export function applySelectionLens(
     const children = childrenByParent.get(focusNodeId) ?? []
     for (const child of children) {
       if (lens.focusSet.has(child.id)) {
+        continue
+      }
+
+      const childPos = basePositions.get(child.id)
+      const childY = childPos?.y ?? focusY
+      if (childY < focusY) {
         continue
       }
 
@@ -214,14 +219,10 @@ export function applySelectionLens(
         continue
       }
 
-      const childPos = basePositions.get(child.id)
-      const childY = childPos?.y ?? minY
-      const direction = childY >= focusY ? "below" : "above"
-
       groups.push({
         rootId: child.id,
         nodeIds,
-        direction,
+        direction: "below",
         minY,
         maxY,
         offset: 0,
@@ -233,22 +234,17 @@ export function applySelectionLens(
     if (!intersectsBand(group.minY, group.maxY, corridorTop, corridorBottom)) {
       continue
     }
-    group.offset =
-      group.direction === "below"
-        ? corridorBottom - group.minY + SELECTION_LENS_CORRIDOR_GAP_PX
-        : corridorTop - group.maxY - SELECTION_LENS_CORRIDOR_GAP_PX
+    group.offset = corridorBottom - group.minY + SELECTION_LENS_CORRIDOR_GAP_PX
   }
 
-  const belowGroups = groups
-    .filter((group) => group.direction === "below")
-    .sort((a, b) => {
-      const aMin = a.minY + a.offset
-      const bMin = b.minY + b.offset
-      if (aMin !== bMin) {
-        return aMin - bMin
-      }
-      return a.rootId - b.rootId
-    })
+  const belowGroups = groups.sort((a, b) => {
+    const aMin = a.minY + a.offset
+    const bMin = b.minY + b.offset
+    if (aMin !== bMin) {
+      return aMin - bMin
+    }
+    return a.rootId - b.rootId
+  })
 
   let cursorBelow = corridorBottom + SELECTION_LENS_CORRIDOR_GAP_PX
   for (const group of belowGroups) {
@@ -258,27 +254,6 @@ export function applySelectionLens(
       group.offset += cursorBelow - minY
     }
     cursorBelow = maxY + SELECTION_LENS_CORRIDOR_GAP_PX
-  }
-
-  const aboveGroups = groups
-    .filter((group) => group.direction === "above")
-    .sort((a, b) => {
-      const aMax = a.maxY + a.offset
-      const bMax = b.maxY + b.offset
-      if (aMax !== bMax) {
-        return bMax - aMax
-      }
-      return a.rootId - b.rootId
-    })
-
-  let cursorAbove = corridorTop - SELECTION_LENS_CORRIDOR_GAP_PX
-  for (const group of aboveGroups) {
-    const minY = group.minY + group.offset
-    const maxY = group.maxY + group.offset
-    if (maxY > cursorAbove) {
-      group.offset -= maxY - cursorAbove
-    }
-    cursorAbove = minY - SELECTION_LENS_CORRIDOR_GAP_PX
   }
 
   const offsetByNodeId = new Map<number, number>()
