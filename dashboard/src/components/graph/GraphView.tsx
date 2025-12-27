@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
+import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
@@ -293,7 +294,7 @@ export function GraphView({
         id: edgeId,
         source: String(graphNode.parentNodeId),
         target: String(graphNode.id),
-        type: "smoothstep",
+        type: "commitString",
         selectable: true,
         focusable: true,
         selected: isSelected,
@@ -325,6 +326,7 @@ export function GraphView({
             nodes={nodes}
             edges={edges}
             nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
+            edgeTypes={{ commitString: CommitStringEdge }}
             fitView
             nodesDraggable={false}
             nodesConnectable={false}
