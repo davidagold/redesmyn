@@ -52,24 +52,18 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const arrowSize = 12
 
   function renderMarker(emphasis: boolean) {
+    const wrapperClass = "flex h-3 w-3 items-center justify-center"
     if (!emphasis) {
       return (
-        <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
+        <span className={wrapperClass}>
+          <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
+        </span>
       )
     }
     return (
-      <svg
-        aria-hidden="true"
-        viewBox="0 0 10 10"
-        className="h-2.5 w-2.5 text-foreground/70"
-      >
-        <path
-          d="M5 0.75 L9.25 5 L5 9.25 L0.75 5 Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.1"
-        />
-      </svg>
+      <span className={wrapperClass}>
+        <span className="h-2.5 w-2.5 rotate-45 border border-foreground/70" />
+      </span>
     )
   }
 

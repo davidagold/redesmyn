@@ -35,6 +35,7 @@ import {
   TRUNK_COMMIT_PADDING,
   TRUNK_COMMIT_ROW_HEIGHT,
   TRUNK_COMMIT_SPACING,
+  TRUNK_EDGE_NUDGE_PX,
   TRUNK_LABEL_COLUMN,
   TRUNK_THICKNESS,
 } from "./graphConfig"
@@ -342,9 +343,14 @@ export function GraphView({
         ? commitPadding * 2 + (markCount - 1) * commitSpacing + rowHeight
         : commitPadding * 2 + rowHeight
     const baseIndex = trunkMarks?.baseIndex ?? 0
+    const edgeOffset = baseIndex > 0 ? commitSpacing / 2 : 0
     const baseOffset =
       markCount > 0
-        ? commitPadding + baseIndex * commitSpacing + rowCenterOffset
+        ? commitPadding +
+          baseIndex * commitSpacing +
+          rowCenterOffset -
+          edgeOffset -
+          TRUNK_EDGE_NUDGE_PX
         : commitPadding + rowCenterOffset
 
     return {
