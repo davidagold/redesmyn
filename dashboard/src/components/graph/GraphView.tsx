@@ -47,6 +47,109 @@ const TRUNK_NODE_ID = "trunk"
 
 type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
 
+const POSITION_EPSILON_PX = 0.25
+const VIEWPORT_EPSILON_PX = 0.5
+const VIEWPORT_EPSILON_ZOOM = 0.001
+
+function positionsMatch(
+  from: Map<number, FlowPosition>,
+  to: Map<number, FlowPosition>,
+) {
+  if (from === to) {
+    return true
+  }
+  if (from.size !== to.size) {
+    return false
+  }
+  for (const [nodeId, pos] of from) {
+    const next = to.get(nodeId)
+    if (!next) {
+      return false
+    }
+    if (
+      Math.abs(pos.x - next.x) > POSITION_EPSILON_PX ||
+      Math.abs(pos.y - next.y) > POSITION_EPSILON_PX
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+function viewportMatches(
+  current: { x: number y: number zoom: number },
+  next: { x: number y: number zoom: number },
+) {
+  return (
+    Math.abs(current.x - next.x) <= VIEWPORT_EPSILON_PX &&
+    Math.abs(current.y - next.y) <= VIEWPORT_EPSILON_PX &&
+    Math.abs(current.zoom - next.zoom) <= VIEWPORT_EPSILON_ZOOM
+  )
+}
+
+function computeGraphBounds(positions: Map<number, FlowPosition>) {
+  if (!positions.size) {
+    return null
+  }
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+  let maxNodeX = 0
+
+  for (const pos of positions.values()) {
+    minX = Math.min(minX, pos.x)
+    minY = Math.min(minY, pos.y)
+    maxX = Math.max(maxX, pos.x + GRAPH_NODE_WIDTH)
+    maxY = Math.max(maxY, pos.y + GRAPH_NODE_HEIGHT)
+    maxNodeX = Math.max(maxNodeX, pos.x)
+  }
+
+  const trunkWidth = Math.max(
+    GRAPH_NODE_WIDTH,
+    maxNodeX + GRAPH_NODE_WIDTH - GRAPH_PADDING,
+  )
+
+  minX = Math.min(minX, GRAPH_PADDING)
+  minY = Math.min(minY, GRAPH_PADDING)
+  maxX = Math.max(maxX, GRAPH_PADDING + trunkWidth)
+  maxY = Math.max(maxY, GRAPH_PADDING + TRUNK_HEIGHT)
+
+  return { minX, minY, maxX, maxY }
+}
+
+function computeFitViewport(
+  bounds: { minX: number minY: number maxX: number maxY: number },
+  rect: DOMRect,
+  reserveWidth: number,
+) {
+  const padding = GRAPH_FIT_PADDING_PX
+  const visibleWidth = Math.max(1, rect.width - reserveWidth - padding * 2)
+  const visibleHeight = Math.max(1, rect.height - padding * 2)
+  const boundsWidth = Math.max(1, bounds.maxX - bounds.minX)
+  const boundsHeight = Math.max(1, bounds.maxY - bounds.minY)
+
+  const fitZoom = Math.min(
+    visibleWidth / boundsWidth,
+    visibleHeight / boundsHeight,
+  )
+  const zoom = Math.min(
+    GRAPH_FIT_MAX_ZOOM,
+    Math.max(GRAPH_FIT_MIN_ZOOM, fitZoom),
+  )
+
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerY = (bounds.minY + bounds.maxY) / 2
+  const visibleCenterX = (rect.width - reserveWidth) / 2
+  const visibleCenterY = rect.height / 2
+
+  return {
+    x: visibleCenterX - centerX * zoom,
+    y: visibleCenterY - centerY * zoom,
+    zoom,
+  }
+}
+
 export function GraphView({
   rootNodes,
   childrenByParent,
@@ -188,18 +291,48 @@ export function GraphView({
   const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
   const hasSelectionRef = useRef(hasSelection)
   const previousHasSelectionRef = useRef(hasSelection)
-  const deselectFitTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     hasSelectionRef.current = hasSelection
   }, [hasSelection])
 
-  const selectionLens = useMemo(() => {
+  const selectionLensRef = useRef<{
+    key: string
+    lens: ReturnType<typeof computeSelectionLens>
+    nodesById: Map<number, GraphNode>
+    childrenByParent: Map<number | null, GraphNode[]>
+  } | null>(null)
+
+  const rawSelectionLens = useMemo(() => {
     if (selectedNodeId === null || focusPositions) {
       return null
     }
     return computeSelectionLens(selectedNodeId, nodesById, childrenByParent)
   }, [childrenByParent, focusPositions, nodesById, selectedNodeId])
+
+  const selectionLens = useMemo(() => {
+    if (!rawSelectionLens) {
+      selectionLensRef.current = null
+      return null
+    }
+    const key = `${rawSelectionLens.focusRootId}:${rawSelectionLens.focusEndId}`
+    const cached = selectionLensRef.current
+    if (
+      cached &&
+      cached.key === key &&
+      cached.nodesById === nodesById &&
+      cached.childrenByParent === childrenByParent
+    ) {
+      return cached.lens
+    }
+    selectionLensRef.current = {
+      key,
+      lens: rawSelectionLens,
+      nodesById,
+      childrenByParent,
+    }
+    return rawSelectionLens
+  }, [childrenByParent, nodesById, rawSelectionLens])
 
   const targetPositions = useMemo(() => {
     if (!selectionLens) {
@@ -220,7 +353,7 @@ export function GraphView({
     const from = positionsRef.current
     const to = targetPositions
 
-    if (from === to) {
+    if (positionsMatch(from, to)) {
       return
     }
 
@@ -423,11 +556,6 @@ export function GraphView({
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
   useEffect(() => {
-    if (deselectFitTimeoutRef.current !== null) {
-      window.clearTimeout(deselectFitTimeoutRef.current)
-      deselectFitTimeoutRef.current = null
-    }
-
     const wasSelected = previousHasSelectionRef.current
     previousHasSelectionRef.current = hasSelection
 
@@ -436,18 +564,22 @@ export function GraphView({
     }
 
     if (wasSelected && !hasSelection) {
-      deselectFitTimeoutRef.current = window.setTimeout(() => {
-        flow.fitView({ padding: 0.2, duration: 200 })
-      }, GRAPH_LAYOUT_ANIMATION_MS)
-    }
-
-    return () => {
-      if (deselectFitTimeoutRef.current !== null) {
-        window.clearTimeout(deselectFitTimeoutRef.current)
-        deselectFitTimeoutRef.current = null
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return
       }
+      const bounds = computeGraphBounds(targetPositions)
+      if (!bounds) {
+        return
+      }
+      const nextViewport = computeFitViewport(bounds, rect, 0)
+      const currentViewport = flow.getViewport()
+      if (viewportMatches(currentViewport, nextViewport)) {
+        return
+      }
+      flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
     }
-  }, [flow, hasSelection, nodes.length])
+  }, [flow, hasSelection, nodes.length, targetPositions])
 
   useEffect(() => {
     if (!flow || selectedNodeId === null || focusPositions) {
@@ -515,7 +647,12 @@ export function GraphView({
         ? Math.min(yMax, Math.max(yMin, trunkAnchorY))
         : visibleCenterY - centerY * zoom
 
-    flow.setViewport({ x, y, zoom }, { duration: GRAPH_LAYOUT_ANIMATION_MS })
+    const nextViewport = { x, y, zoom }
+    const currentViewport = flow.getViewport()
+    if (viewportMatches(currentViewport, nextViewport)) {
+      return
+    }
+    flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
   }, [flow, focusPositions, selectedNodeId, selectionLens, targetPositions])
 
   useEffect(() => {
