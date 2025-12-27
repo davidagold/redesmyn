@@ -699,6 +699,8 @@ export function GraphView({
         style: {
           width: trunkLayout.width,
           height: trunkLayout.height,
+          // React Flow disables pointer events on inert nodes; keep these on so trunk tooltips work.
+          pointerEvents: "all",
         },
         className: "select-none",
       } satisfies TrunkNodeType)

@@ -4,6 +4,7 @@
 
 - When asked to commit, prefer clean, thoughtfully organized, change-sized commits; avoid mixing unrelated concerns (e.g. keep layout vs. markdown vs. UX changes separate) so history stays easy to rebase/split.
 - For any Python usage that relies on project packages/scripts, use `uv` (e.g. `uv run …`, `uv sync`); avoid `pip install`.
+- Strive for self-documenting code via clear names and sensible factoring; if logic/settings are non-obvious or easy to break, add a brief comment explaining why.
 
 ## Data Model Conventions
 
