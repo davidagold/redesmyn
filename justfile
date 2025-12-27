@@ -25,6 +25,7 @@ check:
     uv run ty check .
     cd dashboard && npm run lint
     cd dashboard && npm run typecheck
+    cd dashboard && npm run test
 
 run:
     rn daemon run

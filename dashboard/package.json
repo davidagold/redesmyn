@@ -15,6 +15,7 @@
     "lint": "oxlint --react-plugin --tsconfig tsconfig.json .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview"
   },
