@@ -142,21 +142,14 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                 </TooltipTrigger>
                 <TooltipContent
                   side="right"
+                  sideOffset={10}
                   align="center"
-                  className="space-y-1"
+                  className="space-y-0.5"
                 >
-                  <div className="font-mono text-[10px] text-background/80">
-                    {mark.sha}
-                  </div>
                   <div className="text-xs">{author}</div>
                   {authoredAt ? (
                     <div className="text-xs text-background/70">
                       {authoredAt}
-                    </div>
-                  ) : null}
-                  {isBase ? (
-                    <div className="text-[10px] uppercase tracking-[0.2em] text-background/70">
-                      Base
                     </div>
                   ) : null}
                 </TooltipContent>
