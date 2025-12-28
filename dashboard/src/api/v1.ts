@@ -193,6 +193,57 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/agent/restart": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Restart Task Agent */
+    post: operations["restart_task_agent_v1_tasks__task_id__agent_restart_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/agent/start": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Start Task Agent */
+    post: operations["start_task_agent_v1_tasks__task_id__agent_start_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/agent/stop": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Stop Task Agent */
+    post: operations["stop_task_agent_v1_tasks__task_id__agent_stop_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -387,8 +438,6 @@ export interface components {
       epic: components["schemas"]["EpicResponse"]
       /** Nodes */
       nodes: components["schemas"]["NodeResponse"][]
-      /** Sessions */
-      sessions?: components["schemas"]["AgentSessionResponse"][]
       /** Tasks */
       tasks: components["schemas"]["TaskResponse"][]
       trunk?: components["schemas"]["TrunkTimelineResponse"] | null
@@ -564,6 +613,70 @@ export interface components {
     NodeSetAgentRequest: {
       /** Agentid */
       agentId: number | null
+    }
+    /** TaskAgentRestartRequest */
+    TaskAgentRestartRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+    }
+    /** TaskAgentStartRequest */
+    TaskAgentStartRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness: string
+    }
+    /** TaskAgentStartResponse */
+    TaskAgentStartResponse: {
+      /** Agentid */
+      agentId: number
+      /** Agentname */
+      agentName: string
+      agentStatus: components["schemas"]["AgentStatus"]
+      /** Attach */
+      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
+      /** Harnessprofileid */
+      harnessProfileId: string
+      /** Nodeid */
+      nodeId: number
+      resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      sessionStatus: components["schemas"]["AgentSessionStatus"]
+      /**
+       * Started
+       * @default true
+       */
+      started: boolean
+      /**
+       * Startedat
+       * Format: date-time
+       */
+      startedAt: string
+      /** Taskid */
+      taskId: number
+      /** Warnings */
+      warnings?: string[]
+    }
+    /** TaskAgentStopResponse */
+    TaskAgentStopResponse: {
+      /** Agentid */
+      agentId: number | null
+      /** Agentname */
+      agentName: string | null
+      agentStatus: components["schemas"]["AgentStatus"] | null
+      /** Nodeid */
+      nodeId: number | null
+      /** Stopped */
+      stopped: boolean
+      /** Taskid */
+      taskId: number
     }
     /**
      * TaskAuthority
@@ -1000,6 +1113,107 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["ApiStatusResponse"]
+        }
+      }
+    }
+  }
+  restart_task_agent_v1_tasks__task_id__agent_restart_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentRestartRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStartResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  start_task_agent_v1_tasks__task_id__agent_start_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentStartRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStartResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  stop_task_agent_v1_tasks__task_id__agent_stop_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

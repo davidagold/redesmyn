@@ -1,7 +1,6 @@
 export type NodeActivity = {
   lastCommitAt?: number
   lastWorktreeAt?: number
-  lastSessionAt?: number
 }
 
 export const RECENT_ACTIVITY_WINDOW_MS = 8_000

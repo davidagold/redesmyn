@@ -3,7 +3,6 @@ import type { EpicGraph } from "@/api"
 export type GraphNode = EpicGraph["nodes"][number]
 export type Task = EpicGraph["tasks"][number]
 export type Agent = EpicGraph["agents"][number]
-export type AgentSession = NonNullable<EpicGraph["sessions"]>[number]
 export type TrunkTimeline = EpicGraph["trunk"]
 
 export function formatBranchName(
@@ -35,19 +34,6 @@ export function buildAgentsMap(agents: Agent[]): Map<number, Agent> {
   const map = new Map<number, Agent>()
   for (const agent of agents) {
     map.set(agent.id, agent)
-  }
-  return map
-}
-
-export function buildSessionsByNodeId(
-  sessions: AgentSession[],
-): Map<number, AgentSession> {
-  const map = new Map<number, AgentSession>()
-  for (const session of sessions) {
-    if (session.nodeId === null) {
-      continue
-    }
-    map.set(session.nodeId, session)
   }
   return map
 }

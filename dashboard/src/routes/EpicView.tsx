@@ -62,7 +62,6 @@ export function EpicView() {
     refresh: refreshGraph,
     tasksById,
     agentsById,
-    sessionsByNodeId,
     childrenByParent,
     nodesById,
     rootNodes,
@@ -146,37 +145,22 @@ export function EpicView() {
     }, 250)
   }, [refreshGraph])
 
-  const handleStreamEvent = useCallback(
-    (event: StreamEvent) => {
-      const nodeId = event.data.node_id
-      if (typeof nodeId === "number") {
-        const observedAt = Date.parse(event.createdAt) || Date.now()
-        setActivityByNodeId((prev) => {
-          const next = new Map(prev)
-          const current = next.get(nodeId) ?? {}
-          if (event.eventType === "git.commit") {
-            next.set(nodeId, { ...current, lastCommitAt: observedAt })
-          } else if (event.eventType === "worktree.health") {
-            next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
-          } else if (
-            event.eventType === "agent.session_started" ||
-            event.eventType === "agent.session_stopped"
-          ) {
-            next.set(nodeId, { ...current, lastSessionAt: observedAt })
-          }
-          return next
-        })
-      }
-
-      if (
-        event.eventType === "agent.session_started" ||
-        event.eventType === "agent.session_stopped"
-      ) {
-        scheduleGraphRefresh()
-      }
-    },
-    [scheduleGraphRefresh],
-  )
+  const handleStreamEvent = useCallback((event: StreamEvent) => {
+    const nodeId = event.data.node_id
+    if (typeof nodeId === "number") {
+      const observedAt = Date.parse(event.createdAt) || Date.now()
+      setActivityByNodeId((prev) => {
+        const next = new Map(prev)
+        const current = next.get(nodeId) ?? {}
+        if (event.eventType === "git.commit") {
+          next.set(nodeId, { ...current, lastCommitAt: observedAt })
+        } else if (event.eventType === "worktree.health") {
+          next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
+        }
+        return next
+      })
+    }
+  }, [])
 
   useEventStream({
     epic: selectedEpic?.slug ?? null,
@@ -325,7 +309,6 @@ export function EpicView() {
             childrenByParent={childrenByParent}
             tasksById={tasksById}
             agentsById={agentsById}
-            sessionsByNodeId={sessionsByNodeId}
             activityByNodeId={activityByNodeId}
             trunk={graph.trunk ?? null}
             selectedNodeId={nodeId}

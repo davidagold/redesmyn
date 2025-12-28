@@ -1,13 +1,12 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import type { Agent, AgentSession, GraphNode, Task } from "@/lib/graph-utils"
+import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 
 interface NodeCardProps {
   node: GraphNode
   task?: Task
   agent?: Agent
-  session?: AgentSession
   activity?: NodeActivity
   branchLabel: string
   isSelected: boolean
@@ -15,8 +14,17 @@ interface NodeCardProps {
   onSelect: () => void
 }
 
-function agentStatusColor(agent: Agent | undefined) {
+function statusColor(task: Task | undefined, agent: Agent | undefined) {
+  if (task?.state === "blocked") {
+    return "bg-amber-400"
+  }
+  if (task?.state === "done") {
+    return "bg-muted-foreground/50"
+  }
   const status = agent?.status ?? null
+  if (!agent) {
+    return "bg-muted-foreground/50"
+  }
   if (status === "running") {
     return "bg-emerald-400"
   }
@@ -26,14 +34,26 @@ function agentStatusColor(agent: Agent | undefined) {
   if (status === "error") {
     return "bg-rose-400"
   }
-  return "bg-muted-foreground/50"
+  return "bg-sky-400"
+}
+
+function statusSummary(task: Task | undefined, agent: Agent | undefined) {
+  if (task?.state === "blocked") {
+    return "blocked"
+  }
+  if (task?.state === "done") {
+    return "done"
+  }
+  if (!agent) {
+    return "not started"
+  }
+  return agent.status
 }
 
 export function NodeCard({
   node,
   task,
   agent,
-  session,
   activity,
   branchLabel,
   isSelected,
@@ -43,6 +63,11 @@ export function NodeCard({
   const now = Date.now()
   const commitHot = isRecentActivity(activity?.lastCommitAt, now)
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
+
+  const tooltip = [
+    agent ? `Agent: ${agent.displayName}` : "Agent: (not started)",
+    `Status: ${statusSummary(task, agent)}`,
+  ].join("\n")
 
   return (
     <Card
@@ -65,68 +90,53 @@ export function NodeCard({
         }
       }}
     >
-      <CardContent className="grid gap-1 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-mono text-sm" title={node.branchName}>
-            {branchLabel}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <span>node {node.id}</span>
-              {agent ? (
-                <>
-                  <span className="text-muted-foreground/50">·</span>
-                  <span className="truncate">{agent.displayName}</span>
-                  <span
-                    className={cn(
-                      "h-2 w-2 rounded-full",
-                      agentStatusColor(agent),
-                    )}
-                    aria-label={`agent status: ${agent.status}`}
-                    title={`agent status: ${agent.status}`}
-                  />
-                </>
-              ) : (
-                <>
-                  <span className="text-muted-foreground/50">·</span>
-                  <span className="italic text-muted-foreground/80">
-                    unassigned
-                  </span>
-                </>
+      <CardContent className="relative flex h-full flex-col gap-2 p-4">
+        <div className="absolute right-3 top-3">
+          <div
+            className="relative inline-flex h-3 w-3 items-center justify-center"
+            title={tooltip}
+          >
+            {commitHot ? (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60 opacity-75" />
+            ) : worktreeHot ? (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
+            ) : null}
+            <span
+              className={cn(
+                "relative inline-flex h-2.5 w-2.5 rounded-full",
+                statusColor(task, agent),
               )}
-              {session ? (
-                <>
-                  <span className="text-muted-foreground/50">·</span>
-                  <span title={`session status: ${session.status}`}>
-                    {session.status}
-                  </span>
-                </>
-              ) : null}
-              {commitHot ? (
-                <span
-                  className="relative ml-1 inline-flex h-2 w-2"
-                  aria-label="recent commit activity"
-                  title="recent commit activity"
-                >
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-400/80" />
-                </span>
-              ) : worktreeHot ? (
-                <span
-                  className="relative ml-1 inline-flex h-2 w-2"
-                  aria-label="recent worktree activity"
-                  title="recent worktree activity"
-                >
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400/80" />
-                </span>
-              ) : null}
+              aria-label={tooltip}
+            />
+          </div>
+        </div>
+
+        <div className="pr-4">
+          <div className="flex items-baseline gap-2">
+            {task ? (
+              <div className="font-mono text-xs text-muted-foreground">
+                t{task.id}
+              </div>
+            ) : null}
+            <div className="text-sm font-medium leading-tight">
+              {task?.title ?? "—"}
             </div>
           </div>
+          <div
+            className="font-mono text-xs text-muted-foreground"
+            title={node.branchName}
+          >
+            {branchLabel}
+          </div>
         </div>
-        <div className="text-sm text-muted-foreground">
-          {task?.title ?? "—"}
-        </div>
+
+        {agent ? (
+          <div className="mt-auto flex items-end justify-end">
+            <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground">
+              {agent.displayName}
+            </span>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

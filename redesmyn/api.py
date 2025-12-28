@@ -245,21 +245,6 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             if agent_ids
             else []
         )
-        node_ids = [n.id for n in nodes]
-        sessions = (
-            list(
-                await session.scalars(
-                    select(AgentSession)
-                    .where(
-                        AgentSession.node_id.in_(node_ids),
-                        AgentSession.ended_at.is_(None),
-                    )
-                    .order_by(AgentSession.id)
-                )
-            )
-            if node_ids
-            else []
-        )
 
     trunk: TrunkTimelineResponse | None = None
     try:
@@ -333,10 +318,6 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
         nodes=[NodeResponse.model_validate(n, from_attributes=True) for n in nodes],
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
-        sessions=[
-            AgentSessionResponse.model_validate(s, from_attributes=True)
-            for s in sessions
-        ],
         trunk=trunk,
     )
 

@@ -3,7 +3,6 @@ import { NodeCard } from "@/components/graph/NodeCard"
 import {
   formatBranchName,
   type Agent,
-  type AgentSession,
   type GraphNode,
   type Task,
 } from "@/lib/graph-utils"
@@ -13,7 +12,6 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
   task?: Task
   agent?: Agent
-  session?: AgentSession
   activity?: NodeActivity
   epicSlug?: string | null
   edgeHighlighted?: boolean
@@ -30,7 +28,6 @@ export function FlowBranchNode({
     node,
     task,
     agent,
-    session,
     activity,
     epicSlug,
     edgeHighlighted,
@@ -54,7 +51,6 @@ export function FlowBranchNode({
         node={node}
         task={task}
         agent={agent}
-        session={session}
         activity={activity}
         branchLabel={branchLabel}
         isSelected={selected}
