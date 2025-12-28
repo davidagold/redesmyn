@@ -17,10 +17,11 @@ from sqlalchemy import desc, select
 from redesmyn import __version__
 from redesmyn.agent_runtime import (
     attach_agent_session,
-    load_agent_session,
+    load_task_agent_session,
+    restart_task_agent_session,
     session_log_path_for_row,
-    start_agent_session_for_node,
-    stop_agent_session,
+    start_task_agent_session,
+    stop_task_agent_session,
 )
 from redesmyn.blocks import (
     NotInitializedError,
@@ -32,6 +33,7 @@ from redesmyn.blocks import (
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
+    AgentSession,
     Epic,
     LinearAuth,
     Node,
@@ -188,6 +190,231 @@ def init(
     asyncio.run(init_repo(ctx))
     typer.echo(f"Initialized: {ctx.state_dir}")
     typer.echo(f"DB: {ctx.db_path}")
+
+
+@app.command()
+def run(
+    epic: str | None = typer.Option(None, help="Epic slug or id (required for fleet)."),
+    fleet_size: int | None = typer.Option(
+        None,
+        "--fleet-size",
+        help="Start agents for the top N eligible tasks in the epic (ordered parent-first).",
+    ),
+    task_ids: list[int] | None = typer.Option(
+        None,
+        "--task",
+        help="Task id(s) to start (repeatable). Mutually exclusive with --fleet-size.",
+    ),
+    harness: str = typer.Option(
+        ...,
+        "--harness",
+        help='Harness command (shell-like), e.g. "codex" or "claude --project …".',
+    ),
+    detach: bool = typer.Option(
+        True,
+        "--detach/--no-detach",
+        help="Run in a detached session (tmux if available).",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan only."),
+    restart: bool = typer.Option(
+        False,
+        "--restart",
+        help="Stop and restart agents for selected tasks (still respects eligibility).",
+    ),
+) -> None:
+    """Fleet start agents (or start a specific set of tasks)."""
+    if task_ids and fleet_size is not None:
+        typer.echo("error: --task is mutually exclusive with --fleet-size", err=True)
+        raise typer.Exit(2)
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _plan() -> tuple[
+        list[Task], list[tuple[int, str]], list[Task], Epic | None
+    ]:
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                epic_row: Epic | None = None
+                if task_ids is None:
+                    epic_row = await _resolve_epic(ctx, epic=epic)
+                    tasks = list(
+                        await session.scalars(
+                            select(Task)
+                            .where(Task.epic_id == epic_row.id)
+                            .order_by(Task.id)
+                        )
+                    )
+                else:
+                    tasks = []
+                    for task_id in task_ids:
+                        task = await session.get(Task, task_id)
+                        if task is None:
+                            continue
+                        tasks.append(task)
+
+                nodes = (
+                    list(
+                        await session.scalars(
+                            select(Node)
+                            .where(Node.epic_id == epic_row.id)
+                            .order_by(Node.id)
+                        )
+                    )
+                    if epic_row is not None
+                    else []
+                )
+                node_by_id = {n.id: n for n in nodes}
+
+                def node_depth(node_id: int, cache: dict[int, int]) -> int:
+                    if node_id in cache:
+                        return cache[node_id]
+                    node = node_by_id.get(node_id)
+                    if node is None or node.parent_node_id is None:
+                        cache[node_id] = 0
+                        return 0
+                    value = 1 + node_depth(node.parent_node_id, cache)
+                    cache[node_id] = value
+                    return value
+
+                eligible: list[Task] = []
+                skipped: list[tuple[int, str]] = []
+                if task_ids is not None:
+                    existing_ids = {t.id for t in tasks}
+                    for task_id in task_ids:
+                        if task_id not in existing_ids:
+                            skipped.append((task_id, "not found"))
+
+                for task in tasks:
+                    if task.node_id is None:
+                        skipped.append((task.id, "no node backing"))
+                        continue
+                    if task.state in {TaskState.Blocked, TaskState.Done}:
+                        skipped.append((task.id, f"state={task.state.value}"))
+                        continue
+                    eligible.append(task)
+
+                active_node_ids: set[int] = set()
+                if eligible:
+                    node_ids = [t.node_id for t in eligible if t.node_id is not None]
+                    active_node_ids = set(
+                        await session.scalars(
+                            select(AgentSession.node_id)
+                            .where(
+                                AgentSession.node_id.in_(node_ids),
+                                AgentSession.ended_at.is_(None),
+                            )
+                            .distinct()
+                        )
+                    )
+
+                if epic_row is not None:
+                    cache: dict[int, int] = {}
+                    eligible.sort(
+                        key=lambda t: (
+                            node_depth(t.node_id or 0, cache),
+                            t.id,
+                        )
+                    )
+
+                if task_ids is None:
+                    if fleet_size is None:
+                        raise typer.BadParameter(
+                            "Missing --fleet-size (or pass --task …)"
+                        )
+
+                    if restart:
+                        selected = eligible[:fleet_size]
+                    else:
+                        selected = [
+                            t for t in eligible if t.node_id not in active_node_ids
+                        ][:fleet_size]
+                else:
+                    if restart:
+                        selected = eligible
+                    else:
+                        selected = [
+                            t for t in eligible if t.node_id not in active_node_ids
+                        ]
+
+                if not restart:
+                    already_running = [
+                        t
+                        for t in eligible
+                        if t.node_id is not None and t.node_id in active_node_ids
+                    ]
+                    for t in already_running:
+                        skipped.append((t.id, "already running"))
+
+                return selected, skipped, eligible, epic_row
+        finally:
+            await engine.dispose()
+
+    try:
+        selected, skipped, eligible, epic_row = asyncio.run(_plan())
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if epic_row is not None:
+        typer.echo(f"Epic: {epic_row.slug} (id={epic_row.id})")
+
+    typer.echo(f"Eligible: {len(eligible)}")
+    typer.echo(f"Selected: {len(selected)}")
+    if skipped:
+        typer.echo("Skipped:")
+        for task_id, reason in skipped:
+            typer.echo(f"  - {task_id}: {reason}")
+
+    if dry_run:
+        return
+
+    failures: list[tuple[int, str]] = []
+    for task in selected:
+        try:
+            if restart:
+                result = asyncio.run(
+                    restart_task_agent_session(
+                        ctx,
+                        task_id=task.id,
+                        harness_command=harness,
+                        detach=detach,
+                    )
+                )
+            else:
+                result = asyncio.run(
+                    start_task_agent_session(
+                        ctx,
+                        task_id=task.id,
+                        harness_command=harness,
+                        detach=detach,
+                    )
+                )
+            for warning in result.warnings:
+                typer.echo(f"warning: {warning}", err=True)
+            verb = (
+                "Restarted"
+                if restart
+                else ("Started" if result.started else "Already running")
+            )
+            typer.echo(f"{verb}: {task.id} ({task.title})")
+            typer.echo(f"  rn agent attach --task {task.id}")
+            typer.echo(f"  rn agent logs --task {task.id}")
+            typer.echo(f"  rn checkout --task {task.id}")
+        except RuntimeError as e:
+            failures.append((task.id, str(e)))
+
+    if failures:
+        typer.echo("Failures:", err=True)
+        for task_id, error in failures:
+            typer.echo(f"  - {task_id}: {error}", err=True)
+        raise typer.Exit(1)
 
 
 def _ensure_initialized(ctx: RepoContext) -> None:
@@ -1330,24 +1557,21 @@ def agent_assign(
     typer.echo(f"Assigned agent {agent.id} -> node {node.id} ({node.branch_name})")
 
 
-@agent_app.command(
-    "run",
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-)
-def agent_run(
-    ctx: typer.Context,
-    node_id: int = typer.Option(..., "--node", help="Node id."),
-    harness: str = typer.Option(..., "--harness", help="Harness command (e.g. codex)."),
+@agent_app.command("start")
+def agent_start(
+    task_id: int = typer.Option(..., "--task", help="Task id."),
+    harness: str = typer.Option(
+        ...,
+        "--harness",
+        help='Harness command (shell-like), e.g. "codex" or "claude --project …".',
+    ),
     detach: bool = typer.Option(
-        False,
+        True,
         "--detach/--no-detach",
         help="Run in a detached session (tmux if available).",
     ),
-    epic: str | None = typer.Option(
-        None, help="Epic slug or id (defaults if only one epic)."
-    ),
 ) -> None:
-    """Start a runner-owned agent session for a node."""
+    """Start the per-task agent (tmux-first)."""
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
@@ -1355,15 +1579,54 @@ def agent_run(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    argv = [harness, *list(ctx.args)]
     try:
         result = asyncio.run(
-            start_agent_session_for_node(
+            start_task_agent_session(
+                repo_ctx, task_id=task_id, harness_command=harness, detach=detach
+            )
+        )
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    verb = "Started" if result.started else "Already running"
+    typer.echo(f"{verb}: agent a-{task_id} (attach={result.attach.type})")
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+
+    typer.echo(f"Attach:  rn agent attach --task {task_id}")
+    typer.echo(f"Logs:    rn agent logs --task {task_id}")
+    typer.echo(f"Checkout: rn checkout --task {task_id}")
+
+
+@agent_app.command("restart")
+def agent_restart(
+    task_id: int = typer.Option(..., "--task", help="Task id."),
+    harness: str | None = typer.Option(
+        None,
+        "--harness",
+        help="Harness command (shell-like). Defaults to the last known command for this task.",
+    ),
+    detach: bool = typer.Option(
+        True,
+        "--detach/--no-detach",
+        help="Run in a detached session (tmux if available).",
+    ),
+) -> None:
+    """Restart the per-task agent."""
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    try:
+        result = asyncio.run(
+            restart_task_agent_session(
                 repo_ctx,
-                epic_slug=epic,
-                node_id=node_id,
-                harness=harness,
-                argv=argv,
+                task_id=task_id,
+                harness_command=harness,
                 detach=detach,
             )
         )
@@ -1371,33 +1634,19 @@ def agent_run(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    session_row = result.session
-    attach = result.attach
-    typer.echo(
-        f"Started session {session_row.id}: node={session_row.node_id} "
-        f"agent={session_row.agent_id} attach={attach.type}"
-    )
-    if attach.type == "tmux":
-        typer.echo(f"Attach: rn agent attach --session {session_row.id}")
-    else:
-        log_path = session_log_path_for_row(repo_ctx, session_row=session_row)
-        typer.echo(
-            f"Logs: rn agent logs --session {session_row.id}  (path: {log_path})"
-        )
+    typer.echo(f"Restarted: agent a-{task_id} (attach={result.attach.type})")
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    typer.echo(f"Attach:  rn agent attach --task {task_id}")
+    typer.echo(f"Logs:    rn agent logs --task {task_id}")
+    typer.echo(f"Checkout: rn checkout --task {task_id}")
 
 
 @agent_app.command("attach")
 def agent_attach(
-    session_id: int | None = typer.Option(None, "--session", help="Session id."),
-    node_id: int | None = typer.Option(
-        None, "--node", help="Node id (active session)."
-    ),
+    task_id: int = typer.Option(..., "--task", help="Task id."),
 ) -> None:
-    """Attach to a detached session (tmux)."""
-    if session_id is None and node_id is None:
-        typer.echo("error: pass --session or --node", err=True)
-        raise typer.Exit(2)
-
+    """Attach to a detached agent session (tmux)."""
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
@@ -1405,9 +1654,12 @@ def agent_attach(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    row = asyncio.run(
-        load_agent_session(repo_ctx, session_id=session_id, node_id=node_id)
-    )
+    try:
+        row = asyncio.run(load_task_agent_session(repo_ctx, task_id=task_id))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
     if row is None:
         typer.echo("No matching active session.", err=True)
         raise typer.Exit(1)
@@ -1417,23 +1669,16 @@ def agent_attach(
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         log_path = session_log_path_for_row(repo_ctx, session_row=row)
-        typer.echo(f"Logs: rn agent logs --session {row.id}  (path: {log_path})")
+        typer.echo(f"Logs: rn agent logs --task {task_id}  (path: {log_path})")
         raise typer.Exit(2)
     raise typer.Exit(code)
 
 
 @agent_app.command("stop")
 def agent_stop(
-    session_id: int | None = typer.Option(None, "--session", help="Session id."),
-    node_id: int | None = typer.Option(
-        None, "--node", help="Node id (active session)."
-    ),
+    task_id: int = typer.Option(..., "--task", help="Task id."),
 ) -> None:
-    """Stop a session owned by the runner."""
-    if session_id is None and node_id is None:
-        typer.echo("error: pass --session or --node", err=True)
-        raise typer.Exit(2)
-
+    """Stop a runner-owned agent session for this task."""
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
@@ -1441,21 +1686,21 @@ def agent_stop(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    row = asyncio.run(
-        stop_agent_session(repo_ctx, session_id=session_id, node_id=node_id)
-    )
+    try:
+        row = asyncio.run(stop_task_agent_session(repo_ctx, task_id=task_id))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
     if row is None:
-        typer.echo("No matching active session.", err=True)
-        raise typer.Exit(1)
-    typer.echo(f"Stopped session {row.id}: node={row.node_id} agent={row.agent_id}")
+        typer.echo("No matching active session.")
+        return
+    typer.echo(f"Stopped: agent a-{task_id}")
 
 
 @agent_app.command("logs")
 def agent_logs(
-    session_id: int | None = typer.Option(None, "--session", help="Session id."),
-    node_id: int | None = typer.Option(
-        None, "--node", help="Node id (active session)."
-    ),
+    task_id: int = typer.Option(..., "--task", help="Task id."),
     lines: int = typer.Option(200, "--lines", help="Lines of history to show."),
     follow: bool = typer.Option(
         True,
@@ -1463,11 +1708,7 @@ def agent_logs(
         help="Follow log output (tail -f).",
     ),
 ) -> None:
-    """Tail session logs (tmux pipe-pane or runner log file)."""
-    if session_id is None and node_id is None:
-        typer.echo("error: pass --session or --node", err=True)
-        raise typer.Exit(2)
-
+    """Tail agent logs (tmux pipe-pane or runner log file)."""
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
@@ -1475,16 +1716,16 @@ def agent_logs(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    row = asyncio.run(
-        load_agent_session(
-            repo_ctx,
-            session_id=session_id,
-            node_id=node_id,
-            active_only=False,
+    try:
+        row = asyncio.run(
+            load_task_agent_session(repo_ctx, task_id=task_id, active_only=False)
         )
-    )
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
     if row is None:
-        typer.echo("Session not found.", err=True)
+        typer.echo("No sessions found for this task.", err=True)
         raise typer.Exit(1)
 
     log_path = session_log_path_for_row(repo_ctx, session_row=row)

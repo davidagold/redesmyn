@@ -64,6 +64,257 @@
         "title": "AgentResponse",
         "type": "object"
       },
+      "AgentSessionCreateRequest": {
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "integer"
+          },
+          "attach": {
+            "default": {
+              "type": "none"
+            },
+            "discriminator": {
+              "mapping": {
+                "external": "#/components/schemas/AttachExternalResponse",
+                "none": "#/components/schemas/AttachNoneResponse",
+                "tmux": "#/components/schemas/AttachTmuxResponse"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachNoneResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachTmuxResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachExternalResponse"
+              }
+            ],
+            "title": "Attach"
+          },
+          "cwdPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwdpath"
+          },
+          "harnessProfileId": {
+            "title": "Harnessprofileid",
+            "type": "string"
+          },
+          "hostKey": {
+            "title": "Hostkey",
+            "type": "string"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "resolvedProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentSessionStatus",
+            "default": "starting"
+          }
+        },
+        "required": [
+          "agentId",
+          "hostKey",
+          "harnessProfileId"
+        ],
+        "title": "AgentSessionCreateRequest",
+        "type": "object"
+      },
+      "AgentSessionResponse": {
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "integer"
+          },
+          "attach": {
+            "discriminator": {
+              "mapping": {
+                "external": "#/components/schemas/AttachExternalResponse",
+                "none": "#/components/schemas/AttachNoneResponse",
+                "tmux": "#/components/schemas/AttachTmuxResponse"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachNoneResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachTmuxResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachExternalResponse"
+              }
+            ],
+            "title": "Attach"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "cwdPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cwdpath"
+          },
+          "endedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endedat"
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exitcode"
+          },
+          "harnessProfileId": {
+            "title": "Harnessprofileid",
+            "type": "string"
+          },
+          "hostId": {
+            "title": "Hostid",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "resolvedProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startedAt": {
+            "format": "date-time",
+            "title": "Startedat",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentSessionStatus"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "nodeId",
+          "hostId",
+          "harnessProfileId",
+          "status",
+          "cwdPath",
+          "pid",
+          "attach",
+          "resolvedProfile",
+          "exitCode",
+          "startedAt",
+          "endedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "AgentSessionResponse",
+        "type": "object"
+      },
+      "AgentSessionStatus": {
+        "enum": [
+          "starting",
+          "running",
+          "stopping",
+          "stopped",
+          "failed"
+        ],
+        "title": "AgentSessionStatus",
+        "type": "string"
+      },
       "AgentStatus": {
         "enum": [
           "idle",
@@ -113,6 +364,89 @@
           "block"
         ],
         "title": "ApiStatusResponse",
+        "type": "object"
+      },
+      "AttachExternalResponse": {
+        "properties": {
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "logPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logpath"
+          },
+          "type": {
+            "const": "external",
+            "default": "external",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hint"
+        ],
+        "title": "AttachExternalResponse",
+        "type": "object"
+      },
+      "AttachNoneResponse": {
+        "properties": {
+          "type": {
+            "const": "none",
+            "default": "none",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "AttachNoneResponse",
+        "type": "object"
+      },
+      "AttachTmuxResponse": {
+        "properties": {
+          "logPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logpath"
+          },
+          "session": {
+            "title": "Session",
+            "type": "string"
+          },
+          "socketPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Socketpath"
+          },
+          "type": {
+            "const": "tmux",
+            "default": "tmux",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ],
+        "title": "AttachTmuxResponse",
         "type": "object"
       },
       "BlockMode": {
@@ -352,6 +686,235 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HarnessProfileDefinitionResponse": {
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Argv",
+            "type": "array"
+          },
+          "bootstrapPrelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bootstrapprelude"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Env",
+            "type": "object"
+          },
+          "skillRecommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skillrecommendation"
+          },
+          "workingDir": {
+            "title": "Workingdir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "argv",
+          "env",
+          "workingDir"
+        ],
+        "title": "HarnessProfileDefinitionResponse",
+        "type": "object"
+      },
+      "HarnessProfileResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HarnessProfileSource"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "displayName",
+          "definition",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "HarnessProfileResponse",
+        "type": "object"
+      },
+      "HarnessProfileSource": {
+        "enum": [
+          "builtin",
+          "user"
+        ],
+        "title": "HarnessProfileSource",
+        "type": "string"
+      },
+      "HarnessProfileUpsertRequest": {
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HarnessProfileSource",
+            "default": "user"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "displayName",
+          "definition"
+        ],
+        "title": "HarnessProfileUpsertRequest",
+        "type": "object"
+      },
+      "HostCapabilitiesResponse": {
+        "properties": {
+          "supportsPathShim": {
+            "default": true,
+            "title": "Supportspathshim",
+            "type": "boolean"
+          },
+          "tmuxAvailable": {
+            "default": false,
+            "title": "Tmuxavailable",
+            "type": "boolean"
+          }
+        },
+        "title": "HostCapabilitiesResponse",
+        "type": "object"
+      },
+      "HostResponse": {
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/HostCapabilitiesResponse"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "hostKey": {
+            "title": "Hostkey",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "hostKey",
+          "displayName",
+          "capabilities",
+          "lastSeenAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "HostResponse",
+        "type": "object"
+      },
+      "HostUpsertRequest": {
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostCapabilitiesResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "hostKey": {
+            "title": "Hostkey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostKey",
+          "displayName"
+        ],
+        "title": "HostUpsertRequest",
+        "type": "object"
+      },
       "LinearStatusResponse": {
         "properties": {
           "connected": {
@@ -495,6 +1058,224 @@
           "updatedAt"
         ],
         "title": "NodeResponse",
+        "type": "object"
+      },
+      "NodeSetAgentRequest": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          }
+        },
+        "required": [
+          "agentId"
+        ],
+        "title": "NodeSetAgentRequest",
+        "type": "object"
+      },
+      "TaskAgentRestartRequest": {
+        "properties": {
+          "detach": {
+            "default": true,
+            "title": "Detach",
+            "type": "boolean"
+          },
+          "harness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness"
+          }
+        },
+        "title": "TaskAgentRestartRequest",
+        "type": "object"
+      },
+      "TaskAgentStartRequest": {
+        "properties": {
+          "detach": {
+            "default": true,
+            "title": "Detach",
+            "type": "boolean"
+          },
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          }
+        },
+        "required": [
+          "harness"
+        ],
+        "title": "TaskAgentStartRequest",
+        "type": "object"
+      },
+      "TaskAgentStartResponse": {
+        "properties": {
+          "agentId": {
+            "title": "Agentid",
+            "type": "integer"
+          },
+          "agentName": {
+            "title": "Agentname",
+            "type": "string"
+          },
+          "agentStatus": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "attach": {
+            "discriminator": {
+              "mapping": {
+                "external": "#/components/schemas/AttachExternalResponse",
+                "none": "#/components/schemas/AttachNoneResponse",
+                "tmux": "#/components/schemas/AttachTmuxResponse"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AttachNoneResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachTmuxResponse"
+              },
+              {
+                "$ref": "#/components/schemas/AttachExternalResponse"
+              }
+            ],
+            "title": "Attach"
+          },
+          "harnessProfileId": {
+            "title": "Harnessprofileid",
+            "type": "string"
+          },
+          "nodeId": {
+            "title": "Nodeid",
+            "type": "integer"
+          },
+          "resolvedProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionStatus": {
+            "$ref": "#/components/schemas/AgentSessionStatus"
+          },
+          "started": {
+            "default": true,
+            "title": "Started",
+            "type": "boolean"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "title": "Startedat",
+            "type": "string"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "nodeId",
+          "agentId",
+          "agentName",
+          "agentStatus",
+          "sessionStatus",
+          "harnessProfileId",
+          "attach",
+          "resolvedProfile",
+          "startedAt"
+        ],
+        "title": "TaskAgentStartResponse",
+        "type": "object"
+      },
+      "TaskAgentStopResponse": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "agentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentname"
+          },
+          "agentStatus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "stopped": {
+            "title": "Stopped",
+            "type": "boolean"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "taskId",
+          "nodeId",
+          "agentId",
+          "agentName",
+          "agentStatus",
+          "stopped"
+        ],
+        "title": "TaskAgentStopResponse",
         "type": "object"
       },
       "TaskAuthority": {
@@ -876,6 +1657,64 @@
         "summary": "Epic Graph"
       }
     },
+    "/v1/harness-profiles": {
+      "get": {
+        "operationId": "list_harness_profiles_v1_harness_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessProfileResponse"
+                  },
+                  "title": "Response List Harness Profiles V1 Harness Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Harness Profiles"
+      },
+      "post": {
+        "operationId": "upsert_harness_profile_v1_harness_profiles_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HarnessProfileUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Harness Profile"
+      }
+    },
     "/v1/healthz": {
       "get": {
         "operationId": "healthz_v1_healthz_get",
@@ -898,6 +1737,66 @@
         "summary": "Healthz"
       }
     },
+    "/v1/hosts": {
+      "get": {
+        "operationId": "list_hosts_v1_hosts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HostResponse"
+                  },
+                  "title": "Response List Hosts V1 Hosts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Hosts"
+      }
+    },
+    "/v1/hosts/upsert": {
+      "post": {
+        "operationId": "upsert_host_v1_hosts_upsert_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Host"
+      }
+    },
     "/v1/linear/status": {
       "get": {
         "operationId": "linear_status_v1_linear_status_get",
@@ -916,6 +1815,135 @@
         "summary": "Linear Status"
       }
     },
+    "/v1/nodes/{node_id}/agent": {
+      "post": {
+        "operationId": "set_node_agent_v1_nodes__node_id__agent_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeSetAgentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Node Agent"
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "operationId": "list_agent_sessions_v1_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "active_only",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Active Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentSessionResponse"
+                  },
+                  "title": "Response List Agent Sessions V1 Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Sessions"
+      },
+      "post": {
+        "operationId": "create_agent_session_v1_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentSessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent Session"
+      }
+    },
     "/v1/status": {
       "get": {
         "operationId": "api_status_v1_status_get",
@@ -932,6 +1960,143 @@
           }
         },
         "summary": "Api Status"
+      }
+    },
+    "/v1/tasks/{task_id}/agent/restart": {
+      "post": {
+        "operationId": "restart_task_agent_v1_tasks__task_id__agent_restart_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAgentRestartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAgentStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restart Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/agent/start": {
+      "post": {
+        "operationId": "start_task_agent_v1_tasks__task_id__agent_start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAgentStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAgentStartResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/agent/stop": {
+      "post": {
+        "operationId": "stop_task_agent_v1_tasks__task_id__agent_stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAgentStopResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stop Task Agent"
       }
     }
   }

@@ -17,6 +17,11 @@ from starlette.responses import Response
 from starlette.responses import RedirectResponse
 
 from redesmyn.context import RepoContext, get_repo_context
+from redesmyn.agent_runtime import (
+    restart_task_agent_session,
+    start_task_agent_session,
+    stop_task_agent_session,
+)
 from redesmyn.db import (
     Agent,
     AgentSession,
@@ -33,7 +38,7 @@ from redesmyn.db import (
     create_sessionmaker,
 )
 from redesmyn.db.models import HostCapabilities
-from redesmyn.domain.enums import BlockPolicy
+from redesmyn.domain.enums import AgentStatus, BlockPolicy
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
     linear_authorize_url,
@@ -60,6 +65,10 @@ from redesmyn.schemas.core import (
     NodeResponse,
     ReleaseConditionResponse,
     TaskResponse,
+    TaskAgentRestartRequest,
+    TaskAgentStartRequest,
+    TaskAgentStartResponse,
+    TaskAgentStopResponse,
     TrunkCommitResponse,
     TrunkTimelineResponse,
 )
@@ -347,6 +356,106 @@ async def upsert_harness_profile(
         await session.commit()
         await session.refresh(row)
         return HarnessProfileResponse.model_validate(row, from_attributes=True)
+
+
+async def _require_task_node(
+    session: AsyncSession, *, task_id: int
+) -> tuple[Task, Node]:
+    task = await session.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.node_id is None:
+        raise HTTPException(status_code=409, detail="Task is not mapped to a node")
+    node = await session.get(Node, task.node_id)
+    if node is None:
+        raise HTTPException(status_code=409, detail="Node not found for task")
+    return task, node
+
+
+@v1.post("/tasks/{task_id}/agent/start", response_model=TaskAgentStartResponse)
+async def start_task_agent(
+    task_id: int,
+    request: TaskAgentStartRequest,
+) -> TaskAgentStartResponse:
+    try:
+        result = await start_task_agent_session(
+            app.state.ctx,
+            task_id=task_id,
+            harness_command=request.harness,
+            detach=request.detach,
+        )
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    row = result.session
+    return TaskAgentStartResponse(
+        task_id=task_id,
+        node_id=row.node_id or 0,
+        agent_id=row.agent_id,
+        agent_name=f"a-{task_id}",
+        agent_status=AgentStatus.Running,
+        session_status=row.status,
+        harness_profile_id=row.harness_profile_id,
+        attach=row.attach,
+        resolved_profile=row.resolved_profile,
+        started_at=row.started_at,
+        started=result.started,
+        warnings=list(result.warnings),
+    )
+
+
+@v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)
+async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
+    try:
+        stopped = await stop_task_agent_session(app.state.ctx, task_id=task_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        _, node = await _require_task_node(session, task_id=task_id)
+        agent = await session.get(Agent, node.agent_id) if node.agent_id else None
+
+    return TaskAgentStopResponse(
+        task_id=task_id,
+        node_id=node.id,
+        agent_id=None if agent is None else agent.id,
+        agent_name=None if agent is None else agent.display_name,
+        agent_status=None if agent is None else agent.status,
+        stopped=stopped is not None,
+    )
+
+
+@v1.post("/tasks/{task_id}/agent/restart", response_model=TaskAgentStartResponse)
+async def restart_task_agent(
+    task_id: int,
+    request: TaskAgentRestartRequest,
+) -> TaskAgentStartResponse:
+    try:
+        result = await restart_task_agent_session(
+            app.state.ctx,
+            task_id=task_id,
+            harness_command=request.harness,
+            detach=request.detach,
+        )
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    row = result.session
+    return TaskAgentStartResponse(
+        task_id=task_id,
+        node_id=row.node_id or 0,
+        agent_id=row.agent_id,
+        agent_name=f"a-{task_id}",
+        agent_status=AgentStatus.Running,
+        session_status=row.status,
+        harness_profile_id=row.harness_profile_id,
+        attach=row.attach,
+        resolved_profile=row.resolved_profile,
+        started_at=row.started_at,
+        started=result.started,
+        warnings=list(result.warnings),
+    )
 
 
 @v1.get("/sessions", response_model=list[AgentSessionResponse])

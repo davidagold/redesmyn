@@ -148,6 +148,40 @@ class AgentSessionResponse(ApiResponse):
     updated_at: datetime
 
 
+class TaskAgentStartRequest(ApiResponse):
+    harness: str
+    detach: bool = True
+
+
+class TaskAgentRestartRequest(ApiResponse):
+    harness: str | None = None
+    detach: bool = True
+
+
+class TaskAgentStartResponse(ApiResponse):
+    task_id: int
+    node_id: int
+    agent_id: int
+    agent_name: str
+    agent_status: AgentStatus
+    session_status: AgentSessionStatus
+    harness_profile_id: str
+    attach: AttachInfoResponse
+    resolved_profile: HarnessProfileDefinitionResponse | None
+    started_at: datetime
+    started: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TaskAgentStopResponse(ApiResponse):
+    task_id: int
+    node_id: int | None
+    agent_id: int | None
+    agent_name: str | None
+    agent_status: AgentStatus | None
+    stopped: bool
+
+
 class HostUpsertRequest(ApiResponse):
     host_key: str
     display_name: str
