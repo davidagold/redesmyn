@@ -5,7 +5,6 @@ import os
 import platform
 import shlex
 import shutil
-import signal
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -163,6 +162,17 @@ def _tmux_kill_session(*, name: str) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def _tmux_has_session(*, name: str) -> bool:
+    proc = subprocess.run(
+        ["tmux", "has-session", "-t", name],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=1,
+    )
+    return proc.returncode == 0
 
 
 def _tmux_attach(*, name: str) -> int:
@@ -351,26 +361,38 @@ async def ensure_node_worktree(
     return worktree_path
 
 
-async def ensure_task_agent(*, session: AsyncSession, task: Task, node: Node) -> Agent:
-    expected = f"a-{task.id}"
+async def load_node_agent(session: AsyncSession, *, node: Node) -> Agent | None:
+    if node.agent_id is None:
+        return None
+    agent = await session.get(Agent, node.agent_id)
+    if agent is None:
+        raise RuntimeError("Node has an invalid agent_id")
+    return agent
 
+
+async def get_or_create_task_agent(
+    session: AsyncSession, *, task: Task, node: Node
+) -> Agent:
+    agent = await load_node_agent(session, node=node)
+    if agent is not None:
+        return agent
+
+    expected = f"a-{task.id}"
     agent = await session.scalar(select(Agent).where(Agent.display_name == expected))
     if agent is None:
         agent = Agent(display_name=expected)
         session.add(agent)
         await session.flush()
-
-    if node.agent_id != agent.id:
-        node.agent_id = agent.id
-
-    others = list(
-        await session.scalars(
-            select(Node).where(Node.agent_id == agent.id, Node.id != node.id)
+    else:
+        other_node = await session.scalar(
+            select(Node).where(Node.agent_id == agent.id, Node.id != node.id).limit(1)
         )
-    )
-    for other in others:
-        other.agent_id = None
+        if other_node is not None:
+            raise RuntimeError(
+                f"Agent {expected!r} is already assigned to node {other_node.id} ({other_node.branch_name})"
+            )
 
+    node.agent_id = agent.id
     await session.flush()
     return agent
 
@@ -436,10 +458,42 @@ async def start_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, epic = await _load_task_and_node(session, task_id=task_id)
-            agent = await ensure_task_agent(session=session, task=task, node=node)
+            agent = await get_or_create_task_agent(
+                session=session, task=task, node=node
+            )
 
-            if agent.status in {AgentStatus.Running, AgentStatus.Blocked}:
-                attach = TypeAdapter(AttachInfo).validate_python(agent.attach)
+            if not detach:
+                raise RuntimeError(
+                    "v0 requires tmux-backed detached agents (omit --no-detach)"
+                )
+            if not has_tmux():
+                raise RuntimeError(
+                    "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
+                )
+
+            tmux_name = tmux_session_name_for_task(task_id=task.id)
+            if _tmux_has_session(name=tmux_name):
+                now = datetime.now(UTC)
+                agent.status = AgentStatus.Running
+                agent.last_seen_at = now
+                if agent.started_at is None:
+                    agent.started_at = now
+                agent.ended_at = None
+
+                log_path = agent_log_path(ctx, agent_id=agent.id)
+                try:
+                    _tmux_pipe_to_log(name=tmux_name, log_path=log_path)
+                except RuntimeError:
+                    pass
+
+                attach = AttachTmux(
+                    session=tmux_name,
+                    socket_path=None,
+                    log_path=str(log_path),
+                )
+                agent.attach = attach.model_dump(mode="python")
+                await session.commit()
+                await session.refresh(agent)
                 return StartAgentResult(
                     agent=agent,
                     attach=attach,
@@ -480,38 +534,15 @@ async def start_task_agent(
                 )
             runtime_env |= definition.env
 
-            attach: AttachInfo
-            if detach and has_tmux():
-                attach = await start_tmux_session(
-                    ctx,
-                    task_id=task.id,
-                    agent_id=agent.id,
-                    worktree_path=worktree_path,
-                    argv=definition.argv,
-                    env=runtime_env,
-                )
-                pid = None
-            else:
-                log_path = agent_log_path(ctx, agent_id=agent.id)
-                script_path = write_agent_launcher(
-                    ctx=ctx,
-                    agent_id=agent.id,
-                    argv=definition.argv,
-                    env=runtime_env,
-                )
-                with log_path.open("ab") as log_fp:
-                    proc = subprocess.Popen(
-                        [str(script_path)],
-                        cwd=str(worktree_path),
-                        stdout=log_fp,
-                        stderr=subprocess.STDOUT,
-                        env=os.environ.copy(),
-                    )
-                attach = AttachExternal(
-                    hint=f"Started pid {proc.pid} (no tmux); logs: {log_path}",
-                    log_path=str(log_path),
-                )
-                pid = proc.pid
+            attach = await start_tmux_session(
+                ctx,
+                task_id=task.id,
+                agent_id=agent.id,
+                worktree_path=worktree_path,
+                argv=definition.argv,
+                env=runtime_env,
+            )
+            pid = None
 
             now = datetime.now(UTC)
             agent.status = AgentStatus.Running
@@ -548,19 +579,23 @@ async def stop_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await ensure_task_agent(session=session, task=task, node=node)
-            if agent.status not in {AgentStatus.Running, AgentStatus.Blocked}:
+            agent = await load_node_agent(session, node=node)
+            if agent is None:
                 return False
 
-            attach = TypeAdapter(AttachInfo).validate_python(agent.attach)
-            if isinstance(attach, AttachTmux):
-                _tmux_kill_session(name=attach.session)
+            tmux_name = tmux_session_name_for_task(task_id=task.id)
+            was_running = has_tmux() and _tmux_has_session(name=tmux_name)
+            if was_running:
+                _tmux_kill_session(name=tmux_name)
             else:
-                if agent.pid is not None:
-                    try:
-                        os.kill(agent.pid, signal.SIGTERM)
-                    except OSError:
-                        pass
+                if agent.status in {AgentStatus.Running, AgentStatus.Blocked}:
+                    now = datetime.now(UTC)
+                    agent.status = AgentStatus.Error
+                    agent.last_seen_at = now
+                    agent.ended_at = now
+                    agent.pid = None
+                    await session.commit()
+                return False
 
             now = datetime.now(UTC)
             agent.status = AgentStatus.Idle
@@ -587,7 +622,11 @@ async def restart_task_agent(
             sessionmaker = create_sessionmaker(engine)
             async with sessionmaker() as session:
                 task, node, _ = await _load_task_and_node(session, task_id=task_id)
-                agent = await ensure_task_agent(session=session, task=task, node=node)
+                agent = await load_node_agent(session, node=node)
+                if agent is None:
+                    raise RuntimeError(
+                        "No prior agent run found; pass --harness to restart"
+                    )
                 if agent.resolved_profile is None:
                     raise RuntimeError(
                         "No prior agent run found; pass --harness to restart"
@@ -599,7 +638,13 @@ async def restart_task_agent(
         finally:
             await engine.dispose()
 
-    await stop_task_agent(ctx, task_id=task_id)
+    if not detach:
+        raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
+    if not has_tmux():
+        raise RuntimeError(
+            "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
+        )
+    _tmux_kill_session(name=tmux_session_name_for_task(task_id=task_id))
     return await start_task_agent(
         ctx,
         task_id=task_id,
@@ -619,12 +664,13 @@ async def load_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await ensure_task_agent(session=session, task=task, node=node)
-            if active_only and agent.status not in {
-                AgentStatus.Running,
-                AgentStatus.Blocked,
-            }:
+            agent = await load_node_agent(session, node=node)
+            if agent is None:
                 return None
+            if active_only:
+                tmux_name = tmux_session_name_for_task(task_id=task.id)
+                if not (has_tmux() and _tmux_has_session(name=tmux_name)):
+                    return None
             return agent
     finally:
         await engine.dispose()
