@@ -41,9 +41,14 @@ function toWebSocketUrl(path: string) {
   return `${protocol}://${window.location.host}${path}`
 }
 
+type DisconnectedEventStreamStatus = {
+  state: "disconnected"
+  reason?: string
+}
+
 type EventStreamStatus = { state: "idle" } | { state: "connecting" } | {
   state: "connected"
-} | { state: "disconnected" reason?: string }
+} | DisconnectedEventStreamStatus
 
 export function useEventStream(options: {
   epic: string | null
