@@ -115,11 +115,13 @@ class AttachTmuxResponse(ApiResponse):
     type: Literal["tmux"] = "tmux"
     session: str
     socket_path: str | None = None
+    log_path: str | None = None
 
 
 class AttachExternalResponse(ApiResponse):
     type: Literal["external"] = "external"
     hint: str
+    log_path: str | None = None
 
 
 AttachInfoResponse = Annotated[

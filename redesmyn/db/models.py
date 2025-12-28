@@ -84,11 +84,13 @@ class AttachTmux(BaseModel):
     type: Literal["tmux"] = "tmux"
     session: str
     socket_path: str | None = None
+    log_path: str | None = None
 
 
 class AttachExternal(BaseModel):
     type: Literal["external"] = "external"
     hint: str
+    log_path: str | None = None
 
 
 AttachInfo = Annotated[

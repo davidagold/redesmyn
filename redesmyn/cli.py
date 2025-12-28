@@ -15,6 +15,13 @@ import typer
 from sqlalchemy import desc, select
 
 from redesmyn import __version__
+from redesmyn.agent_runtime import (
+    attach_agent_session,
+    load_agent_session,
+    session_log_path_for_row,
+    start_agent_session_for_node,
+    stop_agent_session,
+)
 from redesmyn.blocks import (
     NotInitializedError,
     clear_block,
@@ -1321,6 +1328,176 @@ def agent_assign(
 
     agent, node = asyncio.run(_run())
     typer.echo(f"Assigned agent {agent.id} -> node {node.id} ({node.branch_name})")
+
+
+@agent_app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def agent_run(
+    ctx: typer.Context,
+    node_id: int = typer.Option(..., "--node", help="Node id."),
+    harness: str = typer.Option(..., "--harness", help="Harness command (e.g. codex)."),
+    detach: bool = typer.Option(
+        False,
+        "--detach/--no-detach",
+        help="Run in a detached session (tmux if available).",
+    ),
+    epic: str | None = typer.Option(
+        None, help="Epic slug or id (defaults if only one epic)."
+    ),
+) -> None:
+    """Start a runner-owned agent session for a node."""
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    argv = [harness, *list(ctx.args)]
+    try:
+        result = asyncio.run(
+            start_agent_session_for_node(
+                repo_ctx,
+                epic_slug=epic,
+                node_id=node_id,
+                harness=harness,
+                argv=argv,
+                detach=detach,
+            )
+        )
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    session_row = result.session
+    attach = result.attach
+    typer.echo(
+        f"Started session {session_row.id}: node={session_row.node_id} "
+        f"agent={session_row.agent_id} attach={attach.type}"
+    )
+    if attach.type == "tmux":
+        typer.echo(f"Attach: rn agent attach --session {session_row.id}")
+    else:
+        log_path = session_log_path_for_row(repo_ctx, session_row=session_row)
+        typer.echo(
+            f"Logs: rn agent logs --session {session_row.id}  (path: {log_path})"
+        )
+
+
+@agent_app.command("attach")
+def agent_attach(
+    session_id: int | None = typer.Option(None, "--session", help="Session id."),
+    node_id: int | None = typer.Option(
+        None, "--node", help="Node id (active session)."
+    ),
+) -> None:
+    """Attach to a detached session (tmux)."""
+    if session_id is None and node_id is None:
+        typer.echo("error: pass --session or --node", err=True)
+        raise typer.Exit(2)
+
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    row = asyncio.run(
+        load_agent_session(repo_ctx, session_id=session_id, node_id=node_id)
+    )
+    if row is None:
+        typer.echo("No matching active session.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        code = attach_agent_session(session_row=row)
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        log_path = session_log_path_for_row(repo_ctx, session_row=row)
+        typer.echo(f"Logs: rn agent logs --session {row.id}  (path: {log_path})")
+        raise typer.Exit(2)
+    raise typer.Exit(code)
+
+
+@agent_app.command("stop")
+def agent_stop(
+    session_id: int | None = typer.Option(None, "--session", help="Session id."),
+    node_id: int | None = typer.Option(
+        None, "--node", help="Node id (active session)."
+    ),
+) -> None:
+    """Stop a session owned by the runner."""
+    if session_id is None and node_id is None:
+        typer.echo("error: pass --session or --node", err=True)
+        raise typer.Exit(2)
+
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    row = asyncio.run(
+        stop_agent_session(repo_ctx, session_id=session_id, node_id=node_id)
+    )
+    if row is None:
+        typer.echo("No matching active session.", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Stopped session {row.id}: node={row.node_id} agent={row.agent_id}")
+
+
+@agent_app.command("logs")
+def agent_logs(
+    session_id: int | None = typer.Option(None, "--session", help="Session id."),
+    node_id: int | None = typer.Option(
+        None, "--node", help="Node id (active session)."
+    ),
+    lines: int = typer.Option(200, "--lines", help="Lines of history to show."),
+    follow: bool = typer.Option(
+        True,
+        "--follow/--no-follow",
+        help="Follow log output (tail -f).",
+    ),
+) -> None:
+    """Tail session logs (tmux pipe-pane or runner log file)."""
+    if session_id is None and node_id is None:
+        typer.echo("error: pass --session or --node", err=True)
+        raise typer.Exit(2)
+
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    row = asyncio.run(
+        load_agent_session(
+            repo_ctx,
+            session_id=session_id,
+            node_id=node_id,
+            active_only=False,
+        )
+    )
+    if row is None:
+        typer.echo("Session not found.", err=True)
+        raise typer.Exit(1)
+
+    log_path = session_log_path_for_row(repo_ctx, session_row=row)
+    if not log_path.exists():
+        typer.echo(f"No log file found: {log_path}", err=True)
+        raise typer.Exit(1)
+
+    cmd = ["tail", "-n", str(lines)]
+    if follow:
+        cmd.append("-f")
+    cmd.append(str(log_path))
+    proc = subprocess.run(cmd)
+    raise typer.Exit(proc.returncode)
 
 
 app.add_typer(agent_app, name="agent")
