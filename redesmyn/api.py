@@ -54,10 +54,12 @@ from redesmyn.repo_observer import run_repo_observer
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
+    AttachInfoResponse,
     BlockScopeResponse,
     BlockStatusResponse,
     EpicGraphResponse,
     EpicResponse,
+    HarnessProfileDefinitionResponse,
     HarnessProfileResponse,
     HarnessProfileUpsertRequest,
     HostResponse,
@@ -441,8 +443,10 @@ async def start_task_agent(
         agent_name=row.display_name,
         agent_status=row.status,
         harness_profile_id=row.harness_profile_id or "",
-        attach=row.attach,
-        resolved_profile=row.resolved_profile,
+        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
+        resolved_profile=TypeAdapter(
+            HarnessProfileDefinitionResponse | None
+        ).validate_python(row.resolved_profile),
         started_at=row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=list(result.warnings),
@@ -498,8 +502,10 @@ async def restart_task_agent(
         agent_name=row.display_name,
         agent_status=row.status,
         harness_profile_id=row.harness_profile_id or "",
-        attach=row.attach,
-        resolved_profile=row.resolved_profile,
+        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
+        resolved_profile=TypeAdapter(
+            HarnessProfileDefinitionResponse | None
+        ).validate_python(row.resolved_profile),
         started_at=row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=list(result.warnings),
