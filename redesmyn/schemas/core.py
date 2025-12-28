@@ -297,6 +297,22 @@ class ApiStatusResponse(ApiResponse):
     block: BlockStatusResponse | None
 
 
+class OrchestrationFleetDefaultsResponse(ApiResponse):
+    mode: Literal["fixed", "auto"]
+    size: int | None = None
+
+
+class OrchestrationHarnessDefaultsResponse(ApiResponse):
+    command: str | None = None
+    detach: bool = True
+
+
+class OrchestrationDefaultsResponse(ApiResponse):
+    default_epic: str | None = None
+    fleet: OrchestrationFleetDefaultsResponse
+    harness: OrchestrationHarnessDefaultsResponse
+
+
 class LinearStatusResponse(ApiResponse):
     connected: bool
     connected_at: datetime | None

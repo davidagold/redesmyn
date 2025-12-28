@@ -50,6 +50,7 @@ from redesmyn.integrations.linear import (
     new_oauth_state,
 )
 from redesmyn.orchestrator import init_repo
+from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.schemas.core import (
@@ -68,6 +69,9 @@ from redesmyn.schemas.core import (
     LinearStatusResponse,
     NodeSetAgentRequest,
     NodeResponse,
+    OrchestrationDefaultsResponse,
+    OrchestrationFleetDefaultsResponse,
+    OrchestrationHarnessDefaultsResponse,
     ReleaseConditionResponse,
     TaskResponse,
     TaskAgentRestartRequest,
@@ -704,6 +708,22 @@ async def index() -> Response:
 
 def _dist_path(repo_root: Path) -> Path:
     return repo_root / "dashboard" / "dist"
+
+
+@v1.get("/config", response_model=OrchestrationDefaultsResponse)
+async def get_orchestration_config() -> OrchestrationDefaultsResponse:
+    defaults = load_orchestration_defaults(app.state.ctx)
+    return OrchestrationDefaultsResponse(
+        default_epic=defaults.default_epic,
+        fleet=OrchestrationFleetDefaultsResponse(
+            mode=defaults.fleet.mode,
+            size=defaults.fleet.size,
+        ),
+        harness=OrchestrationHarnessDefaultsResponse(
+            command=defaults.harness.command,
+            detach=defaults.harness.detach,
+        ),
+    )
 
 
 @v1.get("/status", response_model=ApiStatusResponse)

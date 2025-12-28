@@ -53,6 +53,15 @@ from redesmyn.integrations.linear import (
     fetch_project_issues,
 )
 from redesmyn.git_proxy import does_block_git
+from redesmyn.orchestration_config import (
+    global_config_path,
+    load_orchestration_defaults,
+    read_config_file,
+    render_config_toml,
+    repo_config_path,
+    set_config_value,
+    write_config,
+)
 from redesmyn.orchestrator import init_repo
 from redesmyn.repo import (
     GitCommandError,
@@ -65,6 +74,7 @@ from redesmyn.strings import slugify
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
+config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
 block_app = typer.Typer(
     add_completion=False,
     help="Block controls (use `rn pause` as an alias for v0).",
@@ -194,28 +204,123 @@ def init(
     typer.echo(f"DB: {ctx.db_path}")
 
 
+def _parse_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise typer.BadParameter(f"Expected a boolean, got {value!r}")
+
+
+@config_app.command("get")
+def config_get() -> None:
+    """Print the effective (global + repo) orchestration defaults."""
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    defaults = load_orchestration_defaults(ctx)
+    typer.echo(f"Global: {global_config_path()}")
+    typer.echo(f"Repo:   {repo_config_path(ctx)}")
+    typer.echo("")
+    rendered = render_config_toml(defaults.model_dump(exclude_none=True))
+    typer.echo(rendered if rendered else "(empty)")
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(
+        ...,
+        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach).",
+    ),
+    value: str = typer.Argument(
+        ...,
+        help="Value. Use 'null' to unset (falls back to the next layer).",
+    ),
+    scope: str = typer.Option(
+        "repo",
+        "--scope",
+        help="Where to write (repo|global).",
+        show_choices=True,
+        case_sensitive=False,
+    ),
+) -> None:
+    """Set a config value in the repo or global layer."""
+    allowed = {
+        "default_epic",
+        "fleet.mode",
+        "fleet.size",
+        "harness.command",
+        "harness.detach",
+    }
+    if key not in allowed:
+        raise typer.BadParameter(f"Unknown key: {key!r}")
+
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in {"repo", "global"}:
+        raise typer.BadParameter("--scope must be one of: repo, global")
+
+    value_raw = value.strip()
+    unset = value_raw.lower() in {"null", "none", "(null)", "(none)"}
+
+    parsed: object | None
+    if unset:
+        parsed = None
+    elif key == "fleet.mode":
+        mode = value_raw.lower()
+        if mode not in {"fixed", "auto"}:
+            raise typer.BadParameter("fleet.mode must be fixed or auto")
+        parsed = mode
+    elif key == "fleet.size":
+        parsed_int = int(value_raw)
+        if parsed_int <= 0:
+            raise typer.BadParameter("fleet.size must be > 0 (or null)")
+        parsed = parsed_int
+    elif key == "harness.detach":
+        parsed = _parse_bool(value_raw)
+    else:
+        parsed = value_raw
+
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    path = repo_config_path(ctx) if normalized_scope == "repo" else global_config_path()
+    data = read_config_file(path)
+    set_config_value(data, key, parsed)
+    write_config(path, data)
+    typer.echo(f"Wrote: {path}")
+
+
 @app.command()
 def run(
-    epic: str | None = typer.Option(None, help="Epic slug or id (required for fleet)."),
+    epic: str | None = typer.Option(
+        None, help="Epic slug or id (defaults from config.default_epic)."
+    ),
     fleet_size: int | None = typer.Option(
         None,
         "--fleet-size",
-        help="Start agents for the top N eligible tasks in the epic (ordered parent-first).",
+        help="Start agents for the top N eligible tasks in the epic (ordered parent-first). Overrides config.",
     ),
     task_ids: list[int] | None = typer.Option(
         None,
         "--task",
         help="Task id(s) to start (repeatable). Mutually exclusive with --fleet-size.",
     ),
-    harness: str = typer.Option(
-        ...,
+    harness: str | None = typer.Option(
+        None,
         "--harness",
-        help='Harness command (shell-like), e.g. "codex" or "claude --project …".',
+        help="Harness command (shell-like). Defaults from config.harness.command.",
     ),
-    detach: bool = typer.Option(
-        True,
+    detach: bool | None = typer.Option(
+        None,
         "--detach/--no-detach",
-        help="Run in a detached session (tmux if available).",
+        help="Run in a detached session (tmux if available). Defaults from config.harness.detach.",
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the plan only."),
     restart: bool = typer.Option(
@@ -236,6 +341,18 @@ def run(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
+    defaults = load_orchestration_defaults(ctx)
+    effective_harness = harness or defaults.harness.command
+    if effective_harness is None:
+        typer.echo(
+            "error: Missing --harness (or set config.harness.command via `rn config set harness.command …`)",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    effective_detach = detach if detach is not None else defaults.harness.detach
+    effective_epic = epic or defaults.default_epic
+
     async def _plan() -> tuple[
         list[Task], list[tuple[int, str]], list[Task], Epic | None
     ]:
@@ -245,7 +362,7 @@ def run(
             async with sessionmaker() as session:
                 epic_row: Epic | None = None
                 if task_ids is None:
-                    epic_row = await _resolve_epic(ctx, epic=epic)
+                    epic_row = await _resolve_epic(ctx, epic=effective_epic)
                     tasks = list(
                         await session.scalars(
                             select(Task)
@@ -326,17 +443,24 @@ def run(
                     )
 
                 if task_ids is None:
-                    if fleet_size is None:
+                    effective_fleet_size: int | None = fleet_size
+                    if effective_fleet_size is None:
+                        if defaults.fleet.mode == "auto":
+                            effective_fleet_size = len(eligible)
+                        else:
+                            effective_fleet_size = defaults.fleet.size
+
+                    if effective_fleet_size is None:
                         raise typer.BadParameter(
-                            "Missing --fleet-size (or pass --task …)"
+                            "Missing --fleet-size (or set config.fleet.mode/config.fleet.size)"
                         )
 
                     if restart:
-                        selected = eligible[:fleet_size]
+                        selected = eligible[:effective_fleet_size]
                     else:
                         selected = [
                             t for t in eligible if t.node_id not in active_node_ids
-                        ][:fleet_size]
+                        ][:effective_fleet_size]
                 else:
                     if restart:
                         selected = eligible
@@ -385,8 +509,8 @@ def run(
                     restart_task_agent_session(
                         ctx,
                         task_id=task.id,
-                        harness_command=harness,
-                        detach=detach,
+                        harness_command=effective_harness,
+                        detach=effective_detach,
                     )
                 )
             else:
@@ -394,8 +518,8 @@ def run(
                     start_task_agent_session(
                         ctx,
                         task_id=task.id,
-                        harness_command=harness,
-                        detach=detach,
+                        harness_command=effective_harness,
+                        detach=effective_detach,
                     )
                 )
             for warning in result.warnings:
@@ -1158,6 +1282,7 @@ def daemon_status() -> None:
 
 
 app.add_typer(daemon_app, name="daemon")
+app.add_typer(config_app, name="config")
 
 
 @observer_app.command("run")
@@ -1609,15 +1734,15 @@ def agent_assign(
 @agent_app.command("start")
 def agent_start(
     task_id: int = typer.Option(..., "--task", help="Task id."),
-    harness: str = typer.Option(
-        ...,
+    harness: str | None = typer.Option(
+        None,
         "--harness",
-        help='Harness command (shell-like), e.g. "codex" or "claude --project …".',
+        help="Harness command (shell-like). Defaults from config.harness.command.",
     ),
-    detach: bool = typer.Option(
-        True,
+    detach: bool | None = typer.Option(
+        None,
         "--detach/--no-detach",
-        help="Run in a detached session (tmux if available).",
+        help="Run in a detached session (tmux if available). Defaults from config.harness.detach.",
     ),
 ) -> None:
     """Start the per-task agent (tmux-first)."""
@@ -1628,10 +1753,23 @@ def agent_start(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
+    defaults = load_orchestration_defaults(repo_ctx)
+    effective_harness = harness or defaults.harness.command
+    if effective_harness is None:
+        typer.echo(
+            "error: Missing --harness (or set config.harness.command via `rn config set harness.command …`)",
+            err=True,
+        )
+        raise typer.Exit(2)
+    effective_detach = detach if detach is not None else defaults.harness.detach
+
     try:
         result = asyncio.run(
             start_task_agent_session(
-                repo_ctx, task_id=task_id, harness_command=harness, detach=detach
+                repo_ctx,
+                task_id=task_id,
+                harness_command=effective_harness,
+                detach=effective_detach,
             )
         )
     except RuntimeError as e:
@@ -1656,10 +1794,10 @@ def agent_restart(
         "--harness",
         help="Harness command (shell-like). Defaults to the last known command for this task.",
     ),
-    detach: bool = typer.Option(
-        True,
+    detach: bool | None = typer.Option(
+        None,
         "--detach/--no-detach",
-        help="Run in a detached session (tmux if available).",
+        help="Run in a detached session (tmux if available). Defaults from config.harness.detach.",
     ),
 ) -> None:
     """Restart the per-task agent."""
@@ -1670,13 +1808,17 @@ def agent_restart(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
+    defaults = load_orchestration_defaults(repo_ctx)
+    effective_detach = detach if detach is not None else defaults.harness.detach
+    effective_harness = harness if harness is not None else defaults.harness.command
+
     try:
         result = asyncio.run(
             restart_task_agent_session(
                 repo_ctx,
                 task_id=task_id,
-                harness_command=harness,
-                detach=detach,
+                harness_command=effective_harness,
+                detach=effective_detach,
             )
         )
     except RuntimeError as e:

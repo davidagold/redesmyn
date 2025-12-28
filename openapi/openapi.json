@@ -1080,6 +1080,83 @@
         "title": "NodeSetAgentRequest",
         "type": "object"
       },
+      "OrchestrationDefaultsResponse": {
+        "properties": {
+          "defaultEpic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultepic"
+          },
+          "fleet": {
+            "$ref": "#/components/schemas/OrchestrationFleetDefaultsResponse"
+          },
+          "harness": {
+            "$ref": "#/components/schemas/OrchestrationHarnessDefaultsResponse"
+          }
+        },
+        "required": [
+          "fleet",
+          "harness"
+        ],
+        "title": "OrchestrationDefaultsResponse",
+        "type": "object"
+      },
+      "OrchestrationFleetDefaultsResponse": {
+        "properties": {
+          "mode": {
+            "enum": [
+              "fixed",
+              "auto"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "OrchestrationFleetDefaultsResponse",
+        "type": "object"
+      },
+      "OrchestrationHarnessDefaultsResponse": {
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "detach": {
+            "default": true,
+            "title": "Detach",
+            "type": "boolean"
+          }
+        },
+        "title": "OrchestrationHarnessDefaultsResponse",
+        "type": "object"
+      },
       "TaskAgentRestartRequest": {
         "properties": {
           "detach": {
@@ -1557,6 +1634,24 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/config": {
+      "get": {
+        "operationId": "get_orchestration_config_v1_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchestrationDefaultsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Orchestration Config"
+      }
+    },
     "/v1/epics": {
       "get": {
         "operationId": "list_epics_v1_epics_get",
