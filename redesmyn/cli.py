@@ -18,10 +18,12 @@ from redesmyn import __version__
 from redesmyn.agent_runtime import (
     attach_agent,
     agent_log_path_for_row,
+    has_tmux,
     load_task_agent,
     restart_task_agent,
     start_task_agent,
     stop_task_agent,
+    tmux_session_name_for_task,
 )
 from redesmyn.blocks import (
     NotInitializedError,
@@ -44,7 +46,6 @@ from redesmyn.db import (
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
-    AgentStatus,
     BlockPolicy,
     TaskAuthority,
     TaskSource,
@@ -426,23 +427,28 @@ def run(
 
                 active_node_ids: set[int] = set()
                 if eligible:
-                    node_ids = [t.node_id for t in eligible if t.node_id is not None]
-                    active_node_ids = set(
-                        await session.scalars(
-                            select(Node.id)
-                            .join(Agent, Node.agent_id == Agent.id)
-                            .where(
-                                Node.id.in_(node_ids),
-                                Agent.status.in_(
-                                    [
-                                        AgentStatus.Running,
-                                        AgentStatus.Blocked,
-                                    ]
-                                ),
-                            )
-                            .distinct()
+                    tmux_sessions: set[str] = set()
+                    if has_tmux():
+                        proc = subprocess.run(
+                            ["tmux", "list-sessions", "-F", "#S"],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=1,
                         )
-                    )
+                        if proc.returncode == 0:
+                            tmux_sessions = {
+                                line.strip()
+                                for line in proc.stdout.splitlines()
+                                if line.strip()
+                            }
+
+                    for task in eligible:
+                        if task.node_id is None:
+                            continue
+                        tmux_name = tmux_session_name_for_task(task_id=task.id)
+                        if tmux_name in tmux_sessions:
+                            active_node_ids.add(task.node_id)
 
                 if epic_row is not None:
                     cache: dict[int, int] = {}
