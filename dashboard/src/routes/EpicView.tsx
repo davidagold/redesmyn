@@ -4,13 +4,19 @@ import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
+import { cn } from "@/lib/utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight } from "lucide-react"
 
@@ -216,19 +222,47 @@ export function EpicView() {
       return orchestrationDefaultsLoading ? "Loading defaults…" : "Unavailable"
     }
     if (!orchestrationDefaults.harness.command) {
-      return "Set harness.command via rn config set harness.command …"
+      return "Harness command not configured"
     }
     if (
       orchestrationDefaults.fleet.mode === "fixed" &&
       orchestrationDefaults.fleet.size === null
     ) {
-      return "Set fleet.size (or fleet.mode auto) via rn config set …"
+      return "Fleet size not configured"
     }
     return null
   }, [
     orchestrationDefaults,
     orchestrationDefaultsError,
     orchestrationDefaultsLoading,
+    selectedEpic,
+  ])
+
+  const copyRunDisabledReason = useMemo(() => {
+    if (!runSummary) {
+      return "Run summary unavailable"
+    }
+    if (runSummary.eligible === 0) {
+      return "No eligible tasks"
+    }
+    if (!selectedEpic) {
+      return "No epic selected"
+    }
+    if (orchestrationDefaultsLoading) {
+      return "Loading defaults"
+    }
+    if (runConfigError) {
+      return runConfigError
+    }
+    if (!runCommand) {
+      return "Command unavailable"
+    }
+    return null
+  }, [
+    orchestrationDefaultsLoading,
+    runCommand,
+    runConfigError,
+    runSummary,
     selectedEpic,
   ])
 
@@ -428,8 +462,8 @@ export function EpicView() {
       ) : null}
 
       {selectedEpic && runSummary ? (
-        <div className="border-b px-4 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="border-b px-4 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-baseline gap-3">
               <div className="text-sm font-medium">Run</div>
               <div className="text-xs text-muted-foreground">
@@ -438,69 +472,32 @@ export function EpicView() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleCopyRunCommand()}
-                disabled={!runCommand || runSummary.eligible === 0}
-                title={
-                  runSummary.eligible === 0
-                    ? "No eligible tasks"
-                    : (runCommand ?? undefined)
-                }
-              >
-                Copy rn run …
-              </Button>
-              {runNotice ? (
-                <div className="text-xs text-muted-foreground">{runNotice}</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="mt-2 grid gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <div>
-                  Fleet:{" "}
-                  {orchestrationDefaults ? (
-                    orchestrationDefaults.fleet.mode === "auto" ? (
-                      "auto"
-                    ) : (
-                      <>
-                        fixed
-                        {orchestrationDefaults.fleet.size !== null
-                          ? ` (${orchestrationDefaults.fleet.size})`
-                          : " (unset)"}
-                      </>
-                    )
-                  ) : orchestrationDefaultsLoading ? (
-                    "loading…"
-                  ) : (
-                    "unavailable"
+              <Tooltip>
+                <TooltipTrigger
+                  type="button"
+                  className={cn(
+                    buttonVariants({ variant: "outline", size: "sm" }),
+                    copyRunDisabledReason
+                      ? "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
+                      : null,
                   )}
-                </div>
-                <div>
-                  Harness:{" "}
-                  {orchestrationDefaults?.harness.command
-                    ? orchestrationDefaults.harness.command
-                    : orchestrationDefaultsLoading
-                      ? "loading…"
-                      : "unset"}
-                </div>
-                <div>
-                  Detach:{" "}
-                  {orchestrationDefaults
-                    ? orchestrationDefaults.harness.detach
-                      ? "on"
-                      : "off"
-                    : orchestrationDefaultsLoading
-                      ? "loading…"
-                      : "unavailable"}
-                </div>
-                <div>
-                  Default epic: {orchestrationDefaults?.defaultEpic ?? "unset"}
-                </div>
-              </div>
+                  aria-disabled={copyRunDisabledReason ? "true" : undefined}
+                  onClick={(event) => {
+                    if (copyRunDisabledReason) {
+                      event.preventDefault()
+                      return
+                    }
+                    void handleCopyRunCommand()
+                  }}
+                >
+                  Copy rn run …
+                </TooltipTrigger>
+                {copyRunDisabledReason ? (
+                  <TooltipContent side="bottom" align="end">
+                    {copyRunDisabledReason}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
               <Button
                 variant="ghost"
                 size="xs"
@@ -509,25 +506,58 @@ export function EpicView() {
               >
                 Refresh defaults
               </Button>
+              {runNotice ? (
+                <div className="text-xs text-muted-foreground">{runNotice}</div>
+              ) : null}
             </div>
+          </div>
 
-            {runConfigError ? (
-              <div className="text-xs text-destructive">{runConfigError}</div>
-            ) : null}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <div>
+              Fleet:{" "}
+              {orchestrationDefaults
+                ? orchestrationDefaults.fleet.mode === "auto"
+                  ? "auto"
+                  : orchestrationDefaults.fleet.size !== null
+                    ? `fixed (${orchestrationDefaults.fleet.size})`
+                    : "fixed (size not set)"
+                : orchestrationDefaultsLoading
+                  ? "loading…"
+                  : "—"}
+            </div>
+            <div className="flex items-center gap-1">
+              <span>Harness:</span>
+              {orchestrationDefaults?.harness.command ? (
+                <span className="max-w-[32rem] truncate font-mono">
+                  {orchestrationDefaults.harness.command}
+                </span>
+              ) : orchestrationDefaultsLoading ? (
+                "loading…"
+              ) : (
+                "—"
+              )}
+            </div>
+            <div>
+              Detach:{" "}
+              {orchestrationDefaults
+                ? orchestrationDefaults.harness.detach
+                  ? "on"
+                  : "off"
+                : orchestrationDefaultsLoading
+                  ? "loading…"
+                  : "—"}
+            </div>
+            <div>Default epic: {orchestrationDefaults?.defaultEpic ?? "—"}</div>
           </div>
 
           {runCommand ? (
             <div
-              className="mt-2 truncate font-mono text-xs text-muted-foreground"
+              className="mt-1.5 truncate font-mono text-xs text-muted-foreground"
               title={runCommand}
             >
               {runCommand}
             </div>
-          ) : (
-            <div className="mt-2 text-xs text-muted-foreground">
-              Configure defaults via `rn config` to enable `rn run …`.
-            </div>
-          )}
+          ) : null}
         </div>
       ) : null}
 
