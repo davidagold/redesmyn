@@ -380,31 +380,23 @@ async def get_active_session_for_agent(
 async def ensure_task_agent(*, session: AsyncSession, task: Task, node: Node) -> Agent:
     expected = f"a-{task.id}"
 
-    if node.agent_id is not None:
-        agent = await session.get(Agent, node.agent_id)
-        if agent is None:
-            raise RuntimeError("Node has an invalid agent_id")
-        if agent.display_name != expected:
-            raise RuntimeError(
-                f"Node is assigned to {agent.display_name!r} but expected {expected!r}"
-            )
-        return agent
-
     agent = await session.scalar(select(Agent).where(Agent.display_name == expected))
     if agent is None:
         agent = Agent(display_name=expected)
         session.add(agent)
         await session.flush()
-    else:
-        other = await session.scalar(
-            select(Node).where(Node.agent_id == agent.id, Node.id != node.id).limit(1)
-        )
-        if other is not None:
-            raise RuntimeError(
-                f"Agent {expected!r} is already assigned to node {other.id} ({other.branch_name})"
-            )
 
-    node.agent_id = agent.id
+    if node.agent_id != agent.id:
+        node.agent_id = agent.id
+
+    others = list(
+        await session.scalars(
+            select(Node).where(Node.agent_id == agent.id, Node.id != node.id)
+        )
+    )
+    for other in others:
+        other.agent_id = None
+
     await session.flush()
     return agent
 

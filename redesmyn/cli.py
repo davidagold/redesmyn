@@ -17,6 +17,7 @@ from sqlalchemy import desc, select
 from redesmyn import __version__
 from redesmyn.agent_runtime import (
     attach_agent_session,
+    ensure_task_agent,
     load_task_agent_session,
     restart_task_agent_session,
     session_log_path_for_row,
@@ -838,6 +839,7 @@ async def _sync_from_local(
 
                 task.node_id = node.id
                 node.primary_task_id = task.id
+                await ensure_task_agent(session=session, task=task, node=node)
                 node_by_path[doc.path] = node
 
                 for ref in (meta.id, linear_identifier, linear_issue_id):
@@ -1503,6 +1505,7 @@ def task_link(
                     raise typer.BadParameter(f"Unknown node id: {node_id}")
                 task.node_id = node.id
                 node.primary_task_id = task.id
+                await ensure_task_agent(session=session, task=task, node=node)
                 await session.commit()
                 await session.refresh(task)
                 await session.refresh(node)
