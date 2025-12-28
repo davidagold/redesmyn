@@ -7,9 +7,11 @@ from pydantic import Field
 
 from redesmyn.domain.enums import (
     AgentStatus,
+    AgentSessionStatus,
     BlockMode,
     BlockPolicy,
     CommandState,
+    HarnessProfileSource,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -70,6 +72,108 @@ class AgentResponse(ApiResponse):
     status: AgentStatus
     last_seen_at: datetime | None
     created_at: datetime
+
+
+class HostCapabilitiesResponse(ApiResponse):
+    tmux_available: bool = False
+    supports_path_shim: bool = True
+
+
+class HostResponse(ApiResponse):
+    id: int
+    host_key: str
+    display_name: str
+    capabilities: HostCapabilitiesResponse
+    last_seen_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class HarnessProfileDefinitionResponse(ApiResponse):
+    argv: list[str]
+    env: dict[str, str]
+    working_dir: str
+    bootstrap_prelude: str | None = None
+    skill_recommendation: str | None = None
+
+
+class HarnessProfileResponse(ApiResponse):
+    id: str
+    kind: str
+    source: HarnessProfileSource
+    display_name: str
+    definition: HarnessProfileDefinitionResponse
+    created_at: datetime
+    updated_at: datetime
+
+
+class AttachNoneResponse(ApiResponse):
+    type: Literal["none"] = "none"
+
+
+class AttachTmuxResponse(ApiResponse):
+    type: Literal["tmux"] = "tmux"
+    session: str
+    socket_path: str | None = None
+
+
+class AttachExternalResponse(ApiResponse):
+    type: Literal["external"] = "external"
+    hint: str
+
+
+AttachInfoResponse = Annotated[
+    AttachNoneResponse | AttachTmuxResponse | AttachExternalResponse,
+    Field(discriminator="type"),
+]
+
+
+class AgentSessionResponse(ApiResponse):
+    id: int
+    agent_id: int
+    node_id: int | None
+    host_id: int
+    harness_profile_id: str
+    status: AgentSessionStatus
+    cwd_path: str | None
+    pid: int | None
+    attach: AttachInfoResponse
+    resolved_profile: HarnessProfileDefinitionResponse | None
+    exit_code: int | None
+    started_at: datetime
+    ended_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class HostUpsertRequest(ApiResponse):
+    host_key: str
+    display_name: str
+    capabilities: HostCapabilitiesResponse | None = None
+
+
+class HarnessProfileUpsertRequest(ApiResponse):
+    id: str
+    kind: str
+    display_name: str
+    definition: HarnessProfileDefinitionResponse
+    source: HarnessProfileSource = HarnessProfileSource.User
+
+
+class AgentSessionCreateRequest(ApiResponse):
+    agent_id: int
+    node_id: int | None = None
+    host_key: str
+    harness_profile_id: str
+    status: AgentSessionStatus = AgentSessionStatus.Starting
+    cwd_path: str | None = None
+    pid: int | None = None
+    attach: AttachInfoResponse = AttachNoneResponse()
+    resolved_profile: HarnessProfileDefinitionResponse | None = None
+
+
+class NodeSetAgentRequest(ApiResponse):
+    agent_id: int | None
 
 
 class CommandResponse(ApiResponse):

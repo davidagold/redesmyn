@@ -11,11 +11,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import (
     Enum as SAEnum,
@@ -25,9 +27,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, composite, mapped_column
 
 from redesmyn.domain.enums import (
     AgentStatus,
+    AgentSessionStatus,
     BlockMode,
     BlockPolicy,
     CommandState,
+    HarnessProfileSource,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -57,6 +61,39 @@ class CommandData(BaseModel):
 
 class EventData(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+class HostCapabilities(BaseModel):
+    tmux_available: bool = False
+    supports_path_shim: bool = True
+
+
+class HarnessProfileDefinition(BaseModel):
+    argv: list[str]
+    env: dict[str, str] = Field(default_factory=dict)
+    working_dir: Literal["node_worktree"] = "node_worktree"
+    bootstrap_prelude: str | None = None
+    skill_recommendation: str | None = None
+
+
+class AttachNone(BaseModel):
+    type: Literal["none"] = "none"
+
+
+class AttachTmux(BaseModel):
+    type: Literal["tmux"] = "tmux"
+    session: str
+    socket_path: str | None = None
+
+
+class AttachExternal(BaseModel):
+    type: Literal["external"] = "external"
+    hint: str
+
+
+AttachInfo = Annotated[
+    AttachNone | AttachTmux | AttachExternal, Field(discriminator="type")
+]
 
 
 class ManualRelease(BaseModel):
@@ -239,6 +276,128 @@ class Agent(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Host(Base):
+    __tablename__ = "hosts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    host_key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=lambda: HostCapabilities().model_dump(mode="python"),
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class HarnessProfile(Base):
+    __tablename__ = "harness_profiles"
+
+    # String primary key so built-ins and user-defined profiles can exist without schema changes.
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[HarnessProfileSource] = mapped_column(
+        _enum_type(HarnessProfileSource, "harness_profile_source"),
+        default=HarnessProfileSource.Builtin,
+        nullable=False,
+    )
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    definition: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: HarnessProfileDefinition
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"), nullable=False, index=True
+    )
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
+    host_id: Mapped[int] = mapped_column(
+        ForeignKey("hosts.id"), nullable=False, index=True
+    )
+    harness_profile_id: Mapped[str] = mapped_column(
+        ForeignKey("harness_profiles.id"), nullable=False, index=True
+    )
+    status: Mapped[AgentSessionStatus] = mapped_column(
+        _enum_type(AgentSessionStatus, "agent_session_status"),
+        default=AgentSessionStatus.Starting,
+        nullable=False,
+    )
+
+    cwd_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attach: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=lambda: AttachNone().model_dump(mode="python"),
+    )
+    resolved_profile: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON_TYPE,
+        nullable=True,  # Pydantic: HarnessProfileDefinition
+    )
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        # v0 invariants:
+        # - at most one active session per node (where ended_at is NULL)
+        # - at most one active session per agent (where ended_at is NULL)
+        Index(
+            "uq_agent_sessions_active_agent",
+            "agent_id",
+            unique=True,
+            sqlite_where=text("ended_at IS NULL"),
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+        Index(
+            "uq_agent_sessions_active_node",
+            "node_id",
+            unique=True,
+            sqlite_where=text("ended_at IS NULL AND node_id IS NOT NULL"),
+            postgresql_where=text("ended_at IS NULL AND node_id IS NOT NULL"),
+        ),
     )
 
 

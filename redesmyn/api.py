@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -18,9 +19,12 @@ from starlette.responses import RedirectResponse
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
+    AgentSession,
     Block,
     BlockScope,
     Epic,
+    HarnessProfile,
+    Host,
     LinearAuth,
     Node,
     Repository,
@@ -28,6 +32,7 @@ from redesmyn.db import (
     create_engine,
     create_sessionmaker,
 )
+from redesmyn.db.models import HostCapabilities
 from redesmyn.domain.enums import BlockPolicy
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
@@ -40,11 +45,18 @@ from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
+    AgentSessionCreateRequest,
+    AgentSessionResponse,
     BlockScopeResponse,
     BlockStatusResponse,
     EpicGraphResponse,
     EpicResponse,
+    HarnessProfileResponse,
+    HarnessProfileUpsertRequest,
+    HostResponse,
+    HostUpsertRequest,
     LinearStatusResponse,
+    NodeSetAgentRequest,
     NodeResponse,
     ReleaseConditionResponse,
     TaskResponse,
@@ -226,11 +238,18 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
 
                 def build_commit(sha: str) -> TrunkCommitResponse:
                     info = commit_info.get(sha, {})
+                    authored_at: datetime | None = None
+                    authored_at_raw = info.get("authored_at")
+                    if isinstance(authored_at_raw, str):
+                        try:
+                            authored_at = datetime.fromisoformat(authored_at_raw)
+                        except ValueError:
+                            authored_at = None
                     return TrunkCommitResponse(
                         sha=sha,
                         author_name=info.get("author_name"),
                         author_email=info.get("author_email"),
-                        authored_at=info.get("authored_at"),
+                        authored_at=authored_at,
                     )
 
                 trunk = TrunkTimelineResponse(
@@ -251,6 +270,172 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
         trunk=trunk,
     )
+
+
+@v1.get("/hosts", response_model=list[HostResponse])
+async def list_hosts() -> list[HostResponse]:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        rows = list(await session.scalars(select(Host).order_by(Host.id)))
+    return [HostResponse.model_validate(r, from_attributes=True) for r in rows]
+
+
+@v1.post("/hosts/upsert", response_model=HostResponse)
+async def upsert_host(request: HostUpsertRequest) -> HostResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        row = await session.scalar(
+            select(Host).where(Host.host_key == request.host_key)
+        )
+        if row is None:
+            row = Host(
+                host_key=request.host_key,
+                display_name=request.display_name,
+                capabilities=(
+                    request.capabilities.model_dump(mode="python")
+                    if request.capabilities is not None
+                    else HostCapabilities().model_dump(mode="python")
+                ),
+                last_seen_at=datetime.now(UTC),
+            )
+            session.add(row)
+        else:
+            row.display_name = request.display_name
+            if request.capabilities is not None:
+                row.capabilities = request.capabilities.model_dump(mode="python")
+            row.last_seen_at = datetime.now(UTC)
+
+        await session.commit()
+        await session.refresh(row)
+        return HostResponse.model_validate(row, from_attributes=True)
+
+
+@v1.get("/harness-profiles", response_model=list[HarnessProfileResponse])
+async def list_harness_profiles() -> list[HarnessProfileResponse]:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        rows = list(
+            await session.scalars(select(HarnessProfile).order_by(HarnessProfile.id))
+        )
+    return [
+        HarnessProfileResponse.model_validate(r, from_attributes=True) for r in rows
+    ]
+
+
+@v1.post("/harness-profiles", response_model=HarnessProfileResponse)
+async def upsert_harness_profile(
+    request: HarnessProfileUpsertRequest,
+) -> HarnessProfileResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        row = await session.get(HarnessProfile, request.id)
+        if row is None:
+            row = HarnessProfile(
+                id=request.id,
+                kind=request.kind,
+                source=request.source,
+                display_name=request.display_name,
+                definition=request.definition.model_dump(mode="python"),
+            )
+            session.add(row)
+        else:
+            row.kind = request.kind
+            row.source = request.source
+            row.display_name = request.display_name
+            row.definition = request.definition.model_dump(mode="python")
+
+        await session.commit()
+        await session.refresh(row)
+        return HarnessProfileResponse.model_validate(row, from_attributes=True)
+
+
+@v1.get("/sessions", response_model=list[AgentSessionResponse])
+async def list_agent_sessions(active_only: bool = True) -> list[AgentSessionResponse]:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        stmt = select(AgentSession).order_by(desc(AgentSession.id))
+        if active_only:
+            stmt = stmt.where(AgentSession.ended_at.is_(None))
+        rows = list(await session.scalars(stmt))
+    return [AgentSessionResponse.model_validate(r, from_attributes=True) for r in rows]
+
+
+@v1.post("/sessions", response_model=AgentSessionResponse)
+async def create_agent_session(
+    request: AgentSessionCreateRequest,
+) -> AgentSessionResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        agent = await session.get(Agent, request.agent_id)
+        if agent is None:
+            raise HTTPException(status_code=400, detail="Unknown agent id")
+
+        if request.node_id is not None:
+            node = await session.get(Node, request.node_id)
+            if node is None:
+                raise HTTPException(status_code=400, detail="Unknown node id")
+
+        host = await session.scalar(
+            select(Host).where(Host.host_key == request.host_key)
+        )
+        if host is None:
+            raise HTTPException(status_code=400, detail="Unknown host_key")
+
+        profile = await session.get(HarnessProfile, request.harness_profile_id)
+        if profile is None:
+            raise HTTPException(status_code=400, detail="Unknown harness_profile_id")
+
+        row = AgentSession(
+            agent_id=request.agent_id,
+            node_id=request.node_id,
+            host_id=host.id,
+            harness_profile_id=request.harness_profile_id,
+            status=request.status,
+            cwd_path=request.cwd_path,
+            pid=request.pid,
+            attach=request.attach.model_dump(mode="python"),
+            resolved_profile=(
+                None
+                if request.resolved_profile is None
+                else request.resolved_profile.model_dump(mode="python")
+            ),
+            started_at=datetime.now(UTC),
+            ended_at=None,
+        )
+        session.add(row)
+
+        try:
+            await session.commit()
+        except IntegrityError as e:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Agent or node already has an active session",
+            ) from e
+
+        await session.refresh(row)
+        return AgentSessionResponse.model_validate(row, from_attributes=True)
+
+
+@v1.post("/nodes/{node_id}/agent", response_model=NodeResponse)
+async def set_node_agent(node_id: int, request: NodeSetAgentRequest) -> NodeResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        node = await session.get(Node, node_id)
+        if node is None:
+            raise HTTPException(status_code=404, detail="Node not found")
+
+        if request.agent_id is not None:
+            agent = await session.get(Agent, request.agent_id)
+            if agent is None:
+                raise HTTPException(status_code=400, detail="Unknown agent id")
+            node.agent_id = agent.id
+        else:
+            node.agent_id = None
+
+        await session.commit()
+        await session.refresh(node)
+        return NodeResponse.model_validate(node, from_attributes=True)
 
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)
