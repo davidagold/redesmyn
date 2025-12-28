@@ -16,7 +16,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/v1": daemonOrigin,
+      "/v1": {
+        target: daemonOrigin,
+        ws: true,
+      },
     },
   },
 })

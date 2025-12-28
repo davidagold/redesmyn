@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter
@@ -41,6 +41,7 @@ from redesmyn.db import (
 )
 from redesmyn.db.models import HostCapabilities
 from redesmyn.domain.enums import AgentStatus, BlockPolicy
+from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
     linear_authorize_url,
@@ -149,6 +150,25 @@ v1 = APIRouter(prefix="/v1")
 @v1.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@v1.websocket("/ws")
+async def v1_ws(
+    websocket: WebSocket,
+    epic: str | None = None,
+    after_id: int | None = None,
+) -> None:
+    """WebSocket event stream (v0: activity + presence)."""
+    await websocket.accept()
+    try:
+        await run_event_stream(
+            websocket,
+            app.state.sessionmaker,
+            epic=epic,
+            after_id=after_id,
+        )
+    except WebSocketDisconnect:
+        return
 
 
 async def _repo_id(session: AsyncSession) -> int | None:

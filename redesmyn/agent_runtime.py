@@ -23,6 +23,7 @@ from redesmyn.db import (
     Agent,
     AgentSession,
     Epic,
+    Event,
     HarnessProfile,
     Host,
     Node,
@@ -574,6 +575,21 @@ async def start_agent_session_for_node(
             session_row.status = AgentSessionStatus.Running
             agent.status = AgentStatus.Running
             agent.last_seen_at = datetime.now(UTC)
+            session.add(
+                Event(
+                    event_type="agent.session_started",
+                    data={
+                        "agent_id": agent.id,
+                        "node_id": node.id,
+                        "session_id": session_row.id,
+                        "host_id": host.id,
+                        "harness_profile_id": profile.id,
+                        "status": session_row.status.value,
+                        "attach": attach.model_dump(mode="python"),
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
 
             await session.commit()
             await session.refresh(session_row)
@@ -747,6 +763,20 @@ async def stop_agent_session(
             if agent is not None:
                 agent.status = AgentStatus.Idle
                 agent.last_seen_at = datetime.now(UTC)
+            session.add(
+                Event(
+                    event_type="agent.session_stopped",
+                    data={
+                        "agent_id": row.agent_id,
+                        "node_id": row.node_id,
+                        "session_id": row.id,
+                        "host_id": row.host_id,
+                        "harness_profile_id": row.harness_profile_id,
+                        "status": row.status.value,
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
 
             await session.commit()
             await session.refresh(row)

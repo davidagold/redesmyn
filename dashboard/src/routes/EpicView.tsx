@@ -1,11 +1,12 @@
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
+import { useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { ChevronRight } from "lucide-react"
@@ -43,6 +44,7 @@ export function EpicView() {
   } = useEpics()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
+  const refreshTimerRef = useRef<number | null>(null)
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -120,6 +122,28 @@ export function EpicView() {
 
   const loading = epicsLoading || graphLoading
   const error = epicsError || graphError
+
+  useEventStream({
+    epic: selectedEpic?.slug ?? null,
+    onEvent: () => {
+      if (refreshTimerRef.current !== null) {
+        return
+      }
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null
+        void refreshGraph()
+      }, 250)
+    },
+    onResync: () => void refreshGraph(),
+  })
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
