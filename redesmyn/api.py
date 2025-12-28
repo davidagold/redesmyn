@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
 
+from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.agent_runtime import (
     restart_task_agent as restart_task_agent_runtime,
@@ -117,6 +118,7 @@ async def lifespan(app: App):
     maybe_mount_dashboard(app, ctx.worktree_root)
 
     observer_task: asyncio.Task[None] | None = None
+    agent_monitor_task: asyncio.Task[None] | None = None
     if os.environ.get("REDESMYN_NO_OBSERVER") not in {"1", "true", "TRUE"}:
         observer_task = asyncio.create_task(
             run_repo_observer(
@@ -127,12 +129,29 @@ async def lifespan(app: App):
             )
         )
 
+    if os.environ.get("REDESMYN_NO_AGENT_MONITOR") not in {"1", "true", "TRUE"}:
+        agent_monitor_task = asyncio.create_task(
+            run_agent_monitor(
+                ctx,
+                app.state.sessionmaker,
+                interval_s=1.0,
+                once=False,
+            )
+        )
+
     yield
 
     if observer_task is not None:
         observer_task.cancel()
         try:
             await observer_task
+        except asyncio.CancelledError:
+            pass
+
+    if agent_monitor_task is not None:
+        agent_monitor_task.cancel()
+        try:
+            await agent_monitor_task
         except asyncio.CancelledError:
             pass
 
@@ -242,6 +261,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                 await session.scalars(
                     select(Agent)
                     .where(Agent.id.in_(list(agent_ids)))
+                    .where(Agent.started_at.is_not(None))
                     .order_by(Agent.id)
                 )
             )
