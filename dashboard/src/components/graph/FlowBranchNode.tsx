@@ -16,6 +16,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   epicSlug?: string | null
   edgeHighlighted?: boolean
   onSelectNode: (nodeId: number) => void
+  onRequestRefresh?: () => void
 }
 
 export type FlowBranchNodeType = Node<FlowBranchNodeData, "branch">
@@ -32,6 +33,7 @@ export function FlowBranchNode({
     epicSlug,
     edgeHighlighted,
     onSelectNode,
+    onRequestRefresh,
   } = data
   const branchLabel = formatBranchName(node.branchName, epicSlug)
 
@@ -56,6 +58,7 @@ export function FlowBranchNode({
         isSelected={selected}
         isHighlighted={edgeHighlighted}
         onSelect={() => onSelectNode(node.id)}
+        onRequestRefresh={onRequestRefresh}
       />
     </>
   )

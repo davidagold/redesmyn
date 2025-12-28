@@ -58,6 +58,7 @@ interface GraphViewProps {
   onSelectNode: (nodeId: number) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
+  onRequestRefresh?: () => void
 }
 
 const TRUNK_NODE_ID = "trunk"
@@ -214,6 +215,7 @@ export function GraphView({
   onSelectNode,
   onSelectEdge,
   onClearSelection,
+  onRequestRefresh,
 }: GraphViewProps) {
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -737,6 +739,7 @@ export function GraphView({
           epicSlug,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
           onSelectNode,
+          onRequestRefresh,
         },
         selectable: true,
         draggable: false,
@@ -757,6 +760,7 @@ export function GraphView({
     epicSlug,
     focusPositions,
     onSelectNode,
+    onRequestRefresh,
     nodesById,
     positions,
     selectedEdgeNodeIds,

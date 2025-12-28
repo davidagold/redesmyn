@@ -1,7 +1,13 @@
+import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import { getStoredHarnessCommand } from "@/lib/agent-settings"
+import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
+import { Play, RotateCcw, Square, Terminal } from "lucide-react"
 
 interface NodeCardProps {
   node: GraphNode
@@ -12,6 +18,7 @@ interface NodeCardProps {
   isSelected: boolean
   isHighlighted?: boolean
   onSelect: () => void
+  onRequestRefresh?: () => void
 }
 
 function statusColor(task: Task | undefined, agent: Agent | undefined) {
@@ -59,10 +66,180 @@ export function NodeCard({
   isSelected,
   isHighlighted = false,
   onSelect,
+  onRequestRefresh,
 }: NodeCardProps) {
   const now = Date.now()
   const commitHot = isRecentActivity(activity?.lastCommitAt, now)
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
+
+  const [pendingAction, setPendingAction] =
+    useState<"start" | "stop" | "restart" | "attach" | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!actionError) {
+      return
+    }
+    const id = window.setTimeout(() => setActionError(null), 2_000)
+    return () => window.clearTimeout(id)
+  }, [actionError])
+
+  const agentStatus = agent?.status ?? null
+  const taskId = task?.id ?? null
+  const quickActionsEnabled =
+    taskId !== null &&
+    !!onRequestRefresh &&
+    task?.state !== "blocked" &&
+    task?.state !== "done"
+
+  const isRunning = agentStatus === "running" || agentStatus === "blocked"
+  const canStart = !agent || agentStatus === "idle"
+  const canRestart = isRunning || agentStatus === "error"
+
+  async function handleAttach() {
+    if (taskId === null) {
+      return
+    }
+    setPendingAction("attach")
+    setActionError(null)
+    try {
+      await copyToClipboard(`rn agent attach --task ${taskId}`)
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function handleStart() {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingAction("start")
+    setActionError(null)
+    try {
+      const harness = getStoredHarnessCommand()
+      await startTaskAgent(taskId, { harness, detach: true })
+      onRequestRefresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function handleStop() {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingAction("stop")
+    setActionError(null)
+    try {
+      await stopTaskAgent(taskId)
+      onRequestRefresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function handleRestart() {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingAction("restart")
+    setActionError(null)
+    try {
+      await restartTaskAgent(taskId, { detach: true })
+      onRequestRefresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const quickActions =
+    quickActionsEnabled && taskId !== null ? (
+      isRunning ? (
+        <>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Copy attach command"
+            title="Copy attach command"
+            disabled={pendingAction !== null}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              void handleAttach()
+            }}
+          >
+            <Terminal />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Restart agent"
+            title="Restart agent"
+            disabled={pendingAction !== null}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              void handleRestart()
+            }}
+          >
+            <RotateCcw />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="text-destructive hover:bg-destructive/10"
+            aria-label="Stop agent"
+            title="Stop agent"
+            disabled={pendingAction !== null}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              void handleStop()
+            }}
+          >
+            <Square />
+          </Button>
+        </>
+      ) : canRestart ? (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Restart agent"
+          title="Restart agent"
+          disabled={pendingAction !== null}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            void handleRestart()
+          }}
+        >
+          <RotateCcw />
+        </Button>
+      ) : canStart ? (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Start agent"
+          title="Start agent"
+          disabled={pendingAction !== null}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            void handleStart()
+          }}
+        >
+          <Play />
+        </Button>
+      ) : null
+    ) : null
 
   const tooltip = [
     agent ? `Agent: ${agent.displayName}` : "Agent: (not started)",
@@ -73,6 +250,7 @@ export function NodeCard({
     <Card
       data-node-card
       className={cn(
+        "group",
         "cursor-pointer transition-colors hover:bg-accent/40",
         isSelected
           ? "ring-2 ring-ring"
@@ -91,7 +269,12 @@ export function NodeCard({
       }}
     >
       <CardContent className="relative flex h-full flex-col gap-2 p-4">
-        <div className="absolute right-3 top-3">
+        <div className="absolute right-3 top-3 flex items-center gap-1">
+          {quickActions ? (
+            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {quickActions}
+            </div>
+          ) : null}
           <div
             className="relative inline-flex h-3 w-3 items-center justify-center"
             title={tooltip}
@@ -111,7 +294,7 @@ export function NodeCard({
           </div>
         </div>
 
-        <div className="pr-4">
+        <div className="pr-20">
           <div className="flex items-baseline gap-2">
             {task ? (
               <div className="font-mono text-xs text-muted-foreground">
@@ -135,6 +318,15 @@ export function NodeCard({
             <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground">
               {agent.displayName}
             </span>
+          </div>
+        ) : null}
+
+        {actionError ? (
+          <div
+            className="truncate text-xs text-destructive"
+            title={actionError}
+          >
+            {actionError}
           </div>
         ) : null}
       </CardContent>
