@@ -3,14 +3,18 @@ import { NodeCard } from "@/components/graph/NodeCard"
 import {
   formatBranchName,
   type Agent,
+  type AgentSession,
   type GraphNode,
   type Task,
 } from "@/lib/graph-utils"
+import type { NodeActivity } from "@/lib/presence"
 
 export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
   task?: Task
   agent?: Agent
+  session?: AgentSession
+  activity?: NodeActivity
   epicSlug?: string | null
   edgeHighlighted?: boolean
   onSelectNode: (nodeId: number) => void
@@ -22,7 +26,16 @@ export function FlowBranchNode({
   data,
   selected,
 }: NodeProps<FlowBranchNodeType>) {
-  const { node, task, agent, epicSlug, edgeHighlighted, onSelectNode } = data
+  const {
+    node,
+    task,
+    agent,
+    session,
+    activity,
+    epicSlug,
+    edgeHighlighted,
+    onSelectNode,
+  } = data
   const branchLabel = formatBranchName(node.branchName, epicSlug)
 
   return (
@@ -41,6 +54,8 @@ export function FlowBranchNode({
         node={node}
         task={task}
         agent={agent}
+        session={session}
+        activity={activity}
         branchLabel={branchLabel}
         isSelected={selected}
         isHighlighted={edgeHighlighted}

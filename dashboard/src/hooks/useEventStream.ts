@@ -14,13 +14,25 @@ export type StreamEvent = {
   createdAt: string
 }
 
-export type StreamEventMessage = { type: "event" event: StreamEvent }
+export type StreamEventMessage = {
+  type: "event"
+  event: StreamEvent
+}
 
-export type StreamErrorMessage = { type: "error" message: string }
+export type StreamErrorMessage = {
+  type: "error"
+  message: string
+}
 
-export type StreamResyncMessage = { type: "resync" reason: string }
+export type StreamResyncMessage = {
+  type: "resync"
+  reason: string
+}
 
-export type StreamPongMessage = { type: "pong" serverTime: string }
+export type StreamPongMessage = {
+  type: "pong"
+  serverTime: string
+}
 
 export type StreamMessage = StreamHelloMessage | StreamEventMessage | StreamErrorMessage | StreamResyncMessage | StreamPongMessage
 

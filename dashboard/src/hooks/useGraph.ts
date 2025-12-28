@@ -4,6 +4,7 @@ import {
   buildAgentsMap,
   buildChildrenMap,
   buildNodesMap,
+  buildSessionsByNodeId,
   buildTasksMap,
 } from "@/lib/graph-utils"
 
@@ -37,6 +38,11 @@ export function useGraph(epicId: number | null) {
 
   const agentsById = useMemo(() => buildAgentsMap(graph?.agents ?? []), [graph])
 
+  const sessionsByNodeId = useMemo(
+    () => buildSessionsByNodeId(graph?.sessions ?? []),
+    [graph],
+  )
+
   const childrenByParent = useMemo(
     () => buildChildrenMap(graph?.nodes ?? []),
     [graph],
@@ -53,6 +59,7 @@ export function useGraph(epicId: number | null) {
     refresh,
     tasksById,
     agentsById,
+    sessionsByNodeId,
     childrenByParent,
     nodesById,
     rootNodes,

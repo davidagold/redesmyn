@@ -55,6 +55,24 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/harness-profiles": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Harness Profiles */
+    get: operations["list_harness_profiles_v1_harness_profiles_get"]
+    put?: never
+    /** Upsert Harness Profile */
+    post: operations["upsert_harness_profile_v1_harness_profiles_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/healthz": {
     parameters: {
       query?: never
@@ -72,6 +90,40 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/hosts": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Hosts */
+    get: operations["list_hosts_v1_hosts_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/hosts/upsert": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Upsert Host */
+    post: operations["upsert_host_v1_hosts_upsert_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/linear/status": {
     parameters: {
       query?: never
@@ -83,6 +135,41 @@ export interface paths {
     get: operations["linear_status_v1_linear_status_get"]
     put?: never
     post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/nodes/{node_id}/agent": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Set Node Agent */
+    post: operations["set_node_agent_v1_nodes__node_id__agent_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/sessions": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Agent Sessions */
+    get: operations["list_agent_sessions_v1_sessions_get"]
+    put?: never
+    /** Create Agent Session */
+    post: operations["create_agent_session_v1_sessions_post"]
     delete?: never
     options?: never
     head?: never
@@ -135,6 +222,76 @@ export interface components {
       lastSeenAt: string | null
       status: components["schemas"]["AgentStatus"]
     }
+    /** AgentSessionCreateRequest */
+    AgentSessionCreateRequest: {
+      /** Agentid */
+      agentId: number
+      /**
+       * Attach
+       * @default {
+       *       "type": "none"
+       *     }
+       */
+      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
+      /** Cwdpath */
+      cwdPath?: string | null
+      /** Harnessprofileid */
+      harnessProfileId: string
+      /** Hostkey */
+      hostKey: string
+      /** Nodeid */
+      nodeId?: number | null
+      /** Pid */
+      pid?: number | null
+      resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /** @default starting */
+      status: components["schemas"]["AgentSessionStatus"]
+    }
+    /** AgentSessionResponse */
+    AgentSessionResponse: {
+      /** Agentid */
+      agentId: number
+      /** Attach */
+      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Cwdpath */
+      cwdPath: string | null
+      /** Endedat */
+      endedAt: string | null
+      /** Exitcode */
+      exitCode: number | null
+      /** Harnessprofileid */
+      harnessProfileId: string
+      /** Hostid */
+      hostId: number
+      /** Id */
+      id: number
+      /** Nodeid */
+      nodeId: number | null
+      /** Pid */
+      pid: number | null
+      resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /**
+       * Startedat
+       * Format: date-time
+       */
+      startedAt: string
+      status: components["schemas"]["AgentSessionStatus"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /**
+     * AgentSessionStatus
+     * @enum {string}
+     */
+    AgentSessionStatus: "starting" | "running" | "stopping" | "stopped" | "failed"
     /**
      * AgentStatus
      * @enum {string}
@@ -149,6 +306,40 @@ export interface components {
       defaultBranch: string | null
       /** Reporoot */
       repoRoot: string
+    }
+    /** AttachExternalResponse */
+    AttachExternalResponse: {
+      /** Hint */
+      hint: string
+      /** Logpath */
+      logPath?: string | null
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "external"
+    }
+    /** AttachNoneResponse */
+    AttachNoneResponse: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "none"
+    }
+    /** AttachTmuxResponse */
+    AttachTmuxResponse: {
+      /** Logpath */
+      logPath?: string | null
+      /** Session */
+      session: string
+      /** Socketpath */
+      socketPath?: string | null
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "tmux"
     }
     /**
      * BlockMode
@@ -196,6 +387,8 @@ export interface components {
       epic: components["schemas"]["EpicResponse"]
       /** Nodes */
       nodes: components["schemas"]["NodeResponse"][]
+      /** Sessions */
+      sessions?: components["schemas"]["AgentSessionResponse"][]
       /** Tasks */
       tasks: components["schemas"]["TaskResponse"][]
       trunk?: components["schemas"]["TrunkTimelineResponse"] | null
@@ -224,6 +417,102 @@ export interface components {
     HTTPValidationError: {
       /** Detail */
       detail?: components["schemas"]["ValidationError"][]
+    }
+    /** HarnessProfileDefinitionResponse */
+    HarnessProfileDefinitionResponse: {
+      /** Argv */
+      argv: string[]
+      /** Bootstrapprelude */
+      bootstrapPrelude?: string | null
+      /** Env */
+      env: {
+        [key: string]: string
+      }
+      /** Skillrecommendation */
+      skillRecommendation?: string | null
+      /** Workingdir */
+      workingDir: string
+    }
+    /** HarnessProfileResponse */
+    HarnessProfileResponse: {
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      source: components["schemas"]["HarnessProfileSource"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /**
+     * HarnessProfileSource
+     * @enum {string}
+     */
+    HarnessProfileSource: "builtin" | "user"
+    /** HarnessProfileUpsertRequest */
+    HarnessProfileUpsertRequest: {
+      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      /** @default user */
+      source: components["schemas"]["HarnessProfileSource"]
+    }
+    /** HostCapabilitiesResponse */
+    HostCapabilitiesResponse: {
+      /**
+       * Supportspathshim
+       * @default true
+       */
+      supportsPathShim: boolean
+      /**
+       * Tmuxavailable
+       * @default false
+       */
+      tmuxAvailable: boolean
+    }
+    /** HostResponse */
+    HostResponse: {
+      capabilities: components["schemas"]["HostCapabilitiesResponse"]
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Displayname */
+      displayName: string
+      /** Hostkey */
+      hostKey: string
+      /** Id */
+      id: number
+      /** Lastseenat */
+      lastSeenAt: string | null
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /** HostUpsertRequest */
+    HostUpsertRequest: {
+      capabilities?: components["schemas"]["HostCapabilitiesResponse"] | null
+      /** Displayname */
+      displayName: string
+      /** Hostkey */
+      hostKey: string
     }
     /** LinearStatusResponse */
     LinearStatusResponse: {
@@ -270,6 +559,11 @@ export interface components {
       updatedAt: string
       /** Worktreepath */
       worktreePath: string | null
+    }
+    /** NodeSetAgentRequest */
+    NodeSetAgentRequest: {
+      /** Agentid */
+      agentId: number | null
     }
     /**
      * TaskAuthority
@@ -443,6 +737,59 @@ export interface operations {
       }
     }
   }
+  list_harness_profiles_v1_harness_profiles_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HarnessProfileResponse"][]
+        }
+      }
+    }
+  }
+  upsert_harness_profile_v1_harness_profiles_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HarnessProfileUpsertRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HarnessProfileResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
   healthz_v1_healthz_get: {
     parameters: {
       query?: never
@@ -465,6 +812,59 @@ export interface operations {
       }
     }
   }
+  list_hosts_v1_hosts_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HostResponse"][]
+        }
+      }
+    }
+  }
+  upsert_host_v1_hosts_upsert_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HostUpsertRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HostResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
   linear_status_v1_linear_status_get: {
     parameters: {
       query?: never
@@ -481,6 +881,105 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["LinearStatusResponse"]
+        }
+      }
+    }
+  }
+  set_node_agent_v1_nodes__node_id__agent_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        node_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NodeSetAgentRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["NodeResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  list_agent_sessions_v1_sessions_get: {
+    parameters: {
+      query?: {
+        active_only?: boolean
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["AgentSessionResponse"][]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  create_agent_session_v1_sessions_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AgentSessionCreateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["AgentSessionResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

@@ -309,4 +309,5 @@ class EpicGraphResponse(ApiResponse):
     tasks: list[TaskResponse]
     nodes: list[NodeResponse]
     agents: list[AgentResponse]
+    sessions: list[AgentSessionResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None

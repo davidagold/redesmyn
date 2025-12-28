@@ -15,7 +15,13 @@ import {
   useState,
   type CSSProperties,
 } from "react"
-import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
+import type {
+  Agent,
+  AgentSession,
+  GraphNode,
+  Task,
+  TrunkTimeline,
+} from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
@@ -42,12 +48,15 @@ import {
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
 import { applySelectionLens, computeSelectionLens } from "./selectionLens"
+import type { NodeActivity } from "@/lib/presence"
 
 interface GraphViewProps {
   rootNodes: GraphNode[]
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
+  sessionsByNodeId: Map<number, AgentSession>
+  activityByNodeId: Map<number, NodeActivity>
   trunk?: TrunkTimeline | null
   selectedNodeId: number | null
   selectedEdgeId: string | null
@@ -203,6 +212,8 @@ export function GraphView({
   childrenByParent,
   tasksById,
   agentsById,
+  sessionsByNodeId,
+  activityByNodeId,
   trunk,
   selectedNodeId,
   selectedEdgeId,
@@ -720,6 +731,8 @@ export function GraphView({
         graphNode.agentId !== null
           ? agentsById.get(graphNode.agentId)
           : undefined
+      const session = sessionsByNodeId.get(graphNode.id)
+      const activity = activityByNodeId.get(graphNode.id)
 
       mapped.push({
         id: String(graphNode.id),
@@ -729,6 +742,8 @@ export function GraphView({
           node: graphNode,
           task,
           agent,
+          session,
+          activity,
           epicSlug,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
           onSelectNode,
@@ -747,6 +762,7 @@ export function GraphView({
     }
     return mapped
   }, [
+    activityByNodeId,
     agentsById,
     epicSlug,
     focusPositions,
@@ -755,6 +771,7 @@ export function GraphView({
     positions,
     selectedEdgeNodeIds,
     selectedNodeId,
+    sessionsByNodeId,
     tasksById,
     trunkLayout,
   ])

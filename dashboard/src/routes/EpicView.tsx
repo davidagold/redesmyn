@@ -1,14 +1,15 @@
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
-import { useEventStream } from "@/hooks/useEventStream"
+import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
+import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight } from "lucide-react"
 
 export function EpicView() {
@@ -45,6 +46,9 @@ export function EpicView() {
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const refreshTimerRef = useRef<number | null>(null)
+  const [activityByNodeId, setActivityByNodeId] =
+    useState<Map<number, NodeActivity>>(new Map())
+  const [, setActivityTick] = useState(0)
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -58,6 +62,7 @@ export function EpicView() {
     refresh: refreshGraph,
     tasksById,
     agentsById,
+    sessionsByNodeId,
     childrenByParent,
     nodesById,
     rootNodes,
@@ -123,18 +128,60 @@ export function EpicView() {
   const loading = epicsLoading || graphLoading
   const error = epicsError || graphError
 
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setActivityTick((tick) => tick + 1),
+      1_000,
+    )
+    return () => window.clearInterval(id)
+  }, [])
+
+  const scheduleGraphRefresh = useCallback(() => {
+    if (refreshTimerRef.current !== null) {
+      return
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null
+      void refreshGraph()
+    }, 250)
+  }, [refreshGraph])
+
+  const handleStreamEvent = useCallback(
+    (event: StreamEvent) => {
+      const nodeId = event.data.node_id
+      if (typeof nodeId === "number") {
+        const observedAt = Date.parse(event.createdAt) || Date.now()
+        setActivityByNodeId((prev) => {
+          const next = new Map(prev)
+          const current = next.get(nodeId) ?? {}
+          if (event.eventType === "git.commit") {
+            next.set(nodeId, { ...current, lastCommitAt: observedAt })
+          } else if (event.eventType === "worktree.health") {
+            next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
+          } else if (
+            event.eventType === "agent.session_started" ||
+            event.eventType === "agent.session_stopped"
+          ) {
+            next.set(nodeId, { ...current, lastSessionAt: observedAt })
+          }
+          return next
+        })
+      }
+
+      if (
+        event.eventType === "agent.session_started" ||
+        event.eventType === "agent.session_stopped"
+      ) {
+        scheduleGraphRefresh()
+      }
+    },
+    [scheduleGraphRefresh],
+  )
+
   useEventStream({
     epic: selectedEpic?.slug ?? null,
-    onEvent: () => {
-      if (refreshTimerRef.current !== null) {
-        return
-      }
-      refreshTimerRef.current = window.setTimeout(() => {
-        refreshTimerRef.current = null
-        void refreshGraph()
-      }, 250)
-    },
-    onResync: () => void refreshGraph(),
+    onEvent: handleStreamEvent,
+    onResync: scheduleGraphRefresh,
   })
 
   useEffect(() => {
@@ -278,6 +325,8 @@ export function EpicView() {
             childrenByParent={childrenByParent}
             tasksById={tasksById}
             agentsById={agentsById}
+            sessionsByNodeId={sessionsByNodeId}
+            activityByNodeId={activityByNodeId}
             trunk={graph.trunk ?? null}
             selectedNodeId={nodeId}
             selectedEdgeId={selectedEdgeId}
