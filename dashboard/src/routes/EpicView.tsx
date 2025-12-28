@@ -399,6 +399,7 @@ export function EpicView() {
 
   async function handleRefresh() {
     await refreshEpics()
+    await refreshOrchestrationDefaults()
     await refreshGraph()
   }
 
@@ -463,53 +464,41 @@ export function EpicView() {
 
       {selectedEpic && runSummary ? (
         <div className="border-b px-4 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-baseline gap-3">
-              <div className="text-sm font-medium">Run</div>
-              <div className="text-xs text-muted-foreground">
-                Running {runSummary.running} / Eligible {runSummary.eligible} •
-                Blocked {runSummary.blocked} • Failed {runSummary.failed}
-              </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-medium">Run</div>
+            <div className="text-xs text-muted-foreground">
+              Running {runSummary.running} / Eligible {runSummary.eligible} •
+              Blocked {runSummary.blocked} • Failed {runSummary.failed}
             </div>
-            <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger
-                  type="button"
-                  className={cn(
-                    buttonVariants({ variant: "outline", size: "sm" }),
-                    copyRunDisabledReason
-                      ? "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
-                      : null,
-                  )}
-                  aria-disabled={copyRunDisabledReason ? "true" : undefined}
-                  onClick={(event) => {
-                    if (copyRunDisabledReason) {
-                      event.preventDefault()
-                      return
-                    }
-                    void handleCopyRunCommand()
-                  }}
-                >
-                  Copy rn run …
-                </TooltipTrigger>
-                {copyRunDisabledReason ? (
-                  <TooltipContent side="bottom" align="end">
-                    {copyRunDisabledReason}
-                  </TooltipContent>
-                ) : null}
-              </Tooltip>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => void refreshOrchestrationDefaults()}
-                disabled={orchestrationDefaultsLoading}
+            <Tooltip>
+              <TooltipTrigger
+                type="button"
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "sm" }),
+                  copyRunDisabledReason
+                    ? "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
+                    : null,
+                )}
+                aria-disabled={copyRunDisabledReason ? "true" : undefined}
+                onClick={(event) => {
+                  if (copyRunDisabledReason) {
+                    event.preventDefault()
+                    return
+                  }
+                  void handleCopyRunCommand()
+                }}
               >
-                Refresh defaults
-              </Button>
-              {runNotice ? (
-                <div className="text-xs text-muted-foreground">{runNotice}</div>
+                Copy rn run …
+              </TooltipTrigger>
+              {copyRunDisabledReason ? (
+                <TooltipContent side="bottom" align="end">
+                  {copyRunDisabledReason}
+                </TooltipContent>
               ) : null}
-            </div>
+            </Tooltip>
+            {runNotice ? (
+              <div className="text-xs text-muted-foreground">{runNotice}</div>
+            ) : null}
           </div>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
