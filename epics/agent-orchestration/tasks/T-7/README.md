@@ -11,9 +11,8 @@ node:
 
 ## Brief (local)
 
-- Render agent/session presence directly on graph nodes:
-  - assigned/unassigned
-  - running/idle/blocked/error
+- Render agent presence directly on graph nodes:
+  - not-started / running / stopped / failed / blocked
   - recent activity indicators (commit/worktree pulse)
 - Consume WebSocket updates and reflect them in the graph UI in a tasteful way.
 
@@ -24,9 +23,42 @@ node:
 
 ## Updates
 
-- Graph nodes render agent + session presence (status dot + session state) and subtle activity pulses from streamed events.
-- `EpicGraphResponse` now includes active `sessions` so the dashboard can render session state without extra requests.
+- Graph nodes render agent presence (status dot + state) and subtle activity pulses from streamed events.
 - Node cards should be task-first (no “Node <id>” in the UI): remove node ids from the card UI as nodes are not user-facing.
 - Adjust node card layout: top-align text content, avoid concatenated ID/title repeats, and prefer spacing over extra borders.
-- Use a single status affordance: a colored status circle in the upper-right with a tooltip (status label + uptime).
-- Surface the assigned agent as a “resource tag” aligned to the bottom of the card (small border radius; distinct from regular tags).
+- Use a single status affordance: a colored status circle in the upper-right with a tooltip (status + short health summary).
+- Surface the task’s agent as a “resource tag” aligned to the bottom of the card (small border radius; distinct from regular tags).
+
+### Final designs
+
+#### A) Task-first card content
+
+- Primary text: task identifier + title (no node ids).
+- Secondary text (optional, subtle): short “stack position” hint only if it materially helps (e.g. parent title on hover), otherwise keep cards sparse.
+
+#### B) Single status circle (top-right)
+
+One circle communicates overall “should I worry?”:
+
+- **Green**: agent running
+- **Blue**: agent exists but not running (“ready”)
+- **Gray**: agent not started yet (no agent row or never started)
+- **Amber**: blocked (task state blocked) or stopping/starting transient
+- **Red**: failed (agent error/exit) or worktree missing/mismatch
+
+Tooltip (compact, actionable; avoid inert enumerations):
+
+- `Agent`: `a-<task_id>`
+- `Status`: running/idle/failed (+ elapsed since start if available)
+- `Worktree`: clean/dirty/missing/mismatch (only when not healthy)
+- `Last activity`: last commit subject/sha prefix if available
+
+#### C) Agent “resource tag” (bottom)
+
+- When the task agent exists, show a pill like `a-123` at the bottom edge.
+- The pill is a visual affordance for “this task has an agent identity”, not a property list.
+
+#### D) Activity pulses
+
+- A subtle ring/pulse on the card (or status circle) when a new `git.commit` event lands for the task/node.
+- Pulse timing is short-lived and rate-limited (avoid noisy flapping during rapid commits).
