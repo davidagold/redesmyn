@@ -370,10 +370,25 @@ async def load_node_agent(session: AsyncSession, *, node: Node) -> Agent | None:
     return agent
 
 
+async def load_task_agent_row(
+    session: AsyncSession, *, task: Task, node: Node
+) -> Agent | None:
+    agent = await load_node_agent(session, node=node)
+    if agent is None:
+        return None
+
+    expected = f"a-{task.id}"
+    if agent.display_name != expected:
+        raise RuntimeError(
+            f"Node is assigned to {agent.display_name!r} but expected {expected!r}"
+        )
+    return agent
+
+
 async def get_or_create_task_agent(
     session: AsyncSession, *, task: Task, node: Node
 ) -> Agent:
-    agent = await load_node_agent(session, node=node)
+    agent = await load_task_agent_row(session, task=task, node=node)
     if agent is not None:
         return agent
 
@@ -579,7 +594,7 @@ async def stop_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await load_node_agent(session, node=node)
+            agent = await load_task_agent_row(session, task=task, node=node)
             if agent is None:
                 return False
 
@@ -622,7 +637,7 @@ async def restart_task_agent(
             sessionmaker = create_sessionmaker(engine)
             async with sessionmaker() as session:
                 task, node, _ = await _load_task_and_node(session, task_id=task_id)
-                agent = await load_node_agent(session, node=node)
+                agent = await load_task_agent_row(session, task=task, node=node)
                 if agent is None:
                     raise RuntimeError(
                         "No prior agent run found; pass --harness to restart"
@@ -664,7 +679,7 @@ async def load_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await load_node_agent(session, node=node)
+            agent = await load_task_agent_row(session, task=task, node=node)
             if agent is None:
                 return None
             if active_only:
