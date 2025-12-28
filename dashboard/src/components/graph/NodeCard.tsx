@@ -251,6 +251,7 @@ export function NodeCard({
       data-node-card
       className={cn(
         "group",
+        "py-0",
         "cursor-pointer transition-colors hover:bg-accent/40",
         isSelected
           ? "ring-2 ring-ring"
@@ -268,58 +269,50 @@ export function NodeCard({
         }
       }}
     >
-      <CardContent className="relative flex h-full flex-col gap-2 p-4">
-        <div className="absolute right-3 top-3 flex items-center gap-1">
-          {quickActions ? (
-            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-              {quickActions}
-            </div>
-          ) : null}
+      <CardContent className="flex h-full flex-col gap-2 p-3">
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div
-            className="relative inline-flex h-3 w-3 items-center justify-center"
-            title={tooltip}
-          >
-            {commitHot ? (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60 opacity-75" />
-            ) : worktreeHot ? (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
-            ) : null}
-            <span
-              className={cn(
-                "relative inline-flex h-2.5 w-2.5 rounded-full",
-                statusColor(task, agent),
-              )}
-              aria-label={tooltip}
-            />
-          </div>
-        </div>
-
-        <div className="pr-20">
-          <div className="flex items-baseline gap-2">
-            {task ? (
-              <div className="font-mono text-xs text-muted-foreground">
-                t{task.id}
-              </div>
-            ) : null}
-            <div className="text-sm font-medium leading-tight">
-              {task?.title ?? "—"}
-            </div>
-          </div>
-          <div
-            className="font-mono text-xs text-muted-foreground"
+            className="min-w-0 truncate font-mono text-xs text-muted-foreground"
             title={node.branchName}
           >
             {branchLabel}
           </div>
+          <div className="flex items-center gap-1">
+            {quickActions ? (
+              <div
+                className={cn(
+                  "flex items-center gap-1 transition-opacity",
+                  isSelected
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                )}
+              >
+                {quickActions}
+              </div>
+            ) : null}
+            <div
+              className="relative inline-flex h-3 w-3 items-center justify-center"
+              title={tooltip}
+            >
+              {commitHot ? (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60 opacity-75" />
+              ) : worktreeHot ? (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
+              ) : null}
+              <span
+                className={cn(
+                  "relative inline-flex h-2.5 w-2.5 rounded-full",
+                  statusColor(task, agent),
+                )}
+                aria-label={tooltip}
+              />
+            </div>
+          </div>
         </div>
 
-        {agent ? (
-          <div className="mt-auto flex items-end justify-end">
-            <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground">
-              {agent.displayName}
-            </span>
-          </div>
-        ) : null}
+        <div className="text-sm font-medium leading-tight">
+          {task?.title ?? "—"}
+        </div>
 
         {actionError ? (
           <div
@@ -327,6 +320,14 @@ export function NodeCard({
             title={actionError}
           >
             {actionError}
+          </div>
+        ) : null}
+
+        {agent ? (
+          <div className="mt-auto flex items-end justify-end">
+            <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground">
+              {agent.displayName}
+            </span>
           </div>
         ) : null}
       </CardContent>
