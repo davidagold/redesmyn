@@ -37,8 +37,7 @@ local precommit_steps = (formatters) {
             "openapi/openapi.json",
             "dashboard/src/api/v1.ts",
         )
-        dir = "dashboard"
-        fix = "npm run api:update"
+        fix = "npm --prefix dashboard run api:update && dashboard/node_modules/.bin/oxfmt dashboard/src/api/v1.ts"
         stage = List(
             "dashboard/src/api/v1.ts",
             "openapi/openapi.json",
