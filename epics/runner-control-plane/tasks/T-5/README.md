@@ -1,0 +1,26 @@
+# T-5 Dashboard: runner status + offline guidance
+
+## Metadata
+
+```yaml
+id: T-5
+stacked_on: T-2
+node:
+  branch: rn/runner-control-plane/T-5-dashboard-runner-status
+```
+
+## Brief (local)
+
+- Surface runner connection status in the dashboard:
+  - online/offline + last_seen
+  - host identity (when meaningful)
+  - “telemetry stale” affordances
+- When offline, provide actionable guidance:
+  - copy `rn up` (or the configured equivalent)
+  - troubleshooting link/section (basic)
+- Ensure these UI surfaces remain graph-first (avoid table-heavy “agents list” as the primary view).
+
+## Acceptance Criteria
+
+- A user can tell at a glance whether the runner is connected and whether updates should be expected.
+- The UI provides a single-click path to fix the most common issue (“runner not running”).
