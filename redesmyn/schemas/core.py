@@ -7,7 +7,6 @@ from pydantic import Field
 
 from redesmyn.domain.enums import (
     AgentStatus,
-    AgentSessionStatus,
     BlockMode,
     BlockPolicy,
     CommandState,
@@ -130,24 +129,6 @@ AttachInfoResponse = Annotated[
 ]
 
 
-class AgentSessionResponse(ApiResponse):
-    id: int
-    agent_id: int
-    node_id: int | None
-    host_id: int
-    harness_profile_id: str
-    status: AgentSessionStatus
-    cwd_path: str | None
-    pid: int | None
-    attach: AttachInfoResponse
-    resolved_profile: HarnessProfileDefinitionResponse | None
-    exit_code: int | None
-    started_at: datetime
-    ended_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
 class TaskAgentStartRequest(ApiResponse):
     harness: str
     detach: bool = True
@@ -164,7 +145,6 @@ class TaskAgentStartResponse(ApiResponse):
     agent_id: int
     agent_name: str
     agent_status: AgentStatus
-    session_status: AgentSessionStatus
     harness_profile_id: str
     attach: AttachInfoResponse
     resolved_profile: HarnessProfileDefinitionResponse | None
@@ -194,18 +174,6 @@ class HarnessProfileUpsertRequest(ApiResponse):
     display_name: str
     definition: HarnessProfileDefinitionResponse
     source: HarnessProfileSource = HarnessProfileSource.User
-
-
-class AgentSessionCreateRequest(ApiResponse):
-    agent_id: int
-    node_id: int | None = None
-    host_key: str
-    harness_profile_id: str
-    status: AgentSessionStatus = AgentSessionStatus.Starting
-    cwd_path: str | None = None
-    pid: int | None = None
-    attach: AttachInfoResponse = AttachNoneResponse()
-    resolved_profile: HarnessProfileDefinitionResponse | None = None
 
 
 class NodeSetAgentRequest(ApiResponse):

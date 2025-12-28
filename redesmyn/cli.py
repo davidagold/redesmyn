@@ -16,13 +16,13 @@ from sqlalchemy import desc, select
 
 from redesmyn import __version__
 from redesmyn.agent_runtime import (
-    attach_agent_session,
+    attach_agent,
+    agent_log_path_for_row,
     ensure_task_agent,
-    load_task_agent_session,
-    restart_task_agent_session,
-    session_log_path_for_row,
-    start_task_agent_session,
-    stop_task_agent_session,
+    load_task_agent,
+    restart_task_agent,
+    start_task_agent,
+    stop_task_agent,
 )
 from redesmyn.blocks import (
     NotInitializedError,
@@ -34,7 +34,6 @@ from redesmyn.blocks import (
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
-    AgentSession,
     Epic,
     LinearAuth,
     Node,
@@ -45,7 +44,13 @@ from redesmyn.db import (
 )
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
-from redesmyn.domain.enums import BlockPolicy, TaskAuthority, TaskSource, TaskState
+from redesmyn.domain.enums import (
+    AgentStatus,
+    BlockPolicy,
+    TaskAuthority,
+    TaskSource,
+    TaskState,
+)
 from redesmyn.integrations.linear import (
     LinearClient,
     LinearIssue,
@@ -425,10 +430,16 @@ def run(
                     node_ids = [t.node_id for t in eligible if t.node_id is not None]
                     active_node_ids = set(
                         await session.scalars(
-                            select(AgentSession.node_id)
+                            select(Node.id)
+                            .join(Agent, Node.agent_id == Agent.id)
                             .where(
-                                AgentSession.node_id.in_(node_ids),
-                                AgentSession.ended_at.is_(None),
+                                Node.id.in_(node_ids),
+                                Agent.status.in_(
+                                    [
+                                        AgentStatus.Running,
+                                        AgentStatus.Blocked,
+                                    ]
+                                ),
                             )
                             .distinct()
                         )
@@ -507,7 +518,7 @@ def run(
         try:
             if restart:
                 result = asyncio.run(
-                    restart_task_agent_session(
+                    restart_task_agent(
                         ctx,
                         task_id=task.id,
                         harness_command=effective_harness,
@@ -516,7 +527,7 @@ def run(
                 )
             else:
                 result = asyncio.run(
-                    start_task_agent_session(
+                    start_task_agent(
                         ctx,
                         task_id=task.id,
                         harness_command=effective_harness,
@@ -1768,7 +1779,7 @@ def agent_start(
 
     try:
         result = asyncio.run(
-            start_task_agent_session(
+            start_task_agent(
                 repo_ctx,
                 task_id=task_id,
                 harness_command=effective_harness,
@@ -1817,7 +1828,7 @@ def agent_restart(
 
     try:
         result = asyncio.run(
-            restart_task_agent_session(
+            restart_task_agent(
                 repo_ctx,
                 task_id=task_id,
                 harness_command=effective_harness,
@@ -1849,20 +1860,20 @@ def agent_attach(
         raise typer.Exit(2)
 
     try:
-        row = asyncio.run(load_task_agent_session(repo_ctx, task_id=task_id))
+        agent_row = asyncio.run(load_task_agent(repo_ctx, task_id=task_id))
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if row is None:
-        typer.echo("No matching active session.", err=True)
+    if agent_row is None:
+        typer.echo("No running agent for this task.", err=True)
         raise typer.Exit(1)
 
     try:
-        code = attach_agent_session(session_row=row)
+        code = attach_agent(agent_row=agent_row)
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
-        log_path = session_log_path_for_row(repo_ctx, session_row=row)
+        log_path = agent_log_path_for_row(repo_ctx, agent_row=agent_row)
         typer.echo(f"Logs: rn agent logs --task {task_id}  (path: {log_path})")
         raise typer.Exit(2)
     raise typer.Exit(code)
@@ -1881,13 +1892,13 @@ def agent_stop(
         raise typer.Exit(2)
 
     try:
-        row = asyncio.run(stop_task_agent_session(repo_ctx, task_id=task_id))
+        stopped = asyncio.run(stop_task_agent(repo_ctx, task_id=task_id))
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if row is None:
-        typer.echo("No matching active session.")
+    if not stopped:
+        typer.echo("No running agent for this task.")
         return
     typer.echo(f"Stopped: agent a-{task_id}")
 
@@ -1911,18 +1922,18 @@ def agent_logs(
         raise typer.Exit(2)
 
     try:
-        row = asyncio.run(
-            load_task_agent_session(repo_ctx, task_id=task_id, active_only=False)
+        agent_row = asyncio.run(
+            load_task_agent(repo_ctx, task_id=task_id, active_only=False)
         )
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if row is None:
-        typer.echo("No sessions found for this task.", err=True)
+    if agent_row is None:
+        typer.echo("No agent found for this task.", err=True)
         raise typer.Exit(1)
 
-    log_path = session_log_path_for_row(repo_ctx, session_row=row)
+    log_path = agent_log_path_for_row(repo_ctx, agent_row=agent_row)
     if not log_path.exists():
         typer.echo(f"No log file found: {log_path}", err=True)
         raise typer.Exit(1)

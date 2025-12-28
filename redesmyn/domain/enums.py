@@ -29,14 +29,6 @@ class AgentStatus(StrEnum):
     Error = "error"
 
 
-class AgentSessionStatus(StrEnum):
-    Starting = "starting"
-    Running = "running"
-    Stopping = "stopping"
-    Stopped = "stopped"
-    Failed = "failed"
-
-
 class HarnessProfileSource(StrEnum):
     Builtin = "builtin"
     User = "user"

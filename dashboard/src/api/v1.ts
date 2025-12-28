@@ -175,24 +175,6 @@ export interface paths {
     patch?: never
     trace?: never
   }
-  "/v1/sessions": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** List Agent Sessions */
-    get: operations["list_agent_sessions_v1_sessions_get"]
-    put?: never
-    /** Create Agent Session */
-    post: operations["create_agent_session_v1_sessions_post"]
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
   "/v1/status": {
     parameters: {
       query?: never
@@ -290,76 +272,6 @@ export interface components {
       lastSeenAt: string | null
       status: components["schemas"]["AgentStatus"]
     }
-    /** AgentSessionCreateRequest */
-    AgentSessionCreateRequest: {
-      /** Agentid */
-      agentId: number
-      /**
-       * Attach
-       * @default {
-       *       "type": "none"
-       *     }
-       */
-      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
-      /** Cwdpath */
-      cwdPath?: string | null
-      /** Harnessprofileid */
-      harnessProfileId: string
-      /** Hostkey */
-      hostKey: string
-      /** Nodeid */
-      nodeId?: number | null
-      /** Pid */
-      pid?: number | null
-      resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
-      /** @default starting */
-      status: components["schemas"]["AgentSessionStatus"]
-    }
-    /** AgentSessionResponse */
-    AgentSessionResponse: {
-      /** Agentid */
-      agentId: number
-      /** Attach */
-      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
-      /**
-       * Createdat
-       * Format: date-time
-       */
-      createdAt: string
-      /** Cwdpath */
-      cwdPath: string | null
-      /** Endedat */
-      endedAt: string | null
-      /** Exitcode */
-      exitCode: number | null
-      /** Harnessprofileid */
-      harnessProfileId: string
-      /** Hostid */
-      hostId: number
-      /** Id */
-      id: number
-      /** Nodeid */
-      nodeId: number | null
-      /** Pid */
-      pid: number | null
-      resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
-      /**
-       * Startedat
-       * Format: date-time
-       */
-      startedAt: string
-      status: components["schemas"]["AgentSessionStatus"]
-      /**
-       * Updatedat
-       * Format: date-time
-       */
-      updatedAt: string
-    }
-    /**
-     * AgentSessionStatus
-     * @enum {string}
-     */
-    AgentSessionStatus: "starting" | "running" | "stopping" | "stopped" | "failed"
     /**
      * AgentStatus
      * @enum {string}
@@ -692,7 +604,6 @@ export interface components {
       /** Nodeid */
       nodeId: number
       resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
-      sessionStatus: components["schemas"]["AgentSessionStatus"]
       /**
        * Started
        * @default true
@@ -1084,70 +995,6 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["NodeResponse"]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
-  list_agent_sessions_v1_sessions_get: {
-    parameters: {
-      query?: {
-        active_only?: boolean
-      }
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["AgentSessionResponse"][]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
-  create_agent_session_v1_sessions_post: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["AgentSessionCreateRequest"]
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["AgentSessionResponse"]
         }
       }
       /** @description Validation Error */

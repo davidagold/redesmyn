@@ -12,7 +12,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -20,13 +19,12 @@ from starlette.responses import RedirectResponse
 
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.agent_runtime import (
-    restart_task_agent_session,
-    start_task_agent_session,
-    stop_task_agent_session,
+    restart_task_agent as restart_task_agent_runtime,
+    start_task_agent as start_task_agent_runtime,
+    stop_task_agent as stop_task_agent_runtime,
 )
 from redesmyn.db import (
     Agent,
-    AgentSession,
     Block,
     BlockScope,
     Epic,
@@ -41,7 +39,7 @@ from redesmyn.db import (
     create_sessionmaker,
 )
 from redesmyn.db.models import HostCapabilities
-from redesmyn.domain.enums import AgentStatus, BlockPolicy
+from redesmyn.domain.enums import BlockPolicy
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
@@ -56,8 +54,6 @@ from redesmyn.repo_observer import run_repo_observer
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
-    AgentSessionCreateRequest,
-    AgentSessionResponse,
     BlockScopeResponse,
     BlockStatusResponse,
     EpicGraphResponse,
@@ -424,7 +420,7 @@ async def start_task_agent(
     request: TaskAgentStartRequest,
 ) -> TaskAgentStartResponse:
     try:
-        result = await start_task_agent_session(
+        result = await start_task_agent_runtime(
             app.state.ctx,
             task_id=task_id,
             harness_command=request.harness,
@@ -433,18 +429,21 @@ async def start_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.session
+    row = result.agent
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        _, node = await _require_task_node(session, task_id=task_id)
+
     return TaskAgentStartResponse(
         task_id=task_id,
-        node_id=row.node_id or 0,
-        agent_id=row.agent_id,
-        agent_name=f"a-{task_id}",
-        agent_status=AgentStatus.Running,
-        session_status=row.status,
-        harness_profile_id=row.harness_profile_id,
+        node_id=node.id,
+        agent_id=row.id,
+        agent_name=row.display_name,
+        agent_status=row.status,
+        harness_profile_id=row.harness_profile_id or "",
         attach=row.attach,
         resolved_profile=row.resolved_profile,
-        started_at=row.started_at,
+        started_at=row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=list(result.warnings),
     )
@@ -453,7 +452,7 @@ async def start_task_agent(
 @v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)
 async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
     try:
-        stopped = await stop_task_agent_session(app.state.ctx, task_id=task_id)
+        stopped = await stop_task_agent_runtime(app.state.ctx, task_id=task_id)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -468,7 +467,7 @@ async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
         agent_id=None if agent is None else agent.id,
         agent_name=None if agent is None else agent.display_name,
         agent_status=None if agent is None else agent.status,
-        stopped=stopped is not None,
+        stopped=stopped,
     )
 
 
@@ -478,7 +477,7 @@ async def restart_task_agent(
     request: TaskAgentRestartRequest,
 ) -> TaskAgentStartResponse:
     try:
-        result = await restart_task_agent_session(
+        result = await restart_task_agent_runtime(
             app.state.ctx,
             task_id=task_id,
             harness_command=request.harness,
@@ -487,89 +486,24 @@ async def restart_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.session
+    row = result.agent
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        _, node = await _require_task_node(session, task_id=task_id)
+
     return TaskAgentStartResponse(
         task_id=task_id,
-        node_id=row.node_id or 0,
-        agent_id=row.agent_id,
-        agent_name=f"a-{task_id}",
-        agent_status=AgentStatus.Running,
-        session_status=row.status,
-        harness_profile_id=row.harness_profile_id,
+        node_id=node.id,
+        agent_id=row.id,
+        agent_name=row.display_name,
+        agent_status=row.status,
+        harness_profile_id=row.harness_profile_id or "",
         attach=row.attach,
         resolved_profile=row.resolved_profile,
-        started_at=row.started_at,
+        started_at=row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=list(result.warnings),
     )
-
-
-@v1.get("/sessions", response_model=list[AgentSessionResponse])
-async def list_agent_sessions(active_only: bool = True) -> list[AgentSessionResponse]:
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        stmt = select(AgentSession).order_by(desc(AgentSession.id))
-        if active_only:
-            stmt = stmt.where(AgentSession.ended_at.is_(None))
-        rows = list(await session.scalars(stmt))
-    return [AgentSessionResponse.model_validate(r, from_attributes=True) for r in rows]
-
-
-@v1.post("/sessions", response_model=AgentSessionResponse)
-async def create_agent_session(
-    request: AgentSessionCreateRequest,
-) -> AgentSessionResponse:
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        agent = await session.get(Agent, request.agent_id)
-        if agent is None:
-            raise HTTPException(status_code=400, detail="Unknown agent id")
-
-        if request.node_id is not None:
-            node = await session.get(Node, request.node_id)
-            if node is None:
-                raise HTTPException(status_code=400, detail="Unknown node id")
-
-        host = await session.scalar(
-            select(Host).where(Host.host_key == request.host_key)
-        )
-        if host is None:
-            raise HTTPException(status_code=400, detail="Unknown host_key")
-
-        profile = await session.get(HarnessProfile, request.harness_profile_id)
-        if profile is None:
-            raise HTTPException(status_code=400, detail="Unknown harness_profile_id")
-
-        row = AgentSession(
-            agent_id=request.agent_id,
-            node_id=request.node_id,
-            host_id=host.id,
-            harness_profile_id=request.harness_profile_id,
-            status=request.status,
-            cwd_path=request.cwd_path,
-            pid=request.pid,
-            attach=request.attach.model_dump(mode="python"),
-            resolved_profile=(
-                None
-                if request.resolved_profile is None
-                else request.resolved_profile.model_dump(mode="python")
-            ),
-            started_at=datetime.now(UTC),
-            ended_at=None,
-        )
-        session.add(row)
-
-        try:
-            await session.commit()
-        except IntegrityError as e:
-            await session.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Agent or node already has an active session",
-            ) from e
-
-        await session.refresh(row)
-        return AgentSessionResponse.model_validate(row, from_attributes=True)
 
 
 @v1.post("/nodes/{node_id}/agent", response_model=NodeResponse)

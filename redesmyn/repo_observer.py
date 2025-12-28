@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import AgentSession, Event, Node
+from redesmyn.db import Agent, Event, Node
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
+from redesmyn.domain.enums import AgentStatus
 from redesmyn.repo import current_branch
 
 
@@ -210,17 +211,19 @@ async def observe_once(
             state.initialized = True
         return 0
 
-    node_ids = [n.id for n in nodes]
-    active_sessions = list(
-        await session.scalars(
-            select(AgentSession).where(
-                AgentSession.node_id.in_(node_ids),
-                AgentSession.ended_at.is_(None),
-            )
-        )
+    agent_ids = [n.agent_id for n in nodes if n.agent_id is not None]
+    agents = (
+        list(await session.scalars(select(Agent).where(Agent.id.in_(agent_ids))))
+        if agent_ids
+        else []
     )
-    active_session_by_node: dict[int, AgentSession] = {
-        s.node_id: s for s in active_sessions if s.node_id is not None
+    agent_by_id = {a.id: a for a in agents}
+    active_agent_id_by_node_id: dict[int, int] = {
+        n.id: n.agent_id
+        for n in nodes
+        if n.agent_id is not None
+        and (agent := agent_by_id.get(n.agent_id)) is not None
+        and agent.status in {AgentStatus.Running, AgentStatus.Blocked}
     }
 
     heads = read_branch_heads(ctx.repo_root)
@@ -251,7 +254,6 @@ async def observe_once(
     summaries = read_commit_summaries(ctx.repo_root, shas=new_shas)
     for node, sha in new_commits:
         summary = summaries.get(sha)
-        active_session = active_session_by_node.get(node.id)
         data = GitCommitEventData(
             node_id=node.id,
             branch_name=node.branch_name,
@@ -260,7 +262,7 @@ async def observe_once(
             author_email=summary.author_email if summary else None,
             authored_at=summary.authored_at if summary else None,
             subject=summary.subject if summary else None,
-            agent_id=active_session.agent_id if active_session else None,
+            agent_id=active_agent_id_by_node_id.get(node.id),
         )
         session.add(
             Event(
