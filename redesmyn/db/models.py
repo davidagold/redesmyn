@@ -63,6 +63,28 @@ class EventData(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class GitCommitEventData(BaseModel):
+    node_id: int
+    branch_name: str
+    sha: str
+    author_name: str | None = None
+    author_email: str | None = None
+    authored_at: str | None = None
+    subject: str | None = None
+    agent_id: int | None = None
+    session_id: int | None = None
+
+
+class WorktreeHealthEventData(BaseModel):
+    node_id: int
+    branch_name: str
+    worktree_path: str
+    exists: bool
+    current_branch: str | None = None
+    dirty: bool | None = None
+    branch_mismatch: bool | None = None
+
+
 class HostCapabilities(BaseModel):
     tmux_available: bool = False
     supports_path_shim: bool = True

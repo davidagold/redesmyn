@@ -60,6 +60,7 @@ from redesmyn.repo import (
     current_branch,
     git_worktree_add,
 )
+from redesmyn.repo_observer import run_repo_observer
 from redesmyn.strings import slugify
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
@@ -73,6 +74,7 @@ task_app = typer.Typer(add_completion=False, help="Task management.")
 node_app = typer.Typer(add_completion=False, help="Node/branch graph management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
+observer_app = typer.Typer(add_completion=False, help="Repo observer + telemetry.")
 
 
 @dataclass(slots=True)
@@ -1146,6 +1148,47 @@ def daemon_status() -> None:
 
 
 app.add_typer(daemon_app, name="daemon")
+
+
+@observer_app.command("run")
+def observer_run(
+    interval: float = typer.Option(1.0, "--interval", help="Poll interval (seconds)."),
+    epic: str | None = typer.Option(
+        None, help="Limit observation to an epic slug or id."
+    ),
+    emit_baseline: bool = typer.Option(
+        False,
+        "--emit-baseline/--no-emit-baseline",
+        help="Emit events on first observation (defaults to no).",
+    ),
+    once: bool = typer.Option(False, "--once", help="Run one poll and exit."),
+) -> None:
+    """Run the host-local repo observer in the foreground."""
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if interval <= 0:
+        raise typer.BadParameter("--interval must be > 0")
+
+    try:
+        asyncio.run(
+            run_repo_observer(
+                ctx,
+                interval_s=interval,
+                epic=epic,
+                emit_baseline=emit_baseline,
+                once=once,
+            )
+        )
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+
+
+app.add_typer(observer_app, name="observer")
 
 
 @epic_app.command("create")
