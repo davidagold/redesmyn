@@ -16,8 +16,8 @@ linear:
 
 Enable real multi-agent dogfooding by having Redesmyn **start, manage, and observe** agent harness processes while keeping the UI **graph-first** and real-time:
 
-- Start/stop/restart per-node agent sessions from the graph UI and CLI.
-- Allow humans to **attach/detach** into those sessions (so “agent orchestration” doesn’t mean losing the harness UX users already like).
+- Start/stop/restart **per-task agents** from the graph UI and CLI (including a fleet workflow via `rn run`).
+- Allow humans to **attach/detach** into those agents (so “agent orchestration” doesn’t mean losing the harness UX users already like).
 - Persist liveness + activity (commits, worktree state) and stream updates to the UI via WebSocket.
 - Support multiple harnesses with a thin adapter layer:
   - Claude Code
@@ -42,10 +42,10 @@ For many harnesses, the “adapter” should be largely data-driven:
 
 Hooks (when available) are an enrichment path, not a hard dependency.
 
-### 2.2 Split control plane vs runner (even if co-located in v0)
+### 2.2 Split control plane vs daemon (even if co-located in v0)
 
 - **Control plane**: state + commands + events + API/UI.
-- **Runner**: host-local worktrees + spawning harness processes + telemetry.
+- **Daemon (host-local)**: worktrees + spawning harness processes + telemetry/observation.
 
 v0 can run both in a single local daemon, but the boundary must exist in the code and data model so we don’t bake in “server == host”. This matters for cloud deployment where the agent host and server diverge.
 
@@ -69,7 +69,25 @@ To keep invariants enforceable even when harnesses don’t support hooks:
 
 The graph is the control surface. “Agents list” is an exception view for unassigned/offline/global settings, not the primary workflow.
 
-### 2.5 WebSocket event stream
+### 2.5 Merge “session” into “agent” (v0)
+
+- **One agent per task**: `a-<task_id>`.
+- No separate “session” construct is required for dogfooding UX; agent lifecycle owns:
+  - start/stop/restart
+  - attach/log metadata (tmux-first)
+  - status + timestamps
+- **Stable tmux name** per task agent (reused across restarts): `rn-a-<task_id>`.
+
+### 2.6 Task-first surfaces (avoid node-keyed APIs)
+
+Even before the Node→Task merge, user-facing surfaces should be task-keyed:
+
+- CLI: `rn agent start|stop|restart|attach|logs --task <task_id>`
+- API: `POST /v1/tasks/{task_id}/agent/start|stop|restart`
+
+Internally, resolve `task_id → node_id` via `tasks.node_id` until the architecture refactor merges nodes into tasks.
+
+### 2.7 WebSocket event stream
 
 Use WebSocket as the primary real-time transport so we can later support interactive app-level chat and richer bidirectional flows.
 
@@ -77,22 +95,24 @@ Use WebSocket as the primary real-time transport so we can later support interac
 
 ### 3.1 Required capabilities (MVP)
 
-- Agent sessions:
+- Agents:
   - start/stop/restart, status, last-seen
-  - harness selection
-  - attach/detach when supported
+  - harness selection + defaults
+  - attach/detach when supported (tmux-first)
+  - fleet start (`rn run`) without per-task clicking
 - Activity + telemetry:
-  - detect commits and ref movements for node branches
+  - detect commits and ref movements for task branches
   - basic worktree health (exists, clean/dirty, current branch)
 - UI:
   - agent presence + activity integrated into graph nodes
+  - epic-level “Run” panel for defaults + “copy rn run …”
   - live updates without manual refresh
 
 Messaging and commands are intentionally factored into a separate epic: `epics/messages-commands/README.md`.
 
 ### 3.2 Harness adapters (parallelizable)
 
-After the runner/session model exists, harness adapters can be implemented in parallel (they should not require a strict sequence). Hooks, when available, are an enrichment path rather than a hard dependency.
+After the daemon/agent model exists, harness adapters can be implemented in parallel (they should not require a strict sequence). Hooks, when available, are an enrichment path rather than a hard dependency.
 
 ### 3.3 Explicit non-goals (v0)
 
@@ -104,6 +124,6 @@ After the runner/session model exists, harness adapters can be implemented in pa
 
 From the dashboard graph:
 
-1. Select a node, start a harness session (e.g. Codex) for that node.
-2. Attach into the session, make commits, and see the node update live (status + activity pulse).
-3. Switch between nodes/worktrees ergonomically (`rn checkout`-style workflow) without breaking worktree invariants.
+1. Start a small fleet (`rn run`, or the dashboard “Run” panel) so multiple task agents are running without per-task clicking.
+2. Attach into a task agent, make commits, and see the graph update live (presence + activity pulse).
+3. Switch between task worktrees ergonomically (`rn checkout --task …`) without breaking invariants.

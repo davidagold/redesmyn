@@ -16,8 +16,8 @@ linear:
 
 Build a local-first “cockpit” for orchestrating multi-agent work on a git repository via a **branch graph** where:
 
-- Each branch node is mapped to an agent.
-- Agents work independently on their assigned branches (typically in separate worktrees).
+- Each task-backed graph node can be mapped to **one agent** (a harness process).
+- Agents work independently on their assigned task branches (typically in separate worktrees).
 - Cross-branch operations (rebases, moving commits) are executed by a local daemon that enforces invariants.
 - A dynamic web UI visualizes the evolving commit/branch topology, agent activity, and review feedback in near real-time.
 
@@ -29,7 +29,7 @@ Unlike Graphite-style “one commit per branch” stacks, Redesmyn’s goal is t
 - **Git is the substrate for history**: We observe and manipulate real git history; we do not invent a parallel VCS.
 - **GitHub + Linear are first-class for planning**: Issues/PRs/comments are the substrate for planning, discussion, and progress tracking.
 - **Auditable state**: Persist an append-only event log so rebases and “what happened?” questions are answerable.
-- **Agent-agnostic**: Agents are external processes; integration is primarily via a CLI contract, not deep harness coupling.
+- **Agent-agnostic**: Agents are external harness processes; integration is primarily via `rn`/daemon contracts (profiles + docs + validation), with harness hooks as an opportunistic enhancement.
 - **Graph-first UX**: The UI is a modern, beautiful, highly functional graph experience (not a wall of tables).
 
 ## 3) Dogfooding
@@ -45,7 +45,7 @@ We will use Redesmyn to build Redesmyn.
 - **Branch Graph**: The topology of nodes for an epic. It is a tree (one parent per node); visually a DAG when including commit ancestry.
 - **Graph axes / motion**: The trunk is the base branch timeline; the horizontal axis expresses merge-order. Tasks drift from **left (more dependencies / potential blockers)** to **right (fewer blockers)** as they become merge-ready, then merge/ff back into the base branch.
 - **Stack**: A path through the branch graph from an upstream node to a connected leaf node. Stacks can overlap (shared prefix) and are primarily a focus/view concept.
-- **Agent**: An external worker (Codex, Claude Code, etc.) assigned to a node.
+- **Agent**: A task-pinned harness process (Codex, Claude Code, etc.) working in that task’s branch/worktree. v0 identity is `a-<task_id>` (no separate “session” construct for orchestration UX).
 - **Daemon**: The local long-running orchestrator managing state, locks, commands, and integrations.
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
 - **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).
@@ -261,7 +261,7 @@ The daemon exposes:
 These are enforced by the daemon and by `rn` when possible:
 
 1. **One parent per node**: Branch topology is a tree.
-2. **One agent per node (v0)**: At most one active agent assignment per node.
+2. **One agent per task/node (v0)**: At most one active agent per task-backed graph node (agent ids are `a-<task_id>`).
 3. **Agents commit only on their assigned node branch** (best-effort enforcement via `rn` + worktrees).
 4. **Rebases/moves are daemon-only**: cross-branch history rewriting is executed by the daemon, not by agents.
 5. **Work Range is contiguous**: A node’s changes are represented by the commit range `parent..branch`.
@@ -295,6 +295,7 @@ These are enforced by the daemon and by `rn` when possible:
   - `mustLandAfterTaskIds[]` (additional merge-order constraints; does not affect topology)
   - `state` (todo/in_progress/done/blocked; provider-specific mapping)
   - `nodeId | null` (the primary node for this task, if assigned)
+  - `agentId | null` (the task’s agent, if any)
 
 - **Node**
   - `nodeId`
@@ -302,7 +303,6 @@ These are enforced by the daemon and by `rn` when possible:
   - `branchName`
   - `parentNodeId | null`
   - `childNodeIds[]`
-  - `agentId | null`
   - `worktreePath | null`
   - `primaryTaskId | null`
   - `links`: `{ githubPrId?, linearIssueId? }`
@@ -310,10 +310,14 @@ These are enforced by the daemon and by `rn` when possible:
 
 - **Agent**
   - `agentId`
-  - `displayName`
+  - `taskId` (pinned; agent ids are `a-<task_id>`)
+  - `displayName` (optional)
+  - `harnessProfileId` (resolved harness profile used to launch/attach)
   - `capabilities` (optional; e.g., “can run tests”, “can open PRs”)
   - `lastSeenAt`
-  - `status` (idle/running/blocked/error)
+  - `status` (running/stopped/error)
+  - `startedAt`, `stoppedAt`
+  - `attach` metadata (e.g., tmux session name, log path)
 
 - **Command**
   - `commandId`
