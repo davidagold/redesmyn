@@ -75,6 +75,37 @@ Local-first workflows should remain ergonomic:
 - `rn dev` may run control plane + daemon co-located.
 - Naming/structure should preserve the conceptual split even when co-located.
 
+### 2.8 Multi-repo identity is explicit (org/repo keys)
+
+The control plane will eventually serve multiple repos across multiple organizations/workspaces.
+
+- The daemon handshake must include an explicit repo identity (not a local filesystem path).
+- Repos have a unique `repo_name` within an org/workspace, but identifiers must be stable across renames:
+  - Prefer immutable `org_id` + `repo_id` for primary identity.
+  - Treat names/slugs as display fields and enforce uniqueness per org separately.
+
+### 2.9 Integrations authenticate at the client system level (v1)
+
+In v1, integrations like Linear/GitHub authenticate on the client (daemon host) at the system level.
+
+- The daemon owns tokens/credentials and emits normalized integration events to the control plane.
+- The control plane persists integration-derived events and projections, but does not require provider credentials.
+- Server-managed OAuth/credential storage is a future step (requires multi-tenant user auth + secret storage).
+
+### 2.10 Daemon presence is a projection (not a user-facing DB object)
+
+Daemons are runtime processes (one per repo on a host in v1), not user-managed entities.
+
+- Presence (“online/offline”, `last_seen`, capabilities) is derived from connection + heartbeat events.
+- The control plane may materialize a presence table for fast queries/UI, but the event log remains the source of truth.
+
+### 2.11 Desired state lives on tasks (not agents)
+
+Desired state should be modeled on the graph primitive (`Task`) and persisted in the control plane.
+
+- Users express orchestration intent via task topology and task-level desired state.
+- Agents report observed state/telemetry; they are not the source of truth for desired state.
+
 ## 3) Scope (v1)
 
 - Daemon connection protocol (handshake/auth/versioning/resync).

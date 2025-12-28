@@ -15,6 +15,7 @@ node:
 - Persist/track daemon presence:
   - daemon host identity + capabilities
   - last_seen + connection status
+  - treat presence as a projection derived from connection/heartbeat events
 - Implement command delivery primitives:
   - send commands to a connected daemon
   - daemon acks + retries (idempotency)
