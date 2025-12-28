@@ -1,0 +1,28 @@
+# T-4 CLI UX: `rn up/down/status` + consolidate server/daemon concepts
+
+## Metadata
+
+```yaml
+id: T-4
+stacked_on: T-3
+node:
+  branch: rn/revise-architecture/T-4-rn-up
+```
+
+## Brief (local)
+
+- Introduce a user-friendly daemon lifecycle:
+  - `rn up` (start daemon in the background; connect to control plane)
+  - `rn down` (stop daemon)
+  - `rn status` (daemon online/offline, last_seen, server url)
+- Clarify command taxonomy:
+  - “daemon” is the host-local orchestrator for worktrees + sessions + telemetry
+  - “control plane/server” is the API/UI persistence layer
+  - “observer” becomes a debug-only alias or subcommand (daemon capability)
+- Provide ergonomic “copy this command” strings for the UI to surface (start/connect, logs, attach).
+
+## Acceptance Criteria
+
+- A new user can get to “daemon connected” with a single command (`rn up`).
+- Existing local workflows remain usable (`rn dev` still works; no confusing duplicate processes).
+- `rn status` answers “is my daemon online and feeding telemetry?” quickly.

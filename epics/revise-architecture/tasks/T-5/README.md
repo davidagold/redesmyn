@@ -1,4 +1,4 @@
-# T-5 Dashboard: runner status + offline guidance
+# T-5 Dashboard: daemon status + offline guidance
 
 ## Metadata
 
@@ -6,12 +6,12 @@
 id: T-5
 stacked_on: T-2
 node:
-  branch: rn/runner-control-plane/T-5-dashboard-runner-status
+  branch: rn/revise-architecture/T-5-dashboard-daemon-status
 ```
 
 ## Brief (local)
 
-- Surface runner connection status in the dashboard:
+- Surface daemon connection status in the dashboard:
   - online/offline + last_seen
   - host identity (when meaningful)
   - “telemetry stale” affordances
@@ -22,5 +22,5 @@ node:
 
 ## Acceptance Criteria
 
-- A user can tell at a glance whether the runner is connected and whether updates should be expected.
-- The UI provides a single-click path to fix the most common issue (“runner not running”).
+- A user can tell at a glance whether the daemon is connected and whether updates should be expected.
+- The UI provides a single-click path to fix the most common issue (“daemon not running”).

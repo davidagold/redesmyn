@@ -15,4 +15,4 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/graph-viz/README.md`
 - `epics/agent-orchestration/README.md`
 - `epics/messages-commands/README.md`
-- `epics/runner-control-plane/README.md`
+- `epics/revise-architecture/README.md`
