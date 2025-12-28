@@ -30,6 +30,7 @@ from redesmyn.db import (
     Block,
     BlockScope,
     Epic,
+    Event,
     HarnessProfile,
     Host,
     LinearAuth,
@@ -575,6 +576,7 @@ async def set_node_agent(node_id: int, request: NodeSetAgentRequest) -> NodeResp
         if node is None:
             raise HTTPException(status_code=404, detail="Node not found")
 
+        previous_agent_id = node.agent_id
         if request.agent_id is not None:
             agent = await session.get(Agent, request.agent_id)
             if agent is None:
@@ -582,6 +584,19 @@ async def set_node_agent(node_id: int, request: NodeSetAgentRequest) -> NodeResp
             node.agent_id = agent.id
         else:
             node.agent_id = None
+
+        if node.agent_id != previous_agent_id:
+            session.add(
+                Event(
+                    event_type="node.agent_set",
+                    data={
+                        "node_id": node.id,
+                        "agent_id": node.agent_id,
+                        "previous_agent_id": previous_agent_id,
+                    },
+                    created_at=datetime.now(UTC),
+                )
+            )
 
         await session.commit()
         await session.refresh(node)

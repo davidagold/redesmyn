@@ -212,6 +212,20 @@ class NodeSetAgentRequest(ApiResponse):
     agent_id: int | None
 
 
+class NodeStartSessionRequest(ApiResponse):
+    """Request to start a runner-owned session for a node."""
+
+    command: str
+    detach: bool = True
+
+
+class NodeRestartSessionRequest(ApiResponse):
+    """Request to restart a runner-owned session for a node."""
+
+    command: str | None = None
+    detach: bool = True
+
+
 class CommandResponse(ApiResponse):
     id: int
     command_type: str

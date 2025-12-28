@@ -322,7 +322,21 @@ export function EpicView() {
 
           <DetailsPanel
             open={!!selectedNode || !!selectedEdge}
+            node={selectedNode}
             task={selectedTask}
+            agent={
+              selectedNode?.agentId !== null &&
+              selectedNode?.agentId !== undefined
+                ? (agentsById.get(selectedNode.agentId) ?? null)
+                : null
+            }
+            agents={graph.agents ?? []}
+            session={
+              selectedNode
+                ? (sessionsByNodeId.get(selectedNode.id) ?? null)
+                : null
+            }
+            onRequestRefresh={scheduleGraphRefresh}
             edge={selectedEdge}
           />
         </div>
