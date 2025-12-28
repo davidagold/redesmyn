@@ -72,7 +72,6 @@ class GitCommitEventData(BaseModel):
     authored_at: str | None = None
     subject: str | None = None
     agent_id: int | None = None
-    session_id: int | None = None
 
 
 class WorktreeHealthEventData(BaseModel):

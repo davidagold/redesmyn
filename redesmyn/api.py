@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,6 +49,7 @@ from redesmyn.integrations.linear import (
 )
 from redesmyn.orchestrator import init_repo
 from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
+from redesmyn.repo_observer import run_repo_observer
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
@@ -109,7 +112,25 @@ async def lifespan(app: App):
     app.state.linear_oauth_states = {}
     maybe_mount_dashboard(app, ctx.worktree_root)
 
+    observer_task: asyncio.Task[None] | None = None
+    if os.environ.get("REDESMYN_NO_OBSERVER") not in {"1", "true", "TRUE"}:
+        observer_task = asyncio.create_task(
+            run_repo_observer(
+                ctx,
+                interval_s=1.0,
+                emit_baseline=False,
+                once=False,
+            )
+        )
+
     yield
+
+    if observer_task is not None:
+        observer_task.cancel()
+        try:
+            await observer_task
+        except asyncio.CancelledError:
+            pass
 
     await app.state.engine.dispose()
 

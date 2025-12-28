@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import AgentSession, Epic, Event, Node
+from redesmyn.db import AgentSession, Event, Node
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
 from redesmyn.repo import current_branch
 
@@ -41,6 +41,47 @@ def default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
         safe_parts.append(part.replace(":", "_"))
     safe_rel = Path(*safe_parts) if safe_parts else Path(branch.replace(":", "_"))
     return ctx.state_dir / "worktrees" / safe_rel
+
+
+def _find_existing_worktree_path_for_branch(
+    repo_root: Path, *, branch: str
+) -> Path | None:
+    proc = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root, timeout_s=5)
+    if proc.returncode != 0:
+        return None
+
+    current_path: Path | None = None
+    current_branch: str | None = None
+
+    def commit_current() -> Path | None:
+        if current_path is None or current_branch is None:
+            return None
+        if current_branch == branch:
+            return current_path
+        return None
+
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            match = commit_current()
+            if match is not None:
+                return match
+            current_path = None
+            current_branch = None
+            continue
+
+        if line.startswith("worktree "):
+            current_path = Path(line.removeprefix("worktree ").strip())
+            continue
+
+        if line.startswith("branch "):
+            ref = line.removeprefix("branch ").strip()
+            if ref.startswith("refs/heads/"):
+                current_branch = ref.removeprefix("refs/heads/")
+            else:
+                current_branch = ref
+            continue
+
+    return commit_current()
 
 
 def _run_git(
@@ -129,11 +170,12 @@ def worktree_dirty(worktree_path: Path) -> bool | None:
 
 
 def observe_worktree(*, node: Node, ctx: RepoContext) -> WorktreeObservation:
-    path = (
-        Path(node.worktree_path)
-        if node.worktree_path
-        else default_worktree_path(ctx, branch=node.branch_name)
-    )
+    if node.worktree_path:
+        path = Path(node.worktree_path)
+    else:
+        path = _find_existing_worktree_path_for_branch(
+            ctx.repo_root, branch=node.branch_name
+        ) or default_worktree_path(ctx, branch=node.branch_name)
     if not path.exists():
         return WorktreeObservation(
             worktree_path=str(path),
@@ -155,31 +197,14 @@ def observe_worktree(*, node: Node, ctx: RepoContext) -> WorktreeObservation:
     )
 
 
-async def _resolve_epic_id(session: AsyncSession, *, epic: str | None) -> int | None:
-    if epic is None:
-        return None
-    if epic.isdigit():
-        row = await session.get(Epic, int(epic))
-    else:
-        row = await session.scalar(select(Epic).where(Epic.slug == epic))
-    if row is None:
-        raise RuntimeError(f"Unknown epic: {epic}")
-    return row.id
-
-
 async def observe_once(
     ctx: RepoContext,
     session: AsyncSession,
     state: RepoObserverState,
     *,
-    epic: str | None,
     emit_baseline: bool,
 ) -> int:
-    epic_id = await _resolve_epic_id(session, epic=epic)
-    stmt = select(Node).order_by(Node.id)
-    if epic_id is not None:
-        stmt = stmt.where(Node.epic_id == epic_id)
-    nodes = list(await session.scalars(stmt))
+    nodes = list(await session.scalars(select(Node).order_by(Node.id)))
     if not nodes:
         if not state.initialized:
             state.initialized = True
@@ -236,7 +261,6 @@ async def observe_once(
             authored_at=summary.authored_at if summary else None,
             subject=summary.subject if summary else None,
             agent_id=active_session.agent_id if active_session else None,
-            session_id=active_session.id if active_session else None,
         )
         session.add(
             Event(
@@ -295,7 +319,6 @@ async def run_repo_observer(
     ctx: RepoContext,
     *,
     interval_s: float,
-    epic: str | None,
     emit_baseline: bool,
     once: bool,
 ) -> None:
@@ -311,7 +334,6 @@ async def run_repo_observer(
                     ctx,
                     session,
                     state,
-                    epic=epic,
                     emit_baseline=emit_baseline,
                 )
             if once:

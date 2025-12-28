@@ -1102,6 +1102,11 @@ def daemon_run(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(9234, help="Bind port."),
     reload: bool = typer.Option(False, help="Auto-reload on code changes."),
+    observer: bool = typer.Option(
+        True,
+        "--observer/--no-observer",
+        help="Run the repo observer in the daemon process.",
+    ),
 ) -> None:
     """Run the daemon in the foreground."""
     try:
@@ -1115,6 +1120,11 @@ def daemon_run(
     except Exception as e:  # pragma: no cover
         typer.echo(f"error: uvicorn not available ({e})", err=True)
         raise typer.Exit(2)
+
+    if observer:
+        os.environ.pop("REDESMYN_NO_OBSERVER", None)
+    else:
+        os.environ["REDESMYN_NO_OBSERVER"] = "1"
 
     uvicorn.run("redesmyn.api:app", host=host, port=port, reload=reload)
 
@@ -1153,9 +1163,6 @@ app.add_typer(daemon_app, name="daemon")
 @observer_app.command("run")
 def observer_run(
     interval: float = typer.Option(1.0, "--interval", help="Poll interval (seconds)."),
-    epic: str | None = typer.Option(
-        None, help="Limit observation to an epic slug or id."
-    ),
     emit_baseline: bool = typer.Option(
         False,
         "--emit-baseline/--no-emit-baseline",
@@ -1179,7 +1186,6 @@ def observer_run(
             run_repo_observer(
                 ctx,
                 interval_s=interval,
-                epic=epic,
                 emit_baseline=emit_baseline,
                 once=once,
             )
