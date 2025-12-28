@@ -325,7 +325,7 @@ export function NodeCard({
 
         {agent ? (
           <div className="mt-auto flex items-end justify-start">
-            <span className="rounded-sm bg-muted px-2 py-0.5 font-mono text-xs text-foreground/70">
+            <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
               {agent.displayName}
             </span>
           </div>
