@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+  "/v1/config": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Get Orchestration Config */
+    get: operations["get_orchestration_config_v1_config_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/epics": {
     parameters: {
       query?: never
@@ -152,57 +169,6 @@ export interface paths {
     put?: never
     /** Set Node Agent */
     post: operations["set_node_agent_v1_nodes__node_id__agent_post"]
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  "/v1/nodes/{node_id}/session/restart": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Restart Node Session */
-    post: operations["restart_node_session_v1_nodes__node_id__session_restart_post"]
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  "/v1/nodes/{node_id}/session/start": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Start Node Session */
-    post: operations["start_node_session_v1_nodes__node_id__session_start_post"]
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
-  "/v1/nodes/{node_id}/session/stop": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    get?: never
-    put?: never
-    /** Stop Node Session */
-    post: operations["stop_node_session_v1_nodes__node_id__session_stop_post"]
     delete?: never
     options?: never
     head?: never
@@ -660,11 +626,30 @@ export interface components {
       /** Worktreepath */
       worktreePath: string | null
     }
-    /**
-     * NodeRestartSessionRequest
-     * @description Request to restart a runner-owned session for a node.
-     */
-    NodeRestartSessionRequest: {
+    /** NodeSetAgentRequest */
+    NodeSetAgentRequest: {
+      /** Agentid */
+      agentId: number | null
+    }
+    /** OrchestrationDefaultsResponse */
+    OrchestrationDefaultsResponse: {
+      /** Defaultepic */
+      defaultEpic?: string | null
+      fleet: components["schemas"]["OrchestrationFleetDefaultsResponse"]
+      harness: components["schemas"]["OrchestrationHarnessDefaultsResponse"]
+    }
+    /** OrchestrationFleetDefaultsResponse */
+    OrchestrationFleetDefaultsResponse: {
+      /**
+       * Mode
+       * @enum {string}
+       */
+      mode: "fixed" | "auto"
+      /** Size */
+      size?: number | null
+    }
+    /** OrchestrationHarnessDefaultsResponse */
+    OrchestrationHarnessDefaultsResponse: {
       /** Command */
       command?: string | null
       /**
@@ -672,11 +657,6 @@ export interface components {
        * @default true
        */
       detach: boolean
-    }
-    /** NodeSetAgentRequest */
-    NodeSetAgentRequest: {
-      /** Agentid */
-      agentId: number | null
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
@@ -741,19 +721,6 @@ export interface components {
       stopped: boolean
       /** Taskid */
       taskId: number
-    }
-    /**
-     * NodeStartSessionRequest
-     * @description Request to start a runner-owned session for a node.
-     */
-    NodeStartSessionRequest: {
-      /** Command */
-      command: string
-      /**
-       * Detach
-       * @default true
-       */
-      detach: boolean
     }
     /**
      * TaskAuthority
@@ -845,6 +812,26 @@ export interface components {
 }
 export type $defs = Record<string, never>
 export interface operations {
+  get_orchestration_config_v1_config_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["OrchestrationDefaultsResponse"]
+        }
+      }
+    }
+  }
   list_epics_v1_epics_get: {
     parameters: {
       query?: never
@@ -1097,107 +1084,6 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["NodeResponse"]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
-  restart_node_session_v1_nodes__node_id__session_restart_post: {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        node_id: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["NodeRestartSessionRequest"]
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["AgentSessionResponse"]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
-  start_node_session_v1_nodes__node_id__session_start_post: {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        node_id: number
-      }
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["NodeStartSessionRequest"]
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["AgentSessionResponse"]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
-  stop_node_session_v1_nodes__node_id__session_stop_post: {
-    parameters: {
-      query?: never
-      header?: never
-      path: {
-        node_id: number
-      }
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["AgentSessionResponse"]
         }
       }
       /** @description Validation Error */

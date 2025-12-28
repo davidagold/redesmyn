@@ -8,69 +8,11 @@ import { Button } from "@/components/ui/button"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
-import {
-  getStoredHarnessCommand,
-  storeHarnessCommand,
-} from "@/lib/agent-settings"
+import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight } from "lucide-react"
-
-type FleetMode = "auto" | "fixed"
-
-const RUN_FLEET_MODE_KEY = "rn.run.fleetMode"
-const RUN_FLEET_SIZE_KEY = "rn.run.fleetSize"
-const RUN_DETACH_KEY = "rn.run.detach"
-
-function getStoredFleetMode(): FleetMode {
-  if (typeof window === "undefined") {
-    return "auto"
-  }
-  const raw = window.localStorage.getItem(RUN_FLEET_MODE_KEY)
-  return raw === "fixed" ? "fixed" : "auto"
-}
-
-function storeFleetMode(mode: FleetMode) {
-  if (typeof window === "undefined") {
-    return
-  }
-  window.localStorage.setItem(RUN_FLEET_MODE_KEY, mode)
-}
-
-function getStoredFleetSize(): number {
-  if (typeof window === "undefined") {
-    return 3
-  }
-  const raw = window.localStorage.getItem(RUN_FLEET_SIZE_KEY)
-  if (!raw) {
-    return 3
-  }
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3
-}
-
-function storeFleetSize(size: number) {
-  if (typeof window === "undefined") {
-    return
-  }
-  window.localStorage.setItem(RUN_FLEET_SIZE_KEY, String(size))
-}
-
-function getStoredDetach(): boolean {
-  if (typeof window === "undefined") {
-    return true
-  }
-  const raw = window.localStorage.getItem(RUN_DETACH_KEY)
-  return raw !== "false"
-}
-
-function storeDetach(detach: boolean) {
-  if (typeof window === "undefined") {
-    return
-  }
-  window.localStorage.setItem(RUN_DETACH_KEY, detach ? "true" : "false")
-}
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -120,15 +62,13 @@ export function EpicView() {
     useState<Map<number, NodeActivity>>(new Map())
   const [, setActivityTick] = useState(0)
 
-  const [fleetMode, setFleetMode] = useState<FleetMode>(getStoredFleetMode)
-  const [fleetSizeText, setFleetSizeText] = useState(() =>
-    String(getStoredFleetSize()),
-  )
-  const [harnessCommand, setHarnessCommand] = useState<string>(
-    getStoredHarnessCommand,
-  )
-  const [detach, setDetach] = useState(getStoredDetach)
   const [runNotice, setRunNotice] = useState<string | null>(null)
+  const {
+    defaults: orchestrationDefaults,
+    loading: orchestrationDefaultsLoading,
+    error: orchestrationDefaultsError,
+    refresh: refreshOrchestrationDefaults,
+  } = useOrchestrationDefaults()
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -249,47 +189,46 @@ export function EpicView() {
     return { eligible, running, blocked, failed }
   }, [agentsById, graph, nodesById])
 
-  const parsedFleetSize = useMemo(() => {
-    const parsed = Number.parseInt(fleetSizeText, 10)
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return null
-    }
-    return parsed
-  }, [fleetSizeText])
-
   const runCommand = useMemo(() => {
-    if (!selectedEpic || !runSummary) {
+    if (!selectedEpic || !orchestrationDefaults) {
       return null
     }
-    const size =
-      fleetMode === "auto" ? runSummary.eligible : (parsedFleetSize ?? null)
-    if (size === null) {
+    if (!orchestrationDefaults.harness.command) {
       return null
     }
-    const trimmed = harnessCommand.trim()
-    if (!trimmed) {
+    if (
+      orchestrationDefaults.fleet.mode === "fixed" &&
+      orchestrationDefaults.fleet.size === null
+    ) {
       return null
     }
-    const parts: string[] = [
-      "rn",
-      "run",
-      "--epic",
-      shellQuote(selectedEpic.slug),
-      "--fleet-size",
-      String(size),
-      "--harness",
-      shellQuote(trimmed),
-    ]
-    if (!detach) {
-      parts.push("--no-detach")
+    return `rn run --epic ${shellQuote(selectedEpic.slug)}`
+  }, [orchestrationDefaults, selectedEpic])
+
+  const runConfigError = useMemo(() => {
+    if (orchestrationDefaultsError) {
+      return orchestrationDefaultsError
     }
-    return parts.join(" ")
+    if (!selectedEpic) {
+      return null
+    }
+    if (!orchestrationDefaults) {
+      return orchestrationDefaultsLoading ? "Loading defaults…" : "Unavailable"
+    }
+    if (!orchestrationDefaults.harness.command) {
+      return "Set harness.command via rn config set harness.command …"
+    }
+    if (
+      orchestrationDefaults.fleet.mode === "fixed" &&
+      orchestrationDefaults.fleet.size === null
+    ) {
+      return "Set fleet.size (or fleet.mode auto) via rn config set …"
+    }
+    return null
   }, [
-    detach,
-    fleetMode,
-    harnessCommand,
-    parsedFleetSize,
-    runSummary,
+    orchestrationDefaults,
+    orchestrationDefaultsError,
+    orchestrationDefaultsLoading,
     selectedEpic,
   ])
 
@@ -518,77 +457,63 @@ export function EpicView() {
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <Button
-                variant={fleetMode === "auto" ? "secondary" : "ghost"}
-                size="xs"
-                onClick={() => {
-                  setFleetMode("auto")
-                  storeFleetMode("auto")
-                }}
-              >
-                Auto-size
-              </Button>
-              <Button
-                variant={fleetMode === "fixed" ? "secondary" : "ghost"}
-                size="xs"
-                onClick={() => {
-                  setFleetMode("fixed")
-                  storeFleetMode("fixed")
-                }}
-              >
-                Fixed
-              </Button>
-
-              {fleetMode === "fixed" ? (
-                <input
-                  className="h-7 w-20 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                  type="number"
-                  min={1}
-                  value={fleetSizeText}
-                  onChange={(e) => {
-                    setFleetSizeText(e.target.value)
-                  }}
-                  onBlur={() => {
-                    if (parsedFleetSize !== null) {
-                      storeFleetSize(parsedFleetSize)
-                      setFleetSizeText(String(parsedFleetSize))
-                      return
-                    }
-                    const fallback = getStoredFleetSize()
-                    setFleetSizeText(String(fallback))
-                  }}
-                />
-              ) : (
-                <div className="text-xs text-muted-foreground">
-                  Fleet size = {runSummary.eligible}
+          <div className="mt-2 grid gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <div>
+                  Fleet:{" "}
+                  {orchestrationDefaults ? (
+                    orchestrationDefaults.fleet.mode === "auto" ? (
+                      "auto"
+                    ) : (
+                      <>
+                        fixed
+                        {orchestrationDefaults.fleet.size !== null
+                          ? ` (${orchestrationDefaults.fleet.size})`
+                          : " (unset)"}
+                      </>
+                    )
+                  ) : orchestrationDefaultsLoading ? (
+                    "loading…"
+                  ) : (
+                    "unavailable"
+                  )}
                 </div>
-              )}
+                <div>
+                  Harness:{" "}
+                  {orchestrationDefaults?.harness.command
+                    ? orchestrationDefaults.harness.command
+                    : orchestrationDefaultsLoading
+                      ? "loading…"
+                      : "unset"}
+                </div>
+                <div>
+                  Detach:{" "}
+                  {orchestrationDefaults
+                    ? orchestrationDefaults.harness.detach
+                      ? "on"
+                      : "off"
+                    : orchestrationDefaultsLoading
+                      ? "loading…"
+                      : "unavailable"}
+                </div>
+                <div>
+                  Default epic: {orchestrationDefaults?.defaultEpic ?? "unset"}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => void refreshOrchestrationDefaults()}
+                disabled={orchestrationDefaultsLoading}
+              >
+                Refresh defaults
+              </Button>
             </div>
 
-            <input
-              className="h-7 min-w-[180px] flex-1 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-              value={harnessCommand}
-              onChange={(e) => {
-                const next = e.target.value
-                setHarnessCommand(next)
-                storeHarnessCommand(next)
-              }}
-              placeholder="codex"
-            />
-
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={detach}
-                onChange={(e) => {
-                  setDetach(e.target.checked)
-                  storeDetach(e.target.checked)
-                }}
-              />
-              Detach (tmux)
-            </label>
+            {runConfigError ? (
+              <div className="text-xs text-destructive">{runConfigError}</div>
+            ) : null}
           </div>
 
           {runCommand ? (
@@ -600,7 +525,7 @@ export function EpicView() {
             </div>
           ) : (
             <div className="mt-2 text-xs text-muted-foreground">
-              Enter a harness command to generate `rn run …`.
+              Configure defaults via `rn config` to enable `rn run …`.
             </div>
           )}
         </div>

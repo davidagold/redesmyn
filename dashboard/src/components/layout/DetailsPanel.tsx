@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
+import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import {
   getStoredHarnessCommand,
   storeHarnessCommand,
@@ -45,18 +46,30 @@ function AgentActions({
   agent: Agent | null
   onRequestRefresh: () => void
 }) {
+  const { defaults: orchestrationDefaults } = useOrchestrationDefaults()
   const [pending, setPending] = useState<"start" | "stop" | "restart" | null>(
     null,
   )
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [command, setCommand] = useState(getStoredHarnessCommand)
+  const [commandTouched, setCommandTouched] = useState(false)
 
   useEffect(() => {
     setPending(null)
     setError(null)
     setNotice(null)
   }, [task.id])
+
+  useEffect(() => {
+    if (commandTouched) {
+      return
+    }
+    const next = orchestrationDefaults?.harness.command
+    if (next) {
+      setCommand(next)
+    }
+  }, [commandTouched, orchestrationDefaults?.harness.command])
 
   useEffect(() => {
     if (!notice) {
@@ -79,7 +92,10 @@ function AgentActions({
     setPending("start")
     setError(null)
     try {
-      await startTaskAgent(taskId, { harness: command, detach: true })
+      await startTaskAgent(taskId, {
+        harness: command,
+        detach: orchestrationDefaults?.harness.detach ?? true,
+      })
       storeHarnessCommand(command)
       onRequestRefresh()
     } catch (e) {
@@ -108,7 +124,7 @@ function AgentActions({
     try {
       await restartTaskAgent(taskId, {
         harness: command.trim() || null,
-        detach: true,
+        detach: orchestrationDefaults?.harness.detach ?? true,
       })
       onRequestRefresh()
     } catch (e) {
@@ -207,13 +223,18 @@ function AgentActions({
             onChange={(e) => {
               const next = e.target.value
               setCommand(next)
+              setCommandTouched(true)
               storeHarnessCommand(next)
             }}
             placeholder="codex"
             disabled={pending !== null}
           />
           <div className="text-xs text-muted-foreground">
-            Starts detached (tmux when available).
+            Starts{" "}
+            {(orchestrationDefaults?.harness.detach ?? true)
+              ? "detached (tmux when available)"
+              : "in the foreground"}
+            .
           </div>
         </div>
       ) : null}

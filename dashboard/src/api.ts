@@ -3,6 +3,7 @@ import type { components } from "@/api/v1"
 export type ApiStatus = components["schemas"]["ApiStatusResponse"]
 export type Epic = components["schemas"]["EpicResponse"]
 export type EpicGraph = components["schemas"]["EpicGraphResponse"]
+export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaultsResponse"]
 export type Agent = components["schemas"]["AgentResponse"]
 export type Node = components["schemas"]["NodeResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"]
@@ -40,6 +41,16 @@ export async function fetchEpicGraph(
     throw new Error(`GET /v1/epics/${epic}/graph failed (${response.status})`)
   }
   return response.json() as Promise<EpicGraph>
+}
+
+export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefaults> {
+  const response = await fetch("/v1/config", {
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw new Error(`GET /v1/config failed (${response.status})`)
+  }
+  return response.json() as Promise<OrchestrationDefaults>
 }
 
 async function readErrorDetail(response: Response): Promise<string | null> {
