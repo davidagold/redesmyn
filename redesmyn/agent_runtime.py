@@ -568,7 +568,7 @@ async def send_agent_prelude(
     epic: Epic,
     worktree_path: Path,
     template: str | None,
-    delay_s: float = 3.5,
+    delay_s: float = 1.0,
 ) -> None:
     if delay_s > 0:
         await asyncio.sleep(delay_s)
@@ -596,6 +596,14 @@ async def start_task_agent(
     harness_command: str,
     detach: bool,
 ) -> StartAgentResult:
+    argv = _parse_harness_command(harness_command)
+    if not detach:
+        raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
+    if not has_tmux():
+        raise RuntimeError(
+            "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
+        )
+
     engine = create_engine(ctx.db_path)
     try:
         sessionmaker = create_sessionmaker(engine)
@@ -604,15 +612,6 @@ async def start_task_agent(
             agent = await get_or_create_task_agent(
                 session=session, task=task, node=node
             )
-
-            if not detach:
-                raise RuntimeError(
-                    "v0 requires tmux-backed detached agents (omit --no-detach)"
-                )
-            if not has_tmux():
-                raise RuntimeError(
-                    "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
-                )
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             if _tmux_has_session(name=tmux_name):
@@ -649,7 +648,6 @@ async def start_task_agent(
                 session, ctx, node=node, epic=epic
             )
 
-            argv = _parse_harness_command(harness_command)
             definition = HarnessProfileDefinition(argv=argv)
             profile_id = harness_profile_id_for_definition(argv[0], definition)
             profile = await ensure_harness_profile_row(
