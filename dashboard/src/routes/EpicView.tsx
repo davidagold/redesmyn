@@ -13,7 +13,14 @@ import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
-import { ChevronRight, Play, Square } from "lucide-react"
+import {
+  ChevronRight,
+  Play,
+  Settings2,
+  Square,
+  Terminal,
+  Users,
+} from "lucide-react"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -68,6 +75,7 @@ export function EpicView() {
   const [, setActivityTick] = useState(0)
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
+  const [defaultsMenuOpen, setDefaultsMenuOpen] = useState(false)
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
@@ -643,17 +651,16 @@ export function EpicView() {
       {selectedEpic && runSummary ? (
         <div className="border-b px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-sm font-medium">Run</div>
             <div className="text-xs text-muted-foreground">
               Running {runSummary.running} / Eligible {runSummary.eligible} •
               Blocked {runSummary.blocked} • Failed {runSummary.failed}
             </div>
             <div className="flex items-center gap-2">
-              <div className="flex overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="rounded-none border-0"
+                  className="h-full rounded-none border-0"
                   title="Start or restart all eligible tasks"
                   disabledReason={
                     canRunAll
@@ -669,16 +676,16 @@ export function EpicView() {
                 </Button>
                 <div
                   className={
-                    "overflow-hidden transition-[max-width,opacity] duration-200 " +
+                    "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
                       ? "max-w-[10rem] opacity-100"
-                      : "max-w-0 opacity-0")
+                      : "pointer-events-none max-w-0 opacity-0")
                   }
                 >
                   <Button
                     variant="outline"
                     size="sm"
-                    className="rounded-none border-0 border-l"
+                    className="h-full rounded-none border-0 border-l"
                     title="Start or restart selected tasks"
                     disabledReason={
                       canRunSelected
@@ -696,11 +703,11 @@ export function EpicView() {
                 </div>
               </div>
 
-              <div className="flex overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="rounded-none border-0"
+                  className="h-full rounded-none border-0"
                   title="Stop all running tasks"
                   disabledReason={
                     canStopAll
@@ -716,16 +723,16 @@ export function EpicView() {
                 </Button>
                 <div
                   className={
-                    "overflow-hidden transition-[max-width,opacity] duration-200 " +
+                    "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
                       ? "max-w-[10rem] opacity-100"
-                      : "max-w-0 opacity-0")
+                      : "pointer-events-none max-w-0 opacity-0")
                   }
                 >
                   <Button
                     variant="outline"
                     size="sm"
-                    className="rounded-none border-0 border-l"
+                    className="h-full rounded-none border-0 border-l"
                     title="Stop selected running tasks"
                     disabledReason={
                       canStopSelected
@@ -742,49 +749,22 @@ export function EpicView() {
                   </Button>
                 </div>
               </div>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6"
+                onClick={() => setDefaultsMenuOpen((open) => !open)}
+                title="View orchestration defaults"
+              >
+                <Settings2 />
+                Configure
+              </Button>
             </div>
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
             {runNotice ? (
               <div className="text-xs text-muted-foreground">{runNotice}</div>
             ) : null}
-          </div>
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <div>
-              Fleet:{" "}
-              {orchestrationDefaults
-                ? orchestrationDefaults.fleet.mode === "auto"
-                  ? "auto"
-                  : orchestrationDefaults.fleet.size !== null
-                    ? `fixed (${orchestrationDefaults.fleet.size})`
-                    : "fixed (size not set)"
-                : orchestrationDefaultsLoading
-                  ? "loading…"
-                  : "—"}
-            </div>
-            <div className="flex items-center gap-1">
-              <span>Harness:</span>
-              {orchestrationDefaults?.harness.command ? (
-                <span className="max-w-[32rem] truncate font-mono">
-                  {orchestrationDefaults.harness.command}
-                </span>
-              ) : orchestrationDefaultsLoading ? (
-                "loading…"
-              ) : (
-                "—"
-              )}
-            </div>
-            <div>
-              Detach:{" "}
-              {orchestrationDefaults
-                ? orchestrationDefaults.harness.detach
-                  ? "on"
-                  : "off"
-                : orchestrationDefaultsLoading
-                  ? "loading…"
-                  : "—"}
-            </div>
-            <div>Default epic: {orchestrationDefaults?.defaultEpic ?? "—"}</div>
           </div>
 
           {runCommand ? (
@@ -800,6 +780,96 @@ export function EpicView() {
 
       {graph ? (
         <div className="relative flex min-h-0 flex-1">
+          {defaultsMenuOpen ? (
+            <>
+              <button
+                type="button"
+                aria-label="Close configuration menu"
+                className="absolute inset-0 z-20 cursor-default bg-transparent"
+                onClick={() => setDefaultsMenuOpen(false)}
+              />
+              <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-6 pt-4">
+                <div className="pointer-events-auto w-full max-w-3xl rounded-lg bg-background/80 p-4 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-medium">Defaults</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6"
+                      onClick={() => setDefaultsMenuOpen(false)}
+                    >
+                      Close
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Fleet</span>
+                      </div>
+                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
+                        {orchestrationDefaults
+                          ? orchestrationDefaults.fleet.mode === "auto"
+                            ? "auto"
+                            : orchestrationDefaults.fleet.size !== null
+                              ? `fixed (${orchestrationDefaults.fleet.size})`
+                              : "fixed (size not set)"
+                          : orchestrationDefaultsLoading
+                            ? "loading…"
+                            : "—"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Terminal className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Harness</span>
+                      </div>
+                      {orchestrationDefaults?.harness.command ? (
+                        <span
+                          className="max-w-[28rem] truncate rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80"
+                          title={orchestrationDefaults.harness.command}
+                        >
+                          {orchestrationDefaults.harness.command}
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
+                          {orchestrationDefaultsLoading ? "loading…" : "—"}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3.5 w-3.5 rounded-[6px] border border-border/60" />
+                        <span>Detach</span>
+                      </div>
+                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
+                        {orchestrationDefaults
+                          ? orchestrationDefaults.harness.detach
+                            ? "on"
+                            : "off"
+                          : orchestrationDefaultsLoading
+                            ? "loading…"
+                            : "—"}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3.5 w-3.5 rounded-[6px] border border-border/60" />
+                        <span>Default epic</span>
+                      </div>
+                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
+                        {orchestrationDefaults?.defaultEpic ?? "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : null}
           <GraphView
             rootNodes={rootNodes}
             childrenByParent={childrenByParent}
