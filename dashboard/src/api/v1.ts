@@ -273,6 +273,7 @@ export interface components {
       id: number
       /** Lastseenat */
       lastSeenAt: string | null
+      resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
       status: components["schemas"]["AgentStatus"]
     }
     /**

@@ -61,6 +61,16 @@
             ],
             "title": "Lastseenat"
           },
+          "resolvedProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/AgentStatus"
           }
