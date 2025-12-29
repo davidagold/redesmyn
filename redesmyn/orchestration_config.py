@@ -34,6 +34,8 @@ class HarnessDefaults(BaseModel):
     command: str | None = None
     detach: bool = True
     prelude: str | None = None
+    send_prelude: bool = True
+    submit_prelude: bool = True
 
     @field_validator("command")
     @classmethod

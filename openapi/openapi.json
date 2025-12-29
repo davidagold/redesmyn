@@ -1002,6 +1002,16 @@
               }
             ],
             "title": "Prelude"
+          },
+          "sendPrelude": {
+            "default": true,
+            "title": "Sendprelude",
+            "type": "boolean"
+          },
+          "submitPrelude": {
+            "default": true,
+            "title": "Submitprelude",
+            "type": "boolean"
           }
         },
         "title": "OrchestrationHarnessDefaultsResponse",
@@ -1041,6 +1051,28 @@
               }
             ],
             "title": "Prelude"
+          },
+          "sendPrelude": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sendprelude"
+          },
+          "submitPrelude": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitprelude"
           }
         },
         "title": "OrchestrationHarnessDefaultsUpdateRequest",

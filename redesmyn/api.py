@@ -697,6 +697,8 @@ async def get_orchestration_config() -> OrchestrationDefaultsResponse:
             command=defaults.harness.command,
             detach=defaults.harness.detach,
             prelude=defaults.harness.prelude,
+            send_prelude=defaults.harness.send_prelude,
+            submit_prelude=defaults.harness.submit_prelude,
         ),
     )
 
@@ -725,6 +727,12 @@ async def update_orchestration_config(
             set_config_value(data, "harness.detach", request.harness.detach)
         if "prelude" in request.harness.model_fields_set:
             set_config_value(data, "harness.prelude", request.harness.prelude)
+        if "send_prelude" in request.harness.model_fields_set:
+            set_config_value(data, "harness.send_prelude", request.harness.send_prelude)
+        if "submit_prelude" in request.harness.model_fields_set:
+            set_config_value(
+                data, "harness.submit_prelude", request.harness.submit_prelude
+            )
 
     write_config(path, data)
     return await get_orchestration_config()

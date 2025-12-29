@@ -257,7 +257,7 @@ def config_get() -> None:
 def config_set(
     key: str = typer.Argument(
         ...,
-        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach, harness.prelude).",
+        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach, harness.prelude, harness.send_prelude, harness.submit_prelude).",
     ),
     value: str = typer.Argument(
         ...,
@@ -279,6 +279,8 @@ def config_set(
         "harness.command",
         "harness.detach",
         "harness.prelude",
+        "harness.send_prelude",
+        "harness.submit_prelude",
     }
     if key not in allowed:
         raise typer.BadParameter(f"Unknown key: {key!r}")
@@ -304,6 +306,8 @@ def config_set(
             raise typer.BadParameter("fleet.size must be > 0 (or null)")
         parsed = parsed_int
     elif key == "harness.detach":
+        parsed = _parse_bool(value_raw)
+    elif key in {"harness.send_prelude", "harness.submit_prelude"}:
         parsed = _parse_bool(value_raw)
     else:
         parsed = value_raw

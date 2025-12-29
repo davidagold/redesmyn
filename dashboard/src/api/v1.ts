@@ -589,6 +589,16 @@ export interface components {
       detach: boolean
       /** Prelude */
       prelude?: string | null
+      /**
+       * Sendprelude
+       * @default true
+       */
+      sendPrelude: boolean
+      /**
+       * Submitprelude
+       * @default true
+       */
+      submitPrelude: boolean
     }
     /** OrchestrationHarnessDefaultsUpdateRequest */
     OrchestrationHarnessDefaultsUpdateRequest: {
@@ -598,6 +608,10 @@ export interface components {
       detach?: boolean | null
       /** Prelude */
       prelude?: string | null
+      /** Sendprelude */
+      sendPrelude?: boolean | null
+      /** Submitprelude */
+      submitPrelude?: boolean | null
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {

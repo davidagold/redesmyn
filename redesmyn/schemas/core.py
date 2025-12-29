@@ -276,6 +276,8 @@ class OrchestrationHarnessDefaultsResponse(ApiResponse):
     command: str | None = None
     detach: bool = True
     prelude: str | None = None
+    send_prelude: bool = True
+    submit_prelude: bool = True
 
 
 class OrchestrationDefaultsResponse(ApiResponse):
@@ -288,6 +290,8 @@ class OrchestrationHarnessDefaultsUpdateRequest(ApiRequest):
     command: str | None = None
     detach: bool | None = None
     prelude: str | None = None
+    send_prelude: bool | None = None
+    submit_prelude: bool | None = None
 
 
 class OrchestrationFleetDefaultsUpdateRequest(ApiRequest):

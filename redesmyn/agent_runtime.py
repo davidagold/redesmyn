@@ -609,6 +609,7 @@ async def send_agent_prelude(
     epic: Epic,
     worktree_path: Path,
     template: str | None,
+    submit: bool,
     delay_s: float = 1.0,
 ) -> None:
     if delay_s > 0:
@@ -630,6 +631,8 @@ async def send_agent_prelude(
             template=template,
         ),
     )
+    if submit:
+        _tmux_send_enter(name=tmux_name)
 
 
 async def start_task_agent(
@@ -745,18 +748,24 @@ async def start_task_agent(
             await session.refresh(agent)
             try:
                 prelude = None
+                send_prelude = True
+                submit_prelude = True
                 try:
                     defaults = load_orchestration_defaults(ctx)
                     prelude = defaults.harness.prelude
+                    send_prelude = defaults.harness.send_prelude
+                    submit_prelude = defaults.harness.submit_prelude
                 except RuntimeError:
                     prelude = None
-                await send_agent_prelude(
-                    task=task,
-                    node=node,
-                    epic=epic,
-                    worktree_path=worktree_path,
-                    template=prelude,
-                )
+                if send_prelude:
+                    await send_agent_prelude(
+                        task=task,
+                        node=node,
+                        epic=epic,
+                        worktree_path=worktree_path,
+                        template=prelude,
+                        submit=submit_prelude,
+                    )
             except RuntimeError as e:
                 warnings.append(f"Failed to send agent prelude: {e}")
             return StartAgentResult(
