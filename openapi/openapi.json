@@ -867,6 +867,43 @@
         "title": "OrchestrationDefaultsResponse",
         "type": "object"
       },
+      "OrchestrationDefaultsUpdateRequest": {
+        "properties": {
+          "defaultEpic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultepic"
+          },
+          "fleet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrchestrationFleetDefaultsUpdateRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "harness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrchestrationHarnessDefaultsUpdateRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "OrchestrationDefaultsUpdateRequest",
+        "type": "object"
+      },
       "OrchestrationFleetDefaultsResponse": {
         "properties": {
           "mode": {
@@ -895,6 +932,38 @@
         "title": "OrchestrationFleetDefaultsResponse",
         "type": "object"
       },
+      "OrchestrationFleetDefaultsUpdateRequest": {
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fixed",
+                  "auto"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          }
+        },
+        "title": "OrchestrationFleetDefaultsUpdateRequest",
+        "type": "object"
+      },
       "OrchestrationHarnessDefaultsResponse": {
         "properties": {
           "command": {
@@ -912,9 +981,59 @@
             "default": true,
             "title": "Detach",
             "type": "boolean"
+          },
+          "prelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prelude"
           }
         },
         "title": "OrchestrationHarnessDefaultsResponse",
+        "type": "object"
+      },
+      "OrchestrationHarnessDefaultsUpdateRequest": {
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "detach": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detach"
+          },
+          "prelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prelude"
+          }
+        },
+        "title": "OrchestrationHarnessDefaultsUpdateRequest",
         "type": "object"
       },
       "TaskAgentRestartRequest": {
@@ -1406,6 +1525,42 @@
           }
         },
         "summary": "Get Orchestration Config"
+      },
+      "post": {
+        "operationId": "update_orchestration_config_v1_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrchestrationDefaultsUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrchestrationDefaultsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Orchestration Config"
       }
     },
     "/v1/epics": {

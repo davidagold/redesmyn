@@ -44,7 +44,13 @@ from redesmyn.integrations.linear import (
     new_oauth_state,
 )
 from redesmyn.orchestrator import init_repo
-from redesmyn.orchestration_config import load_orchestration_defaults
+from redesmyn.orchestration_config import (
+    load_orchestration_defaults,
+    read_config_file,
+    repo_config_path,
+    set_config_value,
+    write_config,
+)
 from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.runner_backend import (
@@ -71,6 +77,7 @@ from redesmyn.schemas.core import (
     OrchestrationDefaultsResponse,
     OrchestrationFleetDefaultsResponse,
     OrchestrationHarnessDefaultsResponse,
+    OrchestrationDefaultsUpdateRequest,
     ReleaseConditionResponse,
     TaskResponse,
     TaskAgentRestartRequest,
@@ -689,8 +696,38 @@ async def get_orchestration_config() -> OrchestrationDefaultsResponse:
         harness=OrchestrationHarnessDefaultsResponse(
             command=defaults.harness.command,
             detach=defaults.harness.detach,
+            prelude=defaults.harness.prelude,
         ),
     )
+
+
+@v1.post("/config", response_model=OrchestrationDefaultsResponse)
+async def update_orchestration_config(
+    request: OrchestrationDefaultsUpdateRequest,
+) -> OrchestrationDefaultsResponse:
+    ctx = app.state.ctx
+    path = repo_config_path(ctx)
+    data = read_config_file(path)
+
+    if "default_epic" in request.model_fields_set:
+        set_config_value(data, "default_epic", request.default_epic)
+
+    if request.fleet is not None:
+        if "mode" in request.fleet.model_fields_set:
+            set_config_value(data, "fleet.mode", request.fleet.mode)
+        if "size" in request.fleet.model_fields_set:
+            set_config_value(data, "fleet.size", request.fleet.size)
+
+    if request.harness is not None:
+        if "command" in request.harness.model_fields_set:
+            set_config_value(data, "harness.command", request.harness.command)
+        if "detach" in request.harness.model_fields_set:
+            set_config_value(data, "harness.detach", request.harness.detach)
+        if "prelude" in request.harness.model_fields_set:
+            set_config_value(data, "harness.prelude", request.harness.prelude)
+
+    write_config(path, data)
+    return await get_orchestration_config()
 
 
 @v1.get("/status", response_model=ApiStatusResponse)

@@ -15,7 +15,7 @@ from redesmyn.domain.enums import (
     TaskSource,
     TaskState,
 )
-from redesmyn.schemas.base import ApiResponse
+from redesmyn.schemas.base import ApiRequest, ApiResponse
 
 
 class RepositoryResponse(ApiResponse):
@@ -274,12 +274,30 @@ class OrchestrationFleetDefaultsResponse(ApiResponse):
 class OrchestrationHarnessDefaultsResponse(ApiResponse):
     command: str | None = None
     detach: bool = True
+    prelude: str | None = None
 
 
 class OrchestrationDefaultsResponse(ApiResponse):
     default_epic: str | None = None
     fleet: OrchestrationFleetDefaultsResponse
     harness: OrchestrationHarnessDefaultsResponse
+
+
+class OrchestrationHarnessDefaultsUpdateRequest(ApiRequest):
+    command: str | None = None
+    detach: bool | None = None
+    prelude: str | None = None
+
+
+class OrchestrationFleetDefaultsUpdateRequest(ApiRequest):
+    mode: Literal["fixed", "auto"] | None = None
+    size: int | None = None
+
+
+class OrchestrationDefaultsUpdateRequest(ApiRequest):
+    default_epic: str | None = None
+    fleet: OrchestrationFleetDefaultsUpdateRequest | None = None
+    harness: OrchestrationHarnessDefaultsUpdateRequest | None = None
 
 
 class LinearStatusResponse(ApiResponse):

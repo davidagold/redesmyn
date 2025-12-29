@@ -36,6 +36,7 @@ from redesmyn.db.models import (
     HostCapabilities,
 )
 from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
+from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import GitCommandError, current_branch, git_worktree_add
 from redesmyn.strings import slugify
 
@@ -513,30 +514,51 @@ def _agent_prelude_lines(
     node: Node,
     epic: Epic,
     worktree_path: Path,
+    template: str | None,
 ) -> list[str]:
-    local_path = task.local_path or "(unknown path)"
-    return [
-        "",
-        "Redesmyn agent prelude",
-        "",
-        f"- Assigned task: {task.id} — {task.title}",
-        f"- Task doc: {local_path}",
-        f"- Epic: {epic.slug} (read epics/{epic.slug}/README.md)",
-        f"- Branch: {node.branch_name}",
-        f"- Worktree: {worktree_path}",
-        "",
-        "Guidelines",
-        "",
-        "- Read AGENTS.md at repo root and follow it.",
-        "- Prefer small, focused commits; keep changes maintainable and well-typed.",
-        "- Start by understanding the task design + surrounding code; avoid unrelated changes.",
-        "",
-        "Tips",
-        "",
-        "- Run `just check` before you finish.",
-        "- If you attach to this tmux session, detach with Ctrl-b then d (not Ctrl-c).",
-        "",
-    ]
+    default_template = (
+        "Redesmyn agent prelude\n"
+        "\n"
+        "- Assigned task: {task_id} — {task_title}\n"
+        "- Task doc: {task_doc}\n"
+        "- Epic: {epic_slug} (read {epic_readme})\n"
+        "- Branch: {branch}\n"
+        "- Worktree: {worktree}\n"
+        "\n"
+        "Guidelines\n"
+        "\n"
+        "- Read AGENTS.md at repo root and follow it.\n"
+        "- Prefer small, focused commits; keep changes maintainable and well-typed.\n"
+        "- Start by understanding the task design + surrounding code; avoid unrelated changes.\n"
+        "\n"
+        "Tips\n"
+        "\n"
+        "- Run `just check` before you finish.\n"
+        "- If you attach to this tmux session, detach with Ctrl-b then d (not Ctrl-c).\n"
+    )
+
+    class SafeDict(dict[str, str]):
+        def __missing__(self, key: str) -> str:
+            return "{" + key + "}"
+
+    context = SafeDict(
+        task_id=str(task.id),
+        task_title=task.title,
+        task_doc=task.local_path or "(unknown path)",
+        epic_slug=epic.slug,
+        epic_readme=f"epics/{epic.slug}/README.md",
+        branch=node.branch_name,
+        worktree=str(worktree_path),
+    )
+
+    chosen = template or default_template
+    try:
+        rendered = chosen.format_map(context)
+    except Exception:
+        rendered = chosen
+
+    lines = rendered.strip("\n").splitlines()
+    return ["", *lines, ""]
 
 
 async def send_agent_prelude(
@@ -545,6 +567,7 @@ async def send_agent_prelude(
     node: Node,
     epic: Epic,
     worktree_path: Path,
+    template: str | None,
     delay_s: float = 3.5,
 ) -> None:
     if delay_s > 0:
@@ -561,6 +584,7 @@ async def send_agent_prelude(
             node=node,
             epic=epic,
             worktree_path=worktree_path,
+            template=template,
         ),
     )
 
@@ -679,11 +703,18 @@ async def start_task_agent(
             await session.commit()
             await session.refresh(agent)
             try:
+                prelude = None
+                try:
+                    defaults = load_orchestration_defaults(ctx)
+                    prelude = defaults.harness.prelude
+                except RuntimeError:
+                    prelude = None
                 await send_agent_prelude(
                     task=task,
                     node=node,
                     epic=epic,
                     worktree_path=worktree_path,
+                    template=prelude,
                 )
             except RuntimeError as e:
                 warnings.append(f"Failed to send agent prelude: {e}")

@@ -33,10 +33,19 @@ class HarnessDefaults(BaseModel):
 
     command: str | None = None
     detach: bool = True
+    prelude: str | None = None
 
     @field_validator("command")
     @classmethod
     def _normalize_command(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        return trimmed or None
+
+    @field_validator("prelude")
+    @classmethod
+    def _normalize_prelude(cls, value: str | None) -> str | None:
         if value is None:
             return None
         trimmed = value.strip()
@@ -108,6 +117,9 @@ def load_orchestration_defaults(ctx: RepoContext) -> OrchestrationDefaults:
 
 
 def _toml_string(value: str) -> str:
+    if "\n" in value:
+        escaped = value.replace("\\", "\\\\").replace('"""', '\\"""')
+        return f'"""\n{escaped}\n"""'
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 

@@ -257,7 +257,7 @@ def config_get() -> None:
 def config_set(
     key: str = typer.Argument(
         ...,
-        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach).",
+        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach, harness.prelude).",
     ),
     value: str = typer.Argument(
         ...,
@@ -278,6 +278,7 @@ def config_set(
         "fleet.size",
         "harness.command",
         "harness.detach",
+        "harness.prelude",
     }
     if key not in allowed:
         raise typer.BadParameter(f"Unknown key: {key!r}")

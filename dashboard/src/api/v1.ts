@@ -14,7 +14,8 @@ export interface paths {
     /** Get Orchestration Config */
     get: operations["get_orchestration_config_v1_config_get"]
     put?: never
-    post?: never
+    /** Update Orchestration Config */
+    post: operations["update_orchestration_config_v1_config_post"]
     delete?: never
     options?: never
     head?: never
@@ -552,6 +553,13 @@ export interface components {
       fleet: components["schemas"]["OrchestrationFleetDefaultsResponse"]
       harness: components["schemas"]["OrchestrationHarnessDefaultsResponse"]
     }
+    /** OrchestrationDefaultsUpdateRequest */
+    OrchestrationDefaultsUpdateRequest: {
+      /** Defaultepic */
+      defaultEpic?: string | null
+      fleet?: components["schemas"]["OrchestrationFleetDefaultsUpdateRequest"] | null
+      harness?: components["schemas"]["OrchestrationHarnessDefaultsUpdateRequest"] | null
+    }
     /** OrchestrationFleetDefaultsResponse */
     OrchestrationFleetDefaultsResponse: {
       /**
@@ -559,6 +567,13 @@ export interface components {
        * @enum {string}
        */
       mode: "fixed" | "auto"
+      /** Size */
+      size?: number | null
+    }
+    /** OrchestrationFleetDefaultsUpdateRequest */
+    OrchestrationFleetDefaultsUpdateRequest: {
+      /** Mode */
+      mode?: "fixed" | "auto" | null
       /** Size */
       size?: number | null
     }
@@ -571,6 +586,17 @@ export interface components {
        * @default true
        */
       detach: boolean
+      /** Prelude */
+      prelude?: string | null
+    }
+    /** OrchestrationHarnessDefaultsUpdateRequest */
+    OrchestrationHarnessDefaultsUpdateRequest: {
+      /** Command */
+      command?: string | null
+      /** Detach */
+      detach?: boolean | null
+      /** Prelude */
+      prelude?: string | null
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
@@ -741,6 +767,39 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["OrchestrationDefaultsResponse"]
+        }
+      }
+    }
+  }
+  update_orchestration_config_v1_config_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrchestrationDefaultsUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["OrchestrationDefaultsResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }
