@@ -5,6 +5,11 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import {
   restartTaskAgent,
@@ -83,6 +88,7 @@ export function EpicView() {
   const [configPrelude, setConfigPrelude] = useState("")
   const [configSendPrelude, setConfigSendPrelude] = useState(true)
   const [configSubmitPrelude, setConfigSubmitPrelude] = useState(true)
+  const [defaultPreludeOpen, setDefaultPreludeOpen] = useState(false)
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
@@ -91,6 +97,7 @@ export function EpicView() {
 
   const closeConfig = useCallback(() => {
     setConfigOpen(false)
+    setDefaultPreludeOpen(false)
     setConfigError(null)
   }, [])
 
@@ -100,6 +107,7 @@ export function EpicView() {
     }
     setConfigError(null)
     setConfigNotice(null)
+    setDefaultPreludeOpen(false)
     setConfigHarness(orchestrationDefaults?.harness.command ?? "")
     setConfigDetach(orchestrationDefaults?.harness.detach ?? true)
     setConfigPrelude(orchestrationDefaults?.harness.prelude ?? "")
@@ -1128,8 +1136,68 @@ export function EpicView() {
               </div>
 
               <div className="grid gap-1">
-                <div className="text-xs text-muted-foreground">
-                  Agent prelude
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-muted-foreground">
+                    Agent prelude
+                  </div>
+                  <Popover
+                    open={defaultPreludeOpen}
+                    onOpenChange={setDefaultPreludeOpen}
+                  >
+                    <PopoverTrigger
+                      render={(triggerProps) => {
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="h-5 px-2"
+                            disabledReason={
+                              orchestrationDefaultsLoading
+                                ? "Loading…"
+                                : orchestrationDefaults?.harness
+                                      .builtInPreludeTemplate
+                                  ? null
+                                  : "Default prelude unavailable"
+                            }
+                            {...triggerProps}
+                          >
+                            Show default
+                          </Button>
+                        )
+                      }}
+                    />
+                    <PopoverContent className="w-[24rem]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-foreground">
+                          Default prelude
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6"
+                          disabledReason={
+                            orchestrationDefaults?.harness
+                              .builtInPreludeTemplate
+                              ? null
+                              : "Default prelude unavailable"
+                          }
+                          onClick={() => {
+                            const template =
+                              orchestrationDefaults?.harness
+                                .builtInPreludeTemplate ?? ""
+                            setConfigPrelude(template)
+                            setDefaultPreludeOpen(false)
+                          }}
+                        >
+                          Fill as starting point
+                        </Button>
+                      </div>
+                      <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-border/60 bg-background/30 p-2 font-mono text-[0.625rem] text-foreground/80">
+                        {orchestrationDefaults?.harness
+                          .builtInPreludeTemplate ?? ""}
+                      </pre>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <textarea
                   className="min-h-[10rem] resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
