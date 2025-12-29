@@ -13,7 +13,7 @@ import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, Play, Square } from "lucide-react"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -664,32 +664,21 @@ export function EpicView() {
                   }
                   onClick={() => void handleRunAll()}
                 >
+                  <Play />
                   Run all
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-none border-0 border-l"
-                  disabled={!canStopAll}
-                  title={
-                    canStopAll
-                      ? "Stop all running tasks"
-                      : runAction !== null
-                        ? "Action in progress"
-                        : "Nothing to stop"
+                <div
+                  className={
+                    "overflow-hidden transition-all duration-200 will-change-transform " +
+                    (showSelectedActions
+                      ? "max-w-[10rem] translate-x-0 opacity-100"
+                      : "max-w-0 translate-x-2 opacity-0")
                   }
-                  onClick={() => void handleStopAll()}
                 >
-                  Stop all
-                </Button>
-              </div>
-
-              {showSelectedActions ? (
-                <div className="flex overflow-hidden rounded-md border border-border/60">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="rounded-none border-0"
+                    className="rounded-none border-0 border-l"
                     disabled={!canRunSelected}
                     title={
                       canRunSelected
@@ -702,6 +691,35 @@ export function EpicView() {
                   >
                     Run selected
                   </Button>
+                </div>
+              </div>
+
+              <div className="flex overflow-hidden rounded-md border border-border/60">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-none border-0"
+                  disabled={!canStopAll}
+                  title={
+                    canStopAll
+                      ? "Stop all running tasks"
+                      : runAction !== null
+                        ? "Action in progress"
+                        : "Nothing to stop"
+                  }
+                  onClick={() => void handleStopAll()}
+                >
+                  <Square />
+                  Stop all
+                </Button>
+                <div
+                  className={
+                    "overflow-hidden transition-all duration-200 will-change-transform " +
+                    (showSelectedActions
+                      ? "max-w-[10rem] translate-x-0 opacity-100"
+                      : "max-w-0 translate-x-2 opacity-0")
+                  }
+                >
                   <Button
                     variant="outline"
                     size="sm"
@@ -719,7 +737,7 @@ export function EpicView() {
                     Stop selected
                   </Button>
                 </div>
-              ) : null}
+              </div>
             </div>
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
             {runNotice ? (
