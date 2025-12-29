@@ -16,6 +16,8 @@ import {
   storeHarnessCommand,
 } from "@/lib/agent-settings"
 import { copyToClipboard } from "@/lib/clipboard"
+import { cn } from "@/lib/utils"
+import { RotateCcw, Square, Terminal } from "lucide-react"
 
 type EdgeSelection = {
   id: string
@@ -156,60 +158,126 @@ function AgentActions({
     [taskId],
   )
 
+  const statusTone = useMemo(() => {
+    switch (statusLabel) {
+      case "running":
+        return {
+          label: "running",
+          dotClassName: "bg-emerald-400",
+          pillClassName: "text-foreground/80",
+        }
+      case "blocked":
+        return {
+          label: "blocked",
+          dotClassName: "bg-amber-400",
+          pillClassName: "text-foreground/80",
+        }
+      case "error":
+        return {
+          label: "error",
+          dotClassName: "bg-destructive",
+          pillClassName: "text-destructive",
+        }
+      case "stopped":
+        return {
+          label: "stopped",
+          dotClassName: "border border-sky-400",
+          pillClassName: "text-foreground/80",
+        }
+      default:
+        return {
+          label: statusLabel,
+          dotClassName: "border border-border/60",
+          pillClassName: "text-muted-foreground",
+        }
+    }
+  }, [statusLabel])
+
   return (
-    <div className="grid gap-4">
-      <div className="flex items-center justify-between gap-3">
+    <div className="grid gap-3">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium">Agent {agentName}</div>
-          <div className="text-xs text-muted-foreground">
-            {statusLabel}
-            {harnessKind ? ` • ${harnessKind}` : ""}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
+              {agentName}
+            </div>
+            <div
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] uppercase tracking-wide",
+                statusTone.pillClassName,
+              )}
+            >
+              <span
+                className={cn("h-2 w-2 rounded-full", statusTone.dotClassName)}
+                aria-hidden="true"
+              />
+              <span>{statusTone.label}</span>
+            </div>
+            {harnessKind ? (
+              <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/70">
+                {harnessKind}
+              </div>
+            ) : null}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+
+        <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
-            <>
+            <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
               <Button
                 variant="outline"
                 size="xs"
-                onClick={() => void handleCopy(attachCommand, "Command copied")}
+                className="h-full rounded-none border-0"
+                title="Copy attach command"
+                onClick={() =>
+                  void handleCopy(attachCommand, "Attach command copied")
+                }
                 disabledReason={pending !== null ? "Action in progress" : null}
               >
-                Copy attach
+                <Terminal />
+                Attach
               </Button>
               <Button
                 variant="outline"
                 size="xs"
+                className="h-full rounded-none border-0 border-l"
                 onClick={() => void handleRestart()}
                 disabledReason={pending !== null ? "Action in progress" : null}
               >
+                <RotateCcw />
                 Restart
               </Button>
               <Button
-                variant="destructive"
+                variant="outline"
                 size="xs"
+                className="h-full rounded-none border-0 border-l text-destructive hover:bg-destructive/10"
                 onClick={() => void handleStop()}
                 disabledReason={pending !== null ? "Action in progress" : null}
               >
+                <Square />
                 Stop
               </Button>
-            </>
+            </div>
           ) : (
-            <>
+            <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
               {canRestart ? (
                 <Button
                   variant="outline"
                   size="xs"
+                  className="h-full rounded-none border-0"
                   onClick={() => void handleRestart()}
                   disabledReason={
                     pending !== null ? "Action in progress" : null
                   }
                 >
+                  <RotateCcw />
                   Restart
                 </Button>
               ) : (
                 <Button
+                  variant="outline"
                   size="xs"
+                  className="h-full rounded-none border-0"
                   onClick={() => void handleStart()}
                   disabledReason={
                     pending !== null
@@ -222,13 +290,21 @@ function AgentActions({
                   Start
                 </Button>
               )}
-            </>
+            </div>
           )}
         </div>
       </div>
 
       {!isRunning ? (
-        <div className="grid gap-2">
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">Harness</div>
+            <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
+              {(orchestrationDefaults?.harness.detach ?? true)
+                ? "Detached"
+                : "Foreground"}
+            </span>
+          </div>
           <input
             className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
             value={command}
@@ -241,13 +317,6 @@ function AgentActions({
             placeholder="codex"
             disabled={pending !== null}
           />
-          <div className="text-xs text-muted-foreground">
-            Starts{" "}
-            {(orchestrationDefaults?.harness.detach ?? true)
-              ? "detached (tmux when available)"
-              : "in the foreground"}
-            .
-          </div>
         </div>
       ) : null}
 
@@ -255,7 +324,7 @@ function AgentActions({
         <Button
           variant="ghost"
           size="xs"
-          onClick={() => void handleCopy(logsCommand, "Command copied")}
+          onClick={() => void handleCopy(logsCommand, "Logs command copied")}
           disabledReason={pending !== null ? "Action in progress" : null}
         >
           Copy logs
@@ -263,7 +332,7 @@ function AgentActions({
         <Button
           variant="ghost"
           size="xs"
-          onClick={() => void handleCopy(checkoutCommand, "Command copied")}
+          onClick={() => void handleCopy(checkoutCommand, "Checkout copied")}
           disabledReason={pending !== null ? "Action in progress" : null}
         >
           Copy rn checkout
