@@ -136,3 +136,4 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 - `epics/revise-architecture/tasks/T-5/README.md`: Dashboard daemon status + offline guidance.
 - `epics/revise-architecture/tasks/T-6/README.md`: Merge `Node` into `Task` (single graph primitive).
 - `epics/revise-architecture/tasks/T-7/README.md`: Remove server git execution and keep git proxying local.
+- `epics/revise-architecture/tasks/T-8/README.md`: Split agent “identity/config” from “session/run” (`AgentConfig` + `AgentSession`).
