@@ -1101,7 +1101,11 @@ export function GraphView({
                     variant="outline"
                     size="sm"
                     className="rounded-none border-0"
-                    disabled={selectedRunningTaskIds.length === 0}
+                    disabledReason={
+                      selectedRunningTaskIds.length === 0
+                        ? "No running selected agents"
+                        : null
+                    }
                     title={
                       selectedRunningTaskIds.length
                         ? "Copy a tmux command to attach (sequentially) to running selected agents"

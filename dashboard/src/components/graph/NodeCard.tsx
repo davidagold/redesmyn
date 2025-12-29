@@ -169,7 +169,9 @@ export function NodeCard({
             size="icon-xs"
             aria-label="Copy attach command"
             title="Copy attach command"
-            disabled={pendingAction !== null}
+            disabledReason={
+              pendingAction !== null ? "Action in progress" : null
+            }
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -183,7 +185,9 @@ export function NodeCard({
             size="icon-xs"
             aria-label="Restart agent"
             title="Restart agent"
-            disabled={pendingAction !== null}
+            disabledReason={
+              pendingAction !== null ? "Action in progress" : null
+            }
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -198,7 +202,9 @@ export function NodeCard({
             className="text-destructive hover:bg-destructive/10"
             aria-label="Stop agent"
             title="Stop agent"
-            disabled={pendingAction !== null}
+            disabledReason={
+              pendingAction !== null ? "Action in progress" : null
+            }
             onClick={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -214,7 +220,7 @@ export function NodeCard({
           size="icon-xs"
           aria-label="Restart agent"
           title="Restart agent"
-          disabled={pendingAction !== null}
+          disabledReason={pendingAction !== null ? "Action in progress" : null}
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()
@@ -229,7 +235,7 @@ export function NodeCard({
           size="icon-xs"
           aria-label="Start agent"
           title="Start agent"
-          disabled={pendingAction !== null}
+          disabledReason={pendingAction !== null ? "Action in progress" : null}
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()

@@ -30,7 +30,7 @@ export function EpicSelector({
         className="w-fit gap-1"
         onClick={onMenuToggle}
         aria-expanded={menuOpen}
-        disabled={!epics.length}
+        disabledReason={!epics.length ? "No epics available" : null}
       >
         <span className="truncate">
           {selectedEpic?.slug ?? (epics.length ? "Select epic" : "No epics")}
@@ -54,7 +54,7 @@ export function EpicSelector({
                   variant={epic.id === selectedEpicId ? "secondary" : "ghost"}
                   className="w-fit justify-start"
                   onClick={() => onSelectEpic(epic.id)}
-                  disabled={loading}
+                  disabledReason={loading ? "Refreshing…" : null}
                 >
                   {epic.slug}
                 </Button>

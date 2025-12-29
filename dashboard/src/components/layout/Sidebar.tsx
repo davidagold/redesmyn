@@ -64,7 +64,7 @@ export function Sidebar({ theme, onCycleTheme }: SidebarProps) {
               key={label}
               variant="ghost"
               className="h-8 justify-start gap-2 px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
-              disabled
+              disabledReason="Coming soon"
             >
               <Icon className="h-4 w-4" />
               {label}

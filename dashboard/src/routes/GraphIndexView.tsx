@@ -40,7 +40,7 @@ export function GraphIndexView() {
         <Button
           variant="outline"
           onClick={() => void refresh()}
-          disabled={loading}
+          disabledReason={loading ? "Refreshing…" : null}
         >
           {loading ? "Refreshing..." : "Refresh"}
         </Button>

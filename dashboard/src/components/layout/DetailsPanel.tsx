@@ -173,7 +173,7 @@ function AgentActions({
                 variant="outline"
                 size="xs"
                 onClick={() => void handleCopy(attachCommand, "Command copied")}
-                disabled={pending !== null}
+                disabledReason={pending !== null ? "Action in progress" : null}
               >
                 Copy attach
               </Button>
@@ -181,7 +181,7 @@ function AgentActions({
                 variant="outline"
                 size="xs"
                 onClick={() => void handleRestart()}
-                disabled={pending !== null}
+                disabledReason={pending !== null ? "Action in progress" : null}
               >
                 Restart
               </Button>
@@ -189,7 +189,7 @@ function AgentActions({
                 variant="destructive"
                 size="xs"
                 onClick={() => void handleStop()}
-                disabled={pending !== null}
+                disabledReason={pending !== null ? "Action in progress" : null}
               >
                 Stop
               </Button>
@@ -201,7 +201,9 @@ function AgentActions({
                   variant="outline"
                   size="xs"
                   onClick={() => void handleRestart()}
-                  disabled={pending !== null}
+                  disabledReason={
+                    pending !== null ? "Action in progress" : null
+                  }
                 >
                   Restart
                 </Button>
@@ -209,7 +211,13 @@ function AgentActions({
                 <Button
                   size="xs"
                   onClick={() => void handleStart()}
-                  disabled={pending !== null || !command.trim()}
+                  disabledReason={
+                    pending !== null
+                      ? "Action in progress"
+                      : !command.trim()
+                        ? "Enter a harness command"
+                        : null
+                  }
                 >
                   Start
                 </Button>
@@ -248,7 +256,7 @@ function AgentActions({
           variant="ghost"
           size="xs"
           onClick={() => void handleCopy(logsCommand, "Command copied")}
-          disabled={pending !== null}
+          disabledReason={pending !== null ? "Action in progress" : null}
         >
           Copy logs
         </Button>
@@ -256,7 +264,7 @@ function AgentActions({
           variant="ghost"
           size="xs"
           onClick={() => void handleCopy(checkoutCommand, "Command copied")}
-          disabled={pending !== null}
+          disabledReason={pending !== null ? "Action in progress" : null}
         >
           Copy rn checkout
         </Button>

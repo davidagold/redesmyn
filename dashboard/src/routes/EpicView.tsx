@@ -628,7 +628,7 @@ export function EpicView() {
         <Button
           variant="outline"
           onClick={() => void handleRefresh()}
-          disabled={loading}
+          disabledReason={loading ? "Refreshing…" : null}
         >
           {loading ? "Refreshing..." : "Refresh"}
         </Button>
@@ -654,10 +654,10 @@ export function EpicView() {
                   variant="outline"
                   size="sm"
                   className="rounded-none border-0"
-                  disabled={!canRunAll}
-                  title={
+                  title="Start or restart all eligible tasks"
+                  disabledReason={
                     canRunAll
-                      ? "Start or restart all eligible tasks"
+                      ? null
                       : runAction !== null
                         ? "Action in progress"
                         : "Nothing to start"
@@ -679,13 +679,15 @@ export function EpicView() {
                     variant="outline"
                     size="sm"
                     className="rounded-none border-0 border-l"
-                    disabled={!canRunSelected}
-                    title={
+                    title="Start or restart selected tasks"
+                    disabledReason={
                       canRunSelected
-                        ? "Start or restart selected tasks"
+                        ? null
                         : runAction !== null
                           ? "Action in progress"
-                          : "Nothing to start in selection"
+                          : !showSelectedActions
+                            ? "Select 2+ tasks"
+                            : "Nothing to start in selection"
                     }
                     onClick={() => void handleRunSelected()}
                   >
@@ -699,10 +701,10 @@ export function EpicView() {
                   variant="outline"
                   size="sm"
                   className="rounded-none border-0"
-                  disabled={!canStopAll}
-                  title={
+                  title="Stop all running tasks"
+                  disabledReason={
                     canStopAll
-                      ? "Stop all running tasks"
+                      ? null
                       : runAction !== null
                         ? "Action in progress"
                         : "Nothing to stop"
@@ -724,13 +726,15 @@ export function EpicView() {
                     variant="outline"
                     size="sm"
                     className="rounded-none border-0 border-l"
-                    disabled={!canStopSelected}
-                    title={
+                    title="Stop selected running tasks"
+                    disabledReason={
                       canStopSelected
-                        ? "Stop selected running tasks"
+                        ? null
                         : runAction !== null
                           ? "Action in progress"
-                          : "Nothing to stop in selection"
+                          : !showSelectedActions
+                            ? "Select 2+ tasks"
+                            : "Nothing to stop in selection"
                     }
                     onClick={() => void handleStopSelected()}
                   >
