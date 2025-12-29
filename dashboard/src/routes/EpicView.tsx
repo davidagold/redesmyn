@@ -1017,7 +1017,7 @@ export function EpicView() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-medium">Configure</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
+                  <div className="mt-1.5 text-xs text-muted-foreground">
                     Updates `config.toml` (repo scope).
                   </div>
                 </div>
@@ -1048,6 +1048,10 @@ export function EpicView() {
                   }
                   disabled={configPending}
                 />
+                <div className="text-xs text-muted-foreground">
+                  Shell command used to start the harness inside each task’s
+                  worktree (e.g. <span className="font-mono">codex</span>).
+                </div>
               </div>
 
               <div className="grid gap-1">
@@ -1059,7 +1063,7 @@ export function EpicView() {
                     </span>
                   ) : null}
                 </div>
-                <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
+                <div className="inline-flex h-6 w-fit overflow-hidden rounded-md border border-border/60">
                   <Button
                     variant={configDetach ? "secondary" : "ghost"}
                     size="sm"
@@ -1079,6 +1083,10 @@ export function EpicView() {
                     Foreground
                   </Button>
                 </div>
+                <div className="text-xs text-muted-foreground">
+                  Detached runs in a tmux session; foreground runs in your
+                  current terminal.
+                </div>
               </div>
 
               <div className="grid gap-1">
@@ -1093,11 +1101,27 @@ export function EpicView() {
                   disabled={configPending}
                 />
                 <div className="text-xs text-muted-foreground">
-                  Supports placeholders like{" "}
-                  <span className="font-mono">{`{task_id}`}</span>,{" "}
-                  <span className="font-mono">{`{task_title}`}</span>,{" "}
-                  <span className="font-mono">{`{task_doc}`}</span>,{" "}
-                  <span className="font-mono">{`{epic_slug}`}</span>.
+                  Sent to the agent right after the harness starts. Use it to
+                  point the agent at relevant docs and guidance.
+                </div>
+                <div className="rounded-md border border-border/60 bg-background/30 p-2 text-xs">
+                  <div className="text-xs text-muted-foreground">
+                    Available placeholders
+                  </div>
+                  <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                    <div className="font-mono text-foreground/80">{`{task_id}`}</div>
+                    <div className="text-muted-foreground">
+                      Task numeric id.
+                    </div>
+                    <div className="font-mono text-foreground/80">{`{task_title}`}</div>
+                    <div className="text-muted-foreground">Task title.</div>
+                    <div className="font-mono text-foreground/80">{`{task_doc}`}</div>
+                    <div className="text-muted-foreground">
+                      Task README contents (if available).
+                    </div>
+                    <div className="font-mono text-foreground/80">{`{epic_slug}`}</div>
+                    <div className="text-muted-foreground">Epic slug.</div>
+                  </div>
                 </div>
               </div>
 

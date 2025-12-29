@@ -11,12 +11,8 @@ import { SlidePanel } from "@/components/ui/slide-panel"
 import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
-import {
-  getStoredHarnessCommand,
-  storeHarnessCommand,
-} from "@/lib/agent-settings"
 import { copyToClipboard } from "@/lib/clipboard"
-import { cn } from "@/lib/utils"
+import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { RotateCcw, Square, Terminal } from "lucide-react"
 
 type EdgeSelection = {
@@ -54,24 +50,12 @@ function AgentActions({
   )
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [command, setCommand] = useState(getStoredHarnessCommand)
-  const [commandTouched, setCommandTouched] = useState(false)
 
   useEffect(() => {
     setPending(null)
     setError(null)
     setNotice(null)
   }, [task.id])
-
-  useEffect(() => {
-    if (commandTouched) {
-      return
-    }
-    const next = orchestrationDefaults?.harness.command
-    if (next) {
-      setCommand(next)
-    }
-  }, [commandTouched, orchestrationDefaults?.harness.command])
 
   useEffect(() => {
     if (!notice) {
@@ -83,7 +67,7 @@ function AgentActions({
 
   const taskId = task.id
   const agentName = useMemo(() => `a-${taskId}`, [taskId])
-  const statusLabel = agent?.status ?? "not started"
+  const statusLabel = agent?.status ?? null
   const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
   const canRestart =
@@ -91,15 +75,22 @@ function AgentActions({
     statusLabel === "blocked" ||
     statusLabel === "error"
 
+  const configuredHarnessCommand =
+    orchestrationDefaults?.harness.command?.trim() ?? ""
+  const agentArgv = agent?.resolvedProfile?.argv ?? null
+  const harnessCommand =
+    agentArgv && agentArgv.length > 0
+      ? agentArgv.join(" ")
+      : configuredHarnessCommand
+
   async function handleStart() {
     setPending("start")
     setError(null)
     try {
       await startTaskAgent(taskId, {
-        harness: command,
+        harness: configuredHarnessCommand,
         detach: orchestrationDefaults?.harness.detach ?? true,
       })
-      storeHarnessCommand(command)
       onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -126,7 +117,7 @@ function AgentActions({
     setError(null)
     try {
       await restartTaskAgent(taskId, {
-        harness: command.trim() || null,
+        harness: null,
         detach: orchestrationDefaults?.harness.detach ?? true,
       })
       onRequestRefresh()
@@ -158,41 +149,6 @@ function AgentActions({
     [taskId],
   )
 
-  const statusTone = useMemo(() => {
-    switch (statusLabel) {
-      case "running":
-        return {
-          label: "running",
-          dotClassName: "bg-emerald-400",
-          pillClassName: "text-foreground/80",
-        }
-      case "blocked":
-        return {
-          label: "blocked",
-          dotClassName: "bg-amber-400",
-          pillClassName: "text-foreground/80",
-        }
-      case "error":
-        return {
-          label: "error",
-          dotClassName: "bg-destructive",
-          pillClassName: "text-destructive",
-        }
-      case "stopped":
-        return {
-          label: "stopped",
-          dotClassName: "border border-sky-400",
-          pillClassName: "text-foreground/80",
-        }
-      default:
-        return {
-          label: statusLabel,
-          dotClassName: "border border-border/60",
-          pillClassName: "text-muted-foreground",
-        }
-    }
-  }, [statusLabel])
-
   return (
     <div className="grid gap-3">
       <div className="flex items-start justify-between gap-3">
@@ -201,18 +157,7 @@ function AgentActions({
             <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
               {agentName}
             </div>
-            <div
-              className={cn(
-                "inline-flex items-center gap-1 rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] uppercase tracking-wide",
-                statusTone.pillClassName,
-              )}
-            >
-              <span
-                className={cn("h-2 w-2 rounded-full", statusTone.dotClassName)}
-                aria-hidden="true"
-              />
-              <span>{statusTone.label}</span>
-            </div>
+            <AgentStatusBadge status={statusLabel} />
             {harnessKind ? (
               <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/70">
                 {harnessKind}
@@ -282,8 +227,8 @@ function AgentActions({
                   disabledReason={
                     pending !== null
                       ? "Action in progress"
-                      : !command.trim()
-                        ? "Enter a harness command"
+                      : !configuredHarnessCommand
+                        ? "Set a harness command in Configure"
                         : null
                   }
                 >
@@ -295,30 +240,24 @@ function AgentActions({
         </div>
       </div>
 
-      {!isRunning ? (
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-muted-foreground">Harness</div>
-            <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
-              {(orchestrationDefaults?.harness.detach ?? true)
-                ? "Detached"
-                : "Foreground"}
-            </span>
-          </div>
-          <input
-            className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-            value={command}
-            onChange={(e) => {
-              const next = e.target.value
-              setCommand(next)
-              setCommandTouched(true)
-              storeHarnessCommand(next)
-            }}
-            placeholder="codex"
-            disabled={pending !== null}
-          />
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-muted-foreground">Harness</div>
+          <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
+            {(orchestrationDefaults?.harness.detach ?? true)
+              ? "Detached"
+              : "Foreground"}
+          </span>
         </div>
-      ) : null}
+        <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
+          {harnessCommand || "—"}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {agentArgv
+            ? "Command used for the most recent run."
+            : "Command used when starting this agent."}
+        </div>
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <Button

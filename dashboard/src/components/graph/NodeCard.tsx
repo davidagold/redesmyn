@@ -7,6 +7,7 @@ import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
+import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { Play, RotateCcw, Square, Terminal } from "lucide-react"
 
 interface NodeCardProps {
@@ -19,28 +20,6 @@ interface NodeCardProps {
   isHighlighted?: boolean
   onSelect: (options: { additive: boolean }) => void
   onRequestRefresh?: () => void
-}
-
-function statusColor(task: Task | undefined, agent: Agent | undefined) {
-  if (task?.state === "blocked") {
-    return "border-amber-400 bg-amber-400"
-  }
-  if (task?.state === "done") {
-    return "border-muted-foreground/40 bg-muted-foreground/40"
-  }
-  if (!agent) {
-    return "border-muted-foreground/60 bg-transparent border-dashed"
-  }
-  if (agent.status === "running") {
-    return "border-emerald-400 bg-emerald-400"
-  }
-  if (agent.status === "blocked") {
-    return "border-amber-400 bg-amber-400"
-  }
-  if (agent.status === "error") {
-    return "border-rose-400 bg-rose-400"
-  }
-  return "border-muted-foreground/60 bg-transparent"
 }
 
 function statusSummary(task: Task | undefined, agent: Agent | undefined) {
@@ -305,12 +284,11 @@ export function NodeCard({
               ) : worktreeHot ? (
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
-              <span
-                className={cn(
-                  "relative inline-flex size-3 rounded-full border",
-                  statusColor(task, agent),
-                )}
-                aria-label={tooltip}
+              <AgentStatusIcon
+                status={agent?.status ?? null}
+                taskState={task?.state}
+                className="size-3"
+                title={tooltip}
               />
             </div>
           </div>
