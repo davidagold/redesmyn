@@ -40,13 +40,15 @@ We will use Redesmyn to build Redesmyn.
 
 - **Repository**: A git repository on disk.
 - **Epic**: A collection of tasks for a specific objective within a repository.
-- **Task**: A unit of planned work (typically backed by a Linear issue; optionally a GitHub issue) that can be linked to a node.
-- **Node / Branch Node**: A branch in the epic’s branch graph with a single parent (except the root).
+- **Task**: A unit of planned work (typically backed by a Linear issue; optionally a GitHub issue).
+- **Node / Branch Node (v0)**: A branch in the epic’s branch graph with a single parent (except the root). In v1, Node is merged into Task so the graph has a single primitive.
 - **Branch Graph**: The topology of nodes for an epic. It is a tree (one parent per node); visually a DAG when including commit ancestry.
 - **Graph axes / motion**: The trunk is the base branch timeline; the horizontal axis expresses merge-order. Tasks drift from **left (more dependencies / potential blockers)** to **right (fewer blockers)** as they become merge-ready, then merge/ff back into the base branch.
 - **Stack**: A path through the branch graph from an upstream node to a connected leaf node. Stacks can overlap (shared prefix) and are primarily a focus/view concept.
 - **Agent**: A task-pinned harness process (Codex, Claude Code, etc.) working in that task’s branch/worktree. v0 identity is `a-<task_id>` (no separate “session” construct for orchestration UX).
-- **Daemon**: The local long-running orchestrator managing state, locks, commands, and integrations.
+- **Control Plane (server)**: Persistent orchestration state (tasks, desired state, event log + projections) and APIs/UI. Must run without repo filesystem access.
+- **Daemon (host-local)**: Per-repo process that owns worktrees, host-local git actions, harness process/session lifecycle, and telemetry/observation. Connects outbound to the control plane.
+- **Repo Observer (daemon capability)**: Converts raw git/worktree observations into semantic events; not a separate product concept.
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
 - **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).
 - **Work Range**: The commit range representing a node’s “work”: `parent..branch` (multi-commit allowed).
@@ -202,20 +204,26 @@ Sync commands are explicit about direction:
 
 ### 6.1 Components
 
-- **Daemon**
-  - Owns authoritative state (epics, nodes, agents, locks, commands).
-  - Runs background jobs (repo observer, integration polling, projection updates).
-  - Exposes a local API for CLI + Web UI.
+- **Control Plane (server)**
+  - Owns authoritative state (repos, epics, tasks, desired state) and persists the append-only event log + projections.
+  - Exposes APIs for CLI + Web UI.
+  - Accepts long-lived daemon connections (WebSocket) for telemetry/events and command delivery.
+  - Runs without repo filesystem access; git-derived projections arrive via daemon-emitted events/snapshots.
+
+- **Daemon (host-local)**
+  - Owns worktrees, host-local git actions, harness process/session lifecycle, and telemetry/observation.
+  - Connects outbound to the control plane (WebSocket); does not write the control plane DB directly.
+  - In local dev, control plane + daemon may be co-located, but the boundary remains conceptual and in the protocol.
 
 - **Git Service**
-  - A library/service used by daemon + CLI that performs safe operations:
+  - A library/service used by daemon (and sometimes CLI) that performs safe operations:
     - create/move branches
     - rebase node onto parent
     - cascade rebase subtree
     - move/split commits between nodes
   - Uses worktrees where possible.
 
-- **Repo Observer**
+- **Repo Observer (daemon capability)**
   - Watches for ref movements, new commits, and worktree status changes.
   - Converts raw git observations into semantic domain events.
   - Must be robust if changes occur outside `rn`.
@@ -228,15 +236,16 @@ Sync commands are explicit about direction:
   - Uses projections for queries; subscribes to an event stream for live updates.
 
 - **Integrations**
-  - GitHub + Linear adapters that poll and emit normalized events.
+  - GitHub + Linear adapters that poll and emit normalized events (v1: daemon-owned credentials; server-owned storage is future).
 
-### 6.2 Local API surfaces (daemon)
+### 6.2 Control plane API surfaces
 
-The daemon exposes:
+The control plane exposes:
 
 - Query endpoints for projections (graph, nodes, agents, timelines, comments).
 - Command endpoints (issue commands, acknowledge blocks, lock operations).
 - Event stream endpoint (SSE/WebSocket) for UI.
+- Daemon connection endpoint (WebSocket) for telemetry/events and command delivery.
 
 (Exact protocol is a technology decision; the contract is what matters.)
 

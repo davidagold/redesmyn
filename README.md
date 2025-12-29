@@ -39,6 +39,7 @@ Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git re
 
 - `epics/README.md`
 - `epics/redesmyn/README.md` (bootstrapping epic; we dogfood Redesmyn to build Redesmyn)
+- `epics/revise-architecture/README.md` (control plane/daemon split)
 - `epics/agent-orchestration/README.md` (own agent lifecycle + harness integration)
 - `epics/messages-commands/README.md` (messages, commands, and agent control loop)
 - `epics/graph-viz/README.md` (graph UI improvements)
