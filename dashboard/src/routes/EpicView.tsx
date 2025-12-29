@@ -76,11 +76,58 @@ export function EpicView() {
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
   const [defaultsMenuOpen, setDefaultsMenuOpen] = useState(false)
+  const [defaultsMenuMounted, setDefaultsMenuMounted] = useState(false)
+  const [defaultsMenuVisible, setDefaultsMenuVisible] = useState(false)
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
     refresh: refreshOrchestrationDefaults,
   } = useOrchestrationDefaults()
+  const defaultsCloseTimerRef = useRef<number | null>(null)
+
+  const closeDefaultsMenu = useCallback(() => {
+    setDefaultsMenuOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (defaultsCloseTimerRef.current !== null) {
+      window.clearTimeout(defaultsCloseTimerRef.current)
+      defaultsCloseTimerRef.current = null
+    }
+
+    if (defaultsMenuOpen) {
+      setDefaultsMenuMounted(true)
+      requestAnimationFrame(() => setDefaultsMenuVisible(true))
+      return
+    }
+
+    setDefaultsMenuVisible(false)
+    defaultsCloseTimerRef.current = window.setTimeout(() => {
+      setDefaultsMenuMounted(false)
+      defaultsCloseTimerRef.current = null
+    }, 150)
+
+    return () => {
+      if (defaultsCloseTimerRef.current !== null) {
+        window.clearTimeout(defaultsCloseTimerRef.current)
+        defaultsCloseTimerRef.current = null
+      }
+    }
+  }, [defaultsMenuOpen])
+
+  useEffect(() => {
+    if (!defaultsMenuMounted) {
+      return
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        closeDefaultsMenu()
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [closeDefaultsMenu, defaultsMenuMounted])
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -279,6 +326,86 @@ export function EpicView() {
 
     return targets
   }, [agentsById, graph, nodesById, selectedNodeIds, tasksById])
+
+  const runBuckets = useMemo(() => {
+    if (!graph) {
+      return null
+    }
+
+    const eligible = new Set<number>()
+    const running = new Set<number>()
+    const blocked = new Set<number>()
+    const failed = new Set<number>()
+
+    for (const task of graph.tasks ?? []) {
+      if (task.nodeId === null) {
+        continue
+      }
+      if (task.state === "done") {
+        continue
+      }
+      if (task.state === "blocked") {
+        blocked.add(task.nodeId)
+        continue
+      }
+
+      eligible.add(task.nodeId)
+
+      const node = nodesById.get(task.nodeId) ?? null
+      const agent =
+        node && node.agentId !== null
+          ? (agentsById.get(node.agentId) ?? null)
+          : null
+
+      if (agent?.status === "running") {
+        running.add(task.nodeId)
+      } else if (agent?.status === "blocked") {
+        blocked.add(task.nodeId)
+      } else if (agent?.status === "error") {
+        failed.add(task.nodeId)
+      }
+    }
+
+    return {
+      eligible: Array.from(eligible),
+      running: Array.from(running),
+      blocked: Array.from(blocked),
+      failed: Array.from(failed),
+    }
+  }, [agentsById, graph, nodesById])
+
+  const selectionEquals = useCallback(
+    (nodeIds: number[]) => {
+      if (selectedNodeIds.size !== nodeIds.length) {
+        return false
+      }
+      for (const nodeId of nodeIds) {
+        if (!selectedNodeIds.has(nodeId)) {
+          return false
+        }
+      }
+      return true
+    },
+    [selectedNodeIds],
+  )
+
+  const selectBucketNodes = useCallback(
+    (nodeIds: number[]) => {
+      if (!epicSlug) {
+        return
+      }
+      if (selectionEquals(nodeIds)) {
+        setFocusMode(false)
+        setSelectedNodeIds(new Set())
+        void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
+        return
+      }
+      setFocusMode(nodeIds.length > 1)
+      setSelectedNodeIds(new Set(nodeIds))
+      void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
+    },
+    [epicSlug, navigate, selectionEquals],
+  )
 
   const runCommand = useMemo(() => {
     if (!selectedEpic || !orchestrationDefaults) {
@@ -651,16 +778,80 @@ export function EpicView() {
       {selectedEpic && runSummary ? (
         <div className="border-b px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-xs text-muted-foreground">
-              Running {runSummary.running} / Eligible {runSummary.eligible} •
-              Blocked {runSummary.blocked} • Failed {runSummary.failed}
-            </div>
+            {runBuckets ? (
+              <div className="flex h-6 overflow-hidden rounded-full border border-border/60">
+                <Button
+                  variant={
+                    selectionEquals(runBuckets.running) ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-full min-w-[8.5rem] rounded-none border-0 px-3 leading-none"
+                  onClick={() => selectBucketNodes(runBuckets.running)}
+                  disabledReason={
+                    runSummary.running > 0 ? null : "No running tasks"
+                  }
+                >
+                  <span className="truncate">Running</span>
+                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                    {runSummary.running}
+                  </span>
+                </Button>
+                <Button
+                  variant={
+                    selectionEquals(runBuckets.eligible) ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  onClick={() => selectBucketNodes(runBuckets.eligible)}
+                  disabledReason={
+                    runSummary.eligible > 0 ? null : "No eligible tasks"
+                  }
+                >
+                  <span className="truncate">Eligible</span>
+                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                    {runSummary.eligible}
+                  </span>
+                </Button>
+                <Button
+                  variant={
+                    selectionEquals(runBuckets.blocked) ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  onClick={() => selectBucketNodes(runBuckets.blocked)}
+                  disabledReason={
+                    runSummary.blocked > 0 ? null : "No blocked tasks"
+                  }
+                >
+                  <span className="truncate">Blocked</span>
+                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                    {runSummary.blocked}
+                  </span>
+                </Button>
+                <Button
+                  variant={
+                    selectionEquals(runBuckets.failed) ? "secondary" : "ghost"
+                  }
+                  size="sm"
+                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  onClick={() => selectBucketNodes(runBuckets.failed)}
+                  disabledReason={
+                    runSummary.failed > 0 ? null : "No failed tasks"
+                  }
+                >
+                  <span className="truncate">Failed</span>
+                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                    {runSummary.failed}
+                  </span>
+                </Button>
+              </div>
+            ) : null}
             <div className="flex items-center gap-2">
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-full rounded-none border-0"
+                  className="h-full rounded-none border-0 leading-none"
                   title="Start or restart all eligible tasks"
                   disabledReason={
                     canRunAll
@@ -685,7 +876,7 @@ export function EpicView() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-full rounded-none border-0 border-l"
+                    className="h-full rounded-none border-0 border-l leading-none"
                     title="Start or restart selected tasks"
                     disabledReason={
                       canRunSelected
@@ -707,7 +898,7 @@ export function EpicView() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-full rounded-none border-0"
+                  className="h-full rounded-none border-0 leading-none"
                   title="Stop all running tasks"
                   disabledReason={
                     canStopAll
@@ -732,7 +923,7 @@ export function EpicView() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-full rounded-none border-0 border-l"
+                    className="h-full rounded-none border-0 border-l leading-none"
                     title="Stop selected running tasks"
                     disabledReason={
                       canStopSelected
@@ -780,23 +971,28 @@ export function EpicView() {
 
       {graph ? (
         <div className="relative flex min-h-0 flex-1">
-          {defaultsMenuOpen ? (
+          {defaultsMenuMounted ? (
             <>
               <button
                 type="button"
                 aria-label="Close configuration menu"
                 className="absolute inset-0 z-20 cursor-default bg-transparent"
-                onClick={() => setDefaultsMenuOpen(false)}
+                onClick={closeDefaultsMenu}
               />
               <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-6 pt-4">
-                <div className="pointer-events-auto w-full max-w-3xl rounded-lg bg-background/80 p-4 shadow-sm ring-1 ring-foreground/10 backdrop-blur">
+                <div
+                  className={
+                    "pointer-events-auto w-fit max-w-[calc(100vw-3rem)] rounded-lg bg-background/80 p-4 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-opacity duration-150 " +
+                    (defaultsMenuVisible ? "opacity-100" : "opacity-0")
+                  }
+                >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-medium">Defaults</div>
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6"
-                      onClick={() => setDefaultsMenuOpen(false)}
+                      onClick={closeDefaultsMenu}
                     >
                       Close
                     </Button>
