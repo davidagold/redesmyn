@@ -80,6 +80,8 @@ export function EpicView() {
   const [configHarness, setConfigHarness] = useState("")
   const [configDetach, setConfigDetach] = useState(true)
   const [configPrelude, setConfigPrelude] = useState("")
+  const [configSendPrelude, setConfigSendPrelude] = useState(true)
+  const [configSubmitPrelude, setConfigSubmitPrelude] = useState(true)
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
@@ -100,6 +102,8 @@ export function EpicView() {
     setConfigHarness(orchestrationDefaults?.harness.command ?? "")
     setConfigDetach(orchestrationDefaults?.harness.detach ?? true)
     setConfigPrelude(orchestrationDefaults?.harness.prelude ?? "")
+    setConfigSendPrelude(orchestrationDefaults?.harness.sendPrelude ?? true)
+    setConfigSubmitPrelude(orchestrationDefaults?.harness.submitPrelude ?? true)
   }, [configOpen, orchestrationDefaults])
 
   const selectedEpic = useMemo(
@@ -625,12 +629,25 @@ export function EpicView() {
     const currentCommand = orchestrationDefaults?.harness.command ?? ""
     const currentDetach = orchestrationDefaults?.harness.detach ?? true
     const currentPrelude = orchestrationDefaults?.harness.prelude ?? ""
+    const currentSendPrelude =
+      orchestrationDefaults?.harness.sendPrelude ?? true
+    const currentSubmitPrelude =
+      orchestrationDefaults?.harness.submitPrelude ?? true
     return (
       configHarness !== currentCommand ||
       configDetach !== currentDetach ||
-      configPrelude !== currentPrelude
+      configPrelude !== currentPrelude ||
+      configSendPrelude !== currentSendPrelude ||
+      configSubmitPrelude !== currentSubmitPrelude
     )
-  }, [configDetach, configHarness, configPrelude, orchestrationDefaults])
+  }, [
+    configDetach,
+    configHarness,
+    configPrelude,
+    configSendPrelude,
+    configSubmitPrelude,
+    orchestrationDefaults,
+  ])
 
   const configuredHarnessCommand =
     orchestrationDefaults?.harness.command?.trim() ?? ""
@@ -649,6 +666,8 @@ export function EpicView() {
           command: configHarness.trim() ? configHarness.trim() : null,
           detach: configDetach,
           prelude: configPrelude.trim() ? configPrelude : null,
+          sendPrelude: configSendPrelude,
+          submitPrelude: configSubmitPrelude,
         },
       })
       await refreshOrchestrationDefaults()
@@ -1122,6 +1141,41 @@ export function EpicView() {
                   Sent to the agent right after the harness starts. Use it to
                   point the agent at relevant docs and guidance.
                 </div>
+                <div className="grid gap-1">
+                  <div className="text-xs text-muted-foreground">
+                    Prelude delivery
+                  </div>
+                  <div className="flex h-6 w-fit overflow-hidden rounded-md border border-border/60">
+                    <Button
+                      variant={configSendPrelude ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-full rounded-none border-0 leading-none"
+                      onClick={() => setConfigSendPrelude((value) => !value)}
+                      disabledReason={configPending ? "Saving…" : null}
+                    >
+                      Auto-send
+                    </Button>
+                    <Button
+                      variant={configSubmitPrelude ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-full rounded-none border-0 border-l leading-none"
+                      onClick={() => setConfigSubmitPrelude((value) => !value)}
+                      disabledReason={
+                        configPending
+                          ? "Saving…"
+                          : !configSendPrelude
+                            ? "Enable Auto-send first"
+                            : null
+                      }
+                    >
+                      Press Enter
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Auto-send types the prelude into the harness. Press Enter
+                    submits it so the agent starts working immediately.
+                  </div>
+                </div>
                 <div className="rounded-md border border-border/60 bg-background/30 p-2 text-xs">
                   <div className="text-xs text-muted-foreground">
                     Available placeholders
@@ -1175,6 +1229,12 @@ export function EpicView() {
                       )
                       setConfigPrelude(
                         orchestrationDefaults?.harness.prelude ?? "",
+                      )
+                      setConfigSendPrelude(
+                        orchestrationDefaults?.harness.sendPrelude ?? true,
+                      )
+                      setConfigSubmitPrelude(
+                        orchestrationDefaults?.harness.submitPrelude ?? true,
                       )
                     }}
                     disabledReason={
