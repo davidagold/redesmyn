@@ -16,5 +16,4 @@ DEFAULT_AGENT_PRELUDE_TEMPLATE = (
     "Tips\n"
     "\n"
     "- Run `just check` before you finish.\n"
-    "- If you attach to this tmux session, detach with Ctrl-b then d (not Ctrl-c).\n"
 )
