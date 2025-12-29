@@ -790,7 +790,7 @@ export function EpicView() {
                     selectionEquals(runBuckets.running) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[6rem] rounded-none border-0 px-1.5 leading-none"
+                  className="h-full rounded-none border-0 px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.running)}
                   disabledReason={
                     runSummary.running > 0 ? null : "No tasks to select"
@@ -806,7 +806,7 @@ export function EpicView() {
                     selectionEquals(runBuckets.eligible) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[6rem] rounded-none border-0 border-l px-1.5 leading-none"
+                  className="h-full rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.eligible)}
                   disabledReason={
                     runSummary.eligible > 0 ? null : "No tasks to select"
@@ -822,7 +822,7 @@ export function EpicView() {
                     selectionEquals(runBuckets.blocked) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[6rem] rounded-none border-0 border-l px-1.5 leading-none"
+                  className="h-full rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.blocked)}
                   disabledReason={
                     runSummary.blocked > 0 ? null : "No tasks to select"
@@ -838,7 +838,7 @@ export function EpicView() {
                     selectionEquals(runBuckets.failed) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[6rem] rounded-none border-0 border-l px-1.5 leading-none"
+                  className="h-full rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.failed)}
                   disabledReason={
                     runSummary.failed > 0 ? null : "No tasks to select"
