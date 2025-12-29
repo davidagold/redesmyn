@@ -77,7 +77,7 @@
       },
       "AgentStatus": {
         "enum": [
-          "idle",
+          "stopped",
           "running",
           "blocked",
           "error"

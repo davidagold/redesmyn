@@ -278,7 +278,7 @@ export interface components {
      * AgentStatus
      * @enum {string}
      */
-    AgentStatus: "idle" | "running" | "blocked" | "error"
+    AgentStatus: "stopped" | "running" | "blocked" | "error"
     /** ApiStatusResponse */
     ApiStatusResponse: {
       block: components["schemas"]["BlockStatusResponse"] | null
