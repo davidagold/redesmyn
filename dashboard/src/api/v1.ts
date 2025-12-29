@@ -580,6 +580,8 @@ export interface components {
     }
     /** OrchestrationHarnessDefaultsResponse */
     OrchestrationHarnessDefaultsResponse: {
+      /** Builtinpreludetemplate */
+      builtInPreludeTemplate: string
       /** Command */
       command?: string | null
       /**

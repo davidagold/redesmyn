@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
 
+from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
@@ -697,6 +698,7 @@ async def get_orchestration_config() -> OrchestrationDefaultsResponse:
             command=defaults.harness.command,
             detach=defaults.harness.detach,
             prelude=defaults.harness.prelude,
+            built_in_prelude_template=DEFAULT_AGENT_PRELUDE_TEMPLATE,
             send_prelude=defaults.harness.send_prelude,
             submit_prelude=defaults.harness.submit_prelude,
         ),

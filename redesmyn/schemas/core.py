@@ -276,6 +276,7 @@ class OrchestrationHarnessDefaultsResponse(ApiResponse):
     command: str | None = None
     detach: bool = True
     prelude: str | None = None
+    built_in_prelude_template: str
     send_prelude: bool = True
     submit_prelude: bool = True
 

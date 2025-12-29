@@ -976,6 +976,10 @@
       },
       "OrchestrationHarnessDefaultsResponse": {
         "properties": {
+          "builtInPreludeTemplate": {
+            "title": "Builtinpreludetemplate",
+            "type": "string"
+          },
           "command": {
             "anyOf": [
               {
@@ -1014,6 +1018,9 @@
             "type": "boolean"
           }
         },
+        "required": [
+          "builtInPreludeTemplate"
+        ],
         "title": "OrchestrationHarnessDefaultsResponse",
         "type": "object"
       },

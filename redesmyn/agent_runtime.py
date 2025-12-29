@@ -35,6 +35,7 @@ from redesmyn.db.models import (
     HarnessProfileDefinition,
     HostCapabilities,
 )
+from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import GitCommandError, current_branch, git_worktree_add
@@ -557,26 +558,7 @@ def _agent_prelude_lines(
     worktree_path: Path,
     template: str | None,
 ) -> list[str]:
-    default_template = (
-        "Redesmyn agent prelude\n"
-        "\n"
-        "- Assigned task: {task_id} — {task_title}\n"
-        "- Task doc: {task_doc}\n"
-        "- Epic: {epic_slug} (read {epic_readme})\n"
-        "- Branch: {branch}\n"
-        "- Worktree: {worktree}\n"
-        "\n"
-        "Guidelines\n"
-        "\n"
-        "- Read AGENTS.md at repo root and follow it.\n"
-        "- Prefer small, focused commits; keep changes maintainable and well-typed.\n"
-        "- Start by understanding the task design + surrounding code; avoid unrelated changes.\n"
-        "\n"
-        "Tips\n"
-        "\n"
-        "- Run `just check` before you finish.\n"
-        "- If you attach to this tmux session, detach with Ctrl-b then d (not Ctrl-c).\n"
-    )
+    default_template = DEFAULT_AGENT_PRELUDE_TEMPLATE
 
     class SafeDict(dict[str, str]):
         def __missing__(self, key: str) -> str:
