@@ -68,6 +68,7 @@ class NodeResponse(ApiResponse):
 class AgentResponse(ApiResponse):
     id: int
     display_name: str
+    harness_profile_id: str | None = None
     status: AgentStatus
     last_seen_at: datetime | None
     created_at: datetime

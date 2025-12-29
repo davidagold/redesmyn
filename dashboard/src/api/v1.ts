@@ -266,6 +266,8 @@ export interface components {
       createdAt: string
       /** Displayname */
       displayName: string
+      /** Harnessprofileid */
+      harnessProfileId?: string | null
       /** Id */
       id: number
       /** Lastseenat */

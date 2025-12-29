@@ -70,6 +70,7 @@ export function NodeCard({
   const now = Date.now()
   const commitHot = isRecentActivity(activity?.lastCommitAt, now)
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
+  const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
 
   const [pendingAction, setPendingAction] =
     useState<"stop" | "restart" | "attach" | null>(null)
@@ -301,10 +302,15 @@ export function NodeCard({
         ) : null}
 
         {agent ? (
-          <div className="mt-auto flex items-end justify-start">
+          <div className="mt-auto flex flex-wrap items-end justify-start gap-2">
             <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
               {agent.displayName}
             </span>
+            {harnessKind ? (
+              <span className="rounded-sm bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors group-hover:bg-muted/75 group-focus-within:bg-muted/75">
+                {harnessKind}
+              </span>
+            ) : null}
           </div>
         ) : null}
       </CardContent>
