@@ -19,6 +19,9 @@ Consolidate “graph node” concepts by merging `Node` into `Task` so the graph
   - events referencing nodes should reference tasks
 - Remove the `Node` API surface; the UI operates on tasks and their relationships.
 - Preserve existing data through a DB migration; provide an upgrade path for local dev DBs.
+- Invest in Alembic infrastructure (needed for this migration and future ones):
+  - `just` targets for revision/upgrade/downgrade/history/current
+  - a predictable migrations directory and a clear “dev DB” vs “test DB” story
 
 ## Acceptance Criteria
 

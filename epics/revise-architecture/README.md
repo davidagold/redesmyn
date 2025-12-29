@@ -75,14 +75,20 @@ Local-first workflows should remain ergonomic:
 - `rn dev` may run control plane + daemon co-located.
 - Naming/structure should preserve the conceptual split even when co-located.
 
-### 2.8 Multi-repo identity is explicit (org/repo keys)
+### 2.8 Multi-repo identity is explicit (workspace/repo keys)
 
 The control plane will eventually serve multiple repos across multiple organizations/workspaces.
 
+In v1 we do not yet have a full identity/auth model, but we still need stable multi-repo identity.
+Introduce the minimally sufficient iteration:
+
+- A single implicit “default workspace” (until real org/workspace identity exists), identified by a stable `workspace_id`.
+- Repos are identified by an immutable `repo_id` scoped to a `workspace_id`.
+
 - The daemon handshake must include an explicit repo identity (not a local filesystem path).
-- Repos have a unique `repo_name` within an org/workspace, but identifiers must be stable across renames:
-  - Prefer immutable `org_id` + `repo_id` for primary identity.
-  - Treat names/slugs as display fields and enforce uniqueness per org separately.
+- Repos have a unique `repo_name` within a workspace, but identifiers must be stable across renames:
+  - Prefer immutable `workspace_id` + `repo_id` for primary identity.
+  - Treat names/slugs as display fields and enforce uniqueness per workspace separately.
 
 ### 2.9 Integrations authenticate at the client system level (v1)
 

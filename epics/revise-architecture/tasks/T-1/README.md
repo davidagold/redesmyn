@@ -16,7 +16,8 @@ node:
   - “server” vs “daemon” vs “observer” (deprecations/aliases)
   - “agent runner” (harness process) vs “daemon” (host-local orchestrator)
 - Specify the daemon ↔ control plane protocol:
-  - handshake fields (daemon id, org/repo identity, capabilities)
+  - handshake fields (daemon id, workspace/repo identity, capabilities)
+    - v1: include `workspace_id` even if there is only a single default workspace
   - auth strategy (token/key, rotation hooks)
   - message envelope + versioning strategy
   - heartbeats/liveness + reconnect/backoff

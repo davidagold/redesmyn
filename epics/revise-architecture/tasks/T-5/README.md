@@ -12,9 +12,11 @@ node:
 ## Brief (local)
 
 - Surface daemon connection status in the dashboard:
-  - online/offline + last_seen
+  - **daemon (host) connection**: online/offline + last_seen
+  - **repo telemetry**: attached/unattached + freshness (stale threshold)
   - host identity (when meaningful)
   - “telemetry stale” affordances
+- Prefer a compact, always-visible surface (e.g. RHS of the subheader bar) with hover/click details.
 - When offline, provide actionable guidance:
   - copy `rn up` (or the configured equivalent)
   - troubleshooting link/section (basic)
