@@ -15,6 +15,10 @@ node:
   - `rn up` (start daemon in the background; connect to control plane)
   - `rn down` (stop daemon)
   - `rn status` (daemon online/offline, last_seen, server url)
+- Define how orchestration commands relate:
+  - `rn run`: sets desired state for a task fleet (control-plane intent) and waits for the daemon to reconcile when requested.
+  - `rn agent run`: single-task convenience wrapper around `rn run` (optionally attaches or tails logs).
+  - `rn run` / `rn agent run` should fail with actionable guidance (or auto-start) if the local daemon is not running.
 - Clarify command taxonomy:
   - “daemon” is the host-local orchestrator for worktrees + sessions + telemetry
   - “control plane/server” is the API/UI persistence layer
