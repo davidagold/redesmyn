@@ -5,6 +5,7 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import {
   restartTaskAgent,
   startTaskAgent,
@@ -1085,7 +1086,7 @@ export function EpicView() {
                   }
                   disabled={configPending}
                 />
-                <div className="text-xs text-muted-foreground">
+                <div className="mt-1.5 text-xs text-muted-foreground">
                   Shell command used to start the harness inside each task’s
                   worktree (e.g. <span className="font-mono">codex</span>).
                 </div>
@@ -1120,7 +1121,7 @@ export function EpicView() {
                     Foreground
                   </Button>
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="mt-1.5 text-xs text-muted-foreground">
                   Detached runs in a tmux session; foreground runs in your
                   current terminal.
                 </div>
@@ -1137,46 +1138,53 @@ export function EpicView() {
                   placeholder="Optional. Leave blank to use the built-in prelude."
                   disabled={configPending}
                 />
-                <div className="text-xs text-muted-foreground">
+                <div className="mt-1.5 text-xs text-muted-foreground">
                   Sent to the agent right after the harness starts. Use it to
                   point the agent at relevant docs and guidance.
                 </div>
-                <div className="grid gap-1">
+                <div className="mt-3 grid gap-1">
                   <div className="text-xs text-muted-foreground">
                     Prelude delivery
                   </div>
-                  <div className="flex h-6 w-fit overflow-hidden rounded-md border border-border/60">
-                    <Button
-                      variant={configSendPrelude ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-full rounded-none border-0 leading-none"
-                      onClick={() => setConfigSendPrelude((value) => !value)}
-                      disabledReason={configPending ? "Saving…" : null}
-                    >
-                      Auto-send
-                    </Button>
-                    <Button
-                      variant={configSubmitPrelude ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-full rounded-none border-0 border-l leading-none"
-                      onClick={() => setConfigSubmitPrelude((value) => !value)}
-                      disabledReason={
-                        configPending
-                          ? "Saving…"
-                          : !configSendPrelude
-                            ? "Enable Auto-send first"
-                            : null
-                      }
-                    >
-                      Press Enter
-                    </Button>
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-foreground">
+                        Auto-send prelude
+                      </div>
+                      <Switch
+                        checked={configSendPrelude}
+                        onCheckedChange={(checked) => {
+                          setConfigSendPrelude(checked)
+                          if (!checked) {
+                            setConfigSubmitPrelude(false)
+                          }
+                        }}
+                        disabledReason={configPending ? "Saving…" : null}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-foreground">
+                        Press Enter to submit
+                      </div>
+                      <Switch
+                        checked={configSubmitPrelude}
+                        onCheckedChange={setConfigSubmitPrelude}
+                        disabledReason={
+                          configPending
+                            ? "Saving…"
+                            : !configSendPrelude
+                              ? "Enable Auto-send first"
+                              : null
+                        }
+                      />
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="mt-1.5 text-xs text-muted-foreground">
                     Auto-send types the prelude into the harness. Press Enter
                     submits it so the agent starts working immediately.
                   </div>
                 </div>
-                <div className="rounded-md border border-border/60 bg-background/30 p-2 text-xs">
+                <div className="mt-3 rounded-md border border-border/60 bg-background/30 p-2 text-xs">
                   <div className="text-xs text-muted-foreground">
                     Available placeholders
                   </div>
