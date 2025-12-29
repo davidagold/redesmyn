@@ -19,10 +19,6 @@ from starlette.responses import RedirectResponse
 
 from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.context import RepoContext, get_repo_context
-from redesmyn.agent_runtime import (
-    restart_task_agent as restart_task_agent_runtime,
-    stop_task_agent as stop_task_agent_runtime,
-)
 from redesmyn.db import (
     Agent,
     Block,
@@ -51,6 +47,11 @@ from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
 from redesmyn.repo_observer import run_repo_observer
+from redesmyn.runner_backend import (
+    RunnerBackend,
+    RunnerBackendError,
+    make_runner_backend,
+)
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
@@ -86,6 +87,7 @@ class AppState(Protocol):
     ctx: RepoContext
     engine: AsyncEngine
     sessionmaker: async_sessionmaker[AsyncSession]
+    runner_backend: RunnerBackend
     linear_oauth_states: dict[str, datetime]
 
 
@@ -109,10 +111,12 @@ class DashboardStaticFiles(StaticFiles):
 async def lifespan(app: App):
     ctx = get_repo_context()
     await init_repo(ctx)
+    settings = load_settings(repo_root=ctx.repo_root)
 
     app.state.ctx = ctx
     app.state.engine = create_engine(ctx.db_path)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
+    app.state.runner_backend = make_runner_backend(mode=settings.runner_mode, ctx=ctx)
     app.state.linear_oauth_states = {}
     maybe_mount_dashboard(app, ctx.worktree_root)
 
@@ -440,23 +444,45 @@ async def start_task_agent(
     task_id: int,
     request: TaskAgentStartRequest,
 ) -> TaskAgentStartResponse:
-    # NOTE: This endpoint used to start a tmux-backed harness session directly on the
-    # API host. That only works in the current local-dev architecture where the API
-    # host and the daemon/runner host are the same machine. We intentionally disable
-    # this until the daemon/control-plane split (epics/revise-architecture) lands.
-    raise HTTPException(
-        status_code=501,
-        detail=(
-            "Starting agents via the API is disabled until the daemon/control-plane split; "
-            "use `rn agent start --task <id>` on the runner host."
-        ),
+    try:
+        result = await app.state.runner_backend.start_task_agent(
+            task_id=task_id,
+            harness_command=request.harness,
+            detach=request.detach,
+        )
+    except RunnerBackendError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    row = result.agent
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        _, node = await _require_task_node(session, task_id=task_id)
+
+    return TaskAgentStartResponse(
+        task_id=task_id,
+        node_id=node.id,
+        agent_id=row.id,
+        agent_name=row.display_name,
+        agent_status=row.status,
+        harness_profile_id=row.harness_profile_id or "",
+        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
+        resolved_profile=TypeAdapter(
+            HarnessProfileDefinitionResponse | None
+        ).validate_python(row.resolved_profile),
+        started_at=row.started_at or datetime.now(UTC),
+        started=result.started,
+        warnings=list(result.warnings),
     )
 
 
 @v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)
 async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
     try:
-        stopped = await stop_task_agent_runtime(app.state.ctx, task_id=task_id)
+        stopped = await app.state.runner_backend.stop_task_agent(task_id=task_id)
+    except RunnerBackendError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -481,12 +507,13 @@ async def restart_task_agent(
     request: TaskAgentRestartRequest,
 ) -> TaskAgentStartResponse:
     try:
-        result = await restart_task_agent_runtime(
-            app.state.ctx,
+        result = await app.state.runner_backend.restart_task_agent(
             task_id=task_id,
             harness_command=request.harness,
             detach=request.detach,
         )
+    except RunnerBackendError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

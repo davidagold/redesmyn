@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +17,8 @@ class RedesmynSettings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = 9234
+
+    runner_mode: Literal["local", "remote"] = "local"
 
     linear_client_id: str | None = None
     linear_client_secret: str | None = None
