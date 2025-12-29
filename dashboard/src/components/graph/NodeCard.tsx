@@ -23,25 +23,24 @@ interface NodeCardProps {
 
 function statusColor(task: Task | undefined, agent: Agent | undefined) {
   if (task?.state === "blocked") {
-    return "bg-amber-400"
+    return "border-amber-400 bg-amber-400"
   }
   if (task?.state === "done") {
-    return "bg-muted-foreground/50"
+    return "border-muted-foreground/40 bg-muted-foreground/40"
   }
-  const status = agent?.status ?? null
   if (!agent) {
-    return "bg-muted-foreground/50"
+    return "border-muted-foreground/60 bg-transparent border-dashed"
   }
-  if (status === "running") {
-    return "bg-emerald-400"
+  if (agent.status === "running") {
+    return "border-emerald-400 bg-emerald-400"
   }
-  if (status === "blocked") {
-    return "bg-amber-400"
+  if (agent.status === "blocked") {
+    return "border-amber-400 bg-amber-400"
   }
-  if (status === "error") {
-    return "bg-rose-400"
+  if (agent.status === "error") {
+    return "border-rose-400 bg-rose-400"
   }
-  return "bg-sky-400"
+  return "border-muted-foreground/60 bg-transparent"
 }
 
 function statusSummary(task: Task | undefined, agent: Agent | undefined) {
@@ -278,7 +277,7 @@ export function NodeCard({
           >
             {branchLabel}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-start gap-1">
             {quickActions ? (
               <div
                 className={cn(
@@ -291,18 +290,15 @@ export function NodeCard({
                 {quickActions}
               </div>
             ) : null}
-            <div
-              className="relative inline-flex h-3 w-3 items-center justify-center"
-              title={tooltip}
-            >
+            <div className="relative inline-flex h-3 w-3" title={tooltip}>
               {commitHot ? (
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/60 opacity-75" />
+                <span className="absolute inset-0 inline-flex animate-ping rounded-full bg-sky-400/60 opacity-75" />
               ) : worktreeHot ? (
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
+                <span className="absolute inset-0 inline-flex animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
               <span
                 className={cn(
-                  "relative inline-flex h-2.5 w-2.5 rounded-full",
+                  "relative inline-flex h-3 w-3 rounded-full border",
                   statusColor(task, agent),
                 )}
                 aria-label={tooltip}
