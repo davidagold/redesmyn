@@ -4,21 +4,14 @@ import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { getStoredHarnessCommand } from "@/lib/agent-settings"
-import { copyToClipboard } from "@/lib/clipboard"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
-import { cn } from "@/lib/utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight } from "lucide-react"
 
@@ -78,7 +71,6 @@ export function EpicView() {
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
-    error: orchestrationDefaultsError,
     refresh: refreshOrchestrationDefaults,
   } = useOrchestrationDefaults()
 
@@ -296,61 +288,6 @@ export function EpicView() {
     return `rn run --epic ${shellQuote(selectedEpic.slug)}`
   }, [orchestrationDefaults, selectedEpic])
 
-  const runConfigError = useMemo(() => {
-    if (orchestrationDefaultsError) {
-      return orchestrationDefaultsError
-    }
-    if (!selectedEpic) {
-      return null
-    }
-    if (!orchestrationDefaults) {
-      return orchestrationDefaultsLoading ? "Loading defaults…" : "Unavailable"
-    }
-    if (!orchestrationDefaults.harness.command) {
-      return "Harness command not configured"
-    }
-    if (
-      orchestrationDefaults.fleet.mode === "fixed" &&
-      orchestrationDefaults.fleet.size === null
-    ) {
-      return "Fleet size not configured"
-    }
-    return null
-  }, [
-    orchestrationDefaults,
-    orchestrationDefaultsError,
-    orchestrationDefaultsLoading,
-    selectedEpic,
-  ])
-
-  const copyRunDisabledReason = useMemo(() => {
-    if (!runSummary) {
-      return "Run summary unavailable"
-    }
-    if (runSummary.eligible === 0) {
-      return "No eligible tasks"
-    }
-    if (!selectedEpic) {
-      return "No epic selected"
-    }
-    if (orchestrationDefaultsLoading) {
-      return "Loading defaults"
-    }
-    if (runConfigError) {
-      return runConfigError
-    }
-    if (!runCommand) {
-      return "Command unavailable"
-    }
-    return null
-  }, [
-    orchestrationDefaultsLoading,
-    runCommand,
-    runConfigError,
-    runSummary,
-    selectedEpic,
-  ])
-
   useEffect(() => {
     if (!runNotice) {
       return
@@ -555,18 +492,6 @@ export function EpicView() {
     await refreshEpics()
     await refreshOrchestrationDefaults()
     await refreshGraph()
-  }
-
-  async function handleCopyRunCommand() {
-    if (!runCommand) {
-      return
-    }
-    try {
-      await copyToClipboard(runCommand)
-      setRunNotice("Command copied")
-    } catch (e) {
-      setRunNotice(e instanceof Error ? e.message : String(e))
-    }
   }
 
   const canRunAll =
@@ -796,32 +721,7 @@ export function EpicView() {
                 </div>
               ) : null}
             </div>
-            <Tooltip>
-              <TooltipTrigger
-                type="button"
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "sm" }),
-                  copyRunDisabledReason
-                    ? "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground"
-                    : null,
-                )}
-                aria-disabled={copyRunDisabledReason ? "true" : undefined}
-                onClick={(event) => {
-                  if (copyRunDisabledReason) {
-                    event.preventDefault()
-                    return
-                  }
-                  void handleCopyRunCommand()
-                }}
-              >
-                Copy rn run …
-              </TooltipTrigger>
-              {copyRunDisabledReason ? (
-                <TooltipContent side="bottom" align="end">
-                  {copyRunDisabledReason}
-                </TooltipContent>
-              ) : null}
-            </Tooltip>
+            {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
             {runNotice ? (
               <div className="text-xs text-muted-foreground">{runNotice}</div>
             ) : null}
