@@ -5,6 +5,7 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button, buttonVariants } from "@/components/ui/button"
+import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
@@ -14,6 +15,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { cn } from "@/lib/utils"
@@ -65,6 +67,8 @@ export function EpicView() {
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
   const selectedNodeIdsRef = useRef(selectedNodeIds)
+  const [runAction, setRunAction] =
+    useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
   const refreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
@@ -196,6 +200,85 @@ export function EpicView() {
 
     return { eligible, running, blocked, failed }
   }, [agentsById, graph, nodesById])
+
+  const actionTargets = useMemo(() => {
+    const empty = {
+      start: [] as number[],
+      restart: [] as number[],
+      stop: [] as number[],
+    }
+    const targets = { all: { ...empty }, selected: { ...empty } }
+    if (!graph) {
+      return targets
+    }
+
+    const allStart = new Set<number>()
+    const allRestart = new Set<number>()
+    const allStop = new Set<number>()
+
+    for (const task of graph.tasks ?? []) {
+      if (task.nodeId === null) {
+        continue
+      }
+      if (task.state === "blocked" || task.state === "done") {
+        continue
+      }
+
+      const node = nodesById.get(task.nodeId) ?? null
+      const agent =
+        node && node.agentId !== null
+          ? (agentsById.get(node.agentId) ?? null)
+          : null
+      const status = agent?.status ?? null
+
+      if (!agent || status === "stopped") {
+        allStart.add(task.id)
+      } else if (status === "error") {
+        allRestart.add(task.id)
+      }
+
+      if (status === "running" || status === "blocked") {
+        allStop.add(task.id)
+      }
+    }
+
+    const selectedStart = new Set<number>()
+    const selectedRestart = new Set<number>()
+    const selectedStop = new Set<number>()
+
+    for (const selectedNodeId of selectedNodeIds) {
+      const node = nodesById.get(selectedNodeId) ?? null
+      if (!node || node.primaryTaskId === null) {
+        continue
+      }
+      const task = tasksById.get(node.primaryTaskId) ?? null
+      if (!task || task.state === "blocked" || task.state === "done") {
+        continue
+      }
+      const agent =
+        node.agentId !== null ? (agentsById.get(node.agentId) ?? null) : null
+      const status = agent?.status ?? null
+
+      if (!agent || status === "stopped") {
+        selectedStart.add(task.id)
+      } else if (status === "error") {
+        selectedRestart.add(task.id)
+      }
+
+      if (status === "running" || status === "blocked") {
+        selectedStop.add(task.id)
+      }
+    }
+
+    targets.all.start = [...allStart].sort((a, b) => a - b)
+    targets.all.restart = [...allRestart].sort((a, b) => a - b)
+    targets.all.stop = [...allStop].sort((a, b) => a - b)
+    targets.selected.start = [...selectedStart].sort((a, b) => a - b)
+    targets.selected.restart = [...selectedRestart].sort((a, b) => a - b)
+    targets.selected.stop = [...selectedStop].sort((a, b) => a - b)
+
+    return targets
+  }, [agentsById, graph, nodesById, selectedNodeIds, tasksById])
 
   const runCommand = useMemo(() => {
     if (!selectedEpic || !orchestrationDefaults) {
@@ -486,6 +569,105 @@ export function EpicView() {
     }
   }
 
+  const canRunAll =
+    runAction === null &&
+    (actionTargets.all.start.length > 0 || actionTargets.all.restart.length > 0)
+  const canStopAll = runAction === null && actionTargets.all.stop.length > 0
+  const showSelectedActions = selectedNodeIds.size > 1
+  const canRunSelected =
+    runAction === null &&
+    showSelectedActions &&
+    (actionTargets.selected.start.length > 0 ||
+      actionTargets.selected.restart.length > 0)
+  const canStopSelected =
+    runAction === null &&
+    showSelectedActions &&
+    actionTargets.selected.stop.length > 0
+
+  async function runTargets(targets: {
+    start: number[]
+    restart: number[]
+    stop: number[]
+  }) {
+    const harness = getStoredHarnessCommand()
+    for (const taskId of targets.start) {
+      await startTaskAgent(taskId, { harness, detach: true })
+    }
+    for (const taskId of targets.restart) {
+      await restartTaskAgent(taskId, { detach: true })
+    }
+  }
+
+  async function stopTargets(targets: { stop: number[] }) {
+    for (const taskId of targets.stop) {
+      await stopTaskAgent(taskId)
+    }
+  }
+
+  async function handleRunAll() {
+    if (!canRunAll) {
+      return
+    }
+    setRunAction("runAll")
+    try {
+      await runTargets(actionTargets.all)
+      scheduleGraphRefresh()
+      setRunNotice("Started")
+    } catch (e) {
+      setRunNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunAction(null)
+    }
+  }
+
+  async function handleStopAll() {
+    if (!canStopAll) {
+      return
+    }
+    setRunAction("stopAll")
+    try {
+      await stopTargets(actionTargets.all)
+      scheduleGraphRefresh()
+      setRunNotice("Stopped")
+    } catch (e) {
+      setRunNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunAction(null)
+    }
+  }
+
+  async function handleRunSelected() {
+    if (!canRunSelected) {
+      return
+    }
+    setRunAction("runSelected")
+    try {
+      await runTargets(actionTargets.selected)
+      scheduleGraphRefresh()
+      setRunNotice("Started selection")
+    } catch (e) {
+      setRunNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunAction(null)
+    }
+  }
+
+  async function handleStopSelected() {
+    if (!canStopSelected) {
+      return
+    }
+    setRunAction("stopSelected")
+    try {
+      await stopTargets(actionTargets.selected)
+      scheduleGraphRefresh()
+      setRunNotice("Stopped selection")
+    } catch (e) {
+      setRunNotice(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunAction(null)
+    }
+  }
+
   return (
     <ContentPanel>
       <ContentPanelHeader>
@@ -540,6 +722,79 @@ export function EpicView() {
             <div className="text-xs text-muted-foreground">
               Running {runSummary.running} / Eligible {runSummary.eligible} •
               Blocked {runSummary.blocked} • Failed {runSummary.failed}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex overflow-hidden rounded-md border border-border/60">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-none border-0"
+                  disabled={!canRunAll}
+                  title={
+                    canRunAll
+                      ? "Start or restart all eligible tasks"
+                      : runAction !== null
+                        ? "Action in progress"
+                        : "Nothing to start"
+                  }
+                  onClick={() => void handleRunAll()}
+                >
+                  Run all
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-none border-0 border-l"
+                  disabled={!canStopAll}
+                  title={
+                    canStopAll
+                      ? "Stop all running tasks"
+                      : runAction !== null
+                        ? "Action in progress"
+                        : "Nothing to stop"
+                  }
+                  onClick={() => void handleStopAll()}
+                >
+                  Stop all
+                </Button>
+              </div>
+
+              {showSelectedActions ? (
+                <div className="flex overflow-hidden rounded-md border border-border/60">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0"
+                    disabled={!canRunSelected}
+                    title={
+                      canRunSelected
+                        ? "Start or restart selected tasks"
+                        : runAction !== null
+                          ? "Action in progress"
+                          : "Nothing to start in selection"
+                    }
+                    onClick={() => void handleRunSelected()}
+                  >
+                    Run selected
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0 border-l"
+                    disabled={!canStopSelected}
+                    title={
+                      canStopSelected
+                        ? "Stop selected running tasks"
+                        : runAction !== null
+                          ? "Action in progress"
+                          : "Nothing to stop in selection"
+                    }
+                    onClick={() => void handleStopSelected()}
+                  >
+                    Stop selected
+                  </Button>
+                </div>
+              ) : null}
             </div>
             <Tooltip>
               <TooltipTrigger

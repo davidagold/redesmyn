@@ -1,6 +1,5 @@
 import { DotGrid } from "@/components/ui/dot-grid"
 import { Button } from "@/components/ui/button"
-import { startTaskAgent, stopTaskAgent } from "@/api"
 import {
   Position,
   ReactFlow,
@@ -19,7 +18,7 @@ import {
 } from "react"
 import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
-import { getStoredHarnessCommand } from "@/lib/agent-settings"
+import { copyToClipboard } from "@/lib/clipboard"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
@@ -232,11 +231,10 @@ export function GraphView({
   const viewportAnimationIdRef = useRef(0)
   const [viewportAnimation, setViewportAnimation] =
     useState<ViewportAnimation | null>(null)
-  const [bulkAction, setBulkAction] = useState<"start" | "stop" | null>(null)
-  const [bulkError, setBulkError] = useState<string | null>(null)
-  const [bulkBarMounted, setBulkBarMounted] = useState(false)
-  const [bulkBarVisible, setBulkBarVisible] = useState(false)
-  const bulkBarHideTimerRef = useRef<number | null>(null)
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
+  const [selectionBarMounted, setSelectionBarMounted] = useState(false)
+  const [selectionBarVisible, setSelectionBarVisible] = useState(false)
+  const selectionBarHideTimerRef = useRef<number | null>(null)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -250,17 +248,17 @@ export function GraphView({
   )
 
   useEffect(() => {
-    if (!bulkError) {
+    if (!selectionNotice) {
       return
     }
-    const id = window.setTimeout(() => setBulkError(null), 2_500)
+    const id = window.setTimeout(() => setSelectionNotice(null), 2_000)
     return () => window.clearTimeout(id)
-  }, [bulkError])
+  }, [selectionNotice])
 
   useEffect(() => {
     return () => {
-      if (bulkBarHideTimerRef.current !== null) {
-        window.clearTimeout(bulkBarHideTimerRef.current)
+      if (selectionBarHideTimerRef.current !== null) {
+        window.clearTimeout(selectionBarHideTimerRef.current)
       }
     }
   }, [])
@@ -311,10 +309,8 @@ export function GraphView({
     [nodesById],
   )
 
-  const bulkSelection = useMemo(() => {
-    const startableTaskIds = new Set<number>()
-    const stoppableTaskIds = new Set<number>()
-
+  const selectedRunningTaskIds = useMemo(() => {
+    const taskIds = new Set<number>()
     for (const selectedNodeId of selectedNodeIds) {
       const node = nodesById.get(selectedNodeId) ?? null
       if (!node || node.primaryTaskId === null) {
@@ -329,18 +325,12 @@ export function GraphView({
         node.agentId !== null ? (agentsById.get(node.agentId) ?? null) : null
       const status = agent?.status ?? null
 
-      if (!agent || status === "stopped") {
-        startableTaskIds.add(task.id)
-      }
       if (status === "running" || status === "blocked") {
-        stoppableTaskIds.add(task.id)
+        taskIds.add(task.id)
       }
     }
 
-    return {
-      startableTaskIds: [...startableTaskIds],
-      stoppableTaskIds: [...stoppableTaskIds],
-    }
+    return [...taskIds].sort((a, b) => a - b)
   }, [agentsById, nodesById, selectedNodeIds, tasksById])
 
   const trunkMarks = useMemo(() => {
@@ -1020,70 +1010,28 @@ export function GraphView({
     didInitialFitRef.current = true
   }, [flow, epicSlug, layoutVersion, nodes.length])
 
-  const bulkActionsEnabled = bulkAction === null && !!onRequestRefresh
-  const bulkBarTargetVisible = selectedNodeIds.size > 1
-  const canBulkStart =
-    bulkActionsEnabled && bulkSelection.startableTaskIds.length > 0
-  const canBulkStop =
-    bulkActionsEnabled && bulkSelection.stoppableTaskIds.length > 0
+  const selectionBarTargetVisible = selectedNodeIds.size > 1
 
   useEffect(() => {
-    if (bulkBarTargetVisible) {
-      if (bulkBarHideTimerRef.current !== null) {
-        window.clearTimeout(bulkBarHideTimerRef.current)
-        bulkBarHideTimerRef.current = null
+    if (selectionBarTargetVisible) {
+      if (selectionBarHideTimerRef.current !== null) {
+        window.clearTimeout(selectionBarHideTimerRef.current)
+        selectionBarHideTimerRef.current = null
       }
-      setBulkBarMounted(true)
-      window.requestAnimationFrame(() => setBulkBarVisible(true))
+      setSelectionBarMounted(true)
+      window.requestAnimationFrame(() => setSelectionBarVisible(true))
       return
     }
 
-    setBulkBarVisible(false)
-    if (bulkBarHideTimerRef.current !== null) {
-      window.clearTimeout(bulkBarHideTimerRef.current)
+    setSelectionBarVisible(false)
+    if (selectionBarHideTimerRef.current !== null) {
+      window.clearTimeout(selectionBarHideTimerRef.current)
     }
-    bulkBarHideTimerRef.current = window.setTimeout(() => {
-      setBulkBarMounted(false)
-      bulkBarHideTimerRef.current = null
+    selectionBarHideTimerRef.current = window.setTimeout(() => {
+      setSelectionBarMounted(false)
+      selectionBarHideTimerRef.current = null
     }, 200)
-  }, [bulkBarTargetVisible])
-
-  async function handleBulkStart() {
-    if (!onRequestRefresh) {
-      return
-    }
-    setBulkAction("start")
-    setBulkError(null)
-    try {
-      const harness = getStoredHarnessCommand()
-      for (const taskId of bulkSelection.startableTaskIds) {
-        await startTaskAgent(taskId, { harness, detach: true })
-      }
-      onRequestRefresh()
-    } catch (e) {
-      setBulkError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBulkAction(null)
-    }
-  }
-
-  async function handleBulkStop() {
-    if (!onRequestRefresh) {
-      return
-    }
-    setBulkAction("stop")
-    setBulkError(null)
-    try {
-      for (const taskId of bulkSelection.stoppableTaskIds) {
-        await stopTaskAgent(taskId)
-      }
-      onRequestRefresh()
-    } catch (e) {
-      setBulkError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBulkAction(null)
-    }
-  }
+  }, [selectionBarTargetVisible])
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
@@ -1134,12 +1082,12 @@ export function GraphView({
               } as CSSProperties
             }
           />
-          {bulkBarMounted ? (
+          {selectionBarMounted ? (
             <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
               <div
                 className={
                   "pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-all duration-200 will-change-transform " +
-                  (bulkBarVisible
+                  (selectionBarVisible
                     ? "translate-y-0 opacity-100"
                     : "-translate-y-12 opacity-0")
                 }
@@ -1153,49 +1101,41 @@ export function GraphView({
                     variant="outline"
                     size="sm"
                     className="rounded-none border-0"
-                    disabled={!canBulkStart}
+                    disabled={selectedRunningTaskIds.length === 0}
                     title={
-                      canBulkStart
-                        ? "Start selected agents"
-                        : !onRequestRefresh
-                          ? "Refresh unavailable"
-                          : "No startable tasks selected"
+                      selectedRunningTaskIds.length
+                        ? "Copy a tmux command to attach (sequentially) to running selected agents"
+                        : "No running selected agents"
                     }
-                    onClick={() => void handleBulkStart()}
+                    onClick={() => {
+                      const sessions = selectedRunningTaskIds.map(
+                        (taskId) => `rn-a-${taskId}`,
+                      )
+                      const cmd =
+                        `for s in ${sessions.map((s) => `'${s}'`).join(" ")}; do ` +
+                        `tmux has-session -t "$s" 2>/dev/null && tmux attach -t "$s"; ` +
+                        "done"
+                      void copyToClipboard(cmd)
+                        .then(() => setSelectionNotice("Attach command copied"))
+                        .catch((e: unknown) =>
+                          setSelectionNotice(
+                            e instanceof Error ? e.message : String(e),
+                          ),
+                        )
+                    }}
                   >
-                    Start
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-none border-0 border-l"
-                    disabled={!canBulkStop}
-                    title={
-                      canBulkStop
-                        ? "Stop selected agents"
-                        : !onRequestRefresh
-                          ? "Refresh unavailable"
-                          : "No stoppable tasks selected"
-                    }
-                    onClick={() => void handleBulkStop()}
-                  >
-                    Stop
+                    Copy attach
                   </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={bulkAction !== null}
-                  onClick={onClearSelection}
-                >
+                <Button variant="ghost" size="sm" onClick={onClearSelection}>
                   Clear
                 </Button>
-                {bulkError ? (
+                {selectionNotice ? (
                   <div
                     className="max-w-[24rem] truncate text-xs text-destructive"
-                    title={bulkError}
+                    title={selectionNotice}
                   >
-                    {bulkError}
+                    {selectionNotice}
                   </div>
                 ) : null}
               </div>
