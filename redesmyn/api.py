@@ -21,7 +21,6 @@ from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.agent_runtime import (
     restart_task_agent as restart_task_agent_runtime,
-    start_task_agent as start_task_agent_runtime,
     stop_task_agent as stop_task_agent_runtime,
 )
 from redesmyn.db import (
@@ -441,35 +440,16 @@ async def start_task_agent(
     task_id: int,
     request: TaskAgentStartRequest,
 ) -> TaskAgentStartResponse:
-    try:
-        result = await start_task_agent_runtime(
-            app.state.ctx,
-            task_id=task_id,
-            harness_command=request.harness,
-            detach=request.detach,
-        )
-    except (RuntimeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    row = result.agent
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        _, node = await _require_task_node(session, task_id=task_id)
-
-    return TaskAgentStartResponse(
-        task_id=task_id,
-        node_id=node.id,
-        agent_id=row.id,
-        agent_name=row.display_name,
-        agent_status=row.status,
-        harness_profile_id=row.harness_profile_id or "",
-        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
-        resolved_profile=TypeAdapter(
-            HarnessProfileDefinitionResponse | None
-        ).validate_python(row.resolved_profile),
-        started_at=row.started_at or datetime.now(UTC),
-        started=result.started,
-        warnings=list(result.warnings),
+    # NOTE: This endpoint used to start a tmux-backed harness session directly on the
+    # API host. That only works in the current local-dev architecture where the API
+    # host and the daemon/runner host are the same machine. We intentionally disable
+    # this until the daemon/control-plane split (epics/revise-architecture) lands.
+    raise HTTPException(
+        status_code=501,
+        detail=(
+            "Starting agents via the API is disabled until the daemon/control-plane split; "
+            "use `rn agent start --task <id>` on the runner host."
+        ),
     )
 
 

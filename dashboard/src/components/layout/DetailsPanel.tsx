@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import { SlidePanel } from "@/components/ui/slide-panel"
-import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import { restartTaskAgent, stopTaskAgent } from "@/api"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import {
@@ -87,23 +87,6 @@ function AgentActions({
     statusLabel === "running" ||
     statusLabel === "blocked" ||
     statusLabel === "error"
-
-  async function handleStart() {
-    setPending("start")
-    setError(null)
-    try {
-      await startTaskAgent(taskId, {
-        harness: command,
-        detach: orchestrationDefaults?.harness.detach ?? true,
-      })
-      storeHarnessCommand(command)
-      onRequestRefresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setPending(null)
-    }
-  }
 
   async function handleStop() {
     setPending("stop")
@@ -204,8 +187,8 @@ function AgentActions({
               ) : (
                 <Button
                   size="xs"
-                  onClick={() => void handleStart()}
-                  disabled={pending !== null || !command.trim()}
+                  title="Start disabled (use `rn agent start --task …`)"
+                  disabled
                 >
                   Start
                 </Button>
