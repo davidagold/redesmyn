@@ -213,6 +213,47 @@ def _tmux_send_lines(*, name: str, lines: list[str]) -> None:
         _tmux_send_enter(name=name)
 
 
+def _tmux_capture_pane(*, name: str) -> str:
+    proc = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", name],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "tmux capture-pane failed")
+    return proc.stdout
+
+
+async def _wait_for_agent_input_ready(*, name: str, timeout_s: float) -> None:
+    """Best-effort readiness check.
+
+    Some harness UIs (notably Codex TUI) may buffer/ignore early keystrokes during
+    startup. We wait briefly for recognizable prompts before sending the prelude.
+    """
+
+    deadline = asyncio.get_running_loop().time() + max(0.0, timeout_s)
+    while True:
+        if not _tmux_has_session(name=name):
+            return
+        try:
+            pane = _tmux_capture_pane(name=name)
+        except RuntimeError:
+            pane = ""
+        if (
+            "OpenAI Codex" in pane
+            or "100% context left" in pane
+            or "\n> " in pane
+            or ">_" in pane
+        ):
+            return
+        now = asyncio.get_running_loop().time()
+        if now >= deadline:
+            return
+        await asyncio.sleep(0.1)
+
+
 async def ensure_host_row(session: AsyncSession, ctx: RepoContext) -> Host:
     config = load_or_create_runner_host_config(ctx)
     capabilities = HostCapabilities(
@@ -576,6 +617,8 @@ async def send_agent_prelude(
     tmux_name = tmux_session_name_for_task(task_id=task.id)
     if not (has_tmux() and _tmux_has_session(name=tmux_name)):
         return
+
+    await _wait_for_agent_input_ready(name=tmux_name, timeout_s=3.0)
 
     _tmux_send_lines(
         name=tmux_name,
