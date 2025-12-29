@@ -52,6 +52,8 @@ interface GraphViewProps {
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
   activityByNodeId: Map<number, NodeActivity>
+  harnessCommand: string
+  detach: boolean
   trunk?: TrunkTimeline | null
   selectedNodeIds: ReadonlySet<number>
   selectedNodeId: number | null
@@ -210,6 +212,8 @@ export function GraphView({
   tasksById,
   agentsById,
   activityByNodeId,
+  harnessCommand,
+  detach,
   trunk,
   selectedNodeIds,
   selectedNodeId,
@@ -790,6 +794,8 @@ export function GraphView({
           agent,
           activity,
           epicSlug,
+          harnessCommand,
+          detach,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
           onSelectNode,
           onRequestRefresh,
@@ -810,8 +816,10 @@ export function GraphView({
   }, [
     activityByNodeId,
     agentsById,
+    detach,
     epicSlug,
     focusPositions,
+    harnessCommand,
     onSelectNode,
     onRequestRefresh,
     nodesById,

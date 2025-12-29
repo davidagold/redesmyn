@@ -11,6 +11,8 @@ interface NodeTreeProps {
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
+  harnessCommand: string
+  detach: boolean
   selectedNodeId: number | null
   epicSlug?: string | null
   onSelectNode: (nodeId: number) => void
@@ -22,6 +24,8 @@ export function NodeTree({
   childrenByParent,
   tasksById,
   agentsById,
+  harnessCommand,
+  detach,
   selectedNodeId,
   epicSlug,
   onSelectNode,
@@ -46,6 +50,8 @@ export function NodeTree({
               task={task}
               agent={agent}
               branchLabel={branchLabel}
+              harnessCommand={harnessCommand}
+              detach={detach}
               isSelected={selectedNodeId === node.id}
               onSelect={(_options) => onSelectNode(node.id)}
             />
@@ -57,6 +63,8 @@ export function NodeTree({
                   childrenByParent={childrenByParent}
                   tasksById={tasksById}
                   agentsById={agentsById}
+                  harnessCommand={harnessCommand}
+                  detach={detach}
                   selectedNodeId={selectedNodeId}
                   epicSlug={epicSlug}
                   onSelectNode={onSelectNode}

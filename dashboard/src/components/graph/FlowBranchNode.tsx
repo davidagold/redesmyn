@@ -14,6 +14,8 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   agent?: Agent
   activity?: NodeActivity
   epicSlug?: string | null
+  harnessCommand: string
+  detach: boolean
   edgeHighlighted?: boolean
   onSelectNode: (nodeId: number, options: { additive: boolean }) => void
   onRequestRefresh?: () => void
@@ -31,6 +33,8 @@ export function FlowBranchNode({
     agent,
     activity,
     epicSlug,
+    harnessCommand,
+    detach,
     edgeHighlighted,
     onSelectNode,
     onRequestRefresh,
@@ -55,6 +59,8 @@ export function FlowBranchNode({
         agent={agent}
         activity={activity}
         branchLabel={branchLabel}
+        harnessCommand={harnessCommand}
+        detach={detach}
         isSelected={selected}
         isHighlighted={edgeHighlighted}
         onSelect={(options) => onSelectNode(node.id, options)}

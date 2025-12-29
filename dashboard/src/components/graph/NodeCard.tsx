@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
-import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
@@ -16,6 +15,8 @@ interface NodeCardProps {
   agent?: Agent
   activity?: NodeActivity
   branchLabel: string
+  harnessCommand: string
+  detach: boolean
   isSelected: boolean
   isHighlighted?: boolean
   onSelect: (options: { additive: boolean }) => void
@@ -41,6 +42,8 @@ export function NodeCard({
   agent,
   activity,
   branchLabel,
+  harnessCommand,
+  detach,
   isSelected,
   isHighlighted = false,
   onSelect,
@@ -72,7 +75,8 @@ export function NodeCard({
     task?.state !== "done"
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
-  const canStart = !agent || agentStatus === "stopped"
+  const canStart =
+    (!agent || agentStatus === "stopped") && harnessCommand.trim()
   const canRestart = isRunning || agentStatus === "error"
 
   async function handleAttach() {
@@ -94,11 +98,13 @@ export function NodeCard({
     if (taskId === null || !onRequestRefresh) {
       return
     }
+    if (!harnessCommand.trim()) {
+      return
+    }
     setPendingAction("start")
     setActionError(null)
     try {
-      const harness = getStoredHarnessCommand()
-      await startTaskAgent(taskId, { harness, detach: true })
+      await startTaskAgent(taskId, { harness: harnessCommand, detach })
       onRequestRefresh()
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e))
@@ -214,7 +220,13 @@ export function NodeCard({
           size="icon-xs"
           aria-label="Start agent"
           title="Start agent"
-          disabledReason={pendingAction !== null ? "Action in progress" : null}
+          disabledReason={
+            pendingAction !== null
+              ? "Action in progress"
+              : !harnessCommand.trim()
+                ? "Set a harness command in Configure"
+                : null
+          }
           onClick={(e) => {
             e.preventDefault()
             e.stopPropagation()

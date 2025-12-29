@@ -16,7 +16,6 @@ import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
-import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight, Play, Settings2, Square } from "lucide-react"
@@ -633,6 +632,10 @@ export function EpicView() {
     )
   }, [configDetach, configHarness, configPrelude, orchestrationDefaults])
 
+  const configuredHarnessCommand =
+    orchestrationDefaults?.harness.command?.trim() ?? ""
+  const configuredDetach = orchestrationDefaults?.harness.detach ?? true
+
   async function handleSaveConfig() {
     if (configPending || !configDirty) {
       return
@@ -657,16 +660,22 @@ export function EpicView() {
     }
   }
 
+  const needsHarnessForAll = actionTargets.all.start.length > 0
+  const needsHarnessForSelected =
+    selectedNodeIds.size > 1 && actionTargets.selected.start.length > 0
   const canRunAll =
     runAction === null &&
-    (actionTargets.all.start.length > 0 || actionTargets.all.restart.length > 0)
+    (actionTargets.all.start.length > 0 ||
+      actionTargets.all.restart.length > 0) &&
+    (!needsHarnessForAll || !!configuredHarnessCommand)
   const canStopAll = runAction === null && actionTargets.all.stop.length > 0
   const showSelectedActions = selectedNodeIds.size > 1
   const canRunSelected =
     runAction === null &&
     showSelectedActions &&
     (actionTargets.selected.start.length > 0 ||
-      actionTargets.selected.restart.length > 0)
+      actionTargets.selected.restart.length > 0) &&
+    (!needsHarnessForSelected || !!configuredHarnessCommand)
   const canStopSelected =
     runAction === null &&
     showSelectedActions &&
@@ -677,12 +686,17 @@ export function EpicView() {
     restart: number[]
     stop: number[]
   }) {
-    const harness = getStoredHarnessCommand()
+    if (targets.start.length > 0 && !configuredHarnessCommand) {
+      throw new Error("Set a harness command in Configure")
+    }
     for (const taskId of targets.start) {
-      await startTaskAgent(taskId, { harness, detach: true })
+      await startTaskAgent(taskId, {
+        harness: configuredHarnessCommand,
+        detach: configuredDetach,
+      })
     }
     for (const taskId of targets.restart) {
-      await restartTaskAgent(taskId, { detach: true })
+      await restartTaskAgent(taskId, { detach: configuredDetach })
     }
   }
 
@@ -886,7 +900,9 @@ export function EpicView() {
                       ? null
                       : runAction !== null
                         ? "Action in progress"
-                        : "Nothing to start"
+                        : needsHarnessForAll && !configuredHarnessCommand
+                          ? "Set a harness command in Configure"
+                          : "Nothing to start"
                   }
                   onClick={() => void handleRunAll()}
                 >
@@ -911,9 +927,11 @@ export function EpicView() {
                         ? null
                         : runAction !== null
                           ? "Action in progress"
-                          : !showSelectedActions
-                            ? "Select 2+ tasks"
-                            : "Nothing to start in selection"
+                          : needsHarnessForSelected && !configuredHarnessCommand
+                            ? "Set a harness command in Configure"
+                            : !showSelectedActions
+                              ? "Select 2+ tasks"
+                              : "Nothing to start in selection"
                     }
                     onClick={() => void handleRunSelected()}
                   >
@@ -1184,6 +1202,8 @@ export function EpicView() {
             tasksById={tasksById}
             agentsById={agentsById}
             activityByNodeId={activityByNodeId}
+            harnessCommand={configuredHarnessCommand}
+            detach={configuredDetach}
             trunk={graph.trunk ?? null}
             selectedNodeIds={selectedNodeIds}
             selectedNodeId={nodeId}
