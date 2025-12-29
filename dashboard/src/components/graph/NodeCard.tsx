@@ -166,7 +166,7 @@ export function NodeCard({
         <>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label="Copy attach command"
             title="Copy attach command"
             disabled={pendingAction !== null}
@@ -180,7 +180,7 @@ export function NodeCard({
           </Button>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             aria-label="Restart agent"
             title="Restart agent"
             disabled={pendingAction !== null}
@@ -194,7 +194,7 @@ export function NodeCard({
           </Button>
           <Button
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             className="text-destructive hover:bg-destructive/10"
             aria-label="Stop agent"
             title="Stop agent"
@@ -211,7 +211,7 @@ export function NodeCard({
       ) : canRestart ? (
         <Button
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           aria-label="Restart agent"
           title="Restart agent"
           disabled={pendingAction !== null}
@@ -226,7 +226,7 @@ export function NodeCard({
       ) : canStart ? (
         <Button
           variant="ghost"
-          size="icon-xs"
+          size="icon-sm"
           aria-label="Start agent"
           title="Start agent"
           disabled={pendingAction !== null}
@@ -290,15 +290,18 @@ export function NodeCard({
                 {quickActions}
               </div>
             ) : null}
-            <div className="relative inline-flex h-3 w-3" title={tooltip}>
+            <div
+              className="relative inline-flex size-6 items-center justify-center"
+              title={tooltip}
+            >
               {commitHot ? (
-                <span className="absolute inset-0 inline-flex animate-ping rounded-full bg-sky-400/60 opacity-75" />
+                <span className="absolute inline-flex size-3 animate-ping rounded-full bg-sky-400/60 opacity-75" />
               ) : worktreeHot ? (
-                <span className="absolute inset-0 inline-flex animate-ping rounded-full bg-amber-400/60 opacity-75" />
+                <span className="absolute inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
               <span
                 className={cn(
-                  "relative inline-flex h-3 w-3 rounded-full border",
+                  "relative inline-flex size-3 rounded-full border",
                   statusColor(task, agent),
                 )}
                 aria-label={tooltip}
