@@ -47,7 +47,7 @@ export function NodeTree({
               agent={agent}
               branchLabel={branchLabel}
               isSelected={selectedNodeId === node.id}
-              onSelect={() => onSelectNode(node.id)}
+              onSelect={(_options) => onSelectNode(node.id)}
             />
 
             {children.length > 0 && (

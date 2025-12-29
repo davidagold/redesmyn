@@ -1,4 +1,6 @@
 import { DotGrid } from "@/components/ui/dot-grid"
+import { Button } from "@/components/ui/button"
+import { startTaskAgent, stopTaskAgent } from "@/api"
 import {
   Position,
   ReactFlow,
@@ -17,6 +19,7 @@ import {
 } from "react"
 import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
+import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
@@ -51,11 +54,12 @@ interface GraphViewProps {
   agentsById: Map<number, Agent>
   activityByNodeId: Map<number, NodeActivity>
   trunk?: TrunkTimeline | null
+  selectedNodeIds: ReadonlySet<number>
   selectedNodeId: number | null
   selectedEdgeId: string | null
   focusMode: boolean
   epicSlug?: string | null
-  onSelectNode: (nodeId: number) => void
+  onSelectNode: (nodeId: number, options: { additive: boolean }) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
   onRequestRefresh?: () => void
@@ -208,6 +212,7 @@ export function GraphView({
   agentsById,
   activityByNodeId,
   trunk,
+  selectedNodeIds,
   selectedNodeId,
   selectedEdgeId,
   focusMode,
@@ -223,9 +228,12 @@ export function GraphView({
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
   const [layoutVersion, setLayoutVersion] = useState(0)
+  const didInitialFitRef = useRef(false)
   const viewportAnimationIdRef = useRef(0)
   const [viewportAnimation, setViewportAnimation] =
     useState<ViewportAnimation | null>(null)
+  const [bulkAction, setBulkAction] = useState<"start" | "stop" | null>(null)
+  const [bulkError, setBulkError] = useState<string | null>(null)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -237,6 +245,14 @@ export function GraphView({
     }),
     [],
   )
+
+  useEffect(() => {
+    if (!bulkError) {
+      return
+    }
+    const id = window.setTimeout(() => setBulkError(null), 2_500)
+    return () => window.clearTimeout(id)
+  }, [bulkError])
 
   const queueViewportAnimation = useCallback(
     (nextViewport: Viewport, duration: number) => {
@@ -283,6 +299,38 @@ export function GraphView({
     () => [...nodesById.values()].sort((a, b) => a.id - b.id),
     [nodesById],
   )
+
+  const bulkSelection = useMemo(() => {
+    const startableTaskIds = new Set<number>()
+    const stoppableTaskIds = new Set<number>()
+
+    for (const selectedNodeId of selectedNodeIds) {
+      const node = nodesById.get(selectedNodeId) ?? null
+      if (!node || node.primaryTaskId === null) {
+        continue
+      }
+      const task = tasksById.get(node.primaryTaskId) ?? null
+      if (!task || task.state === "blocked" || task.state === "done") {
+        continue
+      }
+
+      const agent =
+        node.agentId !== null ? (agentsById.get(node.agentId) ?? null) : null
+      const status = agent?.status ?? null
+
+      if (!agent || status === "stopped") {
+        startableTaskIds.add(task.id)
+      }
+      if (status === "running" || status === "blocked") {
+        stoppableTaskIds.add(task.id)
+      }
+    }
+
+    return {
+      startableTaskIds: [...startableTaskIds],
+      stoppableTaskIds: [...stoppableTaskIds],
+    }
+  }, [agentsById, nodesById, selectedNodeIds, tasksById])
 
   const trunkMarks = useMemo(() => {
     if (!trunk || !trunk.baseSha) {
@@ -477,13 +525,17 @@ export function GraphView({
     trunkColumnWidth,
   ])
 
-  const hasSelection = selectedNodeId !== null || selectedEdgeId !== null
+  const hasSelection = selectedNodeIds.size > 0 || selectedEdgeId !== null
   const hasSelectionRef = useRef(hasSelection)
   const previousHasSelectionRef = useRef(hasSelection)
 
   useEffect(() => {
     hasSelectionRef.current = hasSelection
   }, [hasSelection])
+
+  useEffect(() => {
+    didInitialFitRef.current = false
+  }, [epicSlug])
 
   const selectionLensRef = useRef<{
     key: string
@@ -744,7 +796,7 @@ export function GraphView({
         selectable: true,
         draggable: false,
         focusable: true,
-        selected: selectedNodeId === graphNode.id,
+        selected: selectedNodeIds.has(graphNode.id),
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         style: {
@@ -764,7 +816,7 @@ export function GraphView({
     nodesById,
     positions,
     selectedEdgeNodeIds,
-    selectedNodeId,
+    selectedNodeIds,
     tasksById,
     trunkLayout,
   ])
@@ -949,12 +1001,57 @@ export function GraphView({
       return
     }
 
-    if (hasSelectionRef.current) {
+    if (didInitialFitRef.current || hasSelectionRef.current) {
       return
     }
 
     flow.fitView({ padding: 0.2, duration: 200 })
-  }, [flow, layoutVersion, nodes.length])
+    didInitialFitRef.current = true
+  }, [flow, epicSlug, layoutVersion, nodes.length])
+
+  const bulkActionsEnabled = bulkAction === null && !!onRequestRefresh
+  const showBulkActions = selectedNodeIds.size > 1
+  const canBulkStart =
+    bulkActionsEnabled && bulkSelection.startableTaskIds.length > 0
+  const canBulkStop =
+    bulkActionsEnabled && bulkSelection.stoppableTaskIds.length > 0
+
+  async function handleBulkStart() {
+    if (!onRequestRefresh) {
+      return
+    }
+    setBulkAction("start")
+    setBulkError(null)
+    try {
+      const harness = getStoredHarnessCommand()
+      for (const taskId of bulkSelection.startableTaskIds) {
+        await startTaskAgent(taskId, { harness, detach: true })
+      }
+      onRequestRefresh()
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBulkAction(null)
+    }
+  }
+
+  async function handleBulkStop() {
+    if (!onRequestRefresh) {
+      return
+    }
+    setBulkAction("stop")
+    setBulkError(null)
+    try {
+      for (const taskId of bulkSelection.stoppableTaskIds) {
+        await stopTaskAgent(taskId)
+      }
+      onRequestRefresh()
+    } catch (e) {
+      setBulkError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBulkAction(null)
+    }
+  }
 
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
@@ -1005,6 +1102,68 @@ export function GraphView({
               } as CSSProperties
             }
           />
+          {showBulkActions ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+              <div
+                className="pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="text-xs text-muted-foreground">
+                  {selectedNodeIds.size} selected
+                </div>
+                <div className="flex overflow-hidden rounded-md border border-border/60">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0"
+                    disabled={!canBulkStart}
+                    title={
+                      canBulkStart
+                        ? "Start selected agents"
+                        : !onRequestRefresh
+                          ? "Refresh unavailable"
+                          : "No startable tasks selected"
+                    }
+                    onClick={() => void handleBulkStart()}
+                  >
+                    Start
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0 border-l"
+                    disabled={!canBulkStop}
+                    title={
+                      canBulkStop
+                        ? "Stop selected agents"
+                        : !onRequestRefresh
+                          ? "Refresh unavailable"
+                          : "No stoppable tasks selected"
+                    }
+                    onClick={() => void handleBulkStop()}
+                  >
+                    Stop
+                  </Button>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={bulkAction !== null}
+                  onClick={onClearSelection}
+                >
+                  Clear
+                </Button>
+                {bulkError ? (
+                  <div
+                    className="max-w-[24rem] truncate text-xs text-destructive"
+                    title={bulkError}
+                  >
+                    {bulkError}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="relative h-full overflow-auto p-6 text-sm text-muted-foreground">

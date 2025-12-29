@@ -17,7 +17,7 @@ interface NodeCardProps {
   branchLabel: string
   isSelected: boolean
   isHighlighted?: boolean
-  onSelect: () => void
+  onSelect: (options: { additive: boolean }) => void
   onRequestRefresh?: () => void
 }
 
@@ -259,13 +259,13 @@ export function NodeCard({
             ? "ring-1 ring-ring/60"
             : null,
       )}
-      onClick={onSelect}
+      onClick={(e) => onSelect({ additive: e.metaKey || e.ctrlKey })}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
-          onSelect()
+          onSelect({ additive: false })
         }
       }}
     >

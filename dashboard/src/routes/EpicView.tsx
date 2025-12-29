@@ -63,6 +63,8 @@ export function EpicView() {
   } = useEpics()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
+  const selectedNodeIdsRef = useRef(selectedNodeIds)
   const refreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
@@ -324,6 +326,32 @@ export function EpicView() {
   }, [])
 
   useEffect(() => {
+    selectedNodeIdsRef.current = selectedNodeIds
+  }, [selectedNodeIds])
+
+  useEffect(() => {
+    if (selectedEdgeId !== null) {
+      setSelectedNodeIds(new Set())
+      return
+    }
+    if (nodeId === null) {
+      setSelectedNodeIds(new Set())
+      return
+    }
+    setSelectedNodeIds((current) => {
+      if (current.size === 0) {
+        return new Set([nodeId])
+      }
+      if (current.has(nodeId)) {
+        return current
+      }
+      const next = new Set(current)
+      next.add(nodeId)
+      return next
+    })
+  }, [nodeId, selectedEdgeId])
+
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (
         e.target instanceof HTMLElement &&
@@ -359,17 +387,59 @@ export function EpicView() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [epicMenuOpen, epicSlug, navigate, nodeId, selectedEdgeId, selectedNode])
 
-  function handleSelectNode(id: number) {
-    if (epicSlug) {
+  function handleSelectNode(id: number, options: { additive: boolean }) {
+    if (!epicSlug) {
+      return
+    }
+
+    if (!options.additive) {
+      setSelectedNodeIds(new Set([id]))
       void navigate({
         to: "/graph/$epicSlug/$nodeId",
         params: { epicSlug, nodeId: String(id) },
       })
+      return
     }
+
+    const current = selectedNodeIdsRef.current
+    const next = new Set(current)
+    const wasSelected = next.has(id)
+
+    if (wasSelected) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
+
+    setSelectedNodeIds(next)
+
+    if (!wasSelected) {
+      void navigate({
+        to: "/graph/$epicSlug/$nodeId",
+        params: { epicSlug, nodeId: String(id) },
+      })
+      return
+    }
+
+    if (nodeId !== id) {
+      return
+    }
+
+    const nextPrimary = next.values().next().value ?? null
+    if (nextPrimary === null) {
+      void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
+      return
+    }
+
+    void navigate({
+      to: "/graph/$epicSlug/$nodeId",
+      params: { epicSlug, nodeId: String(nextPrimary) },
+    })
   }
 
   function handleSelectEdge(fromId: number, toId: number) {
     setFocusMode(false)
+    setSelectedNodeIds(new Set())
     if (epicSlug) {
       void navigate({
         to: "/graph/$epicSlug/e/$fromNodeId/$toNodeId",
@@ -384,6 +454,7 @@ export function EpicView() {
 
   function handleClearSelection() {
     setFocusMode(false)
+    setSelectedNodeIds(new Set())
     if (epicSlug) {
       void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
     }
@@ -559,6 +630,7 @@ export function EpicView() {
             agentsById={agentsById}
             activityByNodeId={activityByNodeId}
             trunk={graph.trunk ?? null}
+            selectedNodeIds={selectedNodeIds}
             selectedNodeId={nodeId}
             selectedEdgeId={selectedEdgeId}
             focusMode={focusMode}
