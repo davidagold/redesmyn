@@ -5,7 +5,13 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
-import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import {
+  restartTaskAgent,
+  startTaskAgent,
+  stopTaskAgent,
+  updateOrchestrationDefaults,
+} from "@/api"
+import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
@@ -13,14 +19,7 @@ import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
-import {
-  ChevronRight,
-  Play,
-  Settings2,
-  Square,
-  Terminal,
-  Users,
-} from "lucide-react"
+import { ChevronRight, Play, Settings2, Square } from "lucide-react"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -75,45 +74,34 @@ export function EpicView() {
   const [, setActivityTick] = useState(0)
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
-  const [defaultsMenuOpen, setDefaultsMenuOpen] = useState(false)
-  const [defaultsMenuMounted, setDefaultsMenuMounted] = useState(false)
-  const [defaultsMenuVisible, setDefaultsMenuVisible] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
+  const [configPending, setConfigPending] = useState(false)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [configNotice, setConfigNotice] = useState<string | null>(null)
+  const [configHarness, setConfigHarness] = useState("")
+  const [configDetach, setConfigDetach] = useState(true)
+  const [configPrelude, setConfigPrelude] = useState("")
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
     refresh: refreshOrchestrationDefaults,
   } = useOrchestrationDefaults()
-  const defaultsCloseTimerRef = useRef<number | null>(null)
 
-  const closeDefaultsMenu = useCallback(() => {
-    setDefaultsMenuOpen(false)
+  const closeConfig = useCallback(() => {
+    setConfigOpen(false)
+    setConfigError(null)
   }, [])
 
   useEffect(() => {
-    if (defaultsCloseTimerRef.current !== null) {
-      window.clearTimeout(defaultsCloseTimerRef.current)
-      defaultsCloseTimerRef.current = null
-    }
-
-    if (defaultsMenuOpen) {
-      setDefaultsMenuMounted(true)
-      requestAnimationFrame(() => setDefaultsMenuVisible(true))
+    if (!configOpen) {
       return
     }
-
-    setDefaultsMenuVisible(false)
-    defaultsCloseTimerRef.current = window.setTimeout(() => {
-      setDefaultsMenuMounted(false)
-      defaultsCloseTimerRef.current = null
-    }, 150)
-
-    return () => {
-      if (defaultsCloseTimerRef.current !== null) {
-        window.clearTimeout(defaultsCloseTimerRef.current)
-        defaultsCloseTimerRef.current = null
-      }
-    }
-  }, [defaultsMenuOpen])
+    setConfigError(null)
+    setConfigNotice(null)
+    setConfigHarness(orchestrationDefaults?.harness.command ?? "")
+    setConfigDetach(orchestrationDefaults?.harness.detach ?? true)
+    setConfigPrelude(orchestrationDefaults?.harness.prelude ?? "")
+  }, [configOpen, orchestrationDefaults])
 
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
@@ -494,19 +482,9 @@ export function EpicView() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (
-        e.target instanceof HTMLElement &&
-        (e.target.isContentEditable ||
-          e.target.tagName === "INPUT" ||
-          e.target.tagName === "TEXTAREA" ||
-          e.target.tagName === "SELECT")
-      ) {
-        return
-      }
-
       if (e.key === "Escape") {
-        if (defaultsMenuOpen) {
-          closeDefaultsMenu()
+        if (configOpen) {
+          closeConfig()
           return
         }
         if (epicMenuOpen) {
@@ -526,6 +504,16 @@ export function EpicView() {
         return
       }
 
+      if (
+        e.target instanceof HTMLElement &&
+        (e.target.isContentEditable ||
+          e.target.tagName === "INPUT" ||
+          e.target.tagName === "TEXTAREA" ||
+          e.target.tagName === "SELECT")
+      ) {
+        return
+      }
+
       if (e.key === "f" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (!selectedNode) {
           return
@@ -537,8 +525,8 @@ export function EpicView() {
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [
-    closeDefaultsMenu,
-    defaultsMenuOpen,
+    closeConfig,
+    configOpen,
     epicMenuOpen,
     epicSlug,
     navigate,
@@ -632,6 +620,41 @@ export function EpicView() {
     await refreshEpics()
     await refreshOrchestrationDefaults()
     await refreshGraph()
+  }
+
+  const configDirty = useMemo(() => {
+    const currentCommand = orchestrationDefaults?.harness.command ?? ""
+    const currentDetach = orchestrationDefaults?.harness.detach ?? true
+    const currentPrelude = orchestrationDefaults?.harness.prelude ?? ""
+    return (
+      configHarness !== currentCommand ||
+      configDetach !== currentDetach ||
+      configPrelude !== currentPrelude
+    )
+  }, [configDetach, configHarness, configPrelude, orchestrationDefaults])
+
+  async function handleSaveConfig() {
+    if (configPending || !configDirty) {
+      return
+    }
+    setConfigPending(true)
+    setConfigError(null)
+    setConfigNotice(null)
+    try {
+      await updateOrchestrationDefaults({
+        harness: {
+          command: configHarness.trim() ? configHarness.trim() : null,
+          detach: configDetach,
+          prelude: configPrelude.trim() ? configPrelude : null,
+        },
+      })
+      await refreshOrchestrationDefaults()
+      setConfigNotice("Saved")
+    } catch (e) {
+      setConfigError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setConfigPending(false)
+    }
   }
 
   const canRunAll =
@@ -950,8 +973,8 @@ export function EpicView() {
                 variant="ghost"
                 size="sm"
                 className="h-6"
-                onClick={() => setDefaultsMenuOpen((open) => !open)}
-                title="View orchestration defaults"
+                onClick={() => setConfigOpen((open) => !open)}
+                title="Configure harness and agent prelude"
               >
                 <Settings2 />
                 Configure
@@ -976,101 +999,161 @@ export function EpicView() {
 
       {graph ? (
         <div className="relative flex min-h-0 flex-1">
-          {defaultsMenuMounted ? (
-            <>
-              <button
-                type="button"
-                aria-label="Close configuration menu"
-                className="absolute inset-0 z-20 cursor-default bg-transparent"
-                onClick={closeDefaultsMenu}
-              />
-              <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex justify-center px-6 pt-4">
-                <div
-                  className={
-                    "pointer-events-auto w-fit max-w-[calc(100vw-3rem)] rounded-lg bg-background/80 p-4 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-opacity duration-150 " +
-                    (defaultsMenuVisible ? "opacity-100" : "opacity-0")
-                  }
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium">Defaults</div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6"
-                      onClick={closeDefaultsMenu}
-                    >
-                      Close
-                    </Button>
-                  </div>
+          {configOpen ? (
+            <button
+              type="button"
+              aria-label="Close configuration panel"
+              className="absolute inset-0 z-20 cursor-default bg-transparent"
+              onClick={closeConfig}
+            />
+          ) : null}
 
-                  <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>Fleet</span>
-                      </div>
-                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
-                        {orchestrationDefaults
-                          ? orchestrationDefaults.fleet.mode === "auto"
-                            ? "auto"
-                            : orchestrationDefaults.fleet.size !== null
-                              ? `fixed (${orchestrationDefaults.fleet.size})`
-                              : "fixed (size not set)"
-                          : orchestrationDefaultsLoading
-                            ? "loading…"
-                            : "—"}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Terminal className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>Harness</span>
-                      </div>
-                      {orchestrationDefaults?.harness.command ? (
-                        <span
-                          className="max-w-[28rem] truncate rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80"
-                          title={orchestrationDefaults.harness.command}
-                        >
-                          {orchestrationDefaults.harness.command}
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
-                          {orchestrationDefaultsLoading ? "loading…" : "—"}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 rounded-[6px] border border-border/60" />
-                        <span>Detach</span>
-                      </div>
-                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
-                        {orchestrationDefaults
-                          ? orchestrationDefaults.harness.detach
-                            ? "on"
-                            : "off"
-                          : orchestrationDefaultsLoading
-                            ? "loading…"
-                            : "—"}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 rounded-[6px] border border-border/60" />
-                        <span>Default epic</span>
-                      </div>
-                      <span className="rounded-md bg-foreground/5 px-2 py-1 text-xs text-foreground/80">
-                        {orchestrationDefaults?.defaultEpic ?? "—"}
-                      </span>
-                    </div>
+          <SlidePanel
+            open={configOpen}
+            side="left"
+            className="z-30 w-[28rem] border-border/60 bg-background/80 backdrop-blur"
+          >
+            <div className="grid gap-4 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Configure</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    Updates `config.toml` (repo scope).
                   </div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6"
+                  onClick={closeConfig}
+                >
+                  Close
+                </Button>
               </div>
-            </>
-          ) : null}
+
+              {configError ? (
+                <div className="text-xs text-destructive">{configError}</div>
+              ) : null}
+
+              <div className="grid gap-1">
+                <div className="text-xs text-muted-foreground">
+                  Harness command
+                </div>
+                <input
+                  className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                  value={configHarness}
+                  onChange={(e) => setConfigHarness(e.target.value)}
+                  placeholder={
+                    orchestrationDefaults?.harness.command ?? "codex"
+                  }
+                  disabled={configPending}
+                />
+              </div>
+
+              <div className="grid gap-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs text-muted-foreground">Run mode</div>
+                  {orchestrationDefaultsLoading ? (
+                    <span className="text-xs text-muted-foreground">
+                      loading…
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
+                  <Button
+                    variant={configDetach ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-full rounded-none border-0 leading-none"
+                    onClick={() => setConfigDetach(true)}
+                    disabledReason={configPending ? "Saving…" : null}
+                  >
+                    Detached
+                  </Button>
+                  <Button
+                    variant={!configDetach ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-full rounded-none border-0 border-l leading-none"
+                    onClick={() => setConfigDetach(false)}
+                    disabledReason={configPending ? "Saving…" : null}
+                  >
+                    Foreground
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-1">
+                <div className="text-xs text-muted-foreground">
+                  Agent prelude
+                </div>
+                <textarea
+                  className="min-h-[10rem] resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                  value={configPrelude}
+                  onChange={(e) => setConfigPrelude(e.target.value)}
+                  placeholder="Optional. Leave blank to use the built-in prelude."
+                  disabled={configPending}
+                />
+                <div className="text-xs text-muted-foreground">
+                  Supports placeholders like{" "}
+                  <span className="font-mono">{`{task_id}`}</span>,{" "}
+                  <span className="font-mono">{`{task_title}`}</span>,{" "}
+                  <span className="font-mono">{`{task_doc}`}</span>,{" "}
+                  <span className="font-mono">{`{epic_slug}`}</span>.
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6"
+                    onClick={() => void handleSaveConfig()}
+                    disabledReason={
+                      configPending
+                        ? "Saving…"
+                        : !configDirty
+                          ? "No changes"
+                          : null
+                    }
+                  >
+                    Save
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6"
+                    onClick={() => {
+                      setConfigError(null)
+                      setConfigNotice(null)
+                      setConfigHarness(
+                        orchestrationDefaults?.harness.command ?? "",
+                      )
+                      setConfigDetach(
+                        orchestrationDefaults?.harness.detach ?? true,
+                      )
+                      setConfigPrelude(
+                        orchestrationDefaults?.harness.prelude ?? "",
+                      )
+                    }}
+                    disabledReason={
+                      configPending
+                        ? "Saving…"
+                        : orchestrationDefaults
+                          ? null
+                          : "Defaults not loaded"
+                    }
+                  >
+                    Reset
+                  </Button>
+                </div>
+                {configNotice ? (
+                  <div className="text-xs text-muted-foreground">
+                    {configNotice}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </SlidePanel>
           <GraphView
             rootNodes={rootNodes}
             childrenByParent={childrenByParent}

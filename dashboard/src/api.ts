@@ -4,6 +4,7 @@ export type ApiStatus = components["schemas"]["ApiStatusResponse"]
 export type Epic = components["schemas"]["EpicResponse"]
 export type EpicGraph = components["schemas"]["EpicGraphResponse"]
 export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaultsResponse"]
+export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
 export type Agent = components["schemas"]["AgentResponse"]
 export type Node = components["schemas"]["NodeResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"]
@@ -49,6 +50,28 @@ export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefault
   })
   if (!response.ok) {
     throw new Error(`GET /v1/config failed (${response.status})`)
+  }
+  return response.json() as Promise<OrchestrationDefaults>
+}
+
+export async function updateOrchestrationDefaults(
+  request: OrchestrationDefaultsUpdateRequest,
+): Promise<OrchestrationDefaults> {
+  const response = await fetch("/v1/config", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(
+      `POST /v1/config failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    )
   }
   return response.json() as Promise<OrchestrationDefaults>
 }
