@@ -11,7 +11,7 @@ function statusClasses(taskState: Task["state"] | undefined, status: Status) {
     return "border-muted-foreground/40 bg-muted-foreground/40"
   }
   if (status === null) {
-    return "border-sky-400 bg-transparent border-dashed"
+    return "border-muted-foreground/60 bg-transparent border-dashed"
   }
   if (status === "running") {
     return "border-emerald-400 bg-emerald-400"
@@ -22,7 +22,7 @@ function statusClasses(taskState: Task["state"] | undefined, status: Status) {
   if (status === "error") {
     return "border-rose-400 bg-rose-400"
   }
-  return "border-sky-400 bg-transparent"
+  return "border-muted-foreground/60 bg-transparent"
 }
 
 export type AgentStatusIconProps = {
@@ -50,4 +50,3 @@ export function AgentStatusIcon({
     />
   )
 }
-
