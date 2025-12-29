@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import platform
@@ -178,6 +179,37 @@ def _tmux_has_session(*, name: str) -> bool:
 def _tmux_attach(*, name: str) -> int:
     proc = subprocess.run(["tmux", "attach-session", "-t", name])
     return proc.returncode
+
+
+def _tmux_send_literal(*, name: str, text: str) -> None:
+    proc = subprocess.run(
+        ["tmux", "send-keys", "-t", name, "-l", text],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "tmux send-keys failed")
+
+
+def _tmux_send_enter(*, name: str) -> None:
+    proc = subprocess.run(
+        ["tmux", "send-keys", "-t", name, "Enter"],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "tmux send-keys Enter failed")
+
+
+def _tmux_send_lines(*, name: str, lines: list[str]) -> None:
+    for line in lines:
+        if line:
+            _tmux_send_literal(name=name, text=line)
+        _tmux_send_enter(name=name)
 
 
 async def ensure_host_row(session: AsyncSession, ctx: RepoContext) -> Host:
@@ -461,6 +493,78 @@ async def _load_task_and_node(
     return task, node, epic
 
 
+async def checkout_task_worktree(ctx: RepoContext, *, task_id: int) -> Path:
+    """Ensure a task's worktree exists and is recorded on the Node row."""
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            _, node, epic = await _load_task_and_node(session, task_id=task_id)
+            path = await ensure_node_worktree(session, ctx, node=node, epic=epic)
+            await session.commit()
+            return path
+    finally:
+        await engine.dispose()
+
+
+def _agent_prelude_lines(
+    *,
+    task: Task,
+    node: Node,
+    epic: Epic,
+    worktree_path: Path,
+) -> list[str]:
+    local_path = task.local_path or "(unknown path)"
+    return [
+        "",
+        "Redesmyn agent prelude",
+        "",
+        f"- Assigned task: {task.id} — {task.title}",
+        f"- Task doc: {local_path}",
+        f"- Epic: {epic.slug} (read epics/{epic.slug}/README.md)",
+        f"- Branch: {node.branch_name}",
+        f"- Worktree: {worktree_path}",
+        "",
+        "Guidelines",
+        "",
+        "- Read AGENTS.md at repo root and follow it.",
+        "- Prefer small, focused commits; keep changes maintainable and well-typed.",
+        "- Start by understanding the task design + surrounding code; avoid unrelated changes.",
+        "",
+        "Tips",
+        "",
+        "- Run `just check` before you finish.",
+        "- If you attach to this tmux session, detach with Ctrl-b then d (not Ctrl-c).",
+        "",
+    ]
+
+
+async def send_agent_prelude(
+    *,
+    task: Task,
+    node: Node,
+    epic: Epic,
+    worktree_path: Path,
+    delay_s: float = 3.5,
+) -> None:
+    if delay_s > 0:
+        await asyncio.sleep(delay_s)
+
+    tmux_name = tmux_session_name_for_task(task_id=task.id)
+    if not (has_tmux() and _tmux_has_session(name=tmux_name)):
+        return
+
+    _tmux_send_lines(
+        name=tmux_name,
+        lines=_agent_prelude_lines(
+            task=task,
+            node=node,
+            epic=epic,
+            worktree_path=worktree_path,
+        ),
+    )
+
+
 async def start_task_agent(
     ctx: RepoContext,
     *,
@@ -574,6 +678,15 @@ async def start_task_agent(
 
             await session.commit()
             await session.refresh(agent)
+            try:
+                await send_agent_prelude(
+                    task=task,
+                    node=node,
+                    epic=epic,
+                    worktree_path=worktree_path,
+                )
+            except RuntimeError as e:
+                warnings.append(f"Failed to send agent prelude: {e}")
             return StartAgentResult(
                 agent=agent,
                 attach=attach,
