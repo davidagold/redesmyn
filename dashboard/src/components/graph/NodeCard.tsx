@@ -166,7 +166,7 @@ export function NodeCard({
         <>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon-xs"
             aria-label="Copy attach command"
             title="Copy attach command"
             disabled={pendingAction !== null}
@@ -176,11 +176,11 @@ export function NodeCard({
               void handleAttach()
             }}
           >
-            <Terminal />
+            <Terminal className="size-3" />
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon-xs"
             aria-label="Restart agent"
             title="Restart agent"
             disabled={pendingAction !== null}
@@ -190,11 +190,11 @@ export function NodeCard({
               void handleRestart()
             }}
           >
-            <RotateCcw />
+            <RotateCcw className="size-3" />
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon-xs"
             className="text-destructive hover:bg-destructive/10"
             aria-label="Stop agent"
             title="Stop agent"
@@ -205,13 +205,13 @@ export function NodeCard({
               void handleStop()
             }}
           >
-            <Square />
+            <Square className="size-3" />
           </Button>
         </>
       ) : canRestart ? (
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="Restart agent"
           title="Restart agent"
           disabled={pendingAction !== null}
@@ -221,12 +221,12 @@ export function NodeCard({
             void handleRestart()
           }}
         >
-          <RotateCcw />
+          <RotateCcw className="size-3" />
         </Button>
       ) : canStart ? (
         <Button
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="Start agent"
           title="Start agent"
           disabled={pendingAction !== null}
@@ -236,7 +236,7 @@ export function NodeCard({
             void handleStart()
           }}
         >
-          <Play />
+          <Play className="size-3" />
         </Button>
       ) : null
     ) : null
@@ -270,14 +270,14 @@ export function NodeCard({
       }}
     >
       <CardContent className="flex h-full flex-col gap-2 p-3">
-        <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-2">
           <div
-            className="min-w-0 truncate font-mono text-xs text-muted-foreground"
+            className="min-w-0 truncate font-mono text-xs leading-none text-muted-foreground"
             title={node.branchName}
           >
             {branchLabel}
           </div>
-          <div className="flex items-start gap-1">
+          <div className="flex items-center gap-1">
             {quickActions ? (
               <div
                 className={cn(
@@ -291,13 +291,13 @@ export function NodeCard({
               </div>
             ) : null}
             <div
-              className="relative inline-flex size-6 items-center justify-center"
+              className="relative inline-flex size-5 items-center justify-center"
               title={tooltip}
             >
               {commitHot ? (
-                <span className="absolute inline-flex size-3 animate-ping rounded-full bg-sky-400/60 opacity-75" />
+                <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-sky-400/60 opacity-75" />
               ) : worktreeHot ? (
-                <span className="absolute inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
+                <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
               <span
                 className={cn(
