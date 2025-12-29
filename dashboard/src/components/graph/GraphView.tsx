@@ -234,6 +234,9 @@ export function GraphView({
     useState<ViewportAnimation | null>(null)
   const [bulkAction, setBulkAction] = useState<"start" | "stop" | null>(null)
   const [bulkError, setBulkError] = useState<string | null>(null)
+  const [bulkBarMounted, setBulkBarMounted] = useState(false)
+  const [bulkBarVisible, setBulkBarVisible] = useState(false)
+  const bulkBarHideTimerRef = useRef<number | null>(null)
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
@@ -253,6 +256,14 @@ export function GraphView({
     const id = window.setTimeout(() => setBulkError(null), 2_500)
     return () => window.clearTimeout(id)
   }, [bulkError])
+
+  useEffect(() => {
+    return () => {
+      if (bulkBarHideTimerRef.current !== null) {
+        window.clearTimeout(bulkBarHideTimerRef.current)
+      }
+    }
+  }, [])
 
   const queueViewportAnimation = useCallback(
     (nextViewport: Viewport, duration: number) => {
@@ -1010,11 +1021,32 @@ export function GraphView({
   }, [flow, epicSlug, layoutVersion, nodes.length])
 
   const bulkActionsEnabled = bulkAction === null && !!onRequestRefresh
-  const showBulkActions = selectedNodeIds.size > 1
+  const bulkBarTargetVisible = selectedNodeIds.size > 1
   const canBulkStart =
     bulkActionsEnabled && bulkSelection.startableTaskIds.length > 0
   const canBulkStop =
     bulkActionsEnabled && bulkSelection.stoppableTaskIds.length > 0
+
+  useEffect(() => {
+    if (bulkBarTargetVisible) {
+      if (bulkBarHideTimerRef.current !== null) {
+        window.clearTimeout(bulkBarHideTimerRef.current)
+        bulkBarHideTimerRef.current = null
+      }
+      setBulkBarMounted(true)
+      window.requestAnimationFrame(() => setBulkBarVisible(true))
+      return
+    }
+
+    setBulkBarVisible(false)
+    if (bulkBarHideTimerRef.current !== null) {
+      window.clearTimeout(bulkBarHideTimerRef.current)
+    }
+    bulkBarHideTimerRef.current = window.setTimeout(() => {
+      setBulkBarMounted(false)
+      bulkBarHideTimerRef.current = null
+    }, 200)
+  }, [bulkBarTargetVisible])
 
   async function handleBulkStart() {
     if (!onRequestRefresh) {
@@ -1102,10 +1134,15 @@ export function GraphView({
               } as CSSProperties
             }
           />
-          {showBulkActions ? (
+          {bulkBarMounted ? (
             <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
               <div
-                className="pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur"
+                className={
+                  "pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-all duration-200 will-change-transform " +
+                  (bulkBarVisible
+                    ? "translate-y-0 opacity-100"
+                    : "-translate-y-12 opacity-0")
+                }
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="text-xs text-muted-foreground">
