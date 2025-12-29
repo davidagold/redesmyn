@@ -1103,7 +1103,7 @@ export function GraphView({
             }
           />
           {showBulkActions ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
               <div
                 className="pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur"
                 onClick={(e) => e.stopPropagation()}
