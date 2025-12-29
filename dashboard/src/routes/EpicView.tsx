@@ -669,10 +669,10 @@ export function EpicView() {
                 </Button>
                 <div
                   className={
-                    "overflow-hidden transition-all duration-200 will-change-transform " +
+                    "overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
-                      ? "max-w-[10rem] translate-x-0 opacity-100"
-                      : "max-w-0 translate-x-2 opacity-0")
+                      ? "max-w-[10rem] opacity-100"
+                      : "max-w-0 opacity-0")
                   }
                 >
                   <Button
@@ -689,7 +689,7 @@ export function EpicView() {
                     }
                     onClick={() => void handleRunSelected()}
                   >
-                    Run selected
+                    Selected
                   </Button>
                 </div>
               </div>
@@ -714,10 +714,10 @@ export function EpicView() {
                 </Button>
                 <div
                   className={
-                    "overflow-hidden transition-all duration-200 will-change-transform " +
+                    "overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
-                      ? "max-w-[10rem] translate-x-0 opacity-100"
-                      : "max-w-0 translate-x-2 opacity-0")
+                      ? "max-w-[10rem] opacity-100"
+                      : "max-w-0 opacity-0")
                   }
                 >
                   <Button
@@ -734,7 +734,7 @@ export function EpicView() {
                     }
                     onClick={() => void handleStopSelected()}
                   >
-                    Stop selected
+                    Selected
                   </Button>
                 </div>
               </div>
