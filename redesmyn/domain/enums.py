@@ -23,7 +23,7 @@ class TaskState(StrEnum):
 
 
 class AgentStatus(StrEnum):
-    Idle = "idle"
+    Stopped = "stopped"
     Running = "running"
     Blocked = "blocked"
     Error = "error"

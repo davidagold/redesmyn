@@ -94,7 +94,7 @@ export function NodeCard({
     task?.state !== "done"
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
-  const canStart = !agent || agentStatus === "idle"
+  const canStart = !agent || agentStatus === "stopped"
   const canRestart = isRunning || agentStatus === "error"
 
   async function handleAttach() {

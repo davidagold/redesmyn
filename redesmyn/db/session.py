@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from redesmyn.db.models import Base
+from redesmyn.db.migrations.sqlite.agent_status_stopped import (
+    migrate_agent_status_to_stopped,
+)
 
 
 def _sqlite_url(db_path: Path) -> str:
@@ -53,6 +56,8 @@ async def _migrate_sqlite(conn) -> None:
         if name in existing:
             continue
         await conn.execute(text(f"ALTER TABLE agents ADD COLUMN {name} {ddl}"))
+
+    await migrate_agent_status_to_stopped(conn)
 
 
 async def async_session(

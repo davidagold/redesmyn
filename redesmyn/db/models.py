@@ -288,7 +288,7 @@ class Agent(Base):
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[AgentStatus] = mapped_column(
         _enum_type(AgentStatus, "agent_status"),
-        default=AgentStatus.Idle,
+        default=AgentStatus.Stopped,
         nullable=False,
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(

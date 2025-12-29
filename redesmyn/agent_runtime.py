@@ -613,7 +613,7 @@ async def stop_task_agent(
                 return False
 
             now = datetime.now(UTC)
-            agent.status = AgentStatus.Idle
+            agent.status = AgentStatus.Stopped
             agent.last_seen_at = now
             agent.ended_at = now
             agent.pid = None
