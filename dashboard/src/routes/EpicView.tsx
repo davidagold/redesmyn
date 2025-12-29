@@ -115,20 +115,6 @@ export function EpicView() {
     }
   }, [defaultsMenuOpen])
 
-  useEffect(() => {
-    if (!defaultsMenuMounted) {
-      return
-    }
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        closeDefaultsMenu()
-      }
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [closeDefaultsMenu, defaultsMenuMounted])
-
   const selectedEpic = useMemo(
     () => epics.find((e) => e.slug === epicSlug) ?? null,
     [epics, epicSlug],
@@ -519,8 +505,18 @@ export function EpicView() {
       }
 
       if (e.key === "Escape") {
+        if (defaultsMenuOpen) {
+          closeDefaultsMenu()
+          return
+        }
         if (epicMenuOpen) {
           setEpicMenuOpen(false)
+          return
+        }
+        if (selectedNodeIdsRef.current.size > 0 && epicSlug) {
+          setFocusMode(false)
+          setSelectedNodeIds(new Set())
+          void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
           return
         }
         if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
@@ -540,7 +536,16 @@ export function EpicView() {
 
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [epicMenuOpen, epicSlug, navigate, nodeId, selectedEdgeId, selectedNode])
+  }, [
+    closeDefaultsMenu,
+    defaultsMenuOpen,
+    epicMenuOpen,
+    epicSlug,
+    navigate,
+    nodeId,
+    selectedEdgeId,
+    selectedNode,
+  ])
 
   function handleSelectNode(id: number, options: { additive: boolean }) {
     if (!epicSlug) {
@@ -779,16 +784,16 @@ export function EpicView() {
         <div className="border-b px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
             {runBuckets ? (
-              <div className="flex h-6 overflow-hidden rounded-full border border-border/60">
+              <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
                   variant={
                     selectionEquals(runBuckets.running) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[8.5rem] rounded-none border-0 px-3 leading-none"
+                  className="h-full min-w-[7.5rem] rounded-none border-0 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.running)}
                   disabledReason={
-                    runSummary.running > 0 ? null : "No running tasks"
+                    runSummary.running > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Running</span>
@@ -801,10 +806,10 @@ export function EpicView() {
                     selectionEquals(runBuckets.eligible) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
                   onClick={() => selectBucketNodes(runBuckets.eligible)}
                   disabledReason={
-                    runSummary.eligible > 0 ? null : "No eligible tasks"
+                    runSummary.eligible > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Eligible</span>
@@ -817,10 +822,10 @@ export function EpicView() {
                     selectionEquals(runBuckets.blocked) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
                   onClick={() => selectBucketNodes(runBuckets.blocked)}
                   disabledReason={
-                    runSummary.blocked > 0 ? null : "No blocked tasks"
+                    runSummary.blocked > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Blocked</span>
@@ -833,10 +838,10 @@ export function EpicView() {
                     selectionEquals(runBuckets.failed) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[8.5rem] rounded-none border-0 border-l px-3 leading-none"
+                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
                   onClick={() => selectBucketNodes(runBuckets.failed)}
                   disabledReason={
-                    runSummary.failed > 0 ? null : "No failed tasks"
+                    runSummary.failed > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Failed</span>
