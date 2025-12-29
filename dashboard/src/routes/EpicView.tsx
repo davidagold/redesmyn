@@ -790,14 +790,14 @@ export function EpicView() {
                     selectionEquals(runBuckets.running) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[7.5rem] rounded-none border-0 leading-none"
+                  className="h-full min-w-[7rem] rounded-none border-0 px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.running)}
                   disabledReason={
                     runSummary.running > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Running</span>
-                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                  <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/80">
                     {runSummary.running}
                   </span>
                 </Button>
@@ -806,14 +806,14 @@ export function EpicView() {
                     selectionEquals(runBuckets.eligible) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
+                  className="h-full min-w-[7rem] rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.eligible)}
                   disabledReason={
                     runSummary.eligible > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Eligible</span>
-                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                  <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/80">
                     {runSummary.eligible}
                   </span>
                 </Button>
@@ -822,14 +822,14 @@ export function EpicView() {
                     selectionEquals(runBuckets.blocked) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
+                  className="h-full min-w-[7rem] rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.blocked)}
                   disabledReason={
                     runSummary.blocked > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Blocked</span>
-                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                  <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/80">
                     {runSummary.blocked}
                   </span>
                 </Button>
@@ -838,14 +838,14 @@ export function EpicView() {
                     selectionEquals(runBuckets.failed) ? "secondary" : "ghost"
                   }
                   size="sm"
-                  className="h-full min-w-[7.5rem] rounded-none border-0 border-l leading-none"
+                  className="h-full min-w-[7rem] rounded-none border-0 border-l px-1.5 leading-none"
                   onClick={() => selectBucketNodes(runBuckets.failed)}
                   disabledReason={
                     runSummary.failed > 0 ? null : "No tasks to select"
                   }
                 >
                   <span className="truncate">Failed</span>
-                  <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-[0.625rem] text-foreground/80">
+                  <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/80">
                     {runSummary.failed}
                   </span>
                 </Button>
