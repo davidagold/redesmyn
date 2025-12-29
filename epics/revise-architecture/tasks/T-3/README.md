@@ -22,7 +22,7 @@ node:
   - reconnect/backoff
   - resync on reconnect
   - bounded polling + timeouts
-- Remove epic-scoped observation as a primary mode: one daemon per repo (epic scoping only as a debug/perf option, if at all).
+- Remove epic-scoped observation as a primary mode: one daemon per host, at most one observation loop per repo (epic scoping only as a debug/perf option, if at all).
 
 ## Acceptance Criteria
 

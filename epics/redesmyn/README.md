@@ -47,7 +47,7 @@ We will use Redesmyn to build Redesmyn.
 - **Stack**: A path through the branch graph from an upstream node to a connected leaf node. Stacks can overlap (shared prefix) and are primarily a focus/view concept.
 - **Agent**: A task-pinned harness process (Codex, Claude Code, etc.) working in that task’s branch/worktree. v0 identity is `a-<task_id>` (no separate “session” construct for orchestration UX).
 - **Control Plane (server)**: Persistent orchestration state (tasks, desired state, event log + projections) and APIs/UI. Must run without repo filesystem access.
-- **Daemon (host-local)**: Per-repo process that owns worktrees, host-local git actions, harness process/session lifecycle, and telemetry/observation. Connects outbound to the control plane.
+- **Daemon (host-local)**: Host-level process that manages worktrees, host-local git actions, harness process/session lifecycle, and telemetry/observation for one or more repos. Connects outbound to the control plane.
 - **Repo Observer (daemon capability)**: Converts raw git/worktree observations into semantic events; not a separate product concept.
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
 - **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).

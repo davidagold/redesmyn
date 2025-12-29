@@ -23,8 +23,8 @@ Terminology note: “agent runner” refers to the harness process launched by t
 
 The UX should remain “one command + one UI” even though the system is logically split:
 
-- `rn up` starts (or connects) a daemon for the current repo.
-- `rn run --epic <slug> --fleet-size <n>` provisions sessions for tasks and starts a local fleet automatically.
+- `rn up` starts (or connects) the host daemon (one per host).
+- `rn run --epic <slug> --fleet-size <n>` provisions sessions for tasks in the current repo (or an explicit repo) and starts a local fleet automatically.
 - The dashboard clearly indicates whether a daemon is connected and whether telemetry is fresh.
 
 This epic focuses on the daemon/control-plane architecture revision. Harness-specific adapters remain tracked in `epics/agent-orchestration/README.md`.
@@ -35,7 +35,7 @@ This epic focuses on the daemon/control-plane architecture revision. Harness-spe
 
 Git/worktree telemetry is a **daemon concern**. The current “observer” is an implementation detail (a module/capability), not a product concept.
 
-Run at most one daemon per repo. Epic scoping is not a primary UX concept; remove the need to run telemetry with `--epic` filtering.
+Run one daemon per host. For a given repo, run at most one observation loop; epic scoping is not a primary UX concept, so remove the need to run telemetry with `--epic` filtering.
 
 ### 2.2 Control plane does not run host-local actions
 
@@ -94,9 +94,9 @@ In v1, integrations like Linear/GitHub authenticate on the client (daemon host) 
 
 ### 2.10 Daemon presence is a projection (not a user-facing DB object)
 
-Daemons are runtime processes (one per repo on a host in v1), not user-managed entities.
+Daemons are runtime processes (one per host in v1), not user-managed entities.
 
-- Presence (“online/offline”, `last_seen`, capabilities) is derived from connection + heartbeat events.
+- Presence (“online/offline”, `last_seen`, capabilities) is derived from connection + heartbeat events (and may be projected per repo when a daemon manages multiple repos).
 - The control plane may materialize a presence table for fast queries/UI, but the event log remains the source of truth.
 
 ### 2.11 Desired state lives on tasks (not agents)
