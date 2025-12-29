@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { restartTaskAgent, stopTaskAgent } from "@/api"
+import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import { getStoredHarnessCommand } from "@/lib/agent-settings"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
@@ -73,7 +74,7 @@ export function NodeCard({
   const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
 
   const [pendingAction, setPendingAction] =
-    useState<"stop" | "restart" | "attach" | null>(null)
+    useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -104,6 +105,23 @@ export function NodeCard({
     setActionError(null)
     try {
       await copyToClipboard(`rn agent attach --task ${taskId}`)
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function handleStart() {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingAction("start")
+    setActionError(null)
+    try {
+      const harness = getStoredHarnessCommand()
+      await startTaskAgent(taskId, { harness, detach: true })
+      onRequestRefresh()
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -210,9 +228,14 @@ export function NodeCard({
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Start agent (disabled)"
-          title="Start agent (disabled; use `rn agent start --task …`)"
-          disabled
+          aria-label="Start agent"
+          title="Start agent"
+          disabled={pendingAction !== null}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            void handleStart()
+          }}
         >
           <Play />
         </Button>
