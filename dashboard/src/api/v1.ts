@@ -261,6 +261,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/merge-ready": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Set Task Merge Ready */
+    post: operations["set_task_merge_ready_v1_tasks__task_id__merge_ready_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -678,6 +695,8 @@ export interface components {
       detach: boolean
       /** Harness */
       harness?: string | null
+      /** Prelude */
+      prelude?: string | null
     }
     /** TaskAgentStartRequest */
     TaskAgentStartRequest: {
@@ -688,6 +707,8 @@ export interface components {
       detach: boolean
       /** Harness */
       harness: string
+      /** Prelude */
+      prelude?: string | null
     }
     /** TaskAgentStartResponse */
     TaskAgentStartResponse: {
@@ -737,6 +758,11 @@ export interface components {
      * @enum {string}
      */
     TaskAuthority: "local" | "linear" | "github"
+    /** TaskMergeReadyRequest */
+    TaskMergeReadyRequest: {
+      /** Ready */
+      ready: boolean
+    }
     /** TaskResponse */
     TaskResponse: {
       authority: components["schemas"]["TaskAuthority"]
@@ -755,6 +781,8 @@ export interface components {
       linearIssueId: string | null
       /** Localpath */
       localPath: string | null
+      /** Mergereadyat */
+      mergeReadyAt?: string | null
       /** Nodeid */
       nodeId: number | null
       /** Readme */
@@ -1268,6 +1296,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  set_task_merge_ready_v1_tasks__task_id__merge_ready_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskMergeReadyRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskResponse"]
         }
       }
       /** @description Validation Error */
