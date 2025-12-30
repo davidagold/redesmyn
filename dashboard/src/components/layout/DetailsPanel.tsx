@@ -31,6 +31,13 @@ type EdgeSelection = {
   headSha?: string | null
 }
 
+function stripAnsi(text: string) {
+  // CSI sequences (colors, cursor moves, etc.)
+  const withoutCsi = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+  // OSC sequences (titles, hyperlinks, etc.)
+  return withoutCsi.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
+}
+
 interface DetailsPanelProps {
   open: boolean
   task: Task | null
@@ -226,6 +233,13 @@ function AgentActions({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logsOpen, taskId])
 
+  const displayLogsText = useMemo(() => {
+    if (!logsText) {
+      return null
+    }
+    return stripAnsi(logsText)
+  }, [logsText])
+
   return (
     <div className="grid gap-3">
       <div className="flex items-start justify-between gap-3">
@@ -402,11 +416,30 @@ function AgentActions({
               </Button>
             </div>
           </div>
-          <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap">
+          <div className="relative rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
+            <div className="absolute right-2 top-2 z-10">
+              <Button
+                variant="outline"
+                size="xs"
+                className="bg-background/70 backdrop-blur"
+                onClick={() =>
+                  void handleCopy(displayLogsText ?? "", "Output copied")
+                }
+                disabledReason={
+                  logsPending
+                    ? "Loading…"
+                    : !displayLogsText
+                      ? "No output to copy"
+                      : null
+                }
+              >
+                Copy
+              </Button>
+            </div>
+            <pre className="max-h-56 overflow-auto whitespace-pre-wrap pr-16">
               {!hasAgent
                 ? "Start the agent to see output."
-                : logsText || (logsPending ? "Loading…" : "No output")}
+                : displayLogsText || (logsPending ? "Loading…" : "No output")}
             </pre>
           </div>
           {logsTruncated ? (
