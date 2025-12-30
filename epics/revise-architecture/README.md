@@ -23,7 +23,7 @@ Terminology note: “agent runner” refers to the harness process launched by t
 
 The UX should remain “one command + one UI” even though the system is logically split:
 
-- `rn up` starts (or connects) the host daemon (one per host).
+- `rn daemon up` starts (or connects) the host daemon (one per host).
 - `rn run --epic <slug> --fleet-size <n>` provisions sessions for tasks in the current repo (or an explicit repo) and starts a local fleet automatically.
 - The dashboard clearly indicates whether a daemon is connected and whether telemetry is fresh.
 
@@ -140,7 +140,7 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 ## 3) Scope (v1)
 
 - Daemon connection protocol (handshake/auth/versioning/resync).
-- Daemon lifecycle management (`rn up/down/status`, logs).
+- Daemon lifecycle management (`rn daemon up/down/status`, logs).
 - Server-side daemon presence + command delivery.
 - Dashboard “daemon online/offline” surfaces and guidance.
 - Data model migration: merge Node into Task.
@@ -158,7 +158,7 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 - `epics/revise-architecture/tasks/T-1/README.md`: Daemon/control-plane naming + protocol contract.
 - `epics/revise-architecture/tasks/T-2/README.md`: Control plane endpoint for daemon connection + command delivery.
 - `epics/revise-architecture/tasks/T-3/README.md`: Daemon process (connect + telemetry + command execution).
-- `epics/revise-architecture/tasks/T-4/README.md`: CLI UX (`rn up/down/status`) and concept consolidation.
+- `epics/revise-architecture/tasks/T-4/README.md`: CLI UX (`rn daemon up/down/status`) and concept consolidation.
 - `epics/revise-architecture/tasks/T-5/README.md`: Dashboard daemon status + offline guidance.
 - `epics/revise-architecture/tasks/T-6/README.md`: Merge `Node` into `Task` (single graph primitive).
 - `epics/revise-architecture/tasks/T-7/README.md`: Remove server git execution and keep git proxying local.

@@ -1,4 +1,4 @@
-# T-4 CLI UX: `rn up/down/status` + consolidate server/daemon concepts
+# T-4 CLI UX: `rn daemon up/down/status` + consolidate server/daemon concepts
 
 ## Metadata
 
@@ -12,9 +12,9 @@ node:
 ## Brief (local)
 
 - Introduce a user-friendly daemon lifecycle:
-  - `rn up` (start daemon in the background; connect to control plane)
-  - `rn down` (stop daemon)
-  - `rn status` (daemon online/offline, last_seen, server url)
+  - `rn daemon up` (start daemon in the background; connect to control plane)
+  - `rn daemon down` (stop daemon)
+  - `rn daemon status` (daemon online/offline, last_seen, server url)
 - Make repo registration/attachment automatic:
   - any `rn` command checks “is this a git repo, and is it registered?”
   - if unregistered, register and persist the `workspace_id` + `repo_id` locally for future runs
@@ -32,6 +32,6 @@ node:
 
 ## Acceptance Criteria
 
-- A new user can get to “daemon connected” with a single command (`rn up`).
+- A new user can get to “daemon connected” with a single command (`rn daemon up`).
 - Existing local workflows remain usable (`rn dev` still works; no confusing duplicate processes).
-- `rn status` answers “is my daemon online and feeding telemetry?” quickly.
+- `rn daemon status` answers “is my daemon online and feeding telemetry?” quickly.

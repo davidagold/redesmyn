@@ -18,7 +18,7 @@ node:
   - “telemetry stale” affordances
 - Prefer a compact, always-visible surface (e.g. RHS of the subheader bar) with hover/click details.
 - When offline, provide actionable guidance:
-  - copy `rn up` (or the configured equivalent)
+  - copy `rn daemon up` (or the configured equivalent)
   - troubleshooting link/section (basic)
 - Ensure these UI surfaces remain graph-first (avoid table-heavy “agents list” as the primary view).
 
