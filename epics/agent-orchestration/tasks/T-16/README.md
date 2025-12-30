@@ -1,19 +1,28 @@
+<<<<<<< HEAD
 # T-16 Settings: default fleet + harness configuration
+=======
+# T-16 Settings defaults: harness + prelude configuration
+>>>>>>> 3170960 (Docs: add T-16..T-19 task tickets)
 
 ## Metadata
 
 ```yaml
 id: T-16
+<<<<<<< HEAD
 stacked_on: T-3
 must_land_after:
   - T-3
   - T-8
+=======
+stacked_on: T-15
+>>>>>>> 3170960 (Docs: add T-16..T-19 task tickets)
 node:
   branch: rn/agent-orchestration/T-16-settings-defaults
 ```
 
 ## Brief (local)
 
+<<<<<<< HEAD
 Introduce a small, coherent settings system so users don’t have to re-specify “how to run agents” every time:
 
 - Default fleet sizing behavior (fixed size vs auto-size to eligible tasks)
@@ -80,3 +89,19 @@ Fleet sizing (“auto”) uses the eligibility rules defined in `T-3`:
 - task has branch/node backing
 - task state is `todo` or `in_progress`
 - exclude `blocked` and `done` by default
+=======
+Make agent orchestration configurable and ergonomic for local dogfooding:
+
+- Add repo-scoped defaults in `config.toml` for:
+  - harness command (e.g. `codex ...`)
+  - run mode (detached tmux session vs foreground)
+  - agent prelude template (and placeholder interpolation)
+- Expose these defaults in the dashboard in a “Configure” surface that is readable and tasteful.
+
+## Acceptance Criteria
+
+- Users can set and persist defaults via `rn config set ...` and see them reflected in the dashboard.
+- Starting/restarting an agent from the dashboard uses these defaults unless explicitly overridden.
+- The prelude supports placeholders and is sent to the agent at startup.
+
+>>>>>>> 3170960 (Docs: add T-16..T-19 task tickets)
