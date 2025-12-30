@@ -753,15 +753,37 @@ export function EpicView() {
     if (targets.start.length > 0 && !configuredHarnessCommand) {
       throw new Error("Set a harness command in Configure")
     }
+    const warnings: string[] = []
     for (const taskId of targets.start) {
-      await startTaskAgent(taskId, {
+      const response = await startTaskAgent(taskId, {
         harness: configuredHarnessCommand,
         detach: configuredDetach,
       })
+      const responseWarnings = response.warnings ?? []
+      if (!response.started || response.agentStatus === "error") {
+        throw new Error(
+          responseWarnings.join("\n") || "Agent exited immediately",
+        )
+      }
+      if (responseWarnings.length > 0) {
+        warnings.push(...responseWarnings)
+      }
     }
     for (const taskId of targets.restart) {
-      await restartTaskAgent(taskId, { detach: configuredDetach })
+      const response = await restartTaskAgent(taskId, {
+        detach: configuredDetach,
+      })
+      const responseWarnings = response.warnings ?? []
+      if (!response.started || response.agentStatus === "error") {
+        throw new Error(
+          responseWarnings.join("\n") || "Agent exited immediately",
+        )
+      }
+      if (responseWarnings.length > 0) {
+        warnings.push(...responseWarnings)
+      }
     }
+    return warnings
   }
 
   async function stopTargets(targets: { stop: number[] }) {
@@ -776,9 +798,9 @@ export function EpicView() {
     }
     setRunAction("runAll")
     try {
-      await runTargets(actionTargets.all)
+      const warnings = await runTargets(actionTargets.all)
       scheduleGraphRefresh()
-      setRunNotice("Started")
+      setRunNotice(warnings.length > 0 ? "Started (with warnings)" : "Started")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
     } finally {
@@ -808,9 +830,13 @@ export function EpicView() {
     }
     setRunAction("runSelected")
     try {
-      await runTargets(actionTargets.selected)
+      const warnings = await runTargets(actionTargets.selected)
       scheduleGraphRefresh()
-      setRunNotice("Started selection")
+      setRunNotice(
+        warnings.length > 0
+          ? "Started selection (with warnings)"
+          : "Started selection",
+      )
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
     } finally {

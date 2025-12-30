@@ -87,10 +87,18 @@ function AgentActions({
     setPending("start")
     setError(null)
     try {
-      await startTaskAgent(taskId, {
+      const response = await startTaskAgent(taskId, {
         harness: configuredHarnessCommand,
         detach: orchestrationDefaults?.harness.detach ?? true,
       })
+      const warnings = response.warnings ?? []
+      if (warnings.length > 0) {
+        if (!response.started || response.agentStatus === "error") {
+          setError(warnings.join("\n"))
+        } else {
+          setNotice(warnings[0])
+        }
+      }
       onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -116,10 +124,18 @@ function AgentActions({
     setPending("restart")
     setError(null)
     try {
-      await restartTaskAgent(taskId, {
+      const response = await restartTaskAgent(taskId, {
         harness: null,
         detach: orchestrationDefaults?.harness.detach ?? true,
       })
+      const warnings = response.warnings ?? []
+      if (warnings.length > 0) {
+        if (!response.started || response.agentStatus === "error") {
+          setError(warnings.join("\n"))
+        } else {
+          setNotice(warnings[0])
+        }
+      }
       onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -278,9 +294,15 @@ function AgentActions({
         </Button>
       </div>
 
-      {error ? <div className="text-xs text-destructive">{error}</div> : null}
+      {error ? (
+        <pre className="whitespace-pre-wrap text-xs text-destructive">
+          {error}
+        </pre>
+      ) : null}
       {notice ? (
-        <div className="text-xs text-muted-foreground">{notice}</div>
+        <pre className="whitespace-pre-wrap text-xs text-muted-foreground">
+          {notice}
+        </pre>
       ) : null}
     </div>
   )
