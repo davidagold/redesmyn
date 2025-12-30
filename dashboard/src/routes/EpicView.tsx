@@ -85,6 +85,10 @@ export function EpicView() {
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configHarness, setConfigHarness] = useState("")
   const [configDetach, setConfigDetach] = useState(true)
+  const [configSandboxType, setConfigSandboxType] =
+    useState<"none" | "worktree">("none")
+  const [configSandboxNetwork, setConfigSandboxNetwork] =
+    useState<"allow" | "deny">("allow")
   const [configPrelude, setConfigPrelude] = useState("")
   const [configSendPrelude, setConfigSendPrelude] = useState(true)
   const [configSubmitPrelude, setConfigSubmitPrelude] = useState(true)
@@ -110,6 +114,8 @@ export function EpicView() {
     setDefaultPreludeOpen(false)
     setConfigHarness(orchestrationDefaults?.harness.command ?? "")
     setConfigDetach(orchestrationDefaults?.harness.detach ?? true)
+    setConfigSandboxType(orchestrationDefaults?.sandbox.type ?? "none")
+    setConfigSandboxNetwork(orchestrationDefaults?.sandbox.network ?? "allow")
     setConfigPrelude(orchestrationDefaults?.harness.prelude ?? "")
     setConfigSendPrelude(orchestrationDefaults?.harness.sendPrelude ?? true)
     setConfigSubmitPrelude(orchestrationDefaults?.harness.submitPrelude ?? true)
@@ -637,6 +643,9 @@ export function EpicView() {
   const configDirty = useMemo(() => {
     const currentCommand = orchestrationDefaults?.harness.command ?? ""
     const currentDetach = orchestrationDefaults?.harness.detach ?? true
+    const currentSandboxType = orchestrationDefaults?.sandbox.type ?? "none"
+    const currentSandboxNetwork =
+      orchestrationDefaults?.sandbox.network ?? "allow"
     const currentPrelude = orchestrationDefaults?.harness.prelude ?? ""
     const currentSendPrelude =
       orchestrationDefaults?.harness.sendPrelude ?? true
@@ -645,6 +654,8 @@ export function EpicView() {
     return (
       configHarness !== currentCommand ||
       configDetach !== currentDetach ||
+      configSandboxType !== currentSandboxType ||
+      configSandboxNetwork !== currentSandboxNetwork ||
       configPrelude !== currentPrelude ||
       configSendPrelude !== currentSendPrelude ||
       configSubmitPrelude !== currentSubmitPrelude
@@ -652,6 +663,8 @@ export function EpicView() {
   }, [
     configDetach,
     configHarness,
+    configSandboxNetwork,
+    configSandboxType,
     configPrelude,
     configSendPrelude,
     configSubmitPrelude,
@@ -677,6 +690,10 @@ export function EpicView() {
           prelude: configPrelude.trim() ? configPrelude : null,
           sendPrelude: configSendPrelude,
           submitPrelude: configSubmitPrelude,
+        },
+        sandbox: {
+          type: configSandboxType,
+          network: configSandboxNetwork,
         },
       })
       await refreshOrchestrationDefaults()
@@ -1136,6 +1153,47 @@ export function EpicView() {
               </div>
 
               <div className="grid gap-1">
+                <div className="text-xs text-muted-foreground">Sandbox</div>
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-foreground">
+                      Worktree sandbox
+                    </div>
+                    <Switch
+                      checked={configSandboxType === "worktree"}
+                      onCheckedChange={(checked) => {
+                        setConfigSandboxType(checked ? "worktree" : "none")
+                        if (!checked) {
+                          setConfigSandboxNetwork("allow")
+                        }
+                      }}
+                      disabledReason={configPending ? "Saving…" : null}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-xs text-foreground">Deny network</div>
+                    <Switch
+                      checked={configSandboxNetwork === "deny"}
+                      onCheckedChange={(checked) =>
+                        setConfigSandboxNetwork(checked ? "deny" : "allow")
+                      }
+                      disabledReason={
+                        configPending
+                          ? "Saving…"
+                          : configSandboxType !== "worktree"
+                            ? "Enable sandbox first"
+                            : null
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="mt-1.5 text-xs text-muted-foreground">
+                  Restricts agent writes to the task worktree and Redesmyn
+                  state. Enable “Deny network” to force offline operation.
+                </div>
+              </div>
+
+              <div className="grid gap-1">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-muted-foreground">
                     Agent prelude
@@ -1302,6 +1360,12 @@ export function EpicView() {
                       )
                       setConfigDetach(
                         orchestrationDefaults?.harness.detach ?? true,
+                      )
+                      setConfigSandboxType(
+                        orchestrationDefaults?.sandbox.type ?? "none",
+                      )
+                      setConfigSandboxNetwork(
+                        orchestrationDefaults?.sandbox.network ?? "allow",
                       )
                       setConfigPrelude(
                         orchestrationDefaults?.harness.prelude ?? "",
