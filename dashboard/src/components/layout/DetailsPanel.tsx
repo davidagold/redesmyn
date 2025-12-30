@@ -83,7 +83,11 @@ function AgentActions({
   }, [notice])
 
   const taskId = task.id
-  const agentName = useMemo(() => `a-${taskId}`, [taskId])
+  const hasAgent = agent !== null
+  const agentName = useMemo(
+    () => agent?.displayName ?? "No agent",
+    [agent?.displayName],
+  )
   const statusLabel = agent?.status ?? null
   const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
@@ -183,6 +187,13 @@ function AgentActions({
   )
 
   async function refreshLogs() {
+    if (!hasAgent) {
+      setLogsText(null)
+      setLogsPath(null)
+      setLogsTruncated(false)
+      setLogsError(null)
+      return
+    }
     setLogsPending(true)
     setLogsError(null)
     try {
@@ -202,6 +213,13 @@ function AgentActions({
 
   useEffect(() => {
     if (!logsOpen) {
+      return
+    }
+    if (!hasAgent) {
+      setLogsText(null)
+      setLogsPath(null)
+      setLogsTruncated(false)
+      setLogsError(null)
       return
     }
     void refreshLogs()
@@ -323,7 +341,13 @@ function AgentActions({
           variant="ghost"
           size="xs"
           onClick={() => void handleCopy(logsCommand, "Logs command copied")}
-          disabledReason={pending !== null ? "Action in progress" : null}
+          disabledReason={
+            pending !== null
+              ? "Action in progress"
+              : !hasAgent
+                ? "Start the agent to see logs"
+                : null
+          }
         >
           Copy logs
         </Button>
@@ -331,7 +355,13 @@ function AgentActions({
           variant="ghost"
           size="xs"
           onClick={() => setLogsOpen((open) => !open)}
-          disabledReason={pending !== null ? "Action in progress" : null}
+          disabledReason={
+            pending !== null
+              ? "Action in progress"
+              : !hasAgent
+                ? "Start the agent to see output"
+                : null
+          }
         >
           {logsOpen ? "Hide logs" : "Show logs"}
         </Button>
@@ -374,7 +404,9 @@ function AgentActions({
           </div>
           <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
             <pre className="max-h-56 overflow-auto whitespace-pre-wrap">
-              {logsText || (logsPending ? "Loading…" : "No output")}
+              {!hasAgent
+                ? "Start the agent to see output."
+                : logsText || (logsPending ? "Loading…" : "No output")}
             </pre>
           </div>
           {logsTruncated ? (
