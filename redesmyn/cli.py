@@ -75,7 +75,11 @@ from redesmyn.repo import (
     GitCommandError,
     NotAGitRepositoryError,
     current_branch,
+    git_merge_ff_only,
+    git_rebase_update_refs,
+    git_status_porcelain,
     git_worktree_add,
+    git_worktree_path_for_branch,
 )
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
@@ -228,6 +232,112 @@ def checkout(
         raise typer.Exit(2)
 
     typer.echo(str(path))
+
+
+@app.command()
+def merge(
+    task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Merge even if the task is not marked ready.",
+    ),
+) -> None:
+    """Rebase the task branch on the epic base, then fast-forward the base branch."""
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _load_branch_info() -> tuple[str, str]:
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                task = await session.get(Task, task_id)
+                if task is None:
+                    raise RuntimeError(f"Unknown task id: {task_id}")
+                if task.merge_ready_at is None and not force:
+                    raise RuntimeError(
+                        "Task is not marked ready to merge. "
+                        "Mark it ready in the dashboard (Task details → Merge) or pass --force."
+                    )
+                if task.node_id is None:
+                    raise RuntimeError(
+                        "Task has no node/branch yet (node_id is null). Run `rn sync --from local --create-nodes`."
+                    )
+                node = await session.get(Node, task.node_id)
+                if node is None:
+                    raise RuntimeError(f"Task node not found: {task.node_id}")
+                epic = await session.get(Epic, task.epic_id)
+                if epic is None:
+                    raise RuntimeError(f"Epic not found: {task.epic_id}")
+                return node.branch_name, epic.root_branch
+        finally:
+            await engine.dispose()
+
+    try:
+        task_branch, base_branch = asyncio.run(_load_branch_info())
+        task_worktree = asyncio.run(checkout_task_worktree(ctx, task_id=task_id))
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    try:
+        if git_status_porcelain(task_worktree).strip():
+            typer.echo(
+                f"error: Task worktree has uncommitted changes: {task_worktree}",
+                err=True,
+            )
+            raise typer.Exit(2)
+    except GitCommandError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if current_branch(cwd=task_worktree) != task_branch:
+        typer.echo(
+            f"error: Task worktree is not on {task_branch} (at {task_worktree})",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    base_worktree = git_worktree_path_for_branch(ctx.repo_root, base_branch)
+    if base_worktree is None:
+        typer.echo(
+            f"error: No worktree has {base_branch} checked out. "
+            f"Check out {base_branch} in a worktree and retry.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    if current_branch(cwd=base_worktree) != base_branch:
+        typer.echo(
+            f"error: Base worktree is not on {base_branch}: {base_worktree}",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    try:
+        if git_status_porcelain(base_worktree).strip():
+            typer.echo(
+                f"error: Base worktree has uncommitted changes: {base_worktree}",
+                err=True,
+            )
+            raise typer.Exit(2)
+    except GitCommandError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    try:
+        git_rebase_update_refs(task_worktree, base_branch)
+        git_merge_ff_only(base_worktree, task_branch)
+    except GitCommandError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"Merged {task_branch} -> {base_branch}")
 
 
 def _parse_bool(value: str) -> bool:
