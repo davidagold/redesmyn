@@ -150,10 +150,24 @@ def write_agent_launcher(
     run_dir = agent_dir(ctx, agent_id=agent_id)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    lines = ["#!/bin/sh", "set -eu"]
+    log_path = run_dir / "output.log"
+
+    lines = [
+        "#!/bin/sh",
+        "set -eu",
+        f"LOG_PATH={shlex.quote(str(log_path))}",
+        # Capture launcher output (including early failures) in the log file, then
+        # restore the harness stdout/stderr so interactive harnesses keep a TTY.
+        "exec 3>&1 4>&2",
+        'exec >>"$LOG_PATH" 2>&1',
+    ]
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
-    lines.append(f"exec {shlex.join(argv)}")
+
+    # Give tmux a beat to attach pipe-pane so we don't miss very early harness
+    # output in the log.
+    lines.append("sleep 0.2")
+    lines.append(f"exec {shlex.join(argv)} 1>&3 2>&4")
     script_path = run_dir / "run.sh"
     _write_executable(script_path, "\n".join(lines) + "\n")
     return script_path
@@ -208,7 +222,7 @@ def _tmux_attach(*, name: str) -> int:
 
 def _tmux_send_literal(*, name: str, text: str) -> None:
     proc = subprocess.run(
-        ["tmux", "send-keys", "-t", name, "-l", text],
+        ["tmux", "send-keys", "-t", name, "-l", "--", text],
         text=True,
         capture_output=True,
         check=False,
@@ -776,6 +790,22 @@ async def start_task_agent(
                 runtime_env.setdefault("CODEX_HOME", str(run_dir / "codex"))
                 runtime_env.setdefault("XDG_CONFIG_HOME", str(run_dir / "xdg-config"))
                 runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
+                runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
+                runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
+
+                for key in (
+                    "CODEX_HOME",
+                    "XDG_CONFIG_HOME",
+                    "XDG_CACHE_HOME",
+                    "XDG_DATA_HOME",
+                    "XDG_STATE_HOME",
+                ):
+                    value = runtime_env.get(key)
+                    if not value:
+                        continue
+                    path = Path(value)
+                    if path.is_relative_to(ctx.state_dir):
+                        path.mkdir(parents=True, exist_ok=True)
 
             sandbox_provider = make_sandbox_provider()
             wrapped = sandbox_provider.wrap(
