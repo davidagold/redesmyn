@@ -250,6 +250,9 @@ export function NodeCard({
         "group",
         "py-0",
         "cursor-pointer transition-colors hover:bg-accent/40",
+        task?.state === "done"
+          ? "border-emerald-500/30 bg-emerald-500/5"
+          : null,
         isSelected
           ? "ring-2 ring-ring"
           : isHighlighted
