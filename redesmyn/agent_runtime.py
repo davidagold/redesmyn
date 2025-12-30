@@ -39,7 +39,12 @@ from redesmyn.db.models import (
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
 from redesmyn.orchestration_config import load_orchestration_defaults
-from redesmyn.repo import GitCommandError, current_branch, git_worktree_add
+from redesmyn.repo import (
+    GitCommandError,
+    current_branch,
+    git_is_ancestor,
+    git_worktree_add,
+)
 from redesmyn.sandbox import (
     NullSandboxPolicy,
     WorktreeSandboxPolicy,
@@ -815,6 +820,25 @@ async def start_task_agent(
             )
 
             warnings: list[str] = []
+            parent_node = (
+                await session.get(Node, node.parent_node_id)
+                if node.parent_node_id is not None
+                else None
+            )
+            base_ref = (
+                parent_node.branch_name if parent_node is not None else epic.root_branch
+            )
+            if not git_is_ancestor(ctx.repo_root, base_ref, node.branch_name):
+                if parent_node is not None:
+                    warnings.append(
+                        f"Branch {node.branch_name!r} does not include the latest parent tip "
+                        f"{base_ref!r}; consider rebasing before starting new work."
+                    )
+                else:
+                    warnings.append(
+                        f"Branch {node.branch_name!r} does not include the latest base tip "
+                        f"{base_ref!r}; consider rebasing before starting new work."
+                    )
             shim_path = shutil.which("rn")
             runtime_env = {
                 "REDESMYN_AGENT_ID": str(agent.id),

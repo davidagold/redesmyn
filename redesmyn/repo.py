@@ -84,6 +84,13 @@ def git_merge_base(repo_root: Path, ref_a: str, ref_b: str) -> str | None:
     return sha or None
 
 
+def git_is_ancestor(repo_root: Path, ancestor_ref: str, descendant_ref: str) -> bool:
+    proc = _run_git(
+        ["merge-base", "--is-ancestor", ancestor_ref, descendant_ref], cwd=repo_root
+    )
+    return proc.returncode == 0
+
+
 def git_rev_list(
     repo_root: Path,
     ref: str,
