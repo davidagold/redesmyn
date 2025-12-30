@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import desc, select, update
+from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -55,6 +55,12 @@ from redesmyn.integrations.linear import (
     linear_authorize_url,
     linear_redirect_uri,
     new_oauth_state,
+    new_pkce_verifier,
+    pkce_code_challenge,
+)
+from redesmyn.integrations.linear_credentials import (
+    LinearCredentials,
+    default_linear_credential_store,
 )
 from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import (
@@ -147,7 +153,7 @@ class AppState(Protocol):
     repo_executor: RepoExecutor
     runner_mode: str
     local_host_key: str | None
-    linear_oauth_states: dict[str, datetime]
+    linear_oauth_states: dict[str, tuple[datetime, str]]
     event_hub: JsonWebSocketHub
     daemon_connections: DaemonConnectionRegistry
 
@@ -1387,14 +1393,29 @@ async def task_agent_logs(
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)
 async def linear_status() -> LinearStatusResponse:
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        auth = await session.scalar(
-            select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
-        )
+    store = default_linear_credential_store()
+    creds = store.get()
+    if creds is None:
+        sessionmaker = app.state.sessionmaker
+        async with sessionmaker() as session:
+            auth = await session.scalar(
+                select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+            )
+            if auth is not None:
+                creds = LinearCredentials(
+                    access_token=auth.access_token,
+                    refresh_token=auth.refresh_token,
+                    token_type=auth.token_type,
+                    scope=auth.scope,
+                    expires_at=auth.expires_at,
+                    connected_at=auth.created_at,
+                )
+                store.set(creds)
+                await session.execute(delete(LinearAuth))
+                await session.commit()
     return LinearStatusResponse(
-        connected=auth is not None,
-        connected_at=auth.created_at if auth is not None else None,
+        connected=creds is not None,
+        connected_at=creds.connected_at if creds is not None else None,
     )
 
 
@@ -1402,18 +1423,24 @@ async def linear_status() -> LinearStatusResponse:
 async def linear_oauth_start() -> Response:
     settings = load_settings(repo_root=app.state.ctx.repo_root)
     state = new_oauth_state()
-    app.state.linear_oauth_states[state] = datetime.now(UTC)
+    code_verifier = new_pkce_verifier()
+    app.state.linear_oauth_states[state] = (datetime.now(UTC), code_verifier)
 
     for key, created in list(app.state.linear_oauth_states.items()):
-        if datetime.now(UTC) - created > timedelta(minutes=15):
+        created_at, _code_verifier = created
+        if datetime.now(UTC) - created_at > timedelta(minutes=15):
             app.state.linear_oauth_states.pop(key, None)
 
     try:
-        url = linear_authorize_url(settings, state=state)
+        url = linear_authorize_url(
+            settings,
+            state=state,
+            code_challenge=pkce_code_challenge(code_verifier),
+        )
     except ValueError as e:
         return HTMLResponse(
             "<h1>Linear is not configured</h1>"
-            "<p>Set <code>REDESMYN_LINEAR_CLIENT_ID</code> and <code>REDESMYN_LINEAR_CLIENT_SECRET</code> "
+            "<p>Set <code>REDESMYN_LINEAR_CLIENT_ID</code> "
             "in <code>.env</code> (see <code>.env.example</code>).</p>"
             f"<pre>{e}</pre>",
             status_code=500,
@@ -1440,32 +1467,28 @@ async def linear_oauth_callback(
 
     if state not in app.state.linear_oauth_states:
         raise HTTPException(status_code=400, detail="Unknown or expired state")
-    app.state.linear_oauth_states.pop(state, None)
+    _created_at, code_verifier = app.state.linear_oauth_states.pop(state)
 
     settings = load_settings(repo_root=app.state.ctx.repo_root)
     redirect_uri = linear_redirect_uri(settings)
     try:
         token = await exchange_code_for_token(
-            settings, code=code, redirect_uri=redirect_uri
+            settings, code=code, redirect_uri=redirect_uri, code_verifier=code_verifier
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        auth = await session.scalar(
-            select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+    store = default_linear_credential_store()
+    store.set(
+        LinearCredentials(
+            access_token=token.access_token,
+            refresh_token=token.refresh_token,
+            token_type=token.token_type,
+            scope=token.scope,
+            expires_at=token.expires_at,
+            connected_at=datetime.now(UTC),
         )
-        if auth is None:
-            auth = LinearAuth(access_token=token.access_token)
-            session.add(auth)
-
-        auth.access_token = token.access_token
-        auth.refresh_token = token.refresh_token
-        auth.token_type = token.token_type
-        auth.scope = token.scope
-        auth.expires_at = token.expires_at
-        await session.commit()
+    )
 
     return HTMLResponse(
         "<h1>Linear connected</h1><p>You can close this tab and return to Redesmyn.</p>"

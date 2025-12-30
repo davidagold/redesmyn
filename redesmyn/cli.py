@@ -11,12 +11,13 @@ import sys
 import time
 import webbrowser
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import click
 import typer
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, select
 
 from redesmyn import __version__
 from redesmyn.agent_runtime import (
@@ -64,8 +65,20 @@ from redesmyn.integrations.linear import (
     LinearClient,
     LinearIssue,
     LinearIssueRelation,
+    exchange_code_for_token,
     fetch_project_issue_relations,
     fetch_project_issues,
+    linear_authorize_url,
+    linear_redirect_uri,
+    new_oauth_state,
+    new_pkce_verifier,
+    pkce_code_challenge,
+    refresh_access_token,
+)
+from redesmyn.integrations.linear_credentials import (
+    LinearCredentials,
+    default_linear_credential_store,
+    is_expiring_soon,
 )
 from redesmyn.git_proxy import (
     READ_ONLY_SUBCOMMANDS,
@@ -112,6 +125,7 @@ from redesmyn.merge_runs import (
 )
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
+from redesmyn.settings import RedesmynSettings
 from redesmyn.strings import slugify
 
 _DEBUG = False
@@ -1673,9 +1687,7 @@ async def _sync_from_linear(
     project: str | None,
     create_branches: bool,
 ) -> SyncStats:
-    auth = await _load_linear_auth(ctx)
-    if auth is None:
-        raise typer.BadParameter("Linear is not connected. Run `rn linear auth`.")
+    creds = await _require_fresh_linear_credentials(ctx=ctx)
 
     epic_row = await _resolve_epic(ctx, epic=epic)
 
@@ -1694,7 +1706,7 @@ async def _sync_from_linear(
             "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
         )
 
-    client = LinearClient(access_token=auth.access_token)
+    client = LinearClient(access_token=creds.access_token)
     issues = await fetch_project_issues(client, project_id=project_id)
     try:
         relations = await fetch_project_issue_relations(client, project_id=project_id)
@@ -2702,114 +2714,351 @@ async def _load_linear_auth(ctx: RepoContext) -> LinearAuth | None:
         await engine.dispose()
 
 
+async def _maybe_migrate_repo_linear_auth_to_keychain(
+    ctx: RepoContext,
+) -> bool:
+    store = default_linear_credential_store()
+    if store.get() is not None:
+        return False
+
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            auth = await session.scalar(
+                select(LinearAuth).order_by(desc(LinearAuth.id)).limit(1)
+            )
+            if auth is None:
+                return False
+
+            store.set(
+                LinearCredentials(
+                    access_token=auth.access_token,
+                    refresh_token=auth.refresh_token,
+                    token_type=auth.token_type,
+                    scope=auth.scope,
+                    expires_at=auth.expires_at,
+                    connected_at=auth.created_at,
+                )
+            )
+
+            # One-way migration: once creds are in the machine store, remove the
+            # repo-scoped record so `rn linear logout` actually disconnects.
+            await session.execute(delete(LinearAuth))
+            await session.commit()
+            return True
+    finally:
+        await engine.dispose()
+
+
+def _load_settings_for_linear(ctx: RepoContext | None) -> RedesmynSettings:
+    from redesmyn.settings import load_settings
+
+    return load_settings(repo_root=ctx.repo_root if ctx else None)
+
+
+async def _require_fresh_linear_credentials(
+    *,
+    ctx: RepoContext | None,
+    skew: timedelta = timedelta(minutes=5),
+) -> LinearCredentials:
+    store = default_linear_credential_store()
+
+    if store.get() is None and ctx is not None and ctx.db_path.exists():
+        await _maybe_migrate_repo_linear_auth_to_keychain(ctx)
+
+    creds = store.get()
+    if creds is None:
+        raise typer.BadParameter("Linear is not connected. Run `rn linear auth`.")
+
+    settings = _load_settings_for_linear(ctx)
+    if is_expiring_soon(creds, skew=skew):
+        if not creds.refresh_token:
+            raise typer.BadParameter(
+                "Linear access token is expired/expiring and no refresh token is available. Run `rn linear auth`."
+            )
+        try:
+            token = await refresh_access_token(
+                settings, refresh_token=creds.refresh_token
+            )
+        except Exception as e:
+            raise typer.BadParameter(
+                f"Could not refresh Linear access token: {e}"
+            ) from e
+        next_creds = LinearCredentials(
+            access_token=token.access_token,
+            refresh_token=token.refresh_token or creds.refresh_token,
+            token_type=token.token_type,
+            scope=token.scope or creds.scope,
+            expires_at=token.expires_at,
+            connected_at=creds.connected_at,
+        )
+        store.set(next_creds)
+        return next_creds
+
+    return creds
+
+
 @linear_app.command("status")
-def linear_status() -> None:
+def linear_status(
+    whoami: bool = typer.Option(
+        False, "--whoami", help="Fetch and print account info."
+    ),
+) -> None:
+    ctx: RepoContext | None
     try:
         ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
+    except NotAGitRepositoryError:
+        ctx = None
 
-    auth = asyncio.run(_load_linear_auth(ctx))
-    if auth is None:
+    if ctx is not None and not ctx.db_path.exists():
+        ctx = None
+
+    try:
+        creds = asyncio.run(_require_fresh_linear_credentials(ctx=ctx))
+    except typer.BadParameter:
         typer.echo("Linear: not connected")
         raise typer.Exit(1)
 
     typer.echo("Linear: connected")
-    typer.echo(f"Connected at: {auth.created_at.isoformat()}")
+    typer.echo(f"Connected at: {creds.connected_at.isoformat()}")
+
+    if whoami:
+
+        async def _run() -> None:
+            client = LinearClient(access_token=creds.access_token)
+            data = await client.graphql("query { viewer { id name email } }")
+            typer.echo(str(data.get("viewer")))
+
+        asyncio.run(_run())
 
 
 @linear_app.command("auth")
 def linear_auth(
-    wait: bool = typer.Option(True, help="Wait for authorization to complete."),
     timeout_seconds: int = typer.Option(180, help="Max time to wait for auth."),
 ) -> None:
+    ctx: RepoContext | None
     try:
         ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
+    except NotAGitRepositoryError:
+        ctx = None
 
-    from redesmyn.settings import load_settings
+    if ctx is not None and not ctx.db_path.exists():
+        ctx = None
 
-    settings = load_settings(repo_root=ctx.repo_root)
-    if not settings.linear_client_id or not settings.linear_client_secret:
-        redirect_uri = (
-            f"http://{settings.api_host}:{settings.api_port}/v1/linear/oauth/callback"
-        )
+    settings = _load_settings_for_linear(ctx)
+    if not settings.linear_client_id:
+        redirect_uri = linear_redirect_uri(settings)
         typer.echo(
             "error: Linear OAuth is not configured. Create a Linear OAuth app and set:\n"
             "  REDESMYN_LINEAR_CLIENT_ID\n"
-            "  REDESMYN_LINEAR_CLIENT_SECRET\n"
             "in `.env` (see `.env.example`).\n"
             f"Redirect URL: {redirect_uri}",
             err=True,
         )
         raise typer.Exit(2)
-    base = f"http://{settings.api_host}:{settings.api_port}"
-    start_url = f"{base}/v1/linear/oauth/start"
-    status_url = f"{base}/v1/linear/status"
 
-    if not webbrowser.open(start_url):
-        typer.echo(start_url)
+    redirect_uri = linear_redirect_uri(settings)
+    state = new_oauth_state()
+    code_verifier = new_pkce_verifier()
+    code_challenge = pkce_code_challenge(code_verifier)
+    authorize_url = linear_authorize_url(
+        settings, state=state, redirect_uri=redirect_uri, code_challenge=code_challenge
+    )
 
-    if not wait:
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
+    import threading
+
+    callback: dict[str, str | None] = {"code": None, "state": None, "error": None}
+    got_callback = threading.Event()
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/v1/linear/oauth/callback":
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            qs = parse_qs(parsed.query)
+            callback["code"] = (qs.get("code") or [None])[0]
+            callback["state"] = (qs.get("state") or [None])[0]
+            callback["error"] = (qs.get("error") or [None])[0]
+            got_callback.set()
+
+            if callback["error"]:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(
+                    b"<h1>Linear auth failed</h1><p>Return to the terminal for details.</p>"
+                )
+                return
+
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(
+                b"<h1>Linear connected</h1><p>You can close this tab and return to Redesmyn.</p>"
+            )
+
+    host = settings.api_host
+    port = settings.api_port
+    try:
+        httpd = HTTPServer((host, port), _Handler)
+    except OSError as listen_error:
+        listen_error_msg = str(listen_error)
+        base = f"http://{host}:{port}"
+        start_url = f"{base}/v1/linear/oauth/start"
+        status_url = f"{base}/v1/linear/status"
+
+        import httpx
+
+        async def _poll() -> None:
+            loop = asyncio.get_running_loop()
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                start = loop.time()
+                while True:
+                    if loop.time() - start > timeout_seconds:
+                        raise typer.BadParameter(
+                            "Timed out waiting for Linear authorization"
+                        )
+
+                    try:
+                        resp = await client.get(status_url)
+                    except httpx.RequestError:
+                        raise typer.BadParameter(
+                            f"Could not listen on {host}:{port} for OAuth callback ({listen_error_msg}). "
+                            "Stop the process using that port or change REDESMYN_API_HOST/REDESMYN_API_PORT "
+                            "and update your Linear OAuth redirect URL."
+                        ) from None
+
+                    if resp.status_code != 200:
+                        await asyncio.sleep(1.0)
+                        continue
+
+                    payload = resp.json()
+                    if payload.get("connected"):
+                        return
+                    await asyncio.sleep(1.0)
+
+        if not webbrowser.open(start_url):
+            typer.echo(start_url)
+
+        try:
+            asyncio.run(_poll())
+        except typer.BadParameter as poll_error:
+            typer.echo(f"error: {poll_error}", err=True)
+            raise typer.Exit(2)
+
+        typer.echo("Linear: connected")
         return
 
-    import httpx
-
-    async def _poll() -> None:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            start = asyncio.get_event_loop().time()
-            while True:
-                if asyncio.get_event_loop().time() - start > timeout_seconds:
-                    raise typer.BadParameter(
-                        "Timed out waiting for Linear authorization"
-                    )
-
-                try:
-                    resp = await client.get(status_url)
-                except httpx.RequestError:
-                    raise typer.BadParameter(
-                        f"Control plane not reachable at {base}. Run `rn server run` (or `rn dev`)."
-                    ) from None
-
-                if resp.status_code != 200:
-                    await asyncio.sleep(1.0)
-                    continue
-
-                payload = resp.json()
-                if payload.get("connected"):
-                    return
-                await asyncio.sleep(1.0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
 
     try:
-        asyncio.run(_poll())
+        if not webbrowser.open(authorize_url):
+            typer.echo(authorize_url)
+
+        if not got_callback.wait(timeout_seconds):
+            raise typer.BadParameter("Timed out waiting for Linear authorization")
+
+        if callback["error"]:
+            raise typer.BadParameter(
+                f"Linear authorization failed: {callback['error']}"
+            )
+
+        code = callback["code"]
+        returned_state = callback["state"]
+        if not code or not returned_state:
+            raise typer.BadParameter("Missing code/state in Linear callback")
+        if returned_state != state:
+            raise typer.BadParameter("State mismatch in Linear callback")
+
+        try:
+            token = asyncio.run(
+                exchange_code_for_token(
+                    settings,
+                    code=code,
+                    redirect_uri=redirect_uri,
+                    code_verifier=code_verifier,
+                )
+            )
+        except Exception as e:
+            raise typer.BadParameter(
+                f"Could not complete Linear OAuth token exchange: {e}"
+            ) from e
     except typer.BadParameter as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    store = default_linear_credential_store()
+    store.set(
+        LinearCredentials(
+            access_token=token.access_token,
+            refresh_token=token.refresh_token,
+            token_type=token.token_type,
+            scope=token.scope,
+            expires_at=token.expires_at,
+            connected_at=datetime.now(UTC),
+        )
+    )
 
     typer.echo("Linear: connected")
 
 
-@linear_app.command("whoami")
-def linear_whoami() -> None:
+@linear_app.command("logout")
+def linear_logout() -> None:
+    store = default_linear_credential_store()
+    store.clear()
+
     try:
         ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
+    except NotAGitRepositoryError:
+        ctx = None
+
+    if ctx is not None and ctx.db_path.exists():
+
+        async def _purge_legacy() -> None:
+            engine = create_engine(ctx.db_path)
+            try:
+                sessionmaker = create_sessionmaker(engine)
+                async with sessionmaker() as session:
+                    await session.execute(delete(LinearAuth))
+                    await session.commit()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(_purge_legacy())
+
+    typer.echo("Linear: logged out")
+
+
+@linear_app.command("whoami")
+def linear_whoami() -> None:
+    ctx: RepoContext | None
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+
+    if ctx is not None and not ctx.db_path.exists():
+        ctx = None
+
+    try:
+        creds = asyncio.run(_require_fresh_linear_credentials(ctx=ctx))
+    except typer.BadParameter as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    auth = asyncio.run(_load_linear_auth(ctx))
-    if auth is None:
-        typer.echo("error: Linear is not connected. Run `rn linear auth`.", err=True)
-        raise typer.Exit(2)
-
     async def _run() -> None:
-        client = LinearClient(access_token=auth.access_token)
+        client = LinearClient(access_token=creds.access_token)
         data = await client.graphql("query { viewer { id name email } }")
         typer.echo(str(data.get("viewer")))
 
@@ -2848,13 +3097,14 @@ def linear_import(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    auth = asyncio.run(_load_linear_auth(ctx))
-    if auth is None:
-        typer.echo("error: Linear is not connected. Run `rn linear auth`.", err=True)
+    try:
+        creds = asyncio.run(_require_fresh_linear_credentials(ctx=ctx))
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
     epic_row = asyncio.run(_resolve_epic(ctx, epic=epic))
-    client = LinearClient(access_token=auth.access_token)
+    client = LinearClient(access_token=creds.access_token)
 
     async def _fetch() -> tuple[list[LinearIssue], list[LinearIssueRelation]]:
         issues = await fetch_project_issues(client, project_id=project)

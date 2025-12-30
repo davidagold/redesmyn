@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -49,8 +51,23 @@ def new_oauth_state() -> str:
     return secrets.token_urlsafe(24)
 
 
+def new_pkce_verifier() -> str:
+    # RFC 7636: 43-128 chars. token_urlsafe() yields URL-safe base64 characters.
+    verifier = secrets.token_urlsafe(64)
+    return verifier[:128]
+
+
+def pkce_code_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
 def linear_authorize_url(
-    settings: RedesmynSettings, *, state: str, redirect_uri: str | None = None
+    settings: RedesmynSettings,
+    *,
+    state: str,
+    redirect_uri: str | None = None,
+    code_challenge: str | None = None,
 ) -> str:
     client_id = settings.linear_client_id
     if not client_id:
@@ -63,26 +80,38 @@ def linear_authorize_url(
         "scope": settings.linear_scopes,
         "state": state,
     }
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
     return f"{LINEAR_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
 
 
 async def exchange_code_for_token(
-    settings: RedesmynSettings, *, code: str, redirect_uri: str
+    settings: RedesmynSettings,
+    *,
+    code: str,
+    redirect_uri: str,
+    code_verifier: str | None = None,
 ) -> LinearToken:
     client_id = settings.linear_client_id
     client_secret = settings.linear_client_secret
     if not client_id:
         raise ValueError("Missing REDESMYN_LINEAR_CLIENT_ID")
-    if not client_secret:
-        raise ValueError("Missing REDESMYN_LINEAR_CLIENT_SECRET")
+    if not client_secret and not code_verifier:
+        raise ValueError(
+            "Missing REDESMYN_LINEAR_CLIENT_SECRET (or PKCE code_verifier)"
+        )
 
     data = {
         "grant_type": "authorization_code",
         "client_id": client_id,
-        "client_secret": client_secret,
         "redirect_uri": redirect_uri,
         "code": code,
     }
+    if client_secret:
+        data["client_secret"] = client_secret
+    if code_verifier:
+        data["code_verifier"] = code_verifier
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(LINEAR_OAUTH_TOKEN_URL, data=data)
@@ -107,6 +136,52 @@ async def exchange_code_for_token(
     return LinearToken(
         access_token=access_token,
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
+        token_type=str(token_type),
+        scope=scope if isinstance(scope, str) else None,
+        expires_at=expires_at,
+    )
+
+
+async def refresh_access_token(
+    settings: RedesmynSettings, *, refresh_token: str
+) -> LinearToken:
+    client_id = settings.linear_client_id
+    if not client_id:
+        raise ValueError("Missing REDESMYN_LINEAR_CLIENT_ID")
+
+    data = {
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "refresh_token": refresh_token,
+    }
+    if settings.linear_client_secret:
+        data["client_secret"] = settings.linear_client_secret
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(LINEAR_OAUTH_TOKEN_URL, data=data)
+        resp.raise_for_status()
+        payload: dict[str, Any] = resp.json()
+
+    access_token = payload.get("access_token") or payload.get("accessToken")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("Linear OAuth refresh response missing access_token")
+
+    next_refresh_token = payload.get("refresh_token") or payload.get("refreshToken")
+    token_type = payload.get("token_type") or payload.get("tokenType") or "Bearer"
+    scope = payload.get("scope")
+
+    expires_in = payload.get("expires_in") or payload.get("expiresIn")
+    expires_at: datetime | None
+    if isinstance(expires_in, (int, float)) and expires_in > 0:
+        expires_at = datetime.now(UTC) + timedelta(seconds=int(expires_in))
+    else:
+        expires_at = None
+
+    return LinearToken(
+        access_token=access_token,
+        refresh_token=next_refresh_token
+        if isinstance(next_refresh_token, str)
+        else None,
         token_type=str(token_type),
         scope=scope if isinstance(scope, str) else None,
         expires_at=expires_at,

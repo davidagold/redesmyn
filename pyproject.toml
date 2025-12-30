@@ -13,6 +13,7 @@ dependencies = [
   "typer>=0.13",
   "httpx>=0.27",
   "uvicorn[standard]>=0.32",
+  "keyring>=25.0",
 ]
 
 [build-system]
