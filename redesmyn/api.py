@@ -488,6 +488,7 @@ async def start_task_agent(
             task_id=task_id,
             harness_command=request.harness,
             detach=request.detach,
+            prelude_override=request.prelude,
         )
     except RunnerBackendError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
@@ -550,6 +551,7 @@ async def restart_task_agent(
             task_id=task_id,
             harness_command=request.harness,
             detach=request.detach,
+            prelude_override=request.prelude,
         )
     except RunnerBackendError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e

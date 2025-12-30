@@ -134,11 +134,13 @@ AttachInfoResponse = Annotated[
 class TaskAgentStartRequest(ApiResponse):
     harness: str
     detach: bool = True
+    prelude: str | None = None
 
 
 class TaskAgentRestartRequest(ApiResponse):
     harness: str | None = None
     detach: bool = True
+    prelude: str | None = None
 
 
 class TaskAgentStartResponse(ApiResponse):

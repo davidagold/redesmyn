@@ -1835,6 +1835,11 @@ def agent_start(
         "--harness",
         help="Harness command (shell-like). Defaults from config.harness.command.",
     ),
+    prelude: str | None = typer.Option(
+        None,
+        "--prelude",
+        help="One-time prelude message to send for this start only (supports placeholders like {task_id}).",
+    ),
     detach: bool | None = typer.Option(
         None,
         "--detach/--no-detach",
@@ -1866,6 +1871,7 @@ def agent_start(
                 task_id=task_id,
                 harness_command=effective_harness,
                 detach=effective_detach,
+                prelude_override=prelude,
             )
         )
     except RuntimeError as e:
@@ -1889,6 +1895,11 @@ def agent_restart(
         None,
         "--harness",
         help="Harness command (shell-like). Defaults to the last known command for this task.",
+    ),
+    prelude: str | None = typer.Option(
+        None,
+        "--prelude",
+        help="One-time prelude message to send for this restart only (supports placeholders like {task_id}).",
     ),
     detach: bool | None = typer.Option(
         None,
@@ -1915,6 +1926,7 @@ def agent_restart(
                 task_id=task_id,
                 harness_command=effective_harness,
                 detach=effective_detach,
+                prelude_override=prelude,
             )
         )
     except RuntimeError as e:

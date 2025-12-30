@@ -7,8 +7,12 @@ export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaults
 export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
 export type Agent = components["schemas"]["AgentResponse"]
 export type Node = components["schemas"]["NodeResponse"]
-export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"]
-export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest"]
+export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
+  prelude?: string | null
+}
+export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest"] & {
+  prelude?: string | null
+}
 export type TaskAgentStartResponse = components["schemas"]["TaskAgentStartResponse"]
 export type TaskAgentStopResponse = components["schemas"]["TaskAgentStopResponse"]
 

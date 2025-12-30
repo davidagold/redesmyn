@@ -729,6 +729,7 @@ async def start_task_agent(
     task_id: int,
     harness_command: str,
     detach: bool,
+    prelude_override: str | None = None,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -968,11 +969,11 @@ async def start_task_agent(
                 try:
                     if defaults is None:
                         defaults = load_orchestration_defaults(ctx)
-                    prelude = defaults.harness.prelude
+                    prelude = prelude_override or defaults.harness.prelude
                     send_prelude = defaults.harness.send_prelude
                     submit_prelude = defaults.harness.submit_prelude
                 except RuntimeError:
-                    prelude = None
+                    prelude = prelude_override or None
                 if send_prelude:
                     await send_agent_prelude(
                         task=task,
@@ -1040,6 +1041,7 @@ async def restart_task_agent(
     task_id: int,
     harness_command: str | None,
     detach: bool,
+    prelude_override: str | None = None,
 ) -> StartAgentResult:
     if harness_command is None:
         engine = create_engine(ctx.db_path)
@@ -1075,6 +1077,7 @@ async def restart_task_agent(
         task_id=task_id,
         harness_command=harness_command,
         detach=detach,
+        prelude_override=prelude_override,
     )
 
 

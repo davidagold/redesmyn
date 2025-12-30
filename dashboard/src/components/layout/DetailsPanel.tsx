@@ -68,6 +68,8 @@ function AgentActions({
   const [logsText, setLogsText] = useState<string | null>(null)
   const [logsPath, setLogsPath] = useState<string | null>(null)
   const [logsTruncated, setLogsTruncated] = useState<boolean>(false)
+  const [oneTimePreludeOpen, setOneTimePreludeOpen] = useState(false)
+  const [oneTimePrelude, setOneTimePrelude] = useState("")
 
   useEffect(() => {
     setPending(null)
@@ -79,6 +81,8 @@ function AgentActions({
     setLogsText(null)
     setLogsPath(null)
     setLogsTruncated(false)
+    setOneTimePreludeOpen(false)
+    setOneTimePrelude("")
   }, [task.id])
 
   useEffect(() => {
@@ -111,6 +115,8 @@ function AgentActions({
       ? agentArgv.join(" ")
       : configuredHarnessCommand
 
+  const oneTimePreludeValue = oneTimePrelude.trim()
+
   async function handleStart() {
     setPending("start")
     setError(null)
@@ -118,6 +124,7 @@ function AgentActions({
       const response = await startTaskAgent(taskId, {
         harness: configuredHarnessCommand,
         detach: orchestrationDefaults?.harness.detach ?? true,
+        prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
       })
       const warnings = response.warnings ?? []
       if (warnings.length > 0) {
@@ -127,6 +134,8 @@ function AgentActions({
           setNotice(warnings[0])
         }
       }
+      setOneTimePrelude("")
+      setOneTimePreludeOpen(false)
       onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -155,6 +164,7 @@ function AgentActions({
       const response = await restartTaskAgent(taskId, {
         harness: null,
         detach: orchestrationDefaults?.harness.detach ?? true,
+        prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
       })
       const warnings = response.warnings ?? []
       if (warnings.length > 0) {
@@ -164,6 +174,8 @@ function AgentActions({
           setNotice(warnings[0])
         }
       }
+      setOneTimePrelude("")
+      setOneTimePreludeOpen(false)
       onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -348,6 +360,44 @@ function AgentActions({
             ? "Command used for the most recent run."
             : "Command used when starting this agent."}
         </div>
+      </div>
+
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-muted-foreground">One-time prelude</div>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setOneTimePreludeOpen((open) => !open)}
+            disabledReason={pending !== null ? "Action in progress" : null}
+          >
+            {oneTimePreludeOpen ? "Hide" : "Set"}
+          </Button>
+        </div>
+        {oneTimePreludeOpen ? (
+          <>
+            <textarea
+              className="min-h-20 resize-y rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              value={oneTimePrelude}
+              onChange={(e) => setOneTimePrelude(e.target.value)}
+              placeholder="Optional. Sent once on the next Start/Restart. Supports placeholders like {task_id}, {task_title}, {epic_slug}."
+              disabled={pending !== null}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-muted-foreground">
+                Not saved. Cleared after a successful start/restart.
+              </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setOneTimePrelude("")}
+                disabledReason={pending !== null ? "Action in progress" : null}
+              >
+                Clear
+              </Button>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-2">

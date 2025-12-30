@@ -23,6 +23,7 @@ class RunnerBackend(Protocol):
         task_id: int,
         harness_command: str,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult: ...
 
     async def stop_task_agent(
@@ -37,6 +38,7 @@ class RunnerBackend(Protocol):
         task_id: int,
         harness_command: str | None,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult: ...
 
 
@@ -60,12 +62,14 @@ class LocalRunnerBackend:
         task_id: int,
         harness_command: str,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult:
         return await start_task_agent(
             self.ctx,
             task_id=task_id,
             harness_command=harness_command,
             detach=detach,
+            prelude_override=prelude_override,
         )
 
     async def stop_task_agent(self, *, task_id: int) -> bool:
@@ -77,12 +81,14 @@ class LocalRunnerBackend:
         task_id: int,
         harness_command: str | None,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult:
         return await restart_task_agent(
             self.ctx,
             task_id=task_id,
             harness_command=harness_command,
             detach=detach,
+            prelude_override=prelude_override,
         )
 
 
@@ -103,6 +109,7 @@ class RemoteRunnerBackend:
         task_id: int,
         harness_command: str,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; start via the daemon is not implemented yet.",
@@ -121,6 +128,7 @@ class RemoteRunnerBackend:
         task_id: int,
         harness_command: str | None,
         detach: bool,
+        prelude_override: str | None = None,
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; restart via the daemon is not implemented yet.",
