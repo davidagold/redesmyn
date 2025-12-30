@@ -12,6 +12,12 @@ export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest
 export type TaskAgentStartResponse = components["schemas"]["TaskAgentStartResponse"]
 export type TaskAgentStopResponse = components["schemas"]["TaskAgentStopResponse"]
 
+export type TaskAgentLogsResponse = {
+  path: string
+  text: string
+  truncated: boolean
+}
+
 export async function fetchStatus(): Promise<ApiStatus> {
   const response = await fetch("/v1/status", {
     headers: { Accept: "application/json" },
@@ -155,4 +161,32 @@ export async function restartTaskAgent(
     )
   }
   return response.json() as Promise<TaskAgentStartResponse>
+}
+
+export async function fetchTaskAgentLogs(
+  taskId: number,
+  params: {
+    lines?: number
+    maxBytes?: number
+  } = {},
+): Promise<TaskAgentLogsResponse> {
+  const url = new URL(`/v1/tasks/${taskId}/agent/logs`, window.location.origin)
+  if (typeof params.lines === "number") {
+    url.searchParams.set("lines", String(params.lines))
+  }
+  if (typeof params.maxBytes === "number") {
+    url.searchParams.set("max_bytes", String(params.maxBytes))
+  }
+  const response = await fetch(url.pathname + url.search, {
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(
+      `GET /v1/tasks/${taskId}/agent/logs failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    )
+  }
+  return response.json() as Promise<TaskAgentLogsResponse>
 }

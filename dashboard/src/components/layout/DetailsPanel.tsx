@@ -8,7 +8,12 @@ import {
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import { SlidePanel } from "@/components/ui/slide-panel"
-import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import {
+  fetchTaskAgentLogs,
+  restartTaskAgent,
+  startTaskAgent,
+  stopTaskAgent,
+} from "@/api"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
@@ -50,11 +55,23 @@ function AgentActions({
   )
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [logsPending, setLogsPending] = useState(false)
+  const [logsError, setLogsError] = useState<string | null>(null)
+  const [logsText, setLogsText] = useState<string | null>(null)
+  const [logsPath, setLogsPath] = useState<string | null>(null)
+  const [logsTruncated, setLogsTruncated] = useState<boolean>(false)
 
   useEffect(() => {
     setPending(null)
     setError(null)
     setNotice(null)
+    setLogsOpen(false)
+    setLogsPending(false)
+    setLogsError(null)
+    setLogsText(null)
+    setLogsPath(null)
+    setLogsTruncated(false)
   }, [task.id])
 
   useEffect(() => {
@@ -164,6 +181,32 @@ function AgentActions({
     () => `rn checkout --task ${taskId}`,
     [taskId],
   )
+
+  async function refreshLogs() {
+    setLogsPending(true)
+    setLogsError(null)
+    try {
+      const response = await fetchTaskAgentLogs(taskId, {
+        lines: 200,
+        maxBytes: 65_536,
+      })
+      setLogsText(response.text)
+      setLogsPath(response.path)
+      setLogsTruncated(response.truncated)
+    } catch (e) {
+      setLogsError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLogsPending(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!logsOpen) {
+      return
+    }
+    void refreshLogs()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logsOpen, taskId])
 
   return (
     <div className="grid gap-3">
@@ -287,12 +330,65 @@ function AgentActions({
         <Button
           variant="ghost"
           size="xs"
+          onClick={() => setLogsOpen((open) => !open)}
+          disabledReason={pending !== null ? "Action in progress" : null}
+        >
+          {logsOpen ? "Hide logs" : "Show logs"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="xs"
           onClick={() => void handleCopy(checkoutCommand, "Checkout copied")}
           disabledReason={pending !== null ? "Action in progress" : null}
         >
           Copy rn checkout
         </Button>
       </div>
+
+      {logsOpen ? (
+        <div className="grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">
+              Agent output (tail)
+            </div>
+            <div className="flex items-center gap-2">
+              {logsPath ? (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => void handleCopy(logsPath, "Log path copied")}
+                  disabledReason={logsPending ? "Loading…" : null}
+                >
+                  Copy path
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => void refreshLogs()}
+                disabledReason={logsPending ? "Loading…" : null}
+              >
+                Refresh
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
+            <pre className="max-h-56 overflow-auto whitespace-pre-wrap">
+              {logsText || (logsPending ? "Loading…" : "No output")}
+            </pre>
+          </div>
+          {logsTruncated ? (
+            <div className="text-xs text-muted-foreground">
+              Output truncated.
+            </div>
+          ) : null}
+          {logsError ? (
+            <pre className="whitespace-pre-wrap text-xs text-destructive">
+              {logsError}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? (
         <pre className="whitespace-pre-wrap text-xs text-destructive">
