@@ -646,6 +646,19 @@ export function EpicView() {
     await refreshGraph()
   }
 
+  const resetConfigFields = useCallback(() => {
+    setConfigError(null)
+    setConfigNotice(null)
+    setDefaultPreludeOpen(false)
+    setConfigHarness(orchestrationDefaults?.harness.command ?? "")
+    setConfigDetach(orchestrationDefaults?.harness.detach ?? true)
+    setConfigSandboxType(orchestrationDefaults?.sandbox.type ?? "none")
+    setConfigSandboxNetwork(orchestrationDefaults?.sandbox.network ?? "allow")
+    setConfigPrelude(orchestrationDefaults?.harness.prelude ?? "")
+    setConfigSendPrelude(orchestrationDefaults?.harness.sendPrelude ?? true)
+    setConfigSubmitPrelude(orchestrationDefaults?.harness.submitPrelude ?? true)
+  }, [orchestrationDefaults])
+
   const configDirty = useMemo(() => {
     const currentCommand = orchestrationDefaults?.harness.command ?? ""
     const currentDetach = orchestrationDefaults?.harness.detach ?? true
@@ -1083,21 +1096,62 @@ export function EpicView() {
             className="z-30 w-[28rem] border-border/60 bg-background/80 backdrop-blur"
           >
             <div className="grid gap-4 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">Configure</div>
-                  <div className="mt-1.5 text-xs text-muted-foreground">
-                    Updates `config.toml` (repo scope).
+              <div className="-mx-4 -mt-4 sticky top-0 z-20 bg-background/60 px-4 pb-2 pt-4 backdrop-blur">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">Configure</div>
+                    <div className="mt-1.5 text-xs text-muted-foreground">
+                      Updates `config.toml` (repo scope).
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6"
+                      onClick={() => void handleSaveConfig()}
+                      disabledReason={
+                        configPending
+                          ? "Saving…"
+                          : !configDirty
+                            ? "No changes"
+                            : null
+                      }
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6"
+                      onClick={resetConfigFields}
+                      disabledReason={
+                        configPending
+                          ? "Saving…"
+                          : !orchestrationDefaults
+                            ? "Defaults not loaded"
+                            : !configDirty
+                              ? "No changes"
+                              : null
+                      }
+                    >
+                      Reset
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6"
+                      onClick={closeConfig}
+                    >
+                      Close
+                    </Button>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6"
-                  onClick={closeConfig}
-                >
-                  Close
-                </Button>
+                {configNotice ? (
+                  <div className="mt-1.5 text-xs text-muted-foreground">
+                    {configNotice}
+                  </div>
+                ) : null}
               </div>
 
               {configError ? (
@@ -1366,70 +1420,6 @@ export function EpicView() {
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6"
-                    onClick={() => void handleSaveConfig()}
-                    disabledReason={
-                      configPending
-                        ? "Saving…"
-                        : !configDirty
-                          ? "No changes"
-                          : null
-                    }
-                  >
-                    Save
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6"
-                    onClick={() => {
-                      setConfigError(null)
-                      setConfigNotice(null)
-                      setConfigHarness(
-                        orchestrationDefaults?.harness.command ?? "",
-                      )
-                      setConfigDetach(
-                        orchestrationDefaults?.harness.detach ?? true,
-                      )
-                      setConfigSandboxType(
-                        orchestrationDefaults?.sandbox.type ?? "none",
-                      )
-                      setConfigSandboxNetwork(
-                        orchestrationDefaults?.sandbox.network ?? "allow",
-                      )
-                      setConfigPrelude(
-                        orchestrationDefaults?.harness.prelude ?? "",
-                      )
-                      setConfigSendPrelude(
-                        orchestrationDefaults?.harness.sendPrelude ?? true,
-                      )
-                      setConfigSubmitPrelude(
-                        orchestrationDefaults?.harness.submitPrelude ?? true,
-                      )
-                    }}
-                    disabledReason={
-                      configPending
-                        ? "Saving…"
-                        : orchestrationDefaults
-                          ? null
-                          : "Defaults not loaded"
-                    }
-                  >
-                    Reset
-                  </Button>
-                </div>
-                {configNotice ? (
-                  <div className="text-xs text-muted-foreground">
-                    {configNotice}
-                  </div>
-                ) : null}
-              </div>
             </div>
           </SlidePanel>
           <GraphView
