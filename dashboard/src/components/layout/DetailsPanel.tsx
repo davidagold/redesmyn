@@ -309,7 +309,7 @@ export function DetailsPanel({
       <div className="p-3">
         <Accordion
           key={selectionKey}
-          multiple={!!edge}
+          multiple
           defaultValue={defaultSections}
           className="border-0"
         >

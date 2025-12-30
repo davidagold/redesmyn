@@ -6,6 +6,12 @@ import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { Button } from "@/components/ui/button"
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -1098,238 +1104,268 @@ export function EpicView() {
                 <div className="text-xs text-destructive">{configError}</div>
               ) : null}
 
-              <div className="grid gap-1">
-                <div className="text-xs text-muted-foreground">
-                  Harness command
-                </div>
-                <input
-                  className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                  value={configHarness}
-                  onChange={(e) => setConfigHarness(e.target.value)}
-                  placeholder={
-                    orchestrationDefaults?.harness.command ?? "codex"
-                  }
-                  disabled={configPending}
-                />
-                <div className="mt-1.5 text-xs text-muted-foreground">
-                  Shell command used to start the harness inside each task’s
-                  worktree (e.g. <span className="font-mono">codex</span>).
-                </div>
-              </div>
-
-              <div className="grid gap-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-muted-foreground">Run mode</div>
-                  {orchestrationDefaultsLoading ? (
-                    <span className="text-xs text-muted-foreground">
-                      loading…
-                    </span>
-                  ) : null}
-                </div>
-                <div className="inline-flex h-6 w-fit overflow-hidden rounded-md border border-border/60">
-                  <Button
-                    variant={configDetach ? "secondary" : "ghost"}
-                    size="sm"
-                    className="h-full rounded-none border-0 leading-none"
-                    onClick={() => setConfigDetach(true)}
-                    disabledReason={configPending ? "Saving…" : null}
-                  >
-                    Detached
-                  </Button>
-                  <Button
-                    variant={!configDetach ? "secondary" : "ghost"}
-                    size="sm"
-                    className="h-full rounded-none border-0 border-l leading-none"
-                    onClick={() => setConfigDetach(false)}
-                    disabledReason={configPending ? "Saving…" : null}
-                  >
-                    Foreground
-                  </Button>
-                </div>
-                <div className="mt-1.5 text-xs text-muted-foreground">
-                  Detached runs in a tmux session; foreground runs in your
-                  current terminal.
-                </div>
-              </div>
-
-              <div className="grid gap-1">
-                <div className="text-xs text-muted-foreground">Sandbox</div>
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-foreground">
-                      Worktree sandbox
-                    </div>
-                    <Switch
-                      checked={configSandboxType === "worktree"}
-                      onCheckedChange={(checked) => {
-                        setConfigSandboxType(checked ? "worktree" : "none")
-                        if (!checked) {
-                          setConfigSandboxNetwork("allow")
+              <Accordion
+                multiple
+                defaultValue={["harness", "prelude"]}
+                className="border-0"
+              >
+                <AccordionItem value="harness">
+                  <AccordionTrigger>Harness</AccordionTrigger>
+                  <AccordionContent className="grid gap-4 pt-3">
+                    <div className="grid gap-1">
+                      <div className="text-xs text-muted-foreground">
+                        Harness command
+                      </div>
+                      <input
+                        className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                        value={configHarness}
+                        onChange={(e) => setConfigHarness(e.target.value)}
+                        placeholder={
+                          orchestrationDefaults?.harness.command ?? "codex"
                         }
-                      }}
-                      disabledReason={configPending ? "Saving…" : null}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-foreground">Deny network</div>
-                    <Switch
-                      checked={configSandboxNetwork === "deny"}
-                      onCheckedChange={(checked) =>
-                        setConfigSandboxNetwork(checked ? "deny" : "allow")
-                      }
-                      disabledReason={
-                        configPending
-                          ? "Saving…"
-                          : configSandboxType !== "worktree"
-                            ? "Enable sandbox first"
-                            : null
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="mt-1.5 text-xs text-muted-foreground">
-                  Restricts agent writes to the task worktree and Redesmyn
-                  state. Enable “Deny network” to force offline operation.
-                </div>
-              </div>
+                        disabled={configPending}
+                      />
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Shell command used to start the harness inside each
+                        task’s worktree (e.g.{" "}
+                        <span className="font-mono">codex</span>).
+                      </div>
+                    </div>
 
-              <div className="grid gap-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-muted-foreground">
-                    Agent prelude
-                  </div>
-                  <Popover
-                    open={defaultPreludeOpen}
-                    onOpenChange={setDefaultPreludeOpen}
-                  >
-                    <PopoverTrigger
-                      render={(triggerProps) => {
-                        return (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            className="h-5 px-2"
-                            disabledReason={
-                              orchestrationDefaultsLoading
-                                ? "Loading…"
-                                : orchestrationDefaults?.harness
-                                      .builtInPreludeTemplate
-                                  ? null
-                                  : "Default prelude unavailable"
-                            }
-                            {...triggerProps}
-                          >
-                            Show default
-                          </Button>
-                        )
-                      }}
-                    />
-                    <PopoverContent className="w-[24rem]">
+                    <div className="grid gap-1">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-medium text-foreground">
-                          Default prelude
+                        <div className="text-xs text-muted-foreground">
+                          Run mode
                         </div>
+                        {orchestrationDefaultsLoading ? (
+                          <span className="text-xs text-muted-foreground">
+                            loading…
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="inline-flex h-6 w-fit overflow-hidden rounded-md border border-border/60">
                         <Button
-                          variant="outline"
+                          variant={configDetach ? "secondary" : "ghost"}
                           size="sm"
-                          className="h-6"
-                          disabledReason={
-                            orchestrationDefaults?.harness
-                              .builtInPreludeTemplate
-                              ? null
-                              : "Default prelude unavailable"
-                          }
-                          onClick={() => {
-                            const template =
-                              orchestrationDefaults?.harness
-                                .builtInPreludeTemplate ?? ""
-                            setConfigPrelude(template)
-                            setDefaultPreludeOpen(false)
-                          }}
+                          className="h-full rounded-none border-0 leading-none"
+                          onClick={() => setConfigDetach(true)}
+                          disabledReason={configPending ? "Saving…" : null}
                         >
-                          Fill as starting point
+                          Detached
+                        </Button>
+                        <Button
+                          variant={!configDetach ? "secondary" : "ghost"}
+                          size="sm"
+                          className="h-full rounded-none border-0 border-l leading-none"
+                          onClick={() => setConfigDetach(false)}
+                          disabledReason={configPending ? "Saving…" : null}
+                        >
+                          Foreground
                         </Button>
                       </div>
-                      <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-border/60 bg-background/30 p-2 font-mono text-[0.625rem] text-foreground/80">
-                        {orchestrationDefaults?.harness
-                          .builtInPreludeTemplate ?? ""}
-                      </pre>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <textarea
-                  className="min-h-[10rem] resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                  value={configPrelude}
-                  onChange={(e) => setConfigPrelude(e.target.value)}
-                  placeholder="Optional. Leave blank to use the built-in prelude."
-                  disabled={configPending}
-                />
-                <div className="mt-1.5 text-xs text-muted-foreground">
-                  Sent to the agent right after the harness starts. Use it to
-                  point the agent at relevant docs and guidance.
-                </div>
-                <div className="mt-3 grid gap-1">
-                  <div className="text-xs text-muted-foreground">
-                    Prelude delivery
-                  </div>
-                  <div className="grid gap-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs text-foreground">
-                        Auto-send prelude
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Detached runs in a tmux session; foreground runs in your
+                        current terminal.
                       </div>
-                      <Switch
-                        checked={configSendPrelude}
-                        onCheckedChange={(checked) => {
-                          setConfigSendPrelude(checked)
-                          if (!checked) {
-                            setConfigSubmitPrelude(false)
-                          }
-                        }}
-                        disabledReason={configPending ? "Saving…" : null}
-                      />
                     </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs text-foreground">
-                        Press Enter to submit
+
+                    <div className="grid gap-1">
+                      <div className="text-xs text-muted-foreground">
+                        Sandbox
                       </div>
-                      <Switch
-                        checked={configSubmitPrelude}
-                        onCheckedChange={setConfigSubmitPrelude}
-                        disabledReason={
-                          configPending
-                            ? "Saving…"
-                            : !configSendPrelude
-                              ? "Enable Auto-send first"
-                              : null
-                        }
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-foreground">
+                            Worktree sandbox
+                          </div>
+                          <Switch
+                            checked={configSandboxType === "worktree"}
+                            onCheckedChange={(checked) => {
+                              setConfigSandboxType(
+                                checked ? "worktree" : "none",
+                              )
+                              if (!checked) {
+                                setConfigSandboxNetwork("allow")
+                              }
+                            }}
+                            disabledReason={configPending ? "Saving…" : null}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-foreground">
+                            Deny network
+                          </div>
+                          <Switch
+                            checked={configSandboxNetwork === "deny"}
+                            onCheckedChange={(checked) =>
+                              setConfigSandboxNetwork(
+                                checked ? "deny" : "allow",
+                              )
+                            }
+                            disabledReason={
+                              configPending
+                                ? "Saving…"
+                                : configSandboxType !== "worktree"
+                                  ? "Enable sandbox first"
+                                  : null
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Restricts agent writes to the task worktree and Redesmyn
+                        state. Enable “Deny network” to force offline operation.
+                      </div>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem value="prelude">
+                  <AccordionTrigger>Prelude</AccordionTrigger>
+                  <AccordionContent className="grid gap-4 pt-3">
+                    <div className="grid gap-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs text-muted-foreground">
+                          Agent prelude
+                        </div>
+                        <Popover
+                          open={defaultPreludeOpen}
+                          onOpenChange={setDefaultPreludeOpen}
+                        >
+                          <PopoverTrigger
+                            render={(triggerProps) => {
+                              return (
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  className="h-5 px-2"
+                                  disabledReason={
+                                    orchestrationDefaultsLoading
+                                      ? "Loading…"
+                                      : orchestrationDefaults?.harness
+                                            .builtInPreludeTemplate
+                                        ? null
+                                        : "Default prelude unavailable"
+                                  }
+                                  {...triggerProps}
+                                >
+                                  Show default
+                                </Button>
+                              )
+                            }}
+                          />
+                          <PopoverContent className="w-[24rem]">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xs font-medium text-foreground">
+                                Default prelude
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6"
+                                disabledReason={
+                                  orchestrationDefaults?.harness
+                                    .builtInPreludeTemplate
+                                    ? null
+                                    : "Default prelude unavailable"
+                                }
+                                onClick={() => {
+                                  const template =
+                                    orchestrationDefaults?.harness
+                                      .builtInPreludeTemplate ?? ""
+                                  setConfigPrelude(template)
+                                  setDefaultPreludeOpen(false)
+                                }}
+                              >
+                                Fill as starting point
+                              </Button>
+                            </div>
+                            <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-border/60 bg-background/30 p-2 font-mono text-[0.625rem] text-foreground/80">
+                              {orchestrationDefaults?.harness
+                                .builtInPreludeTemplate ?? ""}
+                            </pre>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <textarea
+                        className="min-h-[10rem] resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                        value={configPrelude}
+                        onChange={(e) => setConfigPrelude(e.target.value)}
+                        placeholder="Optional. Leave blank to use the built-in prelude."
+                        disabled={configPending}
                       />
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Sent to the agent right after the harness starts. Use it
+                        to point the agent at relevant docs and guidance.
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-1.5 text-xs text-muted-foreground">
-                    Auto-send types the prelude into the harness. Press Enter
-                    submits it so the agent starts working immediately.
-                  </div>
-                </div>
-                <div className="mt-3 rounded-md border border-border/60 bg-background/30 p-2 text-xs">
-                  <div className="text-xs text-muted-foreground">
-                    Available placeholders
-                  </div>
-                  <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                    <div className="font-mono text-foreground/80">{`{task_id}`}</div>
-                    <div className="text-muted-foreground">
-                      Task numeric id.
+
+                    <div className="grid gap-1">
+                      <div className="text-xs text-muted-foreground">
+                        Prelude delivery
+                      </div>
+                      <div className="grid gap-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-foreground">
+                            Auto-send prelude
+                          </div>
+                          <Switch
+                            checked={configSendPrelude}
+                            onCheckedChange={(checked) => {
+                              setConfigSendPrelude(checked)
+                              if (!checked) {
+                                setConfigSubmitPrelude(false)
+                              }
+                            }}
+                            disabledReason={configPending ? "Saving…" : null}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-xs text-foreground">
+                            Press Enter to submit
+                          </div>
+                          <Switch
+                            checked={configSubmitPrelude}
+                            onCheckedChange={setConfigSubmitPrelude}
+                            disabledReason={
+                              configPending
+                                ? "Saving…"
+                                : !configSendPrelude
+                                  ? "Enable Auto-send first"
+                                  : null
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="mt-1.5 text-xs text-muted-foreground">
+                        Auto-send types the prelude into the harness. Press
+                        Enter submits it so the agent starts working
+                        immediately.
+                      </div>
                     </div>
-                    <div className="font-mono text-foreground/80">{`{task_title}`}</div>
-                    <div className="text-muted-foreground">Task title.</div>
-                    <div className="font-mono text-foreground/80">{`{task_doc}`}</div>
-                    <div className="text-muted-foreground">
-                      Task README contents (if available).
+
+                    <div className="rounded-md border border-border/60 bg-background/30 p-2 text-xs">
+                      <div className="text-xs text-muted-foreground">
+                        Available placeholders
+                      </div>
+                      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                        <div className="font-mono text-foreground/80">{`{task_id}`}</div>
+                        <div className="text-muted-foreground">
+                          Task numeric id.
+                        </div>
+                        <div className="font-mono text-foreground/80">{`{task_title}`}</div>
+                        <div className="text-muted-foreground">Task title.</div>
+                        <div className="font-mono text-foreground/80">{`{task_doc}`}</div>
+                        <div className="text-muted-foreground">
+                          Task README contents (if available).
+                        </div>
+                        <div className="font-mono text-foreground/80">{`{epic_slug}`}</div>
+                        <div className="text-muted-foreground">Epic slug.</div>
+                      </div>
                     </div>
-                    <div className="font-mono text-foreground/80">{`{epic_slug}`}</div>
-                    <div className="text-muted-foreground">Epic slug.</div>
-                  </div>
-                </div>
-              </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
 
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
