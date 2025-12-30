@@ -1442,6 +1442,18 @@ export function EpicView() {
                         </div>
                         <div className="font-mono text-foreground/80">{`{epic_slug}`}</div>
                         <div className="text-muted-foreground">Epic slug.</div>
+                        <div className="font-mono text-foreground/80">{`{epic_readme}`}</div>
+                        <div className="text-muted-foreground">
+                          Epic README path.
+                        </div>
+                        <div className="font-mono text-foreground/80">{`{branch}`}</div>
+                        <div className="text-muted-foreground">
+                          Branch name for the task node.
+                        </div>
+                        <div className="font-mono text-foreground/80">{`{worktree}`}</div>
+                        <div className="text-muted-foreground">
+                          Absolute path to the task worktree.
+                        </div>
                       </div>
                     </div>
                   </AccordionContent>
