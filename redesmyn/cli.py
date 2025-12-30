@@ -75,6 +75,7 @@ from redesmyn.repo import (
     GitCommandError,
     NotAGitRepositoryError,
     current_branch,
+    git_is_ancestor,
     git_merge_ff_only,
     git_rebase_update_refs,
     git_status_porcelain,
@@ -338,6 +339,39 @@ def merge(
         raise typer.Exit(2)
 
     typer.echo(f"Merged {task_branch} -> {base_branch}")
+
+    async def _mark_completed_tasks() -> list[int]:
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                merged_task = await session.get(Task, task_id)
+                if merged_task is None:
+                    return []
+                result = await session.execute(
+                    select(Task, Node)
+                    .join(Node, Task.node_id == Node.id)
+                    .where(Task.epic_id == merged_task.epic_id)
+                )
+                completed: list[int] = []
+                for task_row, node_row in result.all():
+                    if not git_is_ancestor(
+                        ctx.repo_root, node_row.branch_name, task_branch
+                    ):
+                        continue
+                    if task_row.state != TaskState.Done:
+                        task_row.state = TaskState.Done
+                    if task_row.merge_ready_at is not None:
+                        task_row.merge_ready_at = None
+                    completed.append(task_row.id)
+                await session.commit()
+                return completed
+        finally:
+            await engine.dispose()
+
+    completed_ids = asyncio.run(_mark_completed_tasks())
+    if completed_ids:
+        typer.echo(f"Marked complete: {len(completed_ids)} task(s)")
 
 
 def _parse_bool(value: str) -> bool:
