@@ -19,6 +19,7 @@ from starlette.responses import RedirectResponse
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
+from redesmyn.agent_runtime import agent_log_path_for_row
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
@@ -181,6 +182,33 @@ def maybe_mount_dashboard(app_: FastAPI, worktree_root: Path) -> None:
 
 app = App(title="Redesmyn", lifespan=lifespan)
 v1 = APIRouter(prefix="/v1")
+
+
+def _tail_text(path: Path, *, max_bytes: int = 65536) -> tuple[str, bool]:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = None
+
+    try:
+        with path.open("rb") as f:
+            try:
+                f.seek(0, os.SEEK_END)
+                actual_size = f.tell()
+                offset = max(0, actual_size - max_bytes)
+                f.seek(offset, os.SEEK_SET)
+            except OSError:
+                pass
+            data = f.read()
+    except OSError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    truncated = False
+    if size is not None and size > max_bytes:
+        truncated = True
+
+    text = data.decode("utf-8", errors="replace")
+    return text, truncated
 
 
 @v1.get("/healthz")
@@ -548,6 +576,36 @@ async def restart_task_agent(
         started=result.started,
         warnings=list(result.warnings),
     )
+
+
+@v1.get("/tasks/{task_id}/agent/logs", include_in_schema=False)
+async def task_agent_logs(
+    task_id: int,
+    lines: int = 200,
+    max_bytes: int = 65536,
+) -> dict[str, object]:
+    """Return a tail of the agent log for a task (best-effort)."""
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        _, node = await _require_task_node(session, task_id=task_id)
+        agent = await session.get(Agent, node.agent_id) if node.agent_id else None
+
+    if agent is None:
+        raise HTTPException(status_code=404, detail="No agent for this task")
+
+    log_path = agent_log_path_for_row(app.state.ctx, agent_row=agent)
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="No log file found")
+
+    text, truncated = _tail_text(log_path, max_bytes=max_bytes)
+    if lines > 0:
+        text = "\n".join(text.splitlines()[-lines:])
+
+    return {
+        "path": str(log_path),
+        "text": text,
+        "truncated": truncated,
+    }
 
 
 @v1.post("/nodes/{node_id}/agent", response_model=NodeResponse)
