@@ -235,6 +235,9 @@ class Task(Base):
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     github_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    merge_ready_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

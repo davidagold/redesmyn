@@ -47,6 +47,7 @@ class TaskResponse(ApiResponse):
     linear_issue_id: str | None
     github_issue_id: str | None
     local_path: str | None
+    merge_ready_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

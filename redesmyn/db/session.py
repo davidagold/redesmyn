@@ -59,6 +59,11 @@ async def _migrate_sqlite(conn) -> None:
 
     await migrate_agent_status_to_stopped(conn)
 
+    result = await conn.exec_driver_sql("PRAGMA table_info(tasks)")
+    existing = {row[1] for row in result.fetchall()}
+    if "merge_ready_at" not in existing:
+        await conn.execute(text("ALTER TABLE tasks ADD COLUMN merge_ready_at DATETIME"))
+
 
 async def async_session(
     sessionmaker: async_sessionmaker[AsyncSession],
