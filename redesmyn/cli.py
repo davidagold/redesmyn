@@ -889,10 +889,20 @@ def daemon_start() -> None:
     raise typer.Exit(2)
 
 
+@daemon_app.command("up")
+def daemon_up() -> None:
+    daemon_start()
+
+
 @daemon_app.command("stop")
 def daemon_stop() -> None:
     typer.echo("Not implemented yet.", err=True)
     raise typer.Exit(2)
+
+
+@daemon_app.command("down")
+def daemon_down() -> None:
+    daemon_stop()
 
 
 @daemon_app.command("status")
