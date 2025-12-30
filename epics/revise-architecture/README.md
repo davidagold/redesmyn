@@ -27,6 +27,11 @@ The UX should remain “one command + one UI” even though the system is logica
 - `rn run --epic <slug> --fleet-size <n>` provisions sessions for tasks in the current repo (or an explicit repo) and starts a local fleet automatically.
 - The dashboard clearly indicates whether a daemon is connected and whether telemetry is fresh.
 
+Repo selection (v1):
+
+- When `rn` is run inside a git repo, that repo is the default target.
+- When run outside a git repo, commands that need a repo must take an explicit repo selector (exact flag is a CLI design choice; avoid path-based identifiers at the control plane boundary).
+
 This epic focuses on the daemon/control-plane architecture revision. Harness-specific adapters remain tracked in `epics/agent-orchestration/README.md`.
 
 ## 2) Key decisions
@@ -53,6 +58,8 @@ To work behind NAT/firewalls, the daemon maintains an **outbound long-lived conn
 - Server → daemon: configuration updates, desired-state updates, and commands
 
 This provides “RPC-like” behavior over a message protocol; design for idempotency, acks/dedupe, and resync on reconnect.
+
+In v1, prefer a **single WebSocket connection per host daemon**, multiplexing repo-scoped messages by `workspace_id` + `repo_id`.
 
 #### Repo attachment (“attach”) semantics (v1)
 
@@ -106,6 +113,8 @@ Introduce the minimally sufficient iteration:
   - Prefer immutable `workspace_id` + `repo_id` for primary identity.
   - Treat names/slugs as display fields and enforce uniqueness per workspace separately.
 
+This is strictly about identity and event attribution; multi-repo orchestration semantics (cross-repo desired state, multi-repo fleets) remain out of scope for this epic.
+
 ### 2.9 Integrations authenticate at the client system level (v1)
 
 In v1, integrations like Linear/GitHub authenticate on the client (daemon host) at the system level.
@@ -136,6 +145,7 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 - Dashboard “daemon online/offline” surfaces and guidance.
 - Data model migration: merge Node into Task.
 - Git boundary: remove server git execution/proxying; consolidate git proxying locally.
+- Data model cleanup: split agent config from run history (`AgentConfig` + `AgentSession`).
 
 ## 4) Non-goals (this epic)
 
