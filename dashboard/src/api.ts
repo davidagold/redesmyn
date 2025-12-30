@@ -7,6 +7,7 @@ export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaults
 export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
 export type Agent = components["schemas"]["AgentResponse"]
 export type Node = components["schemas"]["NodeResponse"]
+export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
   prelude?: string | null
 }
@@ -52,6 +53,29 @@ export async function fetchEpicGraph(
     throw new Error(`GET /v1/epics/${epic}/graph failed (${response.status})`)
   }
   return response.json() as Promise<EpicGraph>
+}
+
+export async function setTaskMergeReady(
+  taskId: number,
+  ready: boolean,
+): Promise<Task> {
+  const response = await fetch(`/v1/tasks/${taskId}/merge-ready`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ready }),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(
+      `POST /v1/tasks/${taskId}/merge-ready failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    )
+  }
+  return response.json() as Promise<Task>
 }
 
 export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefaults> {

@@ -89,6 +89,7 @@ from redesmyn.schemas.core import (
     TaskAgentStartRequest,
     TaskAgentStartResponse,
     TaskAgentStopResponse,
+    TaskMergeReadyRequest,
     TrunkCommitResponse,
     TrunkTimelineResponse,
 )
@@ -578,6 +579,22 @@ async def restart_task_agent(
         started=result.started,
         warnings=list(result.warnings),
     )
+
+
+@v1.post("/tasks/{task_id}/merge-ready", response_model=TaskResponse)
+async def set_task_merge_ready(
+    task_id: int,
+    request: TaskMergeReadyRequest,
+) -> TaskResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        task = await session.get(Task, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task.merge_ready_at = datetime.now(UTC) if request.ready else None
+        await session.commit()
+        await session.refresh(task)
+        return TaskResponse.model_validate(task, from_attributes=True)
 
 
 @v1.get("/tasks/{task_id}/agent/logs", include_in_schema=False)

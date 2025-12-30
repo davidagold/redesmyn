@@ -167,6 +167,10 @@ class TaskAgentStopResponse(ApiResponse):
     stopped: bool
 
 
+class TaskMergeReadyRequest(ApiRequest):
+    ready: bool
+
+
 class HostUpsertRequest(ApiResponse):
     host_key: str
     display_name: str

@@ -11,6 +11,7 @@ import { SlidePanel } from "@/components/ui/slide-panel"
 import {
   fetchTaskAgentLogs,
   restartTaskAgent,
+  setTaskMergeReady,
   startTaskAgent,
   stopTaskAgent,
 } from "@/api"
@@ -19,6 +20,7 @@ import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { RotateCcw, Square, Terminal } from "lucide-react"
+import { Switch } from "@/components/ui/switch"
 
 type EdgeSelection = {
   id: string
@@ -70,6 +72,10 @@ function AgentActions({
   const [logsTruncated, setLogsTruncated] = useState<boolean>(false)
   const [oneTimePreludeOpen, setOneTimePreludeOpen] = useState(false)
   const [oneTimePrelude, setOneTimePrelude] = useState("")
+  const [mergeReadyPending, setMergeReadyPending] = useState(false)
+  const [mergeReady, setMergeReady] = useState<boolean>(
+    Boolean(task.mergeReadyAt),
+  )
 
   useEffect(() => {
     setPending(null)
@@ -83,7 +89,13 @@ function AgentActions({
     setLogsTruncated(false)
     setOneTimePreludeOpen(false)
     setOneTimePrelude("")
+    setMergeReadyPending(false)
+    setMergeReady(Boolean(task.mergeReadyAt))
   }, [task.id])
+
+  useEffect(() => {
+    setMergeReady(Boolean(task.mergeReadyAt))
+  }, [task.id, task.mergeReadyAt])
 
   useEffect(() => {
     if (!notice) {
@@ -190,6 +202,20 @@ function AgentActions({
       setNotice(label)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleSetMergeReady(next: boolean) {
+    setMergeReadyPending(true)
+    setError(null)
+    try {
+      await setTaskMergeReady(taskId, next)
+      setMergeReady(next)
+      onRequestRefresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMergeReadyPending(false)
     }
   }
 
@@ -398,6 +424,27 @@ function AgentActions({
             </div>
           </>
         ) : null}
+      </div>
+
+      <div className="grid gap-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs text-muted-foreground">Merge</div>
+          <Switch
+            checked={mergeReady}
+            onCheckedChange={(checked) => void handleSetMergeReady(checked)}
+            disabledReason={
+              pending !== null
+                ? "Action in progress"
+                : mergeReadyPending
+                  ? "Saving…"
+                  : null
+            }
+          />
+        </div>
+        <div className="text-xs text-muted-foreground">
+          Mark this task as ready to merge (required for{" "}
+          <span className="font-mono">rn merge</span> unless forced).
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">

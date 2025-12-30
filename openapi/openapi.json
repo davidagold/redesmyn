@@ -1215,6 +1215,17 @@
               }
             ],
             "title": "Harness"
+          },
+          "prelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prelude"
           }
         },
         "title": "TaskAgentRestartRequest",
@@ -1230,6 +1241,17 @@
           "harness": {
             "title": "Harness",
             "type": "string"
+          },
+          "prelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prelude"
           }
         },
         "required": [
@@ -1401,6 +1423,19 @@
         "title": "TaskAuthority",
         "type": "string"
       },
+      "TaskMergeReadyRequest": {
+        "properties": {
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready"
+        ],
+        "title": "TaskMergeReadyRequest",
+        "type": "object"
+      },
       "TaskResponse": {
         "properties": {
           "authority": {
@@ -1451,6 +1486,18 @@
               }
             ],
             "title": "Localpath"
+          },
+          "mergeReadyAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mergereadyat"
           },
           "nodeId": {
             "anyOf": [
@@ -2203,6 +2250,55 @@
           }
         },
         "summary": "Stop Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/merge-ready": {
+      "post": {
+        "operationId": "set_task_merge_ready_v1_tasks__task_id__merge_ready_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskMergeReadyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Task Merge Ready"
       }
     }
   }
