@@ -1121,20 +1121,14 @@ export function EpicView() {
             side="left"
             className="z-30 w-[28rem] border-border/60 bg-background/80 backdrop-blur"
           >
-            <div className="grid gap-4 p-4">
-              <div className="-mx-4 -mt-4 sticky top-0 z-20 bg-background/60 px-4 pb-2 pt-4 backdrop-blur">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">Configure</div>
-                    <div className="mt-1.5 text-xs text-muted-foreground">
-                      Updates `config.toml` (repo scope).
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
+            <div className="relative grid gap-4 p-4">
+              <div className="sticky top-4 z-20 h-0 pointer-events-none">
+                <div className="flex justify-end">
+                  <div className="inline-flex h-6 w-fit overflow-hidden rounded-md border border-border/60 bg-background/40 shadow-sm backdrop-blur pointer-events-auto">
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="h-6"
+                      className="h-full rounded-none border-0 leading-none"
                       onClick={() => void handleSaveConfig()}
                       disabledReason={
                         configPending
@@ -1149,7 +1143,7 @@ export function EpicView() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6"
+                      className="h-full rounded-none border-0 border-l leading-none"
                       onClick={resetConfigFields}
                       disabledReason={
                         configPending
@@ -1166,12 +1160,19 @@ export function EpicView() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6"
+                      className="h-full rounded-none border-0 border-l leading-none"
                       onClick={closeConfig}
                     >
                       Close
                     </Button>
                   </div>
+                </div>
+              </div>
+
+              <div className="pr-24">
+                <div className="text-sm font-medium">Configure</div>
+                <div className="mt-1.5 text-xs text-muted-foreground">
+                  Updates `config.toml` (repo scope).
                 </div>
                 {configNotice ? (
                   <div className="mt-1.5 text-xs text-muted-foreground">
