@@ -39,6 +39,11 @@ from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import GitCommandError, current_branch, git_worktree_add
+from redesmyn.sandbox import (
+    NullSandboxPolicy,
+    WorktreeSandboxPolicy,
+    make_sandbox_provider,
+)
 from redesmyn.strings import slugify
 
 
@@ -703,13 +708,35 @@ async def start_task_agent(
                 )
             runtime_env |= definition.env
 
+            defaults = None
+            try:
+                defaults = load_orchestration_defaults(ctx)
+            except RuntimeError:
+                defaults = None
+
+            sandbox_policy = NullSandboxPolicy()
+            if defaults is not None and defaults.sandbox.type == "worktree":
+                sandbox_policy = WorktreeSandboxPolicy(
+                    worktree_path=worktree_path,
+                    shared_state_paths=[ctx.state_dir],
+                    network=defaults.sandbox.network,
+                )
+
+            sandbox_provider = make_sandbox_provider()
+            wrapped = sandbox_provider.wrap(
+                argv=definition.argv,
+                cwd=worktree_path,
+                env=runtime_env,
+                policy=sandbox_policy,
+            )
+
             attach = await start_tmux_session(
                 ctx,
                 task_id=task.id,
                 agent_id=agent.id,
                 worktree_path=worktree_path,
-                argv=definition.argv,
-                env=runtime_env,
+                argv=wrapped.argv,
+                env=wrapped.env,
             )
             pid = None
 
@@ -733,7 +760,8 @@ async def start_task_agent(
                 send_prelude = True
                 submit_prelude = True
                 try:
-                    defaults = load_orchestration_defaults(ctx)
+                    if defaults is None:
+                        defaults = load_orchestration_defaults(ctx)
                     prelude = defaults.harness.prelude
                     send_prelude = defaults.harness.send_prelude
                     submit_prelude = defaults.harness.submit_prelude

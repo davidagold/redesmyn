@@ -267,6 +267,14 @@ class ApiStatusResponse(ApiResponse):
     block: BlockStatusResponse | None
 
 
+class SandboxCapabilitiesResponse(ApiResponse):
+    provider: str
+    available: bool
+    supports_worktree: bool
+    supports_network_deny: bool
+    unavailable_reason: str | None = None
+
+
 class OrchestrationFleetDefaultsResponse(ApiResponse):
     mode: Literal["fixed", "auto"]
     size: int | None = None
@@ -281,10 +289,16 @@ class OrchestrationHarnessDefaultsResponse(ApiResponse):
     submit_prelude: bool = True
 
 
+class OrchestrationSandboxDefaultsResponse(ApiResponse):
+    type: Literal["none", "worktree"] = "none"
+    network: Literal["allow", "deny"] = "allow"
+
+
 class OrchestrationDefaultsResponse(ApiResponse):
     default_epic: str | None = None
     fleet: OrchestrationFleetDefaultsResponse
     harness: OrchestrationHarnessDefaultsResponse
+    sandbox: OrchestrationSandboxDefaultsResponse
 
 
 class OrchestrationHarnessDefaultsUpdateRequest(ApiRequest):
@@ -300,10 +314,16 @@ class OrchestrationFleetDefaultsUpdateRequest(ApiRequest):
     size: int | None = None
 
 
+class OrchestrationSandboxDefaultsUpdateRequest(ApiRequest):
+    type: Literal["none", "worktree"] | None = None
+    network: Literal["allow", "deny"] | None = None
+
+
 class OrchestrationDefaultsUpdateRequest(ApiRequest):
     default_epic: str | None = None
     fleet: OrchestrationFleetDefaultsUpdateRequest | None = None
     harness: OrchestrationHarnessDefaultsUpdateRequest | None = None
+    sandbox: OrchestrationSandboxDefaultsUpdateRequest | None = None
 
 
 class LinearStatusResponse(ApiResponse):

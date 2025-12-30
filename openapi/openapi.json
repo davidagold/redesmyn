@@ -868,11 +868,15 @@
           },
           "harness": {
             "$ref": "#/components/schemas/OrchestrationHarnessDefaultsResponse"
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/OrchestrationSandboxDefaultsResponse"
           }
         },
         "required": [
           "fleet",
-          "harness"
+          "harness",
+          "sandbox"
         ],
         "title": "OrchestrationDefaultsResponse",
         "type": "object"
@@ -904,6 +908,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/OrchestrationHarnessDefaultsUpdateRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sandbox": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrchestrationSandboxDefaultsUpdateRequest"
               },
               {
                 "type": "null"
@@ -1083,6 +1097,105 @@
           }
         },
         "title": "OrchestrationHarnessDefaultsUpdateRequest",
+        "type": "object"
+      },
+      "OrchestrationSandboxDefaultsResponse": {
+        "properties": {
+          "network": {
+            "default": "allow",
+            "enum": [
+              "allow",
+              "deny"
+            ],
+            "title": "Network",
+            "type": "string"
+          },
+          "type": {
+            "default": "none",
+            "enum": [
+              "none",
+              "worktree"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "OrchestrationSandboxDefaultsResponse",
+        "type": "object"
+      },
+      "OrchestrationSandboxDefaultsUpdateRequest": {
+        "properties": {
+          "network": {
+            "anyOf": [
+              {
+                "enum": [
+                  "allow",
+                  "deny"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "worktree"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "title": "OrchestrationSandboxDefaultsUpdateRequest",
+        "type": "object"
+      },
+      "SandboxCapabilitiesResponse": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "supportsNetworkDeny": {
+            "title": "Supportsnetworkdeny",
+            "type": "boolean"
+          },
+          "supportsWorktree": {
+            "title": "Supportsworktree",
+            "type": "boolean"
+          },
+          "unavailableReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailablereason"
+          }
+        },
+        "required": [
+          "provider",
+          "available",
+          "supportsWorktree",
+          "supportsNetworkDeny"
+        ],
+        "title": "SandboxCapabilitiesResponse",
         "type": "object"
       },
       "TaskAgentRestartRequest": {
@@ -1917,6 +2030,24 @@
           }
         },
         "summary": "Set Node Agent"
+      }
+    },
+    "/v1/sandbox/capabilities": {
+      "get": {
+        "operationId": "sandbox_capabilities_v1_sandbox_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sandbox Capabilities"
       }
     },
     "/v1/status": {

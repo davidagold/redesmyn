@@ -59,6 +59,7 @@ from redesmyn.runner_backend import (
     RunnerBackendError,
     make_runner_backend,
 )
+from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentResponse,
@@ -78,8 +79,10 @@ from redesmyn.schemas.core import (
     OrchestrationDefaultsResponse,
     OrchestrationFleetDefaultsResponse,
     OrchestrationHarnessDefaultsResponse,
+    OrchestrationSandboxDefaultsResponse,
     OrchestrationDefaultsUpdateRequest,
     ReleaseConditionResponse,
+    SandboxCapabilitiesResponse,
     TaskResponse,
     TaskAgentRestartRequest,
     TaskAgentStartRequest,
@@ -702,6 +705,10 @@ async def get_orchestration_config() -> OrchestrationDefaultsResponse:
             send_prelude=defaults.harness.send_prelude,
             submit_prelude=defaults.harness.submit_prelude,
         ),
+        sandbox=OrchestrationSandboxDefaultsResponse(
+            type=defaults.sandbox.type,
+            network=defaults.sandbox.network,
+        ),
     )
 
 
@@ -736,8 +743,22 @@ async def update_orchestration_config(
                 data, "harness.submit_prelude", request.harness.submit_prelude
             )
 
+    if request.sandbox is not None:
+        if "type" in request.sandbox.model_fields_set:
+            set_config_value(data, "sandbox.type", request.sandbox.type)
+        if "network" in request.sandbox.model_fields_set:
+            set_config_value(data, "sandbox.network", request.sandbox.network)
+
     write_config(path, data)
     return await get_orchestration_config()
+
+
+@v1.get("/sandbox/capabilities", response_model=SandboxCapabilitiesResponse)
+async def sandbox_capabilities() -> SandboxCapabilitiesResponse:
+    capabilities = make_sandbox_provider().capabilities()
+    return SandboxCapabilitiesResponse.model_validate(
+        capabilities.model_dump(mode="python"),
+    )
 
 
 @v1.get("/status", response_model=ApiStatusResponse)

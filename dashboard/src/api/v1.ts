@@ -176,6 +176,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/sandbox/capabilities": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Sandbox Capabilities */
+    get: operations["sandbox_capabilities_v1_sandbox_capabilities_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/status": {
     parameters: {
       query?: never
@@ -553,6 +570,7 @@ export interface components {
       defaultEpic?: string | null
       fleet: components["schemas"]["OrchestrationFleetDefaultsResponse"]
       harness: components["schemas"]["OrchestrationHarnessDefaultsResponse"]
+      sandbox: components["schemas"]["OrchestrationSandboxDefaultsResponse"]
     }
     /** OrchestrationDefaultsUpdateRequest */
     OrchestrationDefaultsUpdateRequest: {
@@ -560,6 +578,7 @@ export interface components {
       defaultEpic?: string | null
       fleet?: components["schemas"]["OrchestrationFleetDefaultsUpdateRequest"] | null
       harness?: components["schemas"]["OrchestrationHarnessDefaultsUpdateRequest"] | null
+      sandbox?: components["schemas"]["OrchestrationSandboxDefaultsUpdateRequest"] | null
     }
     /** OrchestrationFleetDefaultsResponse */
     OrchestrationFleetDefaultsResponse: {
@@ -614,6 +633,41 @@ export interface components {
       sendPrelude?: boolean | null
       /** Submitprelude */
       submitPrelude?: boolean | null
+    }
+    /** OrchestrationSandboxDefaultsResponse */
+    OrchestrationSandboxDefaultsResponse: {
+      /**
+       * Network
+       * @default allow
+       * @enum {string}
+       */
+      network: "allow" | "deny"
+      /**
+       * Type
+       * @default none
+       * @enum {string}
+       */
+      type: "none" | "worktree"
+    }
+    /** OrchestrationSandboxDefaultsUpdateRequest */
+    OrchestrationSandboxDefaultsUpdateRequest: {
+      /** Network */
+      network?: "allow" | "deny" | null
+      /** Type */
+      type?: "none" | "worktree" | null
+    }
+    /** SandboxCapabilitiesResponse */
+    SandboxCapabilitiesResponse: {
+      /** Available */
+      available: boolean
+      /** Provider */
+      provider: string
+      /** Supportsnetworkdeny */
+      supportsNetworkDeny: boolean
+      /** Supportsworktree */
+      supportsWorktree: boolean
+      /** Unavailablereason */
+      unavailableReason?: string | null
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
@@ -1082,6 +1136,26 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  sandbox_capabilities_v1_sandbox_capabilities_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["SandboxCapabilitiesResponse"]
         }
       }
     }

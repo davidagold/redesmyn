@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from redesmyn.context import RepoContext
 
 FleetMode = Literal["fixed", "auto"]
+SandboxType = Literal["none", "worktree"]
+SandboxNetworkMode = Literal["allow", "deny"]
 
 
 class FleetDefaults(BaseModel):
@@ -54,12 +56,20 @@ class HarnessDefaults(BaseModel):
         return trimmed or None
 
 
+class SandboxDefaults(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    type: SandboxType = "none"
+    network: SandboxNetworkMode = "allow"
+
+
 class OrchestrationDefaults(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     default_epic: str | None = None
     fleet: FleetDefaults = Field(default_factory=FleetDefaults)
     harness: HarnessDefaults = Field(default_factory=HarnessDefaults)
+    sandbox: SandboxDefaults = Field(default_factory=SandboxDefaults)
 
     @field_validator("default_epic")
     @classmethod

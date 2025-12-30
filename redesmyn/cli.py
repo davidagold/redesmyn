@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -77,11 +78,13 @@ from redesmyn.repo import (
     git_worktree_add,
 )
 from redesmyn.repo_observer import run_repo_observer
+from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.strings import slugify
 
 app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
 config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
+sandbox_app = typer.Typer(add_completion=False, help="Sandbox configuration + health.")
 block_app = typer.Typer(
     add_completion=False,
     help="Block controls (use `rn pause` as an alias for v0).",
@@ -257,7 +260,7 @@ def config_get() -> None:
 def config_set(
     key: str = typer.Argument(
         ...,
-        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach, harness.prelude, harness.send_prelude, harness.submit_prelude).",
+        help="Config key (e.g. default_epic, fleet.mode, fleet.size, harness.command, harness.detach, harness.prelude, harness.send_prelude, harness.submit_prelude, sandbox.type, sandbox.network).",
     ),
     value: str = typer.Argument(
         ...,
@@ -281,6 +284,8 @@ def config_set(
         "harness.prelude",
         "harness.send_prelude",
         "harness.submit_prelude",
+        "sandbox.type",
+        "sandbox.network",
     }
     if key not in allowed:
         raise typer.BadParameter(f"Unknown key: {key!r}")
@@ -305,6 +310,16 @@ def config_set(
         if parsed_int <= 0:
             raise typer.BadParameter("fleet.size must be > 0 (or null)")
         parsed = parsed_int
+    elif key == "sandbox.type":
+        sandbox_type = value_raw.lower()
+        if sandbox_type not in {"none", "worktree"}:
+            raise typer.BadParameter("sandbox.type must be none or worktree")
+        parsed = sandbox_type
+    elif key == "sandbox.network":
+        sandbox_network = value_raw.lower()
+        if sandbox_network not in {"allow", "deny"}:
+            raise typer.BadParameter("sandbox.network must be allow or deny")
+        parsed = sandbox_network
     elif key == "harness.detach":
         parsed = _parse_bool(value_raw)
     elif key in {"harness.send_prelude", "harness.submit_prelude"}:
@@ -323,6 +338,47 @@ def config_set(
     set_config_value(data, key, parsed)
     write_config(path, data)
     typer.echo(f"Wrote: {path}")
+
+
+@sandbox_app.command("doctor")
+def sandbox_doctor(
+    json_output: bool = typer.Option(False, "--json", help="Print JSON for scripting."),
+) -> None:
+    """Show sandbox provider capability + current defaults."""
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    defaults = load_orchestration_defaults(ctx)
+    capabilities = make_sandbox_provider().capabilities()
+    payload = {
+        "capabilities": capabilities.model_dump(mode="python"),
+        "defaults": {
+            "type": defaults.sandbox.type,
+            "network": defaults.sandbox.network,
+        },
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    typer.echo(f"Provider: {capabilities.provider}")
+    available = "yes" if capabilities.available else "no"
+    if capabilities.unavailable_reason:
+        available = f"{available} ({capabilities.unavailable_reason})"
+    typer.echo(f"Available: {available}")
+    typer.echo(
+        "Supports worktree sandbox: "
+        + ("yes" if capabilities.supports_worktree else "no")
+    )
+    typer.echo(
+        f"Supports network deny: {'yes' if capabilities.supports_network_deny else 'no'}"
+    )
+    typer.echo("")
+    typer.echo(f"Configured type: {defaults.sandbox.type}")
+    typer.echo(f"Configured network: {defaults.sandbox.network}")
 
 
 @app.command()
@@ -1322,6 +1378,7 @@ def daemon_status() -> None:
 
 app.add_typer(daemon_app, name="daemon")
 app.add_typer(config_app, name="config")
+app.add_typer(sandbox_app, name="sandbox")
 
 
 @observer_app.command("run")
