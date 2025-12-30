@@ -122,6 +122,24 @@ def agent_log_path(ctx: RepoContext, *, agent_id: int) -> Path:
     return agent_dir(ctx, agent_id=agent_id) / "output.log"
 
 
+def _tail_text(path: Path, *, max_bytes: int = 8192) -> str | None:
+    try:
+        with path.open("rb") as f:
+            try:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                offset = max(0, size - max_bytes)
+                f.seek(offset, os.SEEK_SET)
+            except OSError:
+                pass
+            data = f.read()
+    except OSError:
+        return None
+    if not data:
+        return None
+    return data.decode("utf-8", errors="replace")
+
+
 def write_agent_launcher(
     *,
     ctx: RepoContext,
@@ -642,9 +660,28 @@ async def start_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, node, epic = await _load_task_and_node(session, task_id=task_id)
-            agent = await get_or_create_task_agent(
-                session=session, task=task, node=node
-            )
+
+            agent = await load_task_agent_row(session, task=task, node=node)
+            should_link_agent = agent is None
+            if agent is None:
+                expected = f"a-{task.id}"
+                agent = await session.scalar(
+                    select(Agent).where(Agent.display_name == expected)
+                )
+                if agent is None:
+                    agent = Agent(display_name=expected)
+                    session.add(agent)
+                    await session.flush()
+                else:
+                    other_node = await session.scalar(
+                        select(Node)
+                        .where(Node.agent_id == agent.id, Node.id != node.id)
+                        .limit(1)
+                    )
+                    if other_node is not None:
+                        raise RuntimeError(
+                            f"Agent {expected!r} is already assigned to node {other_node.id} ({other_node.branch_name})"
+                        )
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             if _tmux_has_session(name=tmux_name):
@@ -667,6 +704,9 @@ async def start_task_agent(
                     log_path=str(log_path),
                 )
                 agent.attach = attach.model_dump(mode="python")
+                if should_link_agent:
+                    node.agent_id = agent.id
+                    await session.flush()
                 await session.commit()
                 await session.refresh(agent)
                 return StartAgentResult(
@@ -722,6 +762,21 @@ async def start_task_agent(
                     network=defaults.sandbox.network,
                 )
 
+            if isinstance(sandbox_policy, WorktreeSandboxPolicy):
+                run_dir = agent_dir(ctx, agent_id=agent.id)
+                tmp_dir = run_dir / "tmp"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+
+                runtime_env["TMPDIR"] = str(tmp_dir)
+                runtime_env["TMP"] = str(tmp_dir)
+                runtime_env["TEMP"] = str(tmp_dir)
+
+                # Keep harness state (caches/config) inside Redesmyn state so it
+                # remains writable when sandboxing is enabled.
+                runtime_env.setdefault("CODEX_HOME", str(run_dir / "codex"))
+                runtime_env.setdefault("XDG_CONFIG_HOME", str(run_dir / "xdg-config"))
+                runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
+
             sandbox_provider = make_sandbox_provider()
             wrapped = sandbox_provider.wrap(
                 argv=definition.argv,
@@ -740,9 +795,10 @@ async def start_task_agent(
             )
             pid = None
 
-            now = datetime.now(UTC)
-            agent.status = AgentStatus.Running
-            agent.last_seen_at = now
+            if should_link_agent:
+                node.agent_id = agent.id
+                await session.flush()
+
             agent.host_id = host.id
             agent.harness_profile_id = profile.id
             agent.cwd_path = str(worktree_path)
@@ -750,8 +806,35 @@ async def start_task_agent(
             agent.attach = attach.model_dump(mode="python")
             agent.resolved_profile = definition.model_dump(mode="python")
             agent.exit_code = None
-            agent.started_at = now
+            agent.started_at = datetime.now(UTC)
             agent.ended_at = None
+
+            await asyncio.sleep(0.25)
+            if not _tmux_has_session(name=tmux_name):
+                now = datetime.now(UTC)
+                agent.status = AgentStatus.Error
+                agent.last_seen_at = now
+                agent.ended_at = now
+                log_path = agent_log_path(ctx, agent_id=agent.id)
+                tail = _tail_text(log_path)
+                if tail:
+                    warnings.append(
+                        "Harness exited immediately:\n" + tail.strip("\n")[-4000:]
+                    )
+                else:
+                    warnings.append("Harness exited immediately (no logs captured).")
+                await session.commit()
+                await session.refresh(agent)
+                return StartAgentResult(
+                    agent=agent,
+                    attach=attach,
+                    started=False,
+                    warnings=tuple(warnings),
+                )
+
+            now = datetime.now(UTC)
+            agent.status = AgentStatus.Running
+            agent.last_seen_at = now
 
             await session.commit()
             await session.refresh(agent)
