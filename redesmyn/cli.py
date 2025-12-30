@@ -348,24 +348,54 @@ def merge(
                 merged_task = await session.get(Task, task_id)
                 if merged_task is None:
                     return []
+
+                completed: set[int] = set()
+
+                # Mark the merged task and its node ancestors as complete.
+                #
+                # Note: We intentionally do not use git ancestry of each task branch here because
+                # `git rebase --update-refs` cannot update branches that are currently checked out
+                # in other worktrees, leaving their refs pointing at pre-rebase commits even when
+                # their changes have been incorporated via a downstream merge.
+                if merged_task.node_id is not None:
+                    node = await session.get(Node, merged_task.node_id)
+                    while node is not None:
+                        tasks_for_node = await session.execute(
+                            select(Task).where(Task.node_id == node.id)
+                        )
+                        for task_row in tasks_for_node.scalars().all():
+                            if task_row.state != TaskState.Done:
+                                task_row.state = TaskState.Done
+                            if task_row.merge_ready_at is not None:
+                                task_row.merge_ready_at = None
+                            completed.add(task_row.id)
+
+                        if node.parent_node_id is None:
+                            break
+                        node = await session.get(Node, node.parent_node_id)
+
+                # Also mark any other tasks whose branch ref is an ancestor of the new base branch
+                # head (when those refs are movable), so "included-by-history" tasks get reflected.
                 result = await session.execute(
                     select(Task, Node)
                     .join(Node, Task.node_id == Node.id)
                     .where(Task.epic_id == merged_task.epic_id)
                 )
-                completed: list[int] = []
                 for task_row, node_row in result.all():
+                    if task_row.id in completed:
+                        continue
                     if not git_is_ancestor(
-                        ctx.repo_root, node_row.branch_name, task_branch
+                        ctx.repo_root, node_row.branch_name, base_branch
                     ):
                         continue
                     if task_row.state != TaskState.Done:
                         task_row.state = TaskState.Done
                     if task_row.merge_ready_at is not None:
                         task_row.merge_ready_at = None
-                    completed.append(task_row.id)
+                    completed.add(task_row.id)
+
                 await session.commit()
-                return completed
+                return sorted(completed)
         finally:
             await engine.dispose()
 
