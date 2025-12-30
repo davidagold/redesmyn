@@ -7,6 +7,7 @@ import platform
 import shlex
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -138,6 +139,59 @@ def _tail_text(path: Path, *, max_bytes: int = 8192) -> str | None:
     if not data:
         return None
     return data.decode("utf-8", errors="replace")
+
+
+def _sanitize_path_for_sandbox(path_value: str) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for raw in path_value.split(os.pathsep):
+        entry = raw.strip()
+        if not entry or entry in seen:
+            continue
+        path = Path(entry)
+        if not path.is_dir():
+            continue
+        # Codex may try to write under certain PATH entries; drop ephemeral
+        # temp paths that are non-writable under worktree sandboxing.
+        if entry.startswith("/var/folders/") or entry.startswith(
+            "/private/var/folders/"
+        ):
+            continue
+        parts.append(entry)
+        seen.add(entry)
+
+    for required in ("/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+        if required not in seen and Path(required).is_dir():
+            parts.append(required)
+            seen.add(required)
+
+    return os.pathsep.join(parts)
+
+
+def _seed_codex_home(*, src_dir: Path, dst_dir: Path, warnings: list[str]) -> None:
+    """Best-effort seed of Codex auth/config into a sandboxed home."""
+    try:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        warnings.append(f"Failed to create CODEX_HOME directory: {e}")
+        return
+
+    if not src_dir.is_dir():
+        return
+
+    for name in (
+        "auth.json",
+        "config.toml",
+        "version.json",
+    ):
+        src_file = src_dir / name
+        dst_file = dst_dir / name
+        if not src_file.is_file() or dst_file.exists():
+            continue
+        try:
+            shutil.copy2(src_file, dst_file)
+        except OSError as e:
+            warnings.append(f"Failed to copy {name} into CODEX_HOME: {e}")
 
 
 def write_agent_launcher(
@@ -770,9 +824,18 @@ async def start_task_agent(
 
             sandbox_policy = NullSandboxPolicy()
             if defaults is not None and defaults.sandbox.type == "worktree":
+                shared_state_paths: list[Path] = [ctx.state_dir]
+                # Many tools expect to write to a temp directory (on macOS this is
+                # typically under `/var/folders/...`). Allowing the per-user temp
+                # directory keeps the worktree sandbox usable without widening it
+                # to all writable paths.
+                tmp_root = Path(tempfile.gettempdir())
+                if tmp_root.is_dir():
+                    shared_state_paths.append(tmp_root)
+
                 sandbox_policy = WorktreeSandboxPolicy(
                     worktree_path=worktree_path,
-                    shared_state_paths=[ctx.state_dir],
+                    shared_state_paths=shared_state_paths,
                     network=defaults.sandbox.network,
                 )
 
@@ -784,16 +847,23 @@ async def start_task_agent(
                 runtime_env["TMPDIR"] = str(tmp_dir)
                 runtime_env["TMP"] = str(tmp_dir)
                 runtime_env["TEMP"] = str(tmp_dir)
+                runtime_env["PATH"] = _sanitize_path_for_sandbox(
+                    runtime_env.get("PATH", "")
+                )
 
                 # Keep harness state (caches/config) inside Redesmyn state so it
                 # remains writable when sandboxing is enabled.
-                runtime_env.setdefault("CODEX_HOME", str(run_dir / "codex"))
+                runtime_env["HOME"] = str(run_dir / "home")
+                runtime_env.setdefault(
+                    "CODEX_HOME", str(Path(runtime_env["HOME"]) / ".codex")
+                )
                 runtime_env.setdefault("XDG_CONFIG_HOME", str(run_dir / "xdg-config"))
                 runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
                 runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
                 runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
 
                 for key in (
+                    "HOME",
                     "CODEX_HOME",
                     "XDG_CONFIG_HOME",
                     "XDG_CACHE_HOME",
@@ -806,6 +876,14 @@ async def start_task_agent(
                     path = Path(value)
                     if path.is_relative_to(ctx.state_dir):
                         path.mkdir(parents=True, exist_ok=True)
+
+                if Path(definition.argv[0]).name == "codex":
+                    src_codex = Path.home() / ".codex"
+                    _seed_codex_home(
+                        src_dir=src_codex,
+                        dst_dir=Path(runtime_env["CODEX_HOME"]),
+                        warnings=warnings,
+                    )
 
             sandbox_provider = make_sandbox_provider()
             wrapped = sandbox_provider.wrap(
