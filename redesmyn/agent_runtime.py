@@ -193,6 +193,21 @@ def _seed_codex_home(*, src_dir: Path, dst_dir: Path, warnings: list[str]) -> No
         except OSError as e:
             warnings.append(f"Failed to copy {name} into CODEX_HOME: {e}")
 
+    # Ensure Playwright MCP uses isolated mode so multiple sandboxes/agents can
+    # use browser tooling concurrently without profile locking.
+    config_path = dst_dir / "config.toml"
+    if config_path.exists():
+        try:
+            text = config_path.read_text(encoding="utf-8")
+            if "--isolated" not in text and "mcp_servers.playwright" in text:
+                text = text.replace(
+                    'args = ["@playwright/mcp@latest"]',
+                    'args = ["@playwright/mcp@latest", "--isolated"]',
+                )
+                config_path.write_text(text, encoding="utf-8")
+        except OSError as e:
+            warnings.append(f"Failed to patch CODEX_HOME config.toml: {e}")
+
 
 def write_agent_launcher(
     *,

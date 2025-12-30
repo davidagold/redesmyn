@@ -75,6 +75,12 @@ def _sandbox_exec_profile(policy: WorktreeSandboxPolicy) -> str:
         # avoids having to enumerate every readable system path.
         "(allow default)",
         "(deny file-write*)",
+        # PTYs are required for interactive tools (e.g. Codex exec). On macOS,
+        # `openpty` touches `/dev/*` devices which counts as a file write under
+        # sandbox-exec. Allowing `/dev` keeps PTYs functional without widening
+        # normal filesystem writes.
+        f"(allow file-write* {_subpath_clause(Path('/dev'))})",
+        f"(allow file-write* {_subpath_clause(Path('/private/dev'))})",
         *[
             f"(allow file-write* {_subpath_clause(allowed)})"
             for allowed in [policy.worktree_path, *policy.shared_state_paths]
