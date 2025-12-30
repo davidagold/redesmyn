@@ -844,7 +844,7 @@ async def _sync_from_local(
     epic: str | None,
     create_nodes: bool,
 ) -> SyncStats:
-    epic_fs = _infer_single_epic_slug_from_fs(ctx.repo_root)
+    epic_fs = _infer_single_epic_slug_from_fs(ctx.worktree_root)
     requested = epic or epic_fs
 
     engine = create_engine(ctx.db_path)
@@ -895,7 +895,7 @@ async def _sync_from_local(
             if not epic_slug:
                 raise typer.BadParameter("Could not infer epic; pass --epic <slug|id>.")
 
-            epic_readme = ctx.repo_root / "epics" / epic_slug / "README.md"
+            epic_readme = ctx.worktree_root / "epics" / epic_slug / "README.md"
             if not epic_readme.exists():
                 raise typer.BadParameter(f"Epic doc not found: {epic_readme}")
 
@@ -933,7 +933,7 @@ async def _sync_from_local(
                 if updated:
                     stats.epics_updated += 1
 
-            tasks_dir = ctx.repo_root / "epics" / epic_row.slug / "tasks"
+            tasks_dir = ctx.worktree_root / "epics" / epic_row.slug / "tasks"
             task_readmes = (
                 sorted(tasks_dir.glob("*/README.md")) if tasks_dir.exists() else []
             )
@@ -955,7 +955,7 @@ async def _sync_from_local(
                 meta = doc.metadata
                 linear_issue_id = meta.linear.issue_id if meta.linear else None
                 linear_identifier = meta.linear.identifier if meta.linear else None
-                rel_path = str(doc.path.relative_to(ctx.repo_root))
+                rel_path = str(doc.path.relative_to(ctx.worktree_root))
 
                 task: Task | None = None
                 if linear_issue_id:
@@ -1092,7 +1092,7 @@ async def _sync_from_linear(
 
     project_id = project or epic_row.linear_project_id
     if not project_id:
-        epic_readme = ctx.repo_root / "epics" / epic_row.slug / "README.md"
+        epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
         if epic_readme.exists():
             try:
                 epic_doc = load_epic_doc(epic_readme)
@@ -1146,7 +1146,7 @@ async def _sync_from_linear(
             )
         parent_issue_by_issue[issue_id] = parent
 
-    epic_dir = ctx.repo_root / "epics" / epic_row.slug
+    epic_dir = ctx.worktree_root / "epics" / epic_row.slug
     tasks_dir = epic_dir / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
