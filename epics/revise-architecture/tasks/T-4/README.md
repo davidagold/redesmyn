@@ -19,6 +19,7 @@ node:
   - any `rn` command checks “is this a git repo, and is it registered?”
   - if unregistered, register and persist the `workspace_id` + `repo_id` locally for future runs
   - if registered but not attached, attach so the daemon can start telemetry + reconciliation for this repo
+  - prefer local attach (`rn` → daemon on the same host) to avoid a CLI → control plane → daemon → control plane loop
 - Define how orchestration commands relate:
   - `rn run`: sets desired state for a task fleet (control-plane intent) and waits for the daemon to reconcile when requested.
   - `rn agent run`: single-task convenience wrapper around `rn run` (optionally attaches or tails logs).

@@ -13,7 +13,7 @@ node:
 
 - Surface daemon connection status in the dashboard:
   - **daemon (host) connection**: online/offline + last_seen
-  - **repo telemetry**: attached/unattached + freshness (stale threshold)
+  - **repo telemetry**: attached/unattached + freshness (stale threshold); “attached” means the daemon is actively managing this repo
   - host identity (when meaningful)
   - “telemetry stale” affordances
 - Prefer a compact, always-visible surface (e.g. RHS of the subheader bar) with hover/click details.

@@ -54,6 +54,22 @@ To work behind NAT/firewalls, the daemon maintains an **outbound long-lived conn
 
 This provides “RPC-like” behavior over a message protocol; design for idempotency, acks/dedupe, and resync on reconnect.
 
+#### Repo attachment (“attach”) semantics (v1)
+
+“Attach repo” means: **activate a repo on the host daemon** so it can:
+
+- start the repo’s observation loop (git/worktree/session telemetry → events), and
+- start reconciling repo-scoped desired state + commands locally.
+
+In the common local workflow, this should be a **local** operation (`rn` talks to the daemon on the same host) and should not require a control plane round-trip.
+
+The control plane may still request attach/detach in these cases:
+
+- UI-driven orchestration where the daemon needs to begin managing a repo before it can act.
+- Daemon reconnect/resync (“re-attach these repo ids”).
+
+The control plane must not send host filesystem paths for repo access. Attach/detach should be expressed in terms of stable repo identity (`workspace_id` + `repo_id`); the daemon resolves repo roots from its local registry.
+
 ### 2.4 Merge Node into Task
 
 Nodes are just tasks as represented in the graph. Consolidate these concepts so there is a single graph primitive (`Task`) with branch/topology metadata.

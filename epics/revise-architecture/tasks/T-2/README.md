@@ -13,8 +13,9 @@ node:
 
 - Add a server endpoint for daemon connectivity (WebSocket recommended).
 - Define repo attachment on a host-scoped daemon:
-  - allow the server to tell the daemon “start managing this repo” (attach/detach)
-  - all repo-scoped messages include `workspace_id` + `repo_id` (multiplexed over one host WebSocket)
+  - attach == activate repo observation + reconciliation on the daemon
+  - allow the control plane to request attach/detach by `workspace_id` + `repo_id` (multiplexed over one host WebSocket)
+  - attach/detach must not include host filesystem paths; the daemon resolves repo roots from its local registry
 - Persist/track daemon presence:
   - daemon host identity + capabilities
   - last_seen + connection status
