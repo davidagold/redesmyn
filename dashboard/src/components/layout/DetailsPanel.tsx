@@ -416,7 +416,7 @@ function AgentActions({
               </Button>
             </div>
           </div>
-          <div className="relative rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
+          <div className="relative max-w-full overflow-hidden rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
             <div className="absolute right-2 top-2 z-10">
               <Button
                 variant="outline"
@@ -436,7 +436,7 @@ function AgentActions({
                 Copy
               </Button>
             </div>
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap pr-16">
+            <pre className="max-h-56 min-w-0 overflow-auto whitespace-pre pr-16">
               {!hasAgent
                 ? "Start the agent to see output."
                 : displayLogsText || (logsPending ? "Loading…" : "No output")}
