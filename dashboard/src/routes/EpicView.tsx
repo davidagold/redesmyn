@@ -1438,7 +1438,7 @@ export function EpicView() {
                         <div className="text-muted-foreground">Task title.</div>
                         <div className="font-mono text-foreground/80">{`{task_doc}`}</div>
                         <div className="text-muted-foreground">
-                          Task README contents (if available).
+                          Task README path (if available).
                         </div>
                         <div className="font-mono text-foreground/80">{`{epic_slug}`}</div>
                         <div className="text-muted-foreground">Epic slug.</div>
