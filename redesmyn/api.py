@@ -1390,7 +1390,6 @@ async def task_agent_logs(
         "truncated": truncated,
     }
 
-
 @v1.get("/linear/status", response_model=LinearStatusResponse)
 async def linear_status() -> LinearStatusResponse:
     store = default_linear_credential_store()
