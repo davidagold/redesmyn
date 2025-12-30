@@ -40,16 +40,16 @@ node:
 
 One circle communicates overall “should I worry?”:
 
-- **Green**: agent running
-- **Blue**: agent exists but not running (“ready”)
-- **Gray**: agent not started yet (no agent row or never started)
+- **Green (filled)**: agent running
+- **Blue (outline)**: agent stopped
+- **Blue (dashed outline)**: no agent (not started yet)
 - **Amber**: blocked (task state blocked) or stopping/starting transient
 - **Red**: failed (agent error/exit) or worktree missing/mismatch
 
 Tooltip (compact, actionable; avoid inert enumerations):
 
 - `Agent`: `a-<task_id>`
-- `Status`: running/idle/failed (+ elapsed since start if available)
+- `Status`: running/stopped/blocked/error (+ elapsed since start if available)
 - `Worktree`: clean/dirty/missing/mismatch (only when not healthy)
 - `Last activity`: last commit subject/sha prefix if available
 

@@ -324,7 +324,7 @@ These are enforced by the daemon and by `rn` when possible:
   - `harnessProfileId` (resolved harness profile used to launch/attach)
   - `capabilities` (optional; e.g., “can run tests”, “can open PRs”)
   - `lastSeenAt`
-  - `status` (running/stopped/error)
+  - `status` (running/blocked/stopped/error)
   - `startedAt`, `stoppedAt`
   - `attach` metadata (e.g., tmux session name, log path)
 
