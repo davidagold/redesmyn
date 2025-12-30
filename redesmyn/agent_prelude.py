@@ -20,6 +20,7 @@ DEFAULT_AGENT_PRELUDE_TEMPLATE = (
     "\n"
     "- Read AGENTS.md at repo root and follow it.\n"
     "- Read the epic README and the task README before coding.\n"
+    "- Skim related tasks (parent, children, blockers) to understand context and avoid conflicts.\n"
     "- Keep changes small, well-typed, and easy to review; avoid unrelated changes.\n"
     "- If requirements or context are unclear, ask before making big assumptions.\n"
     "\n"
