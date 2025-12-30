@@ -81,6 +81,11 @@ def _sandbox_exec_profile(policy: WorktreeSandboxPolicy) -> str:
         # normal filesystem writes.
         f"(allow file-write* {_subpath_clause(Path('/dev'))})",
         f"(allow file-write* {_subpath_clause(Path('/private/dev'))})",
+        # Apple `git` shells out to Xcode tools (`xcrun`) which write caches under
+        # `/var/folders/...` (symlinked under `/private/var`). Allow temp writes
+        # so git commands can run inside the worktree sandbox.
+        f"(allow file-write* {_subpath_clause(Path('/var/folders'))})",
+        f"(allow file-write* {_subpath_clause(Path('/private/var/folders'))})",
         *[
             f"(allow file-write* {_subpath_clause(allowed)})"
             for allowed in [policy.worktree_path, *policy.shared_state_paths]
