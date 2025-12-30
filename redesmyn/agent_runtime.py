@@ -841,6 +841,13 @@ async def start_task_agent(
             sandbox_policy = NullSandboxPolicy()
             if defaults is not None and defaults.sandbox.type == "worktree":
                 shared_state_paths: list[Path] = [ctx.state_dir]
+                # Git worktrees share metadata under the main repo `.git/`
+                # directory (e.g., `.git/worktrees/<name>/index.lock`). Allowing
+                # writes there enables basic git operations within a sandboxed
+                # worktree without broadening permissions elsewhere.
+                repo_git_dir = ctx.repo_root / ".git"
+                if repo_git_dir.exists():
+                    shared_state_paths.append(repo_git_dir)
                 # Many tools expect to write to a temp directory (on macOS this is
                 # typically under `/var/folders/...`). Allowing the per-user temp
                 # directory keeps the worktree sandbox usable without widening it
