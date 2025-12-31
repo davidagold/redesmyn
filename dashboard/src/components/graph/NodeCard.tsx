@@ -23,6 +23,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   EllipsisVertical,
   GitMerge,
   Layers,
@@ -416,30 +421,54 @@ export function NodeCard({
                 Ready to merge
               </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={!canMerge || !mergeReady || pendingMerge !== null}
-                title="Fast-forward merge the task + its ancestors into the epic base branch."
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void handleMerge({ cascade: false })
-                }}
-              >
-                <GitMerge className="size-3.5" />
-                Merge
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!canMerge || !mergeReady || pendingMerge !== null}
-                title="Same merge, plus rebase downstream branches to keep the stack intact."
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void handleMerge({ cascade: true })
-                }}
-              >
-                <Layers className="size-3.5" />
-                Merge and Restack
-              </DropdownMenuItem>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge || !mergeReady || pendingMerge !== null
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMerge({ cascade: false })
+                      }}
+                    >
+                      <GitMerge className="size-3.5" />
+                      Merge
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Fast-forward merge the task + its ancestors into the epic base
+                  branch.
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge || !mergeReady || pendingMerge !== null
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMerge({ cascade: true })
+                      }}
+                    >
+                      <Layers className="size-3.5" />
+                      Merge and Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Same merge, plus rebase downstream branches to keep the stack
+                  intact.
+                </TooltipContent>
+              </Tooltip>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
