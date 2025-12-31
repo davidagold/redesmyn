@@ -34,6 +34,15 @@ export type TaskMergeRequest = {
   force?: boolean
 }
 
+export type MergeRunResumeRequest = {
+  allowRunning?: boolean
+}
+
+export type MergeRunResumeResponse = {
+  runId: string
+  baseBranch?: string | null
+}
+
 export type TaskMergePlanStep = {
   kind: "rebase" | "mergeFf"
   nodeId: number | null
@@ -135,6 +144,31 @@ export async function mergeTask(
     )
   }
   return response.json() as Promise<TaskMergeResponse>
+}
+
+export async function resumeMergeRun(
+  runId: string,
+  request: MergeRunResumeRequest,
+): Promise<MergeRunResumeResponse> {
+  const response = await fetch(`/v1/merge-runs/${runId}/resume`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new ApiHttpError(
+      `POST /v1/merge-runs/${runId}/resume failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+      response.status,
+      detail,
+    )
+  }
+  return response.json() as Promise<MergeRunResumeResponse>
 }
 
 export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefaults> {

@@ -3,6 +3,7 @@ import type { EpicGraph } from "@/api"
 export type GraphNode = EpicGraph["nodes"][number]
 export type Task = EpicGraph["tasks"][number] & { mergeReadyAt?: string | null }
 export type Agent = EpicGraph["agents"][number]
+export type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 export type TrunkTimeline = EpicGraph["trunk"]
 
 export function formatBranchName(
@@ -42,6 +43,18 @@ export function buildNodesMap(nodes: GraphNode[]): Map<number, GraphNode> {
   const map = new Map<number, GraphNode>()
   for (const node of nodes) {
     map.set(node.id, node)
+  }
+  return map
+}
+
+export function buildMergeRunsByTaskId(
+  runs: MergeRun[],
+): Map<number, MergeRun> {
+  const map = new Map<number, MergeRun>()
+  for (const run of runs) {
+    if (!map.has(run.requestedTaskId)) {
+      map.set(run.requestedTaskId, run)
+    }
   }
   return map
 }

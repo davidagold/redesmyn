@@ -16,7 +16,13 @@ import {
   useState,
   type CSSProperties,
 } from "react"
-import type { Agent, GraphNode, Task, TrunkTimeline } from "@/lib/graph-utils"
+import type {
+  Agent,
+  GraphNode,
+  MergeRun,
+  Task,
+  TrunkTimeline,
+} from "@/lib/graph-utils"
 import { makeEdgeId } from "@/lib/graph-utils"
 import { copyToClipboard } from "@/lib/clipboard"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
@@ -52,6 +58,7 @@ interface GraphViewProps {
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
   agentsById: Map<number, Agent>
+  mergeRunsByTaskId: Map<number, MergeRun>
   activityByNodeId: Map<number, NodeActivity>
   harnessCommand: string
   detach: boolean
@@ -212,6 +219,7 @@ export function GraphView({
   childrenByParent,
   tasksById,
   agentsById,
+  mergeRunsByTaskId,
   activityByNodeId,
   harnessCommand,
   detach,
@@ -783,6 +791,7 @@ export function GraphView({
         graphNode.agentId !== null
           ? agentsById.get(graphNode.agentId)
           : undefined
+      const mergeRun = task ? mergeRunsByTaskId.get(task.id) : undefined
       const activity = activityByNodeId.get(graphNode.id)
 
       mapped.push({
@@ -793,6 +802,7 @@ export function GraphView({
           node: graphNode,
           task,
           agent,
+          mergeRun,
           activity,
           epicSlug,
           harnessCommand,
@@ -821,6 +831,7 @@ export function GraphView({
     epicSlug,
     focusPositions,
     harnessCommand,
+    mergeRunsByTaskId,
     onSelectNode,
     onRequestRefresh,
     nodesById,

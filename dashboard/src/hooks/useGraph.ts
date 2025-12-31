@@ -3,6 +3,7 @@ import { fetchEpicGraph, type EpicGraph } from "@/api"
 import {
   buildAgentsMap,
   buildChildrenMap,
+  buildMergeRunsByTaskId,
   buildNodesMap,
   buildTasksMap,
 } from "@/lib/graph-utils"
@@ -37,6 +38,11 @@ export function useGraph(epicId: number | null) {
 
   const agentsById = useMemo(() => buildAgentsMap(graph?.agents ?? []), [graph])
 
+  const mergeRunsByTaskId = useMemo(
+    () => buildMergeRunsByTaskId(graph?.mergeRuns ?? []),
+    [graph],
+  )
+
   const childrenByParent = useMemo(
     () => buildChildrenMap(graph?.nodes ?? []),
     [graph],
@@ -53,6 +59,7 @@ export function useGraph(epicId: number | null) {
     refresh,
     tasksById,
     agentsById,
+    mergeRunsByTaskId,
     childrenByParent,
     nodesById,
     rootNodes,

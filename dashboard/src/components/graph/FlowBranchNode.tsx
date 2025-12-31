@@ -4,6 +4,7 @@ import {
   formatBranchName,
   type Agent,
   type GraphNode,
+  type MergeRun,
   type Task,
 } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
@@ -12,6 +13,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
   task?: Task
   agent?: Agent
+  mergeRun?: MergeRun
   activity?: NodeActivity
   epicSlug?: string | null
   harnessCommand: string
@@ -31,6 +33,7 @@ export function FlowBranchNode({
     node,
     task,
     agent,
+    mergeRun,
     activity,
     epicSlug,
     harnessCommand,
@@ -57,6 +60,7 @@ export function FlowBranchNode({
         node={node}
         task={task}
         agent={agent}
+        mergeRun={mergeRun}
         activity={activity}
         branchLabel={branchLabel}
         harnessCommand={harnessCommand}

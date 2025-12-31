@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import {
   ApiHttpError,
   mergeTask,
+  resumeMergeRun,
   restartTaskAgent,
   setTaskMergeReady,
   startTaskAgent,
@@ -11,7 +12,7 @@ import {
 } from "@/api"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
-import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
+import type { Agent, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import {
@@ -41,6 +42,7 @@ interface NodeCardProps {
   node: GraphNode
   task?: Task
   agent?: Agent
+  mergeRun?: MergeRun
   activity?: NodeActivity
   branchLabel: string
   harnessCommand: string
@@ -68,6 +70,7 @@ export function NodeCard({
   node,
   task,
   agent,
+  mergeRun,
   activity,
   branchLabel,
   harnessCommand,
@@ -85,7 +88,7 @@ export function NodeCard({
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [pendingMerge, setPendingMerge] =
-    useState<"ready" | "merge" | "mergeStack" | null>(null)
+    useState<"ready" | "merge" | "mergeStack" | "resume" | null>(null)
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
   const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
@@ -102,6 +105,8 @@ export function NodeCard({
 
   const agentStatus = agent?.status ?? null
   const taskId = task?.id ?? null
+  const mergeRunStatus = mergeRun?.status ?? null
+  const canResumeMerge = mergeRunStatus === "resumable"
 
   useEffect(() => {
     setMergeReady(Boolean(task?.mergeReadyAt))
@@ -242,6 +247,34 @@ export function NodeCard({
           return
         }
         await mergeTask(taskId, { cascade, allowRunning: true })
+        onRequestRefresh()
+        return
+      }
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
+  async function handleResumeMerge() {
+    if (!mergeRun?.runId || !onRequestRefresh) {
+      return
+    }
+    setRefreshPendingAfterMenuClose(false)
+    setPendingMerge("resume")
+    setActionError(null)
+    try {
+      await resumeMergeRun(mergeRun.runId, {})
+      onRequestRefresh()
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409) {
+        const confirmed = window.confirm(
+          "This merge affects running tasks/agents.\n\nProceed anyway?",
+        )
+        if (!confirmed) {
+          return
+        }
+        await resumeMergeRun(mergeRun.runId, { allowRunning: true })
         onRequestRefresh()
         return
       }
@@ -411,7 +444,7 @@ export function NodeCard({
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
               <DropdownMenuCheckboxItem
                 checked={mergeReady}
-                disabled={!canMerge || pendingMerge !== null}
+                disabled={!canMerge || pendingMerge !== null || canResumeMerge}
                 closeOnClick={false}
                 onClick={(e) => e.stopPropagation()}
                 onCheckedChange={(checked) =>
@@ -421,13 +454,43 @@ export function NodeCard({
                 Ready to merge
               </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
+              {canResumeMerge ? (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <DropdownMenuItem
+                          {...triggerProps}
+                          disabled={pendingMerge !== null}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            void handleResumeMerge()
+                          }}
+                        >
+                          <Play className="size-3.5" />
+                          Resume merge
+                        </DropdownMenuItem>
+                      )}
+                    />
+                    <TooltipContent side="right" sideOffset={12} align="center">
+                      Continue a previously-blocked merge run after resolving
+                      conflicts.
+                    </TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
               <Tooltip>
                 <TooltipTrigger
                   render={(triggerProps) => (
                     <DropdownMenuItem
                       {...triggerProps}
                       disabled={
-                        !canMerge || !mergeReady || pendingMerge !== null
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
                       }
                       onClick={(e) => {
                         e.preventDefault()
@@ -451,7 +514,10 @@ export function NodeCard({
                     <DropdownMenuItem
                       {...triggerProps}
                       disabled={
-                        !canMerge || !mergeReady || pendingMerge !== null
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
                       }
                       onClick={(e) => {
                         e.preventDefault()

@@ -90,6 +90,18 @@ export type TaskAgentActionEventData = {
   error?: string | null
 }
 
+export type MergeRunEventData = {
+  type: "merge.run"
+  runId: string
+  nodeId: number
+  epicId: number
+  requestedTaskId: number
+  status: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled"
+  blockedStepIndex?: number | null
+  blockedStepKind?: string | null
+  blockedBranchName?: string | null
+}
+
 export type NodeAgentSetEventData = {
   type: "node.agent_set"
   nodeId: number
@@ -126,7 +138,7 @@ export type UnknownEventData = {
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | MergeRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"

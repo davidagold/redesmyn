@@ -243,6 +243,7 @@ export function EpicView() {
     refresh: refreshGraph,
     tasksById,
     agentsById,
+    mergeRunsByTaskId,
     childrenByParent,
     nodesById,
     rootNodes,
@@ -580,6 +581,11 @@ export function EpicView() {
           }
           return next
         })
+      }
+
+      if (event.eventType === "merge.run") {
+        scheduleGraphRefresh()
+        return
       }
 
       if (event.eventType !== "task.agent_run") {
@@ -1709,6 +1715,7 @@ export function EpicView() {
             childrenByParent={childrenByParent}
             tasksById={tasksById}
             agentsById={agentsById}
+            mergeRunsByTaskId={mergeRunsByTaskId}
             activityByNodeId={activityByNodeId}
             harnessCommand={configuredHarnessCommand}
             detach={configuredDetach}
