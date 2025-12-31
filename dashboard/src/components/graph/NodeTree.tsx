@@ -1,7 +1,7 @@
 import { NodeCard } from "./NodeCard"
 import {
   formatBranchName,
-  type Agent,
+  type AgentSession,
   type GraphNode,
   type Task,
 } from "@/lib/graph-utils"
@@ -10,7 +10,7 @@ interface NodeTreeProps {
   nodes: GraphNode[]
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
-  agentsById: Map<number, Agent>
+  agentSessionsByNodeId: Map<number, AgentSession>
   harnessCommand: string
   detach: boolean
   selectedNodeId: number | null
@@ -23,7 +23,7 @@ export function NodeTree({
   nodes,
   childrenByParent,
   tasksById,
-  agentsById,
+  agentSessionsByNodeId,
   harnessCommand,
   detach,
   selectedNodeId,
@@ -34,9 +34,8 @@ export function NodeTree({
   return (
     <>
       {nodes.map((node) => {
+        const agentSession = agentSessionsByNodeId.get(node.id) ?? undefined
         const task = tasksById.get(node.id) ?? undefined
-        const agent =
-          node.agentId !== null ? agentsById.get(node.agentId) : undefined
         const branchLabel = formatBranchName(node.branchName ?? "", epicSlug)
         const children = childrenByParent.get(node.id) ?? []
 
@@ -45,7 +44,7 @@ export function NodeTree({
             <NodeCard
               node={node}
               task={task}
-              agent={agent}
+              agentSession={agentSession}
               branchLabel={branchLabel}
               harnessCommand={harnessCommand}
               detach={detach}
@@ -59,7 +58,7 @@ export function NodeTree({
                   nodes={children}
                   childrenByParent={childrenByParent}
                   tasksById={tasksById}
-                  agentsById={agentsById}
+                  agentSessionsByNodeId={agentSessionsByNodeId}
                   harnessCommand={harnessCommand}
                   detach={detach}
                   selectedNodeId={selectedNodeId}

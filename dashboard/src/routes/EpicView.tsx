@@ -257,8 +257,8 @@ export function EpicView() {
     loading: graphLoading,
     refresh: refreshGraph,
     tasksById,
-    agentsById,
     mergeRunsByTaskId,
+    agentSessionsByNodeId,
     childrenByParent,
     rootNodes,
   } = useGraph(selectedEpic?.id ?? null)
@@ -339,24 +339,23 @@ export function EpicView() {
       }
 
       eligible += 1
-      const agent =
-        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
+      const session = agentSessionsByNodeId.get(task.id) ?? null
 
       if (task.stackInSync === false) {
         outOfSync += 1
       }
 
-      if (agent?.status === "running") {
+      if (session?.status === "running") {
         running += 1
-      } else if (agent?.status === "blocked") {
+      } else if (session?.status === "blocked") {
         blocked += 1
-      } else if (agent?.status === "error") {
+      } else if (session?.status === "error") {
         failed += 1
       }
     }
 
     return { eligible, running, blocked, failed, outOfSync }
-  }, [agentsById, graph])
+  }, [agentSessionsByNodeId, graph])
 
   const actionTargets = useMemo(() => {
     const empty = {
@@ -381,11 +380,10 @@ export function EpicView() {
         continue
       }
 
-      const agent =
-        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
-      const status = agent?.status ?? null
+      const session = agentSessionsByNodeId.get(task.id) ?? null
+      const status = session?.status ?? null
 
-      if (!agent || status === "stopped") {
+      if (!session || status === "stopped") {
         allStart.add(task.id)
       } else if (status === "error") {
         allRestart.add(task.id)
@@ -405,11 +403,10 @@ export function EpicView() {
       if (!task || task.state === "blocked" || task.state === "done") {
         continue
       }
-      const agent =
-        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
-      const status = agent?.status ?? null
+      const session = agentSessionsByNodeId.get(task.id) ?? null
+      const status = session?.status ?? null
 
-      if (!agent || status === "stopped") {
+      if (!session || status === "stopped") {
         selectedStart.add(task.id)
       } else if (status === "error") {
         selectedRestart.add(task.id)
@@ -428,7 +425,7 @@ export function EpicView() {
     targets.selected.stop = [...selectedStop].sort((a, b) => a - b)
 
     return targets
-  }, [agentsById, graph, selectedNodeIds, tasksById])
+  }, [agentSessionsByNodeId, graph, selectedNodeIds, tasksById])
 
   const runBuckets = useMemo(() => {
     if (!graph) {
@@ -459,14 +456,13 @@ export function EpicView() {
       }
 
       eligible.add(task.id)
-      const agent =
-        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
+      const session = agentSessionsByNodeId.get(task.id) ?? null
 
-      if (agent?.status === "running") {
+      if (session?.status === "running") {
         running.add(task.id)
-      } else if (agent?.status === "blocked") {
+      } else if (session?.status === "blocked") {
         blocked.add(task.id)
-      } else if (agent?.status === "error") {
+      } else if (session?.status === "error") {
         failed.add(task.id)
       }
     }
@@ -478,7 +474,7 @@ export function EpicView() {
       failed: Array.from(failed),
       outOfSync: Array.from(outOfSync),
     }
-  }, [agentsById, graph])
+  }, [agentSessionsByNodeId, graph])
 
   const selectionEquals = useCallback(
     (nodeIds: number[]) => {
@@ -1778,7 +1774,7 @@ export function EpicView() {
             rootNodes={rootNodes}
             childrenByParent={childrenByParent}
             tasksById={tasksById}
-            agentsById={agentsById}
+            agentSessionsByNodeId={agentSessionsByNodeId}
             mergeRunsByTaskId={mergeRunsByTaskId}
             activityByNodeId={activityByNodeId}
             harnessCommand={configuredHarnessCommand}
@@ -1800,11 +1796,8 @@ export function EpicView() {
             open={!!selectedTask || !!selectedEdge}
             node={selectedTask}
             task={selectedTask}
-            agent={
-              selectedTask?.agentId !== null &&
-              selectedTask?.agentId !== undefined
-                ? (agentsById.get(selectedTask.agentId) ?? null)
-                : null
+            agentSession={
+              selectedTask ? (agentSessionsByNodeId.get(selectedTask.id) ?? null) : null
             }
             mergeRun={selectedMergeRun}
             onRequestRefresh={scheduleGraphRefresh}

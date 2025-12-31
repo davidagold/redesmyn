@@ -1,8 +1,8 @@
-import type { Agent } from "@/lib/graph-utils"
+import type { AgentSession } from "@/lib/graph-utils"
 import { cn } from "@/lib/utils"
 import { AgentStatusIcon } from "./AgentStatusIcon"
 
-type Status = Agent["status"] | null
+type Status = AgentSession["status"] | null
 
 function labelForStatus(status: Status) {
   return status ?? "not started"
@@ -39,4 +39,3 @@ export function AgentStatusBadge({ status, className }: AgentStatusBadgeProps) {
     </div>
   )
 }
-

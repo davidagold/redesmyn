@@ -2,8 +2,8 @@ import type { EpicGraph } from "@/api"
 
 export type GraphNode = EpicGraph["tasks"][number]
 export type Task = EpicGraph["tasks"][number]
-export type Agent = EpicGraph["agents"][number]
 export type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
+export type AgentSession = EpicGraph["agentSessions"][number]
 export type TrunkTimeline = EpicGraph["trunk"]
 
 export function formatBranchName(
@@ -31,10 +31,15 @@ export function buildTasksMap(tasks: Task[]): Map<number, Task> {
   return map
 }
 
-export function buildAgentsMap(agents: Agent[]): Map<number, Agent> {
-  const map = new Map<number, Agent>()
-  for (const agent of agents) {
-    map.set(agent.id, agent)
+export function buildAgentSessionsByNodeId(
+  agentSessions: AgentSession[],
+): Map<number, AgentSession> {
+  const map = new Map<number, AgentSession>()
+  for (const session of agentSessions) {
+    if (session.nodeId === null) {
+      continue
+    }
+    map.set(session.nodeId, session)
   }
   return map
 }

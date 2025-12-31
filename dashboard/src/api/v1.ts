@@ -377,23 +377,26 @@ export interface components {
        */
       type: "acks"
     }
-    /** AgentResponse */
-    AgentResponse: {
-      /**
-       * Createdat
-       * Format: date-time
-       */
-      createdAt: string
-      /** Displayname */
-      displayName: string
+    /** AgentSessionResponse */
+    AgentSessionResponse: {
+      /** Agentid */
+      agentId: number
+      /** Agentname */
+      agentName: string
+      /** Endedat */
+      endedAt?: string | null
       /** Harnessprofileid */
       harnessProfileId?: string | null
       /** Id */
       id: number
-      /** Lastseenat */
-      lastSeenAt: string | null
+      /** Nodeid */
+      nodeId: number | null
       resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /** Startedat */
+      startedAt?: string | null
       status: components["schemas"]["AgentStatus"]
+      /** Taskid */
+      taskId: number | null
     }
     /**
      * AgentStatus
@@ -553,8 +556,8 @@ export interface components {
     }
     /** EpicGraphResponse */
     EpicGraphResponse: {
-      /** Agents */
-      agents: components["schemas"]["AgentResponse"][]
+      /** Agentsessions */
+      agentSessions: components["schemas"]["AgentSessionResponse"][]
       epic: components["schemas"]["EpicResponse"]
       /** Mergeruns */
       mergeRuns?: components["schemas"]["MergeRunSummaryResponse"][]
@@ -980,6 +983,8 @@ export interface components {
       agentId: number
       /** Agentname */
       agentName: string
+      /** Agentsessionid */
+      agentSessionId: number
       agentStatus: components["schemas"]["AgentStatus"]
       /** Attach */
       attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]

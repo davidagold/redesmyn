@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils"
-import type { Agent, Task } from "@/lib/graph-utils"
+import type { AgentSession, Task } from "@/lib/graph-utils"
 
-type Status = Agent["status"] | null
+type Status = AgentSession["status"] | null
 
 function statusClasses(taskState: Task["state"] | undefined, status: Status) {
   if (taskState === "blocked") {

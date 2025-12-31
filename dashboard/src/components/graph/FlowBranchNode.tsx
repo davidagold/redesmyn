@@ -2,7 +2,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { NodeCard } from "@/components/graph/NodeCard"
 import {
   formatBranchName,
-  type Agent,
+  type AgentSession,
   type GraphNode,
   type MergeRun,
   type Task,
@@ -12,9 +12,9 @@ import type { NodeActivity } from "@/lib/presence"
 export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
   task?: Task
-  agent?: Agent
   mergeRun?: MergeRun
   blockingMergeRun?: MergeRun
+  agentSession?: AgentSession
   activity?: NodeActivity
   epicSlug?: string | null
   harnessCommand: string
@@ -33,9 +33,9 @@ export function FlowBranchNode({
   const {
     node,
     task,
-    agent,
     mergeRun,
     blockingMergeRun,
+    agentSession,
     activity,
     epicSlug,
     harnessCommand,
@@ -61,7 +61,7 @@ export function FlowBranchNode({
       <NodeCard
         node={node}
         task={task}
-        agent={agent}
+        agentSession={agentSession}
         mergeRun={mergeRun}
         blockingMergeRun={blockingMergeRun}
         activity={activity}

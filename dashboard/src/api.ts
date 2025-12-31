@@ -6,6 +6,7 @@ export type EpicGraph = components["schemas"]["EpicGraphResponse"]
 export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaultsResponse"]
 export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
 export type Agent = components["schemas"]["AgentResponse"]
+export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
   prelude?: string | null

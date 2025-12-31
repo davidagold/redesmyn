@@ -33,7 +33,7 @@ import {
   startTaskAgent,
   stopTaskAgent,
 } from "@/api"
-import type { Agent, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
+import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
@@ -77,8 +77,8 @@ interface DetailsPanelProps {
   open: boolean
   task: Task | null
   node?: GraphNode | null
-  agent?: Agent | null
   mergeRun?: MergeRun | null
+  agentSession?: AgentSession | null
   onRequestRefresh?: () => void
   edge?: EdgeSelection | null
 }
@@ -420,12 +420,12 @@ function MergeRunDetails({
 
 function AgentActions({
   task,
-  agent,
+  agentSession,
   onRequestRefresh,
   floatingActionsPortalId,
 }: {
   task: Task
-  agent: Agent | null
+  agentSession: AgentSession | null
   onRequestRefresh: () => void
   floatingActionsPortalId?: string
 }) {
@@ -476,13 +476,13 @@ function AgentActions({
   }, [notice])
 
   const taskId = task.id
-  const hasAgent = agent !== null
+  const hasAgent = agentSession !== null
   const agentName = useMemo(
-    () => agent?.displayName ?? "No agent",
-    [agent?.displayName],
+    () => agentSession?.agentName ?? "No agent",
+    [agentSession?.agentName],
   )
-  const statusLabel = agent?.status ?? null
-  const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
+  const statusLabel = agentSession?.status ?? null
+  const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
   const canRestart =
     statusLabel === "running" ||
@@ -491,7 +491,7 @@ function AgentActions({
 
   const configuredHarnessCommand =
     orchestrationDefaults?.harness.command?.trim() ?? ""
-  const agentArgv = agent?.resolvedProfile?.argv ?? null
+  const agentArgv = agentSession?.resolvedProfile?.argv ?? null
   const harnessCommand =
     agentArgv && agentArgv.length > 0
       ? agentArgv.join(" ")
@@ -949,8 +949,8 @@ export function DetailsPanel({
   open,
   task,
   node,
-  agent,
   mergeRun,
+  agentSession,
   onRequestRefresh,
   edge,
 }: DetailsPanelProps) {
@@ -1040,7 +1040,7 @@ export function DetailsPanel({
                   {task && onRequestRefresh ? (
                     <AgentActions
                       task={task}
-                      agent={agent ?? null}
+                      agentSession={agentSession ?? null}
                       onRequestRefresh={onRequestRefresh}
                       floatingActionsPortalId={floatingActionsPortalId}
                     />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { fetchEpicGraph, type EpicGraph } from "@/api"
 import {
-  buildAgentsMap,
+  buildAgentSessionsByNodeId,
   buildChildrenMap,
   buildNodesMap,
   buildTasksMap,
@@ -54,7 +54,10 @@ export function useGraph(epicId: number | null) {
 
   const tasksById = useMemo(() => buildTasksMap(graph?.tasks ?? []), [graph])
 
-  const agentsById = useMemo(() => buildAgentsMap(graph?.agents ?? []), [graph])
+  const agentSessionsByNodeId = useMemo(
+    () => buildAgentSessionsByNodeId(graph?.agentSessions ?? []),
+    [graph],
+  )
 
   const childrenByParent = useMemo(
     () => buildChildrenMap(graph?.tasks ?? []),
@@ -94,7 +97,7 @@ export function useGraph(epicId: number | null) {
     loading,
     refresh,
     tasksById,
-    agentsById,
+    agentSessionsByNodeId,
     mergeRunsByTaskId,
     childrenByParent,
     nodesById,

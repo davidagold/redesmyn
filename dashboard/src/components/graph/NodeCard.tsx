@@ -12,7 +12,7 @@ import {
 } from "@/api"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
-import type { Agent, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
+import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
@@ -58,7 +58,7 @@ import {
 interface NodeCardProps {
   node: GraphNode
   task?: Task
-  agent?: Agent
+  agentSession?: AgentSession
   mergeRun?: MergeRun
   blockingMergeRun?: MergeRun
   activity?: NodeActivity
@@ -84,25 +84,28 @@ interface ResumeAllowRunningPrompt {
 
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt
 
-function statusSummary(task: Task | undefined, agent: Agent | undefined) {
+function statusSummary(
+  task: Task | undefined,
+  agentSession: AgentSession | undefined,
+) {
   if (task?.state === "blocked") {
     return "blocked"
   }
   if (task?.state === "done") {
     return "done"
   }
-  if (!agent) {
+  if (!agentSession) {
     return "not started"
   }
-  return agent.status
+  return agentSession.status
 }
 
 export function NodeCard({
   node,
   task,
-  agent,
   mergeRun,
   blockingMergeRun,
+  agentSession,
   activity,
   branchLabel,
   harnessCommand,
@@ -115,7 +118,6 @@ export function NodeCard({
   const now = Date.now()
   const commitHot = isRecentActivity(activity?.lastCommitAt, now)
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
-  const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
   const stackInSync = node.stackInSync ?? null
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
@@ -127,6 +129,7 @@ export function NodeCard({
     node.branchName,
   )
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
+  const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -178,7 +181,7 @@ export function NodeCard({
     })
   }
 
-  const agentStatus = agent?.status ?? null
+  const agentStatus = agentSession?.status ?? null
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
 
@@ -208,7 +211,7 @@ export function NodeCard({
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
   const canStart =
-    (!agent || agentStatus === "stopped") && harnessCommand.trim()
+    (!agentSession || agentStatus === "stopped") && harnessCommand.trim()
   const canRestart = isRunning || agentStatus === "error"
   const canMerge =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -509,8 +512,8 @@ export function NodeCard({
     ) : null
 
   const tooltipParts = [
-    agent ? `Agent: ${agent.displayName}` : "Agent: (not started)",
-    `Status: ${statusSummary(task, agent)}`,
+    agentSession ? `Agent: ${agentSession.agentName}` : "Agent: (not started)",
+    `Status: ${statusSummary(task, agentSession)}`,
     stackInSync === true
       ? "Stack: in sync"
       : stackInSync === false
@@ -780,7 +783,7 @@ export function NodeCard({
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
               <AgentStatusIcon
-                status={agent?.status ?? null}
+                status={agentSession?.status ?? null}
                 taskState={task?.state}
                 className="size-3"
                 title={tooltip}
@@ -793,10 +796,19 @@ export function NodeCard({
           {task?.title ?? "—"}
         </div>
 
-        {agent ? (
+        {actionError ? (
+          <div
+            className="truncate text-xs text-destructive"
+            title={actionError.summary}
+          >
+            {actionError.summary}
+          </div>
+        ) : null}
+
+        {agentSession ? (
           <div className="mt-auto flex flex-wrap items-end justify-start gap-2">
             <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
-              {agent.displayName}
+              {agentSession.agentName}
             </span>
             {harnessKind ? (
               <span className="rounded-sm bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors group-hover:bg-muted/75 group-focus-within:bg-muted/75">

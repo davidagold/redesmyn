@@ -17,7 +17,7 @@ import {
   type CSSProperties,
 } from "react"
 import type {
-  Agent,
+  AgentSession,
   GraphNode,
   MergeRun,
   Task,
@@ -62,8 +62,8 @@ interface GraphViewProps {
   rootNodes: GraphNode[]
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
-  agentsById: Map<number, Agent>
   mergeRunsByTaskId: Map<number, MergeRun>
+  agentSessionsByNodeId: Map<number, AgentSession>
   activityByNodeId: Map<number, NodeActivity>
   harnessCommand: string
   detach: boolean
@@ -228,8 +228,8 @@ export function GraphView({
   rootNodes,
   childrenByParent,
   tasksById,
-  agentsById,
   mergeRunsByTaskId,
+  agentSessionsByNodeId,
   activityByNodeId,
   harnessCommand,
   detach,
@@ -416,9 +416,8 @@ export function GraphView({
         continue
       }
 
-      const agent =
-        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
-      const status = agent?.status ?? null
+      const session = agentSessionsByNodeId.get(node.id) ?? null
+      const status = session?.status ?? null
 
       if (status === "running" || status === "blocked") {
         taskIds.add(task.id)
@@ -426,7 +425,7 @@ export function GraphView({
     }
 
     return [...taskIds].sort((a, b) => a - b)
-  }, [agentsById, nodesById, selectedNodeIds, tasksById])
+  }, [agentSessionsByNodeId, nodesById, selectedNodeIds, tasksById])
 
   const trunkMarks = useMemo(() => {
     if (!trunk || !trunk.baseSha) {
@@ -866,14 +865,11 @@ export function GraphView({
       }
 
       const task = tasksById.get(graphNode.id) ?? undefined
-      const agent =
-        graphNode.agentId !== null
-          ? agentsById.get(graphNode.agentId)
-          : undefined
       const mergeRun = task ? mergeRunsByTaskId.get(task.id) : undefined
       const blockingMergeRun = task
         ? mergeRunsByBlockedTaskId.get(task.id)
         : undefined
+      const agentSession = agentSessionsByNodeId.get(graphNode.id) ?? undefined
       const activity = activityByNodeId.get(graphNode.id)
 
       mapped.push({
@@ -885,9 +881,9 @@ export function GraphView({
         data: {
           node: graphNode,
           task,
-          agent,
           mergeRun,
           blockingMergeRun,
+          agentSession,
           activity,
           epicSlug,
           harnessCommand,
@@ -907,7 +903,7 @@ export function GraphView({
     return mapped
   }, [
     activityByNodeId,
-    agentsById,
+    agentSessionsByNodeId,
     detach,
     epicSlug,
     focusPositions,
