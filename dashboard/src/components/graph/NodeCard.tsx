@@ -341,7 +341,7 @@ export function NodeCard({
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
-            "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[35%] transition-opacity",
+            "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[calc(100%+6px)] transition-opacity",
             isSelected
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
