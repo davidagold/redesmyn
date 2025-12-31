@@ -30,7 +30,6 @@ from redesmyn.db import (
     DaemonConnection,
     DaemonCommand,
     Epic,
-    Event,
     HarnessProfile,
     Host,
     LinearAuth,
