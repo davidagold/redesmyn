@@ -341,7 +341,7 @@ export function NodeCard({
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
-            "absolute right-0 top-0 z-10 translate-x-full -translate-y-1/2 transition-opacity",
+            "absolute right-0 top-1/2 z-10 translate-x-full -translate-y-1/2 transition-opacity",
             isSelected
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
