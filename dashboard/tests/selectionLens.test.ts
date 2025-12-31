@@ -16,13 +16,13 @@ type Node = NodeLike
 
 function buildGraph() {
   const nodes: Node[] = [
-    { id: 4, parentNodeId: null },
-    { id: 5, parentNodeId: 4 },
-    { id: 6, parentNodeId: 4 },
-    { id: 7, parentNodeId: 4 },
-    { id: 8, parentNodeId: 6 },
-    { id: 9, parentNodeId: 8 },
-    { id: 10, parentNodeId: 5 },
+    { id: 4, parentTaskId: null },
+    { id: 5, parentTaskId: 4 },
+    { id: 6, parentTaskId: 4 },
+    { id: 7, parentTaskId: 4 },
+    { id: 8, parentTaskId: 6 },
+    { id: 9, parentTaskId: 8 },
+    { id: 10, parentTaskId: 5 },
   ]
 
   const nodesById = new Map<number, Node>()
@@ -32,7 +32,7 @@ function buildGraph() {
 
   const childrenByParent = new Map<number | null, Node[]>()
   for (const node of nodes) {
-    const key = node.parentNodeId ?? null
+    const key = node.parentTaskId ?? null
     childrenByParent.set(key, [...(childrenByParent.get(key) ?? []), node])
   }
   for (const [key, value] of childrenByParent.entries()) {
