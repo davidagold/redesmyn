@@ -421,9 +421,13 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                     info = commit_info.get(sha, {})
                     authored_at: datetime | None = None
                     authored_at_raw = info.get("authored_at")
+                    if isinstance(authored_at_raw, datetime):
+                        authored_at = authored_at_raw
                     if isinstance(authored_at_raw, str):
                         try:
-                            authored_at = datetime.fromisoformat(authored_at_raw)
+                            authored_at = datetime.fromisoformat(
+                                authored_at_raw.replace("Z", "+00:00")
+                            )
                         except ValueError:
                             authored_at = None
                     return TrunkCommitResponse(

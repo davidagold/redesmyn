@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import TypedDict
 
 
 class NotAGitRepositoryError(RuntimeError):
     pass
+
+
+class CommitInfo(TypedDict):
+    author_name: str | None
+    author_email: str | None
+    authored_at: datetime | None
 
 
 def _run_git(
@@ -110,9 +118,21 @@ def git_rev_list(
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
-def git_commit_info(
-    repo_root: Path, shas: list[str]
-) -> dict[str, dict[str, str | None]]:
+def git_commit_info(repo_root: Path, shas: list[str]) -> dict[str, CommitInfo]:
+    """
+    Return basic commit metadata keyed by sha.
+
+    `git show --format=%aI` returns ISO 8601; we parse it to `datetime` so API
+    response types remain accurate.
+    """
+
+    def parse_iso_dt(value: str) -> datetime | None:
+        try:
+            # `git` usually emits "+00:00", but tolerate "Z" if it appears.
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
     unique: list[str] = []
     seen: set[str] = set()
     for sha in shas:
@@ -130,17 +150,18 @@ def git_commit_info(
     if proc.returncode != 0:
         return {}
 
-    info: dict[str, dict[str, str | None]] = {}
+    info: dict[str, CommitInfo] = {}
     for line in proc.stdout.splitlines():
         parts = line.split("\x1f")
         if len(parts) != 4:
             continue
         sha, author_name, author_email, authored_at = parts
-        info[sha] = {
+        commit_info: CommitInfo = {
             "author_name": author_name or None,
             "author_email": author_email or None,
-            "authored_at": authored_at or None,
+            "authored_at": parse_iso_dt(authored_at) if authored_at else None,
         }
+        info[sha] = commit_info
     return info
 
 
