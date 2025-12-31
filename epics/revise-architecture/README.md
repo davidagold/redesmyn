@@ -163,6 +163,203 @@ For v1, keep this simple:
 - Route commands over the runtime WebSocket connection keyed by `host_key` (enforce at most one active connection per host_key; reject/replace duplicates).
 - Execution targets for repo-mutating commands must be scoped to `workspace_id + repo_id` plus a specific executor identity (explicit `host_key` or implicit via lease).
 
+### 2.13 Daemon ↔ control plane protocol (v1 contract)
+
+This section defines the **v1** daemon/control-plane contract. It is intended to be concrete enough to implement both sides without inventing new semantics.
+
+#### 2.13.1 Naming + deprecations
+
+- **Control plane** and **server** are synonyms. Prefer **control plane** in user-facing docs.
+- **Repo executor** is the component allowed to execute git/worktree mutations for a specific repo instance.
+  - v1: the host-local daemon is the repo executor for its local checkout/worktrees.
+  - cloud: a server-side worker/executor is the repo executor for a server-managed checkout/bare repo.
+- **Host identity (v1)**: treat `Host` (`hosts.host_key`) as the stable daemon/executor identity; no persisted “Daemon” model required.
+- **Observer** is deprecated as a product concept. “Repo observation loop” refers only to an internal daemon capability (telemetry/observation).
+- **Agent runner** refers to the harness process launched by the daemon (Codex/Claude/etc). Avoid using “runner” to mean “daemon”.
+
+#### 2.13.2 Transport + connection scoping
+
+- Transport: **WebSocket** over TLS in production (`wss://…`); `ws://localhost` in local dev.
+- v1 uses **one WebSocket connection per host daemon** (`host_key`), multiplexing messages by `workspace_id + repo_id`.
+- The control plane never opens inbound connections to daemons; daemons reconnect outbound.
+
+#### 2.13.3 Authentication (v1)
+
+- The daemon authenticates at connection time using a bearer token (for example: `Authorization: Bearer <daemon_token>`).
+- Tokens are issued/rotated by the control plane. v1 assumes a single implicit default workspace but still requires `workspace_id` in repo-scoped messages.
+- Local dev may run with a “dev token” provisioned automatically, but the protocol flow remains identical.
+
+#### 2.13.4 Versioning strategy
+
+- The protocol has an explicit `protocol` field with **major/minor** (example: `"1.0"`).
+- Breaking changes increment **major**. Additive backwards-compatible changes increment **minor**.
+- Both sides must reject unknown **major** versions and may warn (but accept) unknown **minor** versions.
+
+#### 2.13.5 Message envelope
+
+All messages are JSON objects with a shared envelope.
+
+Repo-scoped messages must include a `scope` for routing:
+
+```json
+{
+  "protocol": "1.0",
+  "type": "telemetry.event_batch",
+  "msg_id": "01J9ZP2Y9J3Z7Y7Z2Y3XJ2Y1Y0",
+  "sent_at": "2025-01-01T00:00:00Z",
+  "scope": {
+    "workspace_id": "w-…",
+    "repo_id": "r-…"
+  },
+  "payload": {}
+}
+```
+
+Envelope invariants:
+
+- `msg_id` is a unique, stable idempotency key for the message (ULID/UUID). Receivers must dedupe on `msg_id`.
+- `sent_at` is informational; ordering is not guaranteed. Ordering-sensitive flows use explicit sequence/ack fields per message type.
+- The schema of `payload` is determined by `type`.
+
+#### 2.13.6 Handshake + host identity
+
+After the WebSocket is established, the daemon sends a `daemon.hello` message:
+
+```json
+{
+  "protocol": "1.0",
+  "type": "daemon.hello",
+  "msg_id": "…",
+  "sent_at": "…",
+  "payload": {
+    "host_key": "h-<stable-host-identity>",
+    "host_instance_id": "hi-<ephemeral-process-identity>",
+    "capabilities": ["repo_execution", "git_observation", "worktrees", "processes", "integrations.linear"],
+    "client": {
+      "hostname": "my-host",
+      "platform": "darwin",
+      "version": "redesmyn/0.x"
+    }
+  }
+}
+```
+
+Notes:
+
+- `host_key` is the stable daemon/executor identity (stored on the host; persisted via the `Host` row).
+- Enforce **at most one active connection per `host_key`** (reject/replace duplicates).
+- `host_instance_id` changes on daemon restart and helps distinguish “same host, new process”.
+
+The control plane responds with `daemon.hello_ack`:
+
+- Confirms accepted protocol version and returns `connection_id`.
+- May include a “server snapshot” used for resync (see below).
+
+#### 2.13.7 Executor lease (single-writer)
+
+When multiple daemons could attach to the same `(workspace_id, repo_id)`, repo-mutating intents need an unambiguous execution target.
+
+- The control plane maintains a time-bounded **lease** designating the “primary” repo executor.
+- The lease is scoped to `(workspace_id, repo_id)` and identifies the lease-holder by `host_key`.
+- Only the lease-holder is eligible to receive repo-mutating commands by default; other attached daemons may continue read-only telemetry.
+
+Lease messages (v1 shapes; exact naming is flexible):
+
+- `server.lease_grant` / `server.lease_revoke` (server → daemon)
+- `daemon.lease_renew` (daemon → server; optional if server uses heartbeat-based renewal)
+
+#### 2.13.8 Heartbeats + liveness
+
+- Either side may send `heartbeat.ping`; the peer responds with `heartbeat.pong` echoing the ping `msg_id`.
+- The control plane considers the daemon offline when:
+  - the socket closes, or
+  - heartbeats have not been observed within the liveness window.
+- The daemon uses exponential backoff with jitter on reconnect attempts.
+
+#### 2.13.9 Resync + acknowledgements
+
+Reconnects are expected. v1 uses:
+
+- **Server snapshot**: after `daemon.hello`, the control plane may send `server.snapshot` containing the minimum per-repo desired-state/config required for the daemon to operate.
+  - Include lease state (`lease_holder_host_key`, `lease_expires_at`) so the daemon knows whether it is eligible to execute repo-mutating commands.
+- **Daemon acknowledgements**:
+  - For each `server.snapshot` and each delivered `server.command`, the daemon must respond with an ack message (`daemon.ack`) that includes:
+    - `ack_type` (snapshot|command|event_batch)
+    - `ack_id` (the acknowledged message’s `msg_id` or stable command/run id)
+    - `status` (ok|error) and optional error details
+
+The control plane must treat acks as idempotent and safe to replay.
+
+#### 2.13.10 Telemetry + events
+
+- Telemetry/events are pushed daemon → control plane as `telemetry.event_batch`.
+- Each batch contains an ordered list of events with stable ids so the control plane can dedupe on reconnect.
+- The control plane persists events to the authoritative event log, then acks ingestion.
+
+Example payload shape (illustrative; event vocab is an additive surface):
+
+```json
+{
+  "events": [
+    {
+      "event_id": "01J9ZP…",
+      "event_type": "git.refs_changed",
+      "created_at": "2025-01-01T00:00:00Z",
+      "data": { "refs": [] }
+    }
+  ]
+}
+```
+
+Invariants:
+
+- `event_id` is unique within a repo event stream; receivers must dedupe by `(workspace_id, repo_id, event_id)`.
+- The daemon may resend unacked batches on reconnect (at-least-once delivery).
+- Event vocab should key domain concepts by `task_id` (not “node”), since **Node → Task** is an explicit migration in T-6.
+
+#### 2.13.11 Command delivery model (intent, progress, resume)
+
+- Commands are pushed control plane → daemon as `server.command` and represent **high-level intent** (not raw git RPC).
+  - Example intents: merge+restack, restack, checkout/attach, refresh projections.
+- Each command includes a stable `command_id` and a `dedupe_key` (may be the same value).
+- Targeting:
+  - Either explicitly target a `host_key`, or
+  - route implicitly to the current lease-holder for `(workspace_id, repo_id)`.
+- The daemon must be able to safely handle duplicate delivery (at-least-once transport):
+  - If a command with the same `command_id` (or `dedupe_key`) has already been applied, the daemon must no-op and re-ack as `ok`.
+
+Merge/restack commands must be designed with resumable progress and manual conflict resolution in mind:
+
+- The executor should emit progress events (e.g. `merge.run_started`, `merge.step_completed`, `merge.conflict`, `merge.run_completed`) with a stable `run_id`.
+- If a conflict requires manual resolution, the executor pauses and emits a “blocked” event; the user resolves locally, then the control plane issues a `server.command` to **resume** the run by `run_id`.
+
+Command execution results are reported via `daemon.command_result` (and/or `daemon.ack` with details).
+
+#### 2.13.12 Git-derived projections (executor-sourced)
+
+Any projection that requires git history or worktree inspection must be produced by the **repo executor** and sent to the control plane (events and/or snapshots).
+
+Examples:
+
+- trunk timeline
+- “stack in sync / out of sync” indicators
+- ahead/behind counts, merge-base, conflict status
+
+The control plane persists/broadcasts these projections but does not compute them via git directly.
+See **Updates** for the current temporary mismatch (`stackInSync` computed in the control plane today).
+
+#### 2.13.13 Local dev: co-located mode invariants
+
+When the control plane and daemon run on the same machine (for example via `rn dev`):
+
+- They still communicate over the same WebSocket protocol (usually `ws://127.0.0.1`).
+- Repo identity remains `(workspace_id, repo_id)`; local paths are not substituted for identity.
+- Authentication may be simplified (dev token), but message shapes and resync/ack/lease behavior must remain identical so co-located dev exercises real protocol behavior.
+
+#### 2.13.14 Migration note (v0 → v1)
+
+Migration note: **current local DB-writing observer → daemon emitting events + executor projections to the control plane**.
+
 ## 3) Scope (v1)
 
 - Daemon connection protocol (handshake/auth/versioning/resync).

@@ -46,9 +46,13 @@ We will use Redesmyn to build Redesmyn.
 - **Graph axes / motion**: The trunk is the base branch timeline; the horizontal axis expresses merge-order. Tasks drift from **left (more dependencies / potential blockers)** to **right (fewer blockers)** as they become merge-ready, then merge/ff back into the base branch.
 - **Stack**: A path through the branch graph from an upstream node to a connected leaf node. Stacks can overlap (shared prefix) and are primarily a focus/view concept.
 - **Agent**: A task-pinned harness process (Codex, Claude Code, etc.) working in that task’s branch/worktree. v0 identity is `a-<task_id>` (no separate “session” construct for orchestration UX).
-- **Control Plane (server)**: Persistent orchestration state (tasks, desired state, event log + projections) and APIs/UI. Must run without repo filesystem access.
+- **Agent runner**: Synonym for “harness process”, used when clarity matters (it is launched/managed by the daemon). Avoid using “runner” to mean “daemon”.
+- **Control Plane**: Persistent orchestration state (tasks, desired state, event log + projections) and APIs/UI. Must run without repo filesystem access.
+- **Server**: Synonym for “control plane” (preferred term in user-facing docs: “control plane”).
 - **Daemon (host-local)**: Host-level process that manages worktrees, host-local git actions, harness process/session lifecycle, and telemetry/observation for one or more repos. Connects outbound to the control plane.
-- **Repo Observer (daemon capability)**: Converts raw git/worktree observations into semantic events; not a separate product concept.
+- **Repo executor**: The component allowed to execute git/worktree mutations and compute git-derived projections for a specific repo instance. v1: the host daemon is the repo executor for the local checkout/worktrees and is identified by `Host.host_key` (single-writer enforced via a lease).
+- **Repo observation loop (daemon capability)**: Converts raw git/worktree observations into semantic events; not a separate product concept.
+- **Observer (deprecated)**: Legacy v0 name for the repo observation loop; avoid using “observer” as a user-facing concept (UI/CLI/docs).
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
 - **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).
 - **Work Range**: The commit range representing a node’s “work”: `parent..branch` (multi-commit allowed).
@@ -223,7 +227,7 @@ Sync commands are explicit about direction:
     - move/split commits between nodes
   - Uses worktrees where possible.
 
-- **Repo Observer (daemon capability)**
+- **Repo observation loop (daemon capability)**
   - Watches for ref movements, new commits, and worktree status changes.
   - Converts raw git observations into semantic domain events.
   - Must be robust if changes occur outside `rn`.
