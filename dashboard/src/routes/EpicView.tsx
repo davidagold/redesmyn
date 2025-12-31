@@ -50,6 +50,11 @@ type BulkActionState = {
   startedAt: number
 }
 
+type BulkActionRequestItem = {
+  taskId: number
+  action: "start" | "restart" | "stop"
+}
+
 function bulkActionStorageKey(epicSlug: string) {
   return `redesmyn:bulk-action:${epicSlug}`
 }
@@ -921,7 +926,7 @@ export function EpicView() {
 
   async function submitBulkActions(options: {
     kind: BulkActionKind
-    actions: Array<{ taskId: number action: "start" | "restart" | "stop" }>
+    actions: BulkActionRequestItem[]
     harness: string | null
   }) {
     if (options.actions.length === 0) {
