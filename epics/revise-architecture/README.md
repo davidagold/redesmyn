@@ -44,7 +44,10 @@ Run one daemon per host. For a given repo, run at most one observation loop; epi
 
 ### 2.2 Control plane does not run host-local actions
 
-The control plane must be runnable in a container/remote host with no repo filesystem access. Host-local actions happen in the daemon:
+The control plane must be runnable in a container/remote host with no repo filesystem access.
+
+~~Host-local actions happen in the daemon:~~
+Repo-local actions happen in a **repo executor** (in v1: the host-local daemon; in future cloud mode: a server-side repo worker/executor):
 
 - git reads/writes (including graph projections like trunk timeline)
 - tmux/process lifecycle
@@ -85,7 +88,8 @@ Nodes are just tasks as represented in the graph. Consolidate these concepts so 
 
 - Remove server endpoints/paths that proxy or execute git.
 - Keep `rn git` as a local proxy (optional enforcement); the daemon’s telemetry picks up effects and reports them to the control plane.
-- Any graph projections requiring git history must be produced by the daemon and sent to the control plane (events and/or snapshots).
+- ~~Any graph projections requiring git history must be produced by the daemon and sent to the control plane (events and/or snapshots).~~
+  Any graph projections requiring git history must be produced by the **repo executor** and sent to the control plane (events and/or snapshots).
 
 ### 2.6 Event log is authoritative in the control plane
 
@@ -137,6 +141,28 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 - Users express orchestration intent via task topology and task-level desired state.
 - Agents report observed state/telemetry; they are not the source of truth for desired state.
 
+### 2.12 Repo execution targets: executors + leases (v1)
+
+As we move toward cloud deployability, “control plane can’t run git” must not imply “git always runs on a user’s machine”.
+Instead, we introduce an explicit **repo executor** role:
+
+- A **repo executor** is the component that has filesystem access to a specific repo instance and is allowed to execute git/worktree mutations.
+  - Local-first: the host-local daemon is the repo executor for the local checkout/worktrees.
+  - Cloud: a server-side worker can be the repo executor for a server-managed checkout/bare repo.
+- The control plane issues **high-level intent** (e.g. “merge task T-7 and restack descendants”), not a raw git RPC.
+  The repo executor turns that intent into concrete git steps, executes them, and reports progress/results back as events.
+
+To avoid ambiguity when multiple daemons could be attached to the “same repo” (e.g. two laptops, duplicate daemons, etc.), git-mutating intents must have a single writer:
+
+- Define a single “primary” repo executor via a time-bounded **lease** (aka primary/ownership).
+- The control plane routes git-mutating commands to the lease-holder; other connected daemons may remain attached for read-only telemetry.
+
+For v1, keep this simple:
+
+- Treat `Host` (via `hosts.host_key`) as the stable daemon/executor identity; a separate persisted “Daemon” model is not required.
+- Route commands over the runtime WebSocket connection keyed by `host_key` (enforce at most one active connection per host_key; reject/replace duplicates).
+- Execution targets for repo-mutating commands must be scoped to `workspace_id + repo_id` plus a specific executor identity (explicit `host_key` or implicit via lease).
+
 ## 3) Scope (v1)
 
 - Daemon connection protocol (handshake/auth/versioning/resync).
@@ -163,3 +189,12 @@ Desired state should be modeled on the graph primitive (`Task`) and persisted in
 - `epics/revise-architecture/tasks/T-6/README.md`: Merge `Node` into `Task` (single graph primitive).
 - `epics/revise-architecture/tasks/T-7/README.md`: Remove server git execution and keep git proxying local.
 - `epics/revise-architecture/tasks/T-8/README.md`: Split agent “identity/config” from “session/run” (`AgentConfig` + `AgentSession`).
+
+## Updates
+
+### 2025-12-31
+
+- Added (temporary) “stack in sync with upstream” UI surfacing implemented via a `stackInSync` field on the graph node response.
+  Today this is computed in the control plane via direct git calls, which conflicts with §§2.2/2.5.
+  This must be migrated to a repo-executor-sourced projection in **T-7 + T-3 + T-2**.
+- The current `stackInSync` field is on `NodeResponse`; it must move during **T-6 (Node → Task)** so the public API/UI does not retain a separate node concept.

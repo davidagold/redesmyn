@@ -20,6 +20,9 @@ node:
   - if unregistered, register and persist the `workspace_id` + `repo_id` locally for future runs
   - if registered but not attached, attach so the daemon can start telemetry + reconciliation for this repo
   - prefer local attach (`rn` → daemon on the same host) to avoid a CLI → control plane → daemon → control plane loop
+  - clarify (and implement) how an executor is chosen when multiple daemons could attach to the same `workspace_id + repo_id`:
+    - v1: `rn` should be able to claim/renew a “primary executor” lease for the current host (`hosts.host_key`)
+    - provide actionable guidance when a lease is held elsewhere (“another host is primary for this repo”)
 - Define how orchestration commands relate:
   - `rn run`: sets desired state for a task fleet (control-plane intent) and waits for the daemon to reconcile when requested.
   - `rn agent run`: single-task convenience wrapper around `rn run` (optionally attaches or tails logs).
@@ -29,9 +32,17 @@ node:
   - “control plane/server” is the API/UI persistence layer
   - “observer” becomes a debug-only alias or subcommand (daemon capability)
 - Provide ergonomic “copy this command” strings for the UI to surface (start/connect, logs, attach).
+  - include any needed “take over / claim lease” affordance commands in the guidance vocabulary
 
 ## Acceptance Criteria
 
 - A new user can get to “daemon connected” with a single command (`rn daemon up`).
 - Existing local workflows remain usable (`rn dev` still works; no confusing duplicate processes).
 - `rn daemon status` answers “is my daemon online and feeding telemetry?” quickly.
+
+## Updates
+
+### 2025-12-31
+
+- The epic control doc now formalizes a **repo executor** role and a “primary executor” **lease** for git-mutating actions (see `epics/revise-architecture/README.md` §2.12).
+  This task should ensure the CLI can establish/inspect the repo’s executor/lease state so UI-driven merges and restacks have a clear target.
