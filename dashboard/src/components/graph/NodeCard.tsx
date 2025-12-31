@@ -390,9 +390,6 @@ export function NodeCard({
                   size="icon-sm"
                   aria-label="Task actions"
                   title="Task actions"
-                  disabledReason={
-                    pendingMerge !== null ? "Action in progress" : null
-                  }
                   className={cn(
                     "rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60",
                     triggerProps.className,
