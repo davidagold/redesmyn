@@ -16,6 +16,7 @@ import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -80,6 +81,7 @@ export function NodeCard({
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [pendingMerge, setPendingMerge] =
     useState<"ready" | "merge" | "mergeStack" | null>(null)
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -321,6 +323,7 @@ export function NodeCard({
         "relative overflow-visible",
         "py-0",
         "cursor-pointer transition-colors hover:bg-accent/40",
+        actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done" ? "border-emerald-500/40" : null,
         isSelected
           ? "ring-2 ring-ring"
@@ -342,14 +345,14 @@ export function NodeCard({
         <div
           className={cn(
             "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[calc(100%+6px)] transition-opacity",
-            isSelected
+            isSelected || actionsMenuOpen
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
           )}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <DropdownMenu>
+          <DropdownMenu onOpenChange={(open) => setActionsMenuOpen(open)}>
             <DropdownMenuTrigger
               render={(triggerProps) => (
                 <Button
@@ -371,15 +374,17 @@ export function NodeCard({
               )}
             />
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void handleToggleMergeReady(!isMergeReady)
-                }}
+              <DropdownMenuCheckboxItem
+                checked={isMergeReady}
+                disabled={!canMerge || pendingMerge !== null}
+                closeOnClick={false}
+                onClick={(e) => e.stopPropagation()}
+                onCheckedChange={(checked) =>
+                  void handleToggleMergeReady(checked)
+                }
               >
-                {isMergeReady ? "Unmark ready to merge" : "Mark ready to merge"}
-              </DropdownMenuItem>
+                Ready to merge
+              </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={!canMerge || !isMergeReady || pendingMerge !== null}
@@ -420,7 +425,7 @@ export function NodeCard({
               <div
                 className={cn(
                   "flex items-center gap-1 transition-opacity",
-                  isSelected
+                  isSelected || actionsMenuOpen
                     ? "opacity-100"
                     : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
                 )}

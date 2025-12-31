@@ -155,14 +155,14 @@ function DropdownMenuCheckboxItem({
     <MenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
       className={cn(
-        "focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground min-h-7 gap-2 rounded-md py-1.5 pr-8 pl-2 text-xs [&_svg:not([class*='size-'])]:size-3.5 relative flex cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "focus:bg-accent focus:text-accent-foreground focus:**:text-accent-foreground min-h-7 gap-2 rounded-md py-1 pl-8 pr-2 text-xs/relaxed [&_svg:not([class*='size-'])]:size-3.5 relative flex cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       checked={checked}
       {...props}
     >
       <span
-        className="pointer-events-none absolute right-2 flex items-center justify-center pointer-events-none"
+        className="pointer-events-none absolute left-2 flex items-center justify-center"
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <MenuPrimitive.CheckboxItemIndicator>
