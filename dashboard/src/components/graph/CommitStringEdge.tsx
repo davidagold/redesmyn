@@ -56,7 +56,7 @@ export function CommitStringEdge({
     targetY,
     sourcePosition,
     targetPosition,
-    borderRadius: 18,
+    borderRadius: 28,
   })
 
   const edgeStyle: CSSProperties = {

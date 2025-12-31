@@ -19,6 +19,7 @@ import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
+import { FloatingActions } from "@/components/ui/floating-actions"
 import { RotateCcw, Square, Terminal } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
@@ -279,8 +280,46 @@ function AgentActions({
   }, [logsText])
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-start justify-between gap-3">
+    <div className="relative grid gap-3">
+      {isRunning ? (
+        <FloatingActions>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-full rounded-none border-0"
+            title="Copy attach command"
+            onClick={() =>
+              void handleCopy(attachCommand, "Attach command copied")
+            }
+            disabledReason={pending !== null ? "Action in progress" : null}
+          >
+            <Terminal />
+            Attach
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-full rounded-none border-0 border-l"
+            onClick={() => void handleRestart()}
+            disabledReason={pending !== null ? "Action in progress" : null}
+          >
+            <RotateCcw />
+            Restart
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-full rounded-none border-0 border-l text-destructive hover:bg-destructive/10"
+            onClick={() => void handleStop()}
+            disabledReason={pending !== null ? "Action in progress" : null}
+          >
+            <Square />
+            Stop
+          </Button>
+        </FloatingActions>
+      ) : null}
+
+      <div className={"flex items-start gap-3 " + (isRunning ? "pr-28" : "")}>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
@@ -295,44 +334,8 @@ function AgentActions({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          {isRunning ? (
-            <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
-              <Button
-                variant="outline"
-                size="xs"
-                className="h-full rounded-none border-0"
-                title="Copy attach command"
-                onClick={() =>
-                  void handleCopy(attachCommand, "Attach command copied")
-                }
-                disabledReason={pending !== null ? "Action in progress" : null}
-              >
-                <Terminal />
-                Attach
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                className="h-full rounded-none border-0 border-l"
-                onClick={() => void handleRestart()}
-                disabledReason={pending !== null ? "Action in progress" : null}
-              >
-                <RotateCcw />
-                Restart
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                className="h-full rounded-none border-0 border-l text-destructive hover:bg-destructive/10"
-                onClick={() => void handleStop()}
-                disabledReason={pending !== null ? "Action in progress" : null}
-              >
-                <Square />
-                Stop
-              </Button>
-            </div>
-          ) : (
+        {!isRunning ? (
+          <div className="flex shrink-0 items-center gap-2">
             <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
               {canRestart ? (
                 <Button
@@ -365,8 +368,8 @@ function AgentActions({
                 </Button>
               )}
             </div>
-          )}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-1">

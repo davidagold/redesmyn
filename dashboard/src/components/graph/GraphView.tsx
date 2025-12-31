@@ -22,6 +22,7 @@ import { copyToClipboard } from "@/lib/clipboard"
 import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
+import { RoundedSmoothStepEdge } from "./RoundedSmoothStepEdge"
 import {
   DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
@@ -242,7 +243,7 @@ export function GraphView({
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
-      type: "smoothstep",
+      type: "roundedSmoothStep",
       style: {
         stroke: "var(--border)",
         strokeWidth: 1.25,
@@ -839,7 +840,7 @@ export function GraphView({
           source: TRUNK_NODE_ID,
           sourceHandle: "base",
           target: String(root.id),
-          type: "smoothstep",
+          type: "roundedSmoothStep",
           selectable: false,
           focusable: false,
           interactionWidth: 0,
@@ -1049,7 +1050,10 @@ export function GraphView({
           nodes={nodes}
           edges={edges}
           nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
-          edgeTypes={{ commitString: CommitStringEdge }}
+          edgeTypes={{
+            commitString: CommitStringEdge,
+            roundedSmoothStep: RoundedSmoothStepEdge,
+          }}
           nodesDraggable={false}
           nodesConnectable={false}
           onInit={setFlow}

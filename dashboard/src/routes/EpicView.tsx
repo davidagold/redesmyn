@@ -1210,9 +1210,9 @@ export function EpicView() {
                   onClick={() => void handleRunAll()}
                 >
                   {bulkAction?.kind === "run" ? (
-                    <Loader2 className="animate-spin" />
+                    <Loader2 className="animate-spin text-primary" />
                   ) : (
-                    <Play />
+                    <Play className="text-primary" />
                   )}
                   Run all
                 </Button>
@@ -1266,9 +1266,9 @@ export function EpicView() {
                   onClick={() => void handleStopAll()}
                 >
                   {bulkAction?.kind === "stop" ? (
-                    <Loader2 className="animate-spin" />
+                    <Loader2 className="animate-spin text-destructive" />
                   ) : (
-                    <Square />
+                    <Square className="text-destructive" />
                   )}
                   Stop all
                 </Button>
@@ -1318,7 +1318,14 @@ export function EpicView() {
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
             {bulkAction ? (
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2
+                  className={
+                    "h-3 w-3 animate-spin " +
+                    (bulkAction.kind === "stop"
+                      ? "text-destructive"
+                      : "text-primary")
+                  }
+                />
                 {bulkAction.kind === "stop" ? "Stopping" : "Starting"}{" "}
                 {bulkAction.completed}/{bulkAction.total}
                 {bulkAction.failed > 0
