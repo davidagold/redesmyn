@@ -15,7 +15,7 @@
     "lint": "oxlint --react-plugin --tsconfig tsconfig.json .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc -b --pretty false",
     "preview": "vite preview"
   },
@@ -44,6 +44,7 @@
     "oxfmt": "^0.2.0",
     "oxlint": "^1.16.0",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.20.5",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.34.1",
     "vite": "npm:rolldown-vite@^6.3.21"
