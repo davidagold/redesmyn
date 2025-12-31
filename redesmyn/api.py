@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
@@ -89,6 +90,8 @@ from redesmyn.schemas.core import (
     TaskAgentStartRequest,
     TaskAgentStartResponse,
     TaskAgentStopResponse,
+    TaskAgentBulkRunRequest,
+    TaskAgentBulkRunResponse,
     TaskMergeReadyRequest,
     TrunkCommitResponse,
     TrunkTimelineResponse,
@@ -516,6 +519,160 @@ async def start_task_agent(
         started=result.started,
         warnings=list(result.warnings),
     )
+
+
+async def _emit_task_agent_run_event(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    node_id: int,
+    task_id: int,
+    action: str,
+    phase: str,
+    agent_id: int | None = None,
+    warnings: list[str] | None = None,
+    error: str | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "node_id": node_id,
+        "task_id": task_id,
+        "action": action,
+        "phase": phase,
+    }
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    if warnings is not None:
+        payload["warnings"] = warnings
+    if error is not None:
+        payload["error"] = error
+
+    async with sessionmaker() as session:
+        session.add(
+            Event(
+                event_type="task.agent_run",
+                data=payload,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+async def _run_task_agents_bulk(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    start_task_ids: list[int],
+    restart_task_ids: list[int],
+    harness: str | None,
+    detach: bool,
+    prelude: str | None,
+) -> None:
+    async def _node_id_for_task(task_id: int) -> int:
+        async with sessionmaker() as session:
+            _, node = await _require_task_node(session, task_id=task_id)
+            return node.id
+
+    for task_id in sorted(set(start_task_ids)):
+        node_id = await _node_id_for_task(task_id)
+        await _emit_task_agent_run_event(
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            node_id=node_id,
+            task_id=task_id,
+            action="start",
+            phase="requested",
+        )
+        try:
+            result = await app.state.runner_backend.start_task_agent(
+                task_id=task_id,
+                harness_command=harness or "",
+                detach=detach,
+                prelude_override=prelude,
+            )
+            await _emit_task_agent_run_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action="start",
+                phase="started",
+                agent_id=result.agent.id,
+                warnings=list(result.warnings),
+            )
+        except Exception as e:
+            await _emit_task_agent_run_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action="start",
+                phase="failed",
+                error=str(e),
+            )
+
+    for task_id in sorted(set(restart_task_ids)):
+        node_id = await _node_id_for_task(task_id)
+        await _emit_task_agent_run_event(
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            node_id=node_id,
+            task_id=task_id,
+            action="restart",
+            phase="requested",
+        )
+        try:
+            result = await app.state.runner_backend.restart_task_agent(
+                task_id=task_id,
+                harness_command=None,
+                detach=detach,
+                prelude_override=prelude,
+            )
+            await _emit_task_agent_run_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action="restart",
+                phase="started",
+                agent_id=result.agent.id,
+                warnings=list(result.warnings),
+            )
+        except Exception as e:
+            await _emit_task_agent_run_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action="restart",
+                phase="failed",
+                error=str(e),
+            )
+
+
+@v1.post("/tasks/agent/run", response_model=TaskAgentBulkRunResponse)
+async def run_task_agents_bulk(
+    request: TaskAgentBulkRunRequest,
+) -> TaskAgentBulkRunResponse:
+    if request.start_task_ids and not request.harness:
+        raise HTTPException(
+            status_code=400,
+            detail="harness is required when start_task_ids is non-empty",
+        )
+    run_id = request.run_id or uuid4().hex
+    submitted = len(set(request.start_task_ids)) + len(set(request.restart_task_ids))
+    asyncio.create_task(
+        _run_task_agents_bulk(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            start_task_ids=request.start_task_ids,
+            restart_task_ids=request.restart_task_ids,
+            harness=request.harness,
+            detach=request.detach,
+            prelude=request.prelude,
+        )
+    )
+    return TaskAgentBulkRunResponse(run_id=run_id, submitted=submitted)
 
 
 @v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)

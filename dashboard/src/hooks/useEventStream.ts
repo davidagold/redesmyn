@@ -10,9 +10,82 @@ export type StreamHelloMessage = {
 export type StreamEvent = {
   id: number
   eventType: string
-  data: Record<string, unknown>
+  data: StreamEventData
   createdAt: string
 }
+
+export type GitCommitEventData = {
+  type: "git.commit"
+  nodeId: number
+  branchName: string
+  sha: string
+  authorName?: string | null
+  authorEmail?: string | null
+  authoredAt?: string | null
+  subject?: string | null
+  agentId?: number | null
+}
+
+export type WorktreeHealthEventData = {
+  type: "worktree.health"
+  nodeId: number
+  branchName: string
+  worktreePath: string
+  exists: boolean
+  currentBranch?: string | null
+  dirty?: boolean | null
+  branchMismatch?: boolean | null
+}
+
+export type TaskAgentRunEventData = {
+  type: "task.agent_run"
+  runId: string
+  nodeId: number
+  taskId: number
+  action: "start" | "restart"
+  phase: "requested" | "started" | "failed"
+  agentId?: number | null
+  warnings?: string[]
+  error?: string | null
+}
+
+export type NodeAgentSetEventData = {
+  type: "node.agent_set"
+  nodeId: number
+  agentId: number | null
+  previousAgentId: number | null
+}
+
+export type BlockSetEventData = {
+  type: "block.set"
+  scope: Record<string, unknown>
+  policy: string
+  mode: string
+  release: Record<string, unknown>
+  reason?: string | null
+}
+
+export type BlockClearedEventData = {
+  type: "block.cleared"
+  scope: Record<string, unknown>
+  policy: string
+  reason?: string | null
+}
+
+export type BlockAckEventData = {
+  type: "block.ack"
+  scope: Record<string, unknown>
+  policy: string
+  agentId: number
+}
+
+export type UnknownEventData = {
+  type: "unknown"
+  eventType: string
+  data: Record<string, unknown>
+}
+
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"

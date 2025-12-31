@@ -167,6 +167,20 @@ class TaskAgentStopResponse(ApiResponse):
     stopped: bool
 
 
+class TaskAgentBulkRunRequest(ApiRequest):
+    run_id: str | None = None
+    start_task_ids: list[int] = Field(default_factory=list)
+    restart_task_ids: list[int] = Field(default_factory=list)
+    harness: str | None = None
+    detach: bool = True
+    prelude: str | None = None
+
+
+class TaskAgentBulkRunResponse(ApiResponse):
+    run_id: str
+    submitted: int
+
+
 class TaskMergeReadyRequest(ApiRequest):
     ready: bool
 
@@ -252,10 +266,94 @@ class BlockResponse(ApiResponse):
     cleared_reason: str | None
 
 
+class GitCommitEventDataResponse(ApiResponse):
+    type: Literal["git.commit"] = "git.commit"
+    node_id: int
+    branch_name: str
+    sha: str
+    author_name: str | None = None
+    author_email: str | None = None
+    authored_at: str | None = None
+    subject: str | None = None
+    agent_id: int | None = None
+
+
+class WorktreeHealthEventDataResponse(ApiResponse):
+    type: Literal["worktree.health"] = "worktree.health"
+    node_id: int
+    branch_name: str
+    worktree_path: str
+    exists: bool
+    current_branch: str | None = None
+    dirty: bool | None = None
+    branch_mismatch: bool | None = None
+
+
+class NodeAgentSetEventDataResponse(ApiResponse):
+    type: Literal["node.agent_set"] = "node.agent_set"
+    node_id: int
+    agent_id: int | None
+    previous_agent_id: int | None
+
+
+class BlockSetEventDataResponse(ApiResponse):
+    type: Literal["block.set"] = "block.set"
+    scope: dict[str, Any]
+    policy: str
+    mode: str
+    release: dict[str, Any]
+    reason: str | None
+
+
+class BlockClearedEventDataResponse(ApiResponse):
+    type: Literal["block.cleared"] = "block.cleared"
+    scope: dict[str, Any]
+    policy: str
+    reason: str | None
+
+
+class BlockAckEventDataResponse(ApiResponse):
+    type: Literal["block.ack"] = "block.ack"
+    scope: dict[str, Any]
+    policy: str
+    agent_id: int
+
+
+class TaskAgentRunEventDataResponse(ApiResponse):
+    type: Literal["task.agent_run"] = "task.agent_run"
+    run_id: str
+    node_id: int
+    task_id: int
+    action: Literal["start", "restart"]
+    phase: Literal["requested", "started", "failed"]
+    agent_id: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class UnknownEventDataResponse(ApiResponse):
+    type: Literal["unknown"] = "unknown"
+    event_type: str
+    data: dict[str, Any]
+
+
+EventDataResponse = Annotated[
+    GitCommitEventDataResponse
+    | WorktreeHealthEventDataResponse
+    | NodeAgentSetEventDataResponse
+    | BlockSetEventDataResponse
+    | BlockClearedEventDataResponse
+    | BlockAckEventDataResponse
+    | TaskAgentRunEventDataResponse
+    | UnknownEventDataResponse,
+    Field(discriminator="type"),
+]
+
+
 class EventResponse(ApiResponse):
     id: int
     event_type: str
-    data: dict[str, Any]
+    data: EventDataResponse
     created_at: datetime
 
 

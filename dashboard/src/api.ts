@@ -16,6 +16,10 @@ export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest
 }
 export type TaskAgentStartResponse = components["schemas"]["TaskAgentStartResponse"]
 export type TaskAgentStopResponse = components["schemas"]["TaskAgentStopResponse"]
+export type TaskAgentBulkRunRequest = components["schemas"]["TaskAgentBulkRunRequest"] & {
+  prelude?: string | null
+}
+export type TaskAgentBulkRunResponse = components["schemas"]["TaskAgentBulkRunResponse"]
 
 export type TaskAgentLogsResponse = {
   path: string
@@ -148,6 +152,28 @@ export async function startTaskAgent(
     )
   }
   return response.json() as Promise<TaskAgentStartResponse>
+}
+
+export async function runTaskAgentsBulk(
+  request: TaskAgentBulkRunRequest,
+): Promise<TaskAgentBulkRunResponse> {
+  const response = await fetch("/v1/tasks/agent/run", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(
+      `POST /v1/tasks/agent/run failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    )
+  }
+  return response.json() as Promise<TaskAgentBulkRunResponse>
 }
 
 export async function stopTaskAgent(

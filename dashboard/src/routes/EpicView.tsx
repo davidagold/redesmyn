@@ -18,8 +18,7 @@ import {
 } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import {
-  restartTaskAgent,
-  startTaskAgent,
+  runTaskAgentsBulk,
   stopTaskAgent,
   updateOrchestrationDefaults,
 } from "@/api"
@@ -30,7 +29,7 @@ import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import type { NodeActivity } from "@/lib/presence"
-import { ChevronRight, Play, Settings2, Square } from "lucide-react"
+import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -79,6 +78,12 @@ export function EpicView() {
   const selectedNodeIdsRef = useRef(selectedNodeIds)
   const [runAction, setRunAction] =
     useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
+  const [bulkRun, setBulkRun] = useState<{
+    runId: string
+    total: number
+    completed: number
+    failed: number
+  } | null>(null)
   const refreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
@@ -447,9 +452,13 @@ export function EpicView() {
     }, 250)
   }, [refreshGraph])
 
-  const handleStreamEvent = useCallback((event: StreamEvent) => {
-    const nodeId = event.data.node_id
-    if (typeof nodeId === "number") {
+  const handleStreamEvent = useCallback(
+    (event: StreamEvent) => {
+      if (!("nodeId" in event.data) || typeof event.data.nodeId !== "number") {
+        return
+      }
+      const nodeId = event.data.nodeId
+
       const observedAt = Date.parse(event.createdAt) || Date.now()
       setActivityByNodeId((prev) => {
         const next = new Map(prev)
@@ -461,8 +470,40 @@ export function EpicView() {
         }
         return next
       })
-    }
-  }, [])
+
+      if (event.data.type !== "task.agent_run") {
+        return
+      }
+
+      const data = event.data
+
+      if (data.phase !== "started" && data.phase !== "failed") {
+        return
+      }
+
+      setBulkRun((current) => {
+        if (!current || current.runId !== data.runId) {
+          return current
+        }
+
+        const completed = current.completed + 1
+        const failed = current.failed + (data.phase === "failed" ? 1 : 0)
+
+        if (completed >= current.total) {
+          setRunNotice(
+            failed > 0
+              ? `Started (with ${failed} failure${failed === 1 ? "" : "s"})`
+              : "Started",
+          )
+          return null
+        }
+
+        return { ...current, completed, failed }
+      })
+      scheduleGraphRefresh()
+    },
+    [scheduleGraphRefresh],
+  )
 
   useEventStream({
     epic: selectedEpic?.slug ?? null,
@@ -729,19 +770,23 @@ export function EpicView() {
     selectedNodeIds.size > 1 && actionTargets.selected.start.length > 0
   const canRunAll =
     runAction === null &&
+    bulkRun === null &&
     (actionTargets.all.start.length > 0 ||
       actionTargets.all.restart.length > 0) &&
     (!needsHarnessForAll || !!configuredHarnessCommand)
-  const canStopAll = runAction === null && actionTargets.all.stop.length > 0
+  const canStopAll =
+    runAction === null && bulkRun === null && actionTargets.all.stop.length > 0
   const showSelectedActions = selectedNodeIds.size > 1
   const canRunSelected =
     runAction === null &&
+    bulkRun === null &&
     showSelectedActions &&
     (actionTargets.selected.start.length > 0 ||
       actionTargets.selected.restart.length > 0) &&
     (!needsHarnessForSelected || !!configuredHarnessCommand)
   const canStopSelected =
     runAction === null &&
+    bulkRun === null &&
     showSelectedActions &&
     actionTargets.selected.stop.length > 0
 
@@ -750,40 +795,28 @@ export function EpicView() {
     restart: number[]
     stop: number[]
   }) {
+    const total = targets.start.length + targets.restart.length
+    if (total === 0) {
+      return
+    }
     if (targets.start.length > 0 && !configuredHarnessCommand) {
       throw new Error("Set a harness command in Configure")
     }
-    const warnings: string[] = []
-    for (const taskId of targets.start) {
-      const response = await startTaskAgent(taskId, {
-        harness: configuredHarnessCommand,
-        detach: configuredDetach,
-      })
-      const responseWarnings = response.warnings ?? []
-      if (!response.started || response.agentStatus === "error") {
-        throw new Error(
-          responseWarnings.join("\n") || "Agent exited immediately",
-        )
-      }
-      if (responseWarnings.length > 0) {
-        warnings.push(...responseWarnings)
-      }
-    }
-    for (const taskId of targets.restart) {
-      const response = await restartTaskAgent(taskId, {
-        detach: configuredDetach,
-      })
-      const responseWarnings = response.warnings ?? []
-      if (!response.started || response.agentStatus === "error") {
-        throw new Error(
-          responseWarnings.join("\n") || "Agent exited immediately",
-        )
-      }
-      if (responseWarnings.length > 0) {
-        warnings.push(...responseWarnings)
-      }
-    }
-    return warnings
+
+    const runId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    setBulkRun({ runId, total, completed: 0, failed: 0 })
+
+    await runTaskAgentsBulk({
+      runId,
+      startTaskIds: targets.start,
+      restartTaskIds: targets.restart,
+      harness: targets.start.length > 0 ? configuredHarnessCommand : null,
+      detach: configuredDetach,
+      prelude: null,
+    })
   }
 
   async function stopTargets(targets: { stop: number[] }) {
@@ -798,11 +831,12 @@ export function EpicView() {
     }
     setRunAction("runAll")
     try {
-      const warnings = await runTargets(actionTargets.all)
+      await runTargets(actionTargets.all)
       scheduleGraphRefresh()
-      setRunNotice(warnings.length > 0 ? "Started (with warnings)" : "Started")
+      setRunNotice("Starting…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
+      setBulkRun(null)
     } finally {
       setRunAction(null)
     }
@@ -830,15 +864,12 @@ export function EpicView() {
     }
     setRunAction("runSelected")
     try {
-      const warnings = await runTargets(actionTargets.selected)
+      await runTargets(actionTargets.selected)
       scheduleGraphRefresh()
-      setRunNotice(
-        warnings.length > 0
-          ? "Started selection (with warnings)"
-          : "Started selection",
-      )
+      setRunNotice("Starting selection…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
+      setBulkRun(null)
     } finally {
       setRunAction(null)
     }
@@ -988,7 +1019,7 @@ export function EpicView() {
                   disabledReason={
                     canRunAll
                       ? null
-                      : runAction !== null
+                      : runAction !== null || bulkRun !== null
                         ? "Action in progress"
                         : needsHarnessForAll && !configuredHarnessCommand
                           ? "Set a harness command in Configure"
@@ -996,7 +1027,7 @@ export function EpicView() {
                   }
                   onClick={() => void handleRunAll()}
                 >
-                  <Play />
+                  {bulkRun ? <Loader2 className="animate-spin" /> : <Play />}
                   Run all
                 </Button>
                 <div
@@ -1015,7 +1046,7 @@ export function EpicView() {
                     disabledReason={
                       canRunSelected
                         ? null
-                        : runAction !== null
+                        : runAction !== null || bulkRun !== null
                           ? "Action in progress"
                           : needsHarnessForSelected && !configuredHarnessCommand
                             ? "Set a harness command in Configure"
@@ -1025,6 +1056,7 @@ export function EpicView() {
                     }
                     onClick={() => void handleRunSelected()}
                   >
+                    {bulkRun ? <Loader2 className="animate-spin" /> : null}
                     Selected
                   </Button>
                 </div>
@@ -1039,7 +1071,7 @@ export function EpicView() {
                   disabledReason={
                     canStopAll
                       ? null
-                      : runAction !== null
+                      : runAction !== null || bulkRun !== null
                         ? "Action in progress"
                         : "Nothing to stop"
                   }
@@ -1064,7 +1096,7 @@ export function EpicView() {
                     disabledReason={
                       canStopSelected
                         ? null
-                        : runAction !== null
+                        : runAction !== null || bulkRun !== null
                           ? "Action in progress"
                           : !showSelectedActions
                             ? "Select 2+ tasks"
@@ -1089,7 +1121,13 @@ export function EpicView() {
               </Button>
             </div>
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
-            {runNotice ? (
+            {bulkRun ? (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Starting {bulkRun.completed}/{bulkRun.total}
+                {bulkRun.failed > 0 ? ` (${bulkRun.failed} failed)` : null}
+              </div>
+            ) : runNotice ? (
               <div className="text-xs text-muted-foreground">{runNotice}</div>
             ) : null}
           </div>

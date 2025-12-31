@@ -210,6 +210,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/agent/run": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Run Task Agents Bulk */
+    post: operations["run_task_agents_bulk_v1_tasks_agent_run_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/tasks/{task_id}/agent/restart": {
     parameters: {
       query?: never
@@ -685,6 +702,31 @@ export interface components {
       supportsWorktree: boolean
       /** Unavailablereason */
       unavailableReason?: string | null
+    }
+    /** TaskAgentBulkRunRequest */
+    TaskAgentBulkRunRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+      /** Prelude */
+      prelude?: string | null
+      /** Restarttaskids */
+      restartTaskIds?: number[]
+      /** Runid */
+      runId?: string | null
+      /** Starttaskids */
+      startTaskIds?: number[]
+    }
+    /** TaskAgentBulkRunResponse */
+    TaskAgentBulkRunResponse: {
+      /** Runid */
+      runId: string
+      /** Submitted */
+      submitted: number
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
@@ -1204,6 +1246,39 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["ApiStatusResponse"]
+        }
+      }
+    }
+  }
+  run_task_agents_bulk_v1_tasks_agent_run_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentBulkRunRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentBulkRunResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

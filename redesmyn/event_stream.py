@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from fastapi import WebSocket
+from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -66,9 +67,22 @@ async def send_hello(websocket: WebSocket, *, last_event_id: int) -> None:
 
 
 async def send_event(websocket: WebSocket, event: Event) -> None:
-    payload = EventResponse.model_validate(event, from_attributes=True).model_dump(
-        by_alias=True
-    )
+    raw_data = event.data if isinstance(event.data, dict) else {}
+    payload_dict = {
+        "id": event.id,
+        "event_type": event.event_type,
+        "created_at": event.created_at,
+        "data": {**raw_data, "type": event.event_type},
+    }
+    try:
+        payload = EventResponse.model_validate(payload_dict).model_dump(by_alias=True)
+    except ValidationError:
+        payload_dict["data"] = {
+            "type": "unknown",
+            "event_type": event.event_type,
+            "data": raw_data,
+        }
+        payload = EventResponse.model_validate(payload_dict).model_dump(by_alias=True)
     await websocket.send_json({"type": "event", "event": payload})
 
 

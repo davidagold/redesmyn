@@ -1198,6 +1198,82 @@
         "title": "SandboxCapabilitiesResponse",
         "type": "object"
       },
+      "TaskAgentBulkRunRequest": {
+        "properties": {
+          "detach": {
+            "default": true,
+            "title": "Detach",
+            "type": "boolean"
+          },
+          "harness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness"
+          },
+          "prelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prelude"
+          },
+          "restartTaskIds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Restarttaskids",
+            "type": "array"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "startTaskIds": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Starttaskids",
+            "type": "array"
+          }
+        },
+        "title": "TaskAgentBulkRunRequest",
+        "type": "object"
+      },
+      "TaskAgentBulkRunResponse": {
+        "properties": {
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "submitted": {
+            "title": "Submitted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runId",
+          "submitted"
+        ],
+        "title": "TaskAgentBulkRunResponse",
+        "type": "object"
+      },
       "TaskAgentRestartRequest": {
         "properties": {
           "detach": {
@@ -2113,6 +2189,44 @@
           }
         },
         "summary": "Api Status"
+      }
+    },
+    "/v1/tasks/agent/run": {
+      "post": {
+        "operationId": "run_task_agents_bulk_v1_tasks_agent_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAgentBulkRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAgentBulkRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Task Agents Bulk"
       }
     },
     "/v1/tasks/{task_id}/agent/restart": {
