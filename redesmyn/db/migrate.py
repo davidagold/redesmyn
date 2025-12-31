@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+
+
+def _repo_root_from_db_path(db_path: Path) -> Path:
+    # db_path is typically: <repo>/.redesmyn/redesmyn.sqlite3
+    return db_path.parent.parent
+
+
+def alembic_config_for_db(db_path: Path) -> Config:
+    repo_root = _repo_root_from_db_path(db_path)
+    cfg = Config(str(repo_root / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    return cfg
+
+
+def upgrade_to_head(*, db_path: Path) -> None:
+    command.upgrade(alembic_config_for_db(db_path), "head")
+
+
+def stamp_revision(*, db_path: Path, revision: str) -> None:
+    command.stamp(alembic_config_for_db(db_path), revision)

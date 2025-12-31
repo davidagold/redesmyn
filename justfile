@@ -29,3 +29,19 @@ check:
 
 run:
     rn daemon run
+
+# Database (Alembic)
+db-current:
+    uv run alembic -c alembic.ini current
+
+db-history:
+    uv run alembic -c alembic.ini history
+
+db-upgrade rev="head":
+    uv run alembic -c alembic.ini upgrade {{rev}}
+
+db-downgrade rev="-1":
+    uv run alembic -c alembic.ini downgrade {{rev}}
+
+db-revision msg:
+    uv run alembic -c alembic.ini revision -m "{{msg}}" --autogenerate
