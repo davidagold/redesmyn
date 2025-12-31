@@ -112,7 +112,7 @@ Introduce the minimally sufficient iteration:
 - A single implicit “default workspace” (until real org/workspace identity exists), identified by a stable `workspace_id`.
 - Repos are identified by an immutable `repo_id` scoped to a `workspace_id`.
 
-- The daemon handshake must include an explicit repo identity (not a local filesystem path).
+- Repo-scoped messages (and attach/detach) must include an explicit repo identity (not a local filesystem path).
 - Repos have a unique `repo_name` within a workspace, but identifiers must be stable across renames:
   - Prefer immutable `workspace_id` + `repo_id` for primary identity.
   - Treat names/slugs as display fields and enforce uniqueness per workspace separately.
@@ -170,6 +170,7 @@ This section defines the **v1** daemon/control-plane contract. It is intended to
 #### 2.13.1 Naming + deprecations
 
 - **Control plane** and **server** are synonyms. Prefer **control plane** in user-facing docs.
+- **Daemon** is the host-local orchestrator (one per host) that connects outbound to the control plane.
 - **Repo executor** is the component allowed to execute git/worktree mutations for a specific repo instance.
   - v1: the host-local daemon is the repo executor for its local checkout/worktrees.
   - cloud: a server-side worker/executor is the repo executor for a server-managed checkout/bare repo.
@@ -249,6 +250,7 @@ Notes:
 - `host_key` is the stable daemon/executor identity (stored on the host; persisted via the `Host` row).
 - Enforce **at most one active connection per `host_key`** (reject/replace duplicates).
 - `host_instance_id` changes on daemon restart and helps distinguish “same host, new process”.
+- Repo identity is carried in `scope` on repo-scoped messages (and attach/detach), not as a host filesystem path.
 
 The control plane responds with `daemon.hello_ack`:
 
