@@ -418,6 +418,7 @@ export function NodeCard({
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 disabled={!canMerge || !mergeReady || pendingMerge !== null}
+                title="Fast-forward merge the task + its ancestors into the epic base branch."
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -429,6 +430,7 @@ export function NodeCard({
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={!canMerge || !mergeReady || pendingMerge !== null}
+                title="Same merge, plus rebase downstream branches to keep the stack intact."
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -436,7 +438,7 @@ export function NodeCard({
                 }}
               >
                 <Layers className="size-3.5" />
-                Merge stack
+                Merge and Restack
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
