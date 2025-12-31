@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { createPortal } from "react-dom"
 import { Markdown } from "@/components/markdown"
 import {
   Accordion,
@@ -54,10 +55,12 @@ function AgentActions({
   task,
   agent,
   onRequestRefresh,
+  floatingActionsPortalId,
 }: {
   task: Task
   agent: Agent | null
   onRequestRefresh: () => void
+  floatingActionsPortalId?: string
 }) {
   const { defaults: orchestrationDefaults } = useOrchestrationDefaults()
   const [pending, setPending] = useState<"start" | "stop" | "restart" | null>(
@@ -279,48 +282,55 @@ function AgentActions({
     return stripAnsi(logsText)
   }, [logsText])
 
-  return (
-    <div className="relative grid gap-3">
-      {isRunning ? (
-        <FloatingActions>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-full rounded-none border-0"
-            title="Copy attach command"
-            onClick={() =>
-              void handleCopy(attachCommand, "Attach command copied")
-            }
-            disabledReason={pending !== null ? "Action in progress" : null}
-          >
-            <Terminal />
-            Attach
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-full rounded-none border-0 border-l"
-            onClick={() => void handleRestart()}
-            disabledReason={pending !== null ? "Action in progress" : null}
-          >
-            <RotateCcw />
-            Restart
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-full rounded-none border-0 border-l text-destructive hover:bg-destructive/10"
-            onClick={() => void handleStop()}
-            disabledReason={pending !== null ? "Action in progress" : null}
-          >
-            <Square />
-            Stop
-          </Button>
-        </FloatingActions>
-      ) : null}
+  const floatingPortal =
+    isRunning && floatingActionsPortalId
+      ? document.getElementById(floatingActionsPortalId)
+      : null
 
-      <div className={"flex items-start gap-3 " + (isRunning ? "pr-28" : "")}>
-        <div className="min-w-0">
+  const floatingActions = isRunning ? (
+    <FloatingActions>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="h-full rounded-none border-0"
+        title="Copy attach command"
+        onClick={() => void handleCopy(attachCommand, "Attach command copied")}
+        disabledReason={pending !== null ? "Action in progress" : null}
+      >
+        <Terminal />
+        Attach
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="h-full rounded-none border-0 border-l"
+        onClick={() => void handleRestart()}
+        disabledReason={pending !== null ? "Action in progress" : null}
+      >
+        <RotateCcw />
+        Restart
+      </Button>
+      <Button
+        variant="ghost"
+        size="xs"
+        className="h-full rounded-none border-0 border-l text-destructive hover:bg-destructive/10"
+        onClick={() => void handleStop()}
+        disabledReason={pending !== null ? "Action in progress" : null}
+      >
+        <Square />
+        Stop
+      </Button>
+    </FloatingActions>
+  ) : null
+
+  return (
+    <div className="grid gap-3">
+      {floatingPortal && floatingActions
+        ? createPortal(floatingActions, floatingPortal)
+        : null}
+
+      <div className="flex items-start justify-between gap-3">
+        <div className={"min-w-0 " + (isRunning ? "pr-28" : "")}>
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
               {agentName}
@@ -586,10 +596,12 @@ export function DetailsPanel({
         : "none"
 
   const defaultSections = edge ? ["contract"] : ["agent", "readme"]
+  const floatingActionsPortalId = "details-panel-floating-actions"
 
   return (
     <SlidePanel open={open}>
       <div className="p-3">
+        <div id={floatingActionsPortalId} />
         <Accordion
           key={selectionKey}
           multiple
@@ -655,6 +667,7 @@ export function DetailsPanel({
                       task={task}
                       agent={agent ?? null}
                       onRequestRefresh={onRequestRefresh}
+                      floatingActionsPortalId={floatingActionsPortalId}
                     />
                   ) : null}
                 </AccordionContent>

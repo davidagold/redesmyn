@@ -1210,9 +1210,9 @@ export function EpicView() {
                   onClick={() => void handleRunAll()}
                 >
                   {bulkAction?.kind === "run" ? (
-                    <Loader2 className="animate-spin text-primary" />
+                    <Loader2 className="animate-spin text-emerald-400" />
                   ) : (
-                    <Play className="text-primary" />
+                    <Play className="text-emerald-400" />
                   )}
                   Run all
                 </Button>
@@ -1243,7 +1243,7 @@ export function EpicView() {
                     onClick={() => void handleRunSelected()}
                   >
                     {bulkAction?.kind === "run" ? (
-                      <Loader2 className="animate-spin" />
+                      <Loader2 className="animate-spin text-emerald-400" />
                     ) : null}
                     Selected
                   </Button>
@@ -1297,7 +1297,7 @@ export function EpicView() {
                     onClick={() => void handleStopSelected()}
                   >
                     {bulkAction?.kind === "stop" ? (
-                      <Loader2 className="animate-spin" />
+                      <Loader2 className="animate-spin text-destructive" />
                     ) : null}
                     Selected
                   </Button>
@@ -1323,7 +1323,7 @@ export function EpicView() {
                     "h-3 w-3 animate-spin " +
                     (bulkAction.kind === "stop"
                       ? "text-destructive"
-                      : "text-primary")
+                      : "text-emerald-400")
                   }
                 />
                 {bulkAction.kind === "stop" ? "Stopping" : "Starting"}{" "}
