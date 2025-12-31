@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip"
 import {
   EllipsisVertical,
+  AlertTriangle,
   GitBranch,
   GitMerge,
   Layers,
@@ -87,6 +88,9 @@ export function NodeCard({
   const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
   const stackInSync = node.stackInSync ?? null
   const outOfSync = stackInSync === false
+  const mergeRunStatus = mergeRun?.status ?? null
+  const mergeRunBlocked = mergeRunStatus === "blocked"
+  const mergeRunResumable = mergeRunStatus === "resumable"
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -108,7 +112,6 @@ export function NodeCard({
 
   const agentStatus = agent?.status ?? null
   const taskId = task?.id ?? null
-  const mergeRunStatus = mergeRun?.status ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
 
   useEffect(() => {
@@ -391,6 +394,44 @@ export function NodeCard({
   ]
   const tooltip = tooltipParts.filter(Boolean).join("\n")
 
+  const gitAttentionKind: "mergeBlocked" | "mergeResumable" | "outOfSync" | null =
+    mergeRunBlocked
+      ? "mergeBlocked"
+      : mergeRunResumable
+        ? "mergeResumable"
+        : outOfSync
+          ? "outOfSync"
+          : null
+
+  const gitAttentionIcon =
+    gitAttentionKind === "mergeBlocked" ? (
+      <AlertTriangle className="size-4" />
+    ) : gitAttentionKind === "mergeResumable" ? (
+      <Play className="size-4" />
+    ) : gitAttentionKind === "outOfSync" ? (
+      <GitBranch className="size-4" />
+    ) : null
+
+  const gitAttentionTextClass =
+    gitAttentionKind === "mergeBlocked"
+      ? "text-destructive/80"
+      : gitAttentionKind === "mergeResumable"
+        ? "text-amber-200/80"
+        : "text-amber-300/70"
+
+  const gitAttentionTooltipLines: string[] = []
+  if (mergeRunBlocked) {
+    gitAttentionTooltipLines.push("Merge blocked (conflicts).")
+    if (mergeRun?.blockedBranchName) {
+      gitAttentionTooltipLines.push(`Branch: ${mergeRun.blockedBranchName}`)
+    }
+  } else if (mergeRunResumable) {
+    gitAttentionTooltipLines.push("Merge ready to resume.")
+  }
+  if (outOfSync) {
+    gitAttentionTooltipLines.push("Branch is out of sync with its upstream.")
+  }
+
   return (
     <Card
       data-node-card
@@ -614,24 +655,27 @@ export function NodeCard({
           </div>
         ) : null}
       </CardContent>
-      {outOfSync ? (
+      {gitAttentionKind && gitAttentionIcon ? (
         <Tooltip>
           <TooltipTrigger
             render={(triggerProps) => (
               <span
                 {...triggerProps}
                 className={cn(
-                  "nodrag nopan absolute bottom-3 right-3 text-amber-300/70",
+                  "nodrag nopan absolute bottom-3 right-3",
+                  gitAttentionTextClass,
                   triggerProps.className,
                 )}
-                aria-label="Out of sync with upstream"
+                aria-label="Git status attention"
               >
-                <GitBranch className="size-4" />
+                {gitAttentionIcon}
               </span>
             )}
           />
           <TooltipContent side="left" sideOffset={12} align="center">
-            Branch is out of sync with its upstream.
+            <div className="whitespace-pre-line">
+              {gitAttentionTooltipLines.join("\n")}
+            </div>
           </TooltipContent>
         </Tooltip>
       ) : null}
