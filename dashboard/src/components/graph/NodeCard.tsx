@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Ellipsis,
+  EllipsisVertical,
   GitMerge,
   Layers,
   Play,
@@ -341,13 +341,12 @@ export function NodeCard({
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
-            "absolute -top-2 -right-2 z-10 transition-opacity",
+            "absolute right-0 top-0 z-10 translate-x-1/2 -translate-y-1/2 transition-opacity",
             isSelected
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
           )}
           onClick={(e) => {
-            e.preventDefault()
             e.stopPropagation()
           }}
         >
@@ -356,24 +355,21 @@ export function NodeCard({
               render={(triggerProps) => (
                 <Button
                   {...triggerProps}
-                  variant="secondary"
-                  size="icon-xs"
+                  variant="ghost"
+                  size="icon-sm"
                   aria-label="Task actions"
                   title="Task actions"
                   disabledReason={
                     pendingMerge !== null ? "Action in progress" : null
                   }
                   className={cn(
-                    "rounded-full shadow-sm",
+                    "rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60",
                     triggerProps.className,
                   )}
-                  onClick={(event) => {
-                    triggerProps.onClick?.(event)
-                    event.preventDefault()
-                    event.stopPropagation()
-                  }}
+                  onClickCapture={(event) => event.stopPropagation()}
+                  onPointerDownCapture={(event) => event.stopPropagation()}
                 >
-                  <Ellipsis className="size-3" />
+                  <EllipsisVertical className="size-4" />
                 </Button>
               )}
             />

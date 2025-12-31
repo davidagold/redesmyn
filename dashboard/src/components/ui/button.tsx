@@ -1,5 +1,6 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
+import { forwardRef } from "react"
 
 import { cn } from "@/lib/utils"
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip"
@@ -39,18 +40,24 @@ const buttonVariants = cva(
   },
 )
 
-function Button({
-  className,
-  variant = "default",
-  size = "default",
-  disabledReason = null,
-  ...props
-}: Omit<ButtonPrimitive.Props, "disabled"> & VariantProps<typeof buttonVariants> & {
+type ButtonProps = Omit<ButtonPrimitive.Props, "disabled"> & VariantProps<typeof buttonVariants> & {
   disabledReason?: string | null
-}) {
+}
+
+const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    className,
+    variant = "default",
+    size = "default",
+    disabledReason = null,
+    ...props
+  },
+  ref,
+) {
   const disabled = Boolean(disabledReason)
   const button = (
     <ButtonPrimitive
+      ref={ref}
       data-slot="button"
       disabled={disabled}
       className={cn(buttonVariants({ variant, size, className }))}
@@ -89,6 +96,8 @@ function Button({
       </TooltipContent>
     </Tooltip>
   )
-}
+})
+
+Button.displayName = "Button"
 
 export { Button, buttonVariants }
