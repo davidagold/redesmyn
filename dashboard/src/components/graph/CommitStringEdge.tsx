@@ -7,7 +7,11 @@ import {
   type EdgeProps,
 } from "@xyflow/react"
 import type { CSSProperties } from "react"
-import { edgeLodBand, GRAPH_EDGE_STYLE_ANIMATION_MS } from "./graphConfig"
+import {
+  edgeLodBand,
+  GRAPH_EDGE_BORDER_RADIUS,
+  GRAPH_EDGE_STYLE_ANIMATION_MS,
+} from "./graphConfig"
 
 export type CommitStringEdgeData = {
   commitCount?: number | null
@@ -56,7 +60,7 @@ export function CommitStringEdge({
     targetY,
     sourcePosition,
     targetPosition,
-    borderRadius: 28,
+    borderRadius: GRAPH_EDGE_BORDER_RADIUS,
   })
 
   const edgeStyle: CSSProperties = {

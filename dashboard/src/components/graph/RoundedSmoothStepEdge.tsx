@@ -1,6 +1,5 @@
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from "@xyflow/react"
-
-const GRAPH_EDGE_BORDER_RADIUS = 28
+import { GRAPH_EDGE_BORDER_RADIUS } from "./graphConfig"
 
 export function RoundedSmoothStepEdge({
   id,
