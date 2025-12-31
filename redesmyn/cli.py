@@ -75,12 +75,15 @@ from redesmyn.repo import (
     GitCommandError,
     NotAGitRepositoryError,
     current_branch,
-    git_is_ancestor,
-    git_merge_ff_only,
-    git_rebase_update_refs,
-    git_status_porcelain,
     git_worktree_add,
-    git_worktree_path_for_branch,
+)
+from redesmyn.git_mechanics_v0 import (
+    MergeBlockedByRunningAgents,
+    MergePlanError,
+    build_merge_cascade_plan,
+    execute_merge_cascade_plan,
+    format_merge_plan,
+    format_running_agents_confirmation,
 )
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
@@ -238,13 +241,34 @@ def checkout(
 @app.command()
 def merge(
     task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
+    cascade: bool = typer.Option(
+        False,
+        "--cascade",
+        help="Also rebase downstream branches to preserve the stack.",
+    ),
+    scope: str = typer.Option(
+        "descendants",
+        "--scope",
+        help="Cascade scope (descendants|spine). Ignored unless --cascade is set.",
+        show_choices=True,
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the merge plan without performing any git operations.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Proceed without prompting (including when running agents are detected).",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
         help="Merge even if the task is not marked ready.",
     ),
 ) -> None:
-    """Rebase the task branch on the epic base, then fast-forward the base branch."""
+    """Merge a task branch into the epic base branch (optionally cascading through the stack)."""
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
@@ -252,156 +276,64 @@ def merge(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    async def _load_branch_info() -> tuple[str, str]:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                task = await session.get(Task, task_id)
-                if task is None:
-                    raise RuntimeError(f"Unknown task id: {task_id}")
-                if task.merge_ready_at is None and not force:
-                    raise RuntimeError(
-                        "Task is not marked ready to merge. "
-                        "Mark it ready in the dashboard (Task details → Merge) or pass --force."
-                    )
-                if task.node_id is None:
-                    raise RuntimeError(
-                        "Task has no node/branch yet (node_id is null). Run `rn sync --from local --create-nodes`."
-                    )
-                node = await session.get(Node, task.node_id)
-                if node is None:
-                    raise RuntimeError(f"Task node not found: {task.node_id}")
-                epic = await session.get(Epic, task.epic_id)
-                if epic is None:
-                    raise RuntimeError(f"Epic not found: {task.epic_id}")
-                return node.branch_name, epic.root_branch
-        finally:
-            await engine.dispose()
-
-    try:
-        task_branch, base_branch = asyncio.run(_load_branch_info())
-        task_worktree = asyncio.run(checkout_task_worktree(ctx, task_id=task_id))
-    except RuntimeError as e:
-        typer.echo(f"error: {e}", err=True)
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in {"descendants", "spine"}:
+        typer.echo("error: --scope must be one of: descendants, spine", err=True)
         raise typer.Exit(2)
 
+    selected_scope = normalized_scope if cascade else "spine"
+
+    engine = create_engine(ctx.db_path)
+    sessionmaker = create_sessionmaker(engine)
     try:
-        if git_status_porcelain(task_worktree).strip():
-            typer.echo(
-                f"error: Task worktree has uncommitted changes: {task_worktree}",
-                err=True,
+        plan = asyncio.run(
+            build_merge_cascade_plan(
+                ctx=ctx,
+                sessionmaker=sessionmaker,
+                task_id=task_id,
+                run_id=f"cli-{int(time.time())}",
+                scope=selected_scope,  # type: ignore[arg-type]
+                force=force,
             )
-            raise typer.Exit(2)
-    except GitCommandError as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    if current_branch(cwd=task_worktree) != task_branch:
-        typer.echo(
-            f"error: Task worktree is not on {task_branch} (at {task_worktree})",
-            err=True,
         )
-        raise typer.Exit(2)
 
-    base_worktree = git_worktree_path_for_branch(ctx.repo_root, base_branch)
-    if base_worktree is None:
-        typer.echo(
-            f"error: No worktree has {base_branch} checked out. "
-            f"Check out {base_branch} in a worktree and retry.",
-            err=True,
-        )
-        raise typer.Exit(2)
-
-    if current_branch(cwd=base_worktree) != base_branch:
-        typer.echo(
-            f"error: Base worktree is not on {base_branch}: {base_worktree}",
-            err=True,
-        )
-        raise typer.Exit(2)
-
-    try:
-        if git_status_porcelain(base_worktree).strip():
-            typer.echo(
-                f"error: Base worktree has uncommitted changes: {base_worktree}",
-                err=True,
+        confirmed_running = False
+        if plan.running_agents and not yes:
+            confirmed_running = typer.confirm(
+                format_running_agents_confirmation(plan.running_agents),
+                default=False,
             )
-            raise typer.Exit(2)
+            if not confirmed_running:
+                raise typer.Exit(1)
+
+        if dry_run:
+            typer.echo(format_merge_plan(plan))
+            return
+
+        asyncio.run(
+            execute_merge_cascade_plan(
+                ctx=ctx,
+                sessionmaker=sessionmaker,
+                plan=plan,
+                allow_running=yes or confirmed_running,
+                emit_event=None,
+            )
+        )
+
+        typer.echo(f"Merged into {plan.base_branch}")
+    except MergePlanError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    except MergeBlockedByRunningAgents:
+        typer.echo(
+            "error: merge affects running tasks; pass --yes to proceed", err=True
+        )
+        raise typer.Exit(2)
     except GitCommandError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
-
-    try:
-        git_rebase_update_refs(task_worktree, base_branch)
-        git_merge_ff_only(base_worktree, task_branch)
-    except GitCommandError as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    typer.echo(f"Merged {task_branch} -> {base_branch}")
-
-    async def _mark_completed_tasks() -> list[int]:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                merged_task = await session.get(Task, task_id)
-                if merged_task is None:
-                    return []
-
-                completed: set[int] = set()
-
-                # Mark the merged task and its node ancestors as complete.
-                #
-                # Note: We intentionally do not use git ancestry of each task branch here because
-                # `git rebase --update-refs` cannot update branches that are currently checked out
-                # in other worktrees, leaving their refs pointing at pre-rebase commits even when
-                # their changes have been incorporated via a downstream merge.
-                if merged_task.node_id is not None:
-                    node = await session.get(Node, merged_task.node_id)
-                    while node is not None:
-                        tasks_for_node = await session.execute(
-                            select(Task).where(Task.node_id == node.id)
-                        )
-                        for task_row in tasks_for_node.scalars().all():
-                            if task_row.state != TaskState.Done:
-                                task_row.state = TaskState.Done
-                            if task_row.merge_ready_at is not None:
-                                task_row.merge_ready_at = None
-                            completed.add(task_row.id)
-
-                        if node.parent_node_id is None:
-                            break
-                        node = await session.get(Node, node.parent_node_id)
-
-                # Also mark any other tasks whose branch ref is an ancestor of the new base branch
-                # head (when those refs are movable), so "included-by-history" tasks get reflected.
-                result = await session.execute(
-                    select(Task, Node)
-                    .join(Node, Task.node_id == Node.id)
-                    .where(Task.epic_id == merged_task.epic_id)
-                )
-                for task_row, node_row in result.all():
-                    if task_row.id in completed:
-                        continue
-                    if not git_is_ancestor(
-                        ctx.repo_root, node_row.branch_name, base_branch
-                    ):
-                        continue
-                    if task_row.state != TaskState.Done:
-                        task_row.state = TaskState.Done
-                    if task_row.merge_ready_at is not None:
-                        task_row.merge_ready_at = None
-                    completed.add(task_row.id)
-
-                await session.commit()
-                return sorted(completed)
-        finally:
-            await engine.dispose()
-
-    completed_ids = asyncio.run(_mark_completed_tasks())
-    if completed_ids:
-        typer.echo(f"Marked complete: {len(completed_ids)} task(s)")
+    finally:
+        asyncio.run(engine.dispose())
 
 
 def _parse_bool(value: str) -> bool:

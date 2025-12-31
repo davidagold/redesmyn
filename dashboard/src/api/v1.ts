@@ -295,6 +295,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/merge": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Merge Task */
+    post: operations["merge_task_v1_tasks__task_id__merge_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/tasks/{task_id}/merge-ready": {
     parameters: {
       query?: never
@@ -850,10 +867,75 @@ export interface components {
      * @enum {string}
      */
     TaskAuthority: "local" | "linear" | "github"
+    /** TaskMergePlanStepResponse */
+    TaskMergePlanStepResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /** Branchname */
+      branchName: string
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "rebase" | "merge_ff"
+      /** Nodeid */
+      nodeId: number | null
+      /** Taskid */
+      taskId: number | null
+      /** Upstreamref */
+      upstreamRef?: string | null
+      /** Worktreepath */
+      worktreePath: string
+    }
     /** TaskMergeReadyRequest */
     TaskMergeReadyRequest: {
       /** Ready */
       ready: boolean
+    }
+    /** TaskMergeRequest */
+    TaskMergeRequest: {
+      /**
+       * Allowrunning
+       * @default false
+       */
+      allowRunning: boolean
+      /**
+       * Cascade
+       * @default false
+       */
+      cascade: boolean
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /**
+       * Force
+       * @default false
+       */
+      force: boolean
+      /** Runid */
+      runId?: string | null
+      /**
+       * Scope
+       * @default descendants
+       * @enum {string}
+       */
+      scope: "descendants" | "spine"
+    }
+    /** TaskMergeResponse */
+    TaskMergeResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /** Runid */
+      runId: string
+      /** Steps */
+      steps?: components["schemas"]["TaskMergePlanStepResponse"][]
     }
     /** TaskResponse */
     TaskResponse: {
@@ -1454,6 +1536,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  merge_task_v1_tasks__task_id__merge_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskMergeRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskMergeResponse"]
         }
       }
       /** @description Validation Error */

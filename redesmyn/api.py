@@ -96,10 +96,19 @@ from redesmyn.schemas.core import (
     TaskAgentBulkRunRequest,
     TaskAgentBulkRunResponse,
     TaskMergeReadyRequest,
+    TaskMergeRequest,
+    TaskMergeResponse,
+    TaskMergePlanStepResponse,
     TrunkCommitResponse,
     TrunkTimelineResponse,
 )
 from redesmyn.settings import load_settings
+from redesmyn.git_mechanics_v0 import (
+    MergeBlockedByRunningAgents,
+    MergePlanError,
+    build_merge_cascade_plan,
+    execute_merge_cascade_plan,
+)
 
 
 class AppState(Protocol):
@@ -602,6 +611,22 @@ async def _emit_task_agent_action_event(
         await session.commit()
 
 
+async def _emit_task_merge_event(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    payload: dict[str, object],
+) -> None:
+    async with sessionmaker() as session:
+        session.add(
+            Event(
+                event_type="task.merge",
+                data=payload,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
 async def _task_node_info(
     sessionmaker: async_sessionmaker[AsyncSession], *, task_id: int
 ) -> tuple[Task, Node, int | None]:
@@ -987,6 +1012,84 @@ async def set_task_merge_ready(
         await session.commit()
         await session.refresh(task)
         return TaskResponse.model_validate(task, from_attributes=True)
+
+
+@v1.post("/tasks/{task_id}/merge", response_model=TaskMergeResponse)
+async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeResponse:
+    run_id = request.run_id or uuid4().hex
+    scope: Literal["descendants", "spine"] = (
+        request.scope if request.cascade else "spine"
+    )
+    try:
+        plan = await build_merge_cascade_plan(
+            ctx=app.state.ctx,
+            sessionmaker=app.state.sessionmaker,
+            task_id=task_id,
+            run_id=run_id,
+            scope=scope,
+            force=request.force,
+        )
+    except MergePlanError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if plan.running_agents and not request.allow_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+        )
+
+    if request.dry_run:
+        steps = [
+            TaskMergePlanStepResponse(
+                kind=step.kind,
+                node_id=step.node_id,
+                task_id=step.task_id,
+                branch_name=step.branch_name,
+                worktree_path=str(step.worktree_path),
+                upstream_ref=step.upstream_ref,
+                base_branch=step.base_branch,
+            )
+            for step in plan.steps
+        ]
+        return TaskMergeResponse(
+            run_id=run_id,
+            dry_run=True,
+            base_branch=plan.base_branch,
+            steps=steps,
+        )
+
+    async def _run() -> None:
+        try:
+            await execute_merge_cascade_plan(
+                ctx=app.state.ctx,
+                sessionmaker=app.state.sessionmaker,
+                plan=plan,
+                allow_running=request.allow_running,
+                emit_event=lambda payload: _emit_task_merge_event(
+                    sessionmaker=app.state.sessionmaker, payload=payload
+                ),
+            )
+        except MergeBlockedByRunningAgents:
+            # The plan was computed with running agents, but the request didn't allow them.
+            # We return 409 to the caller before spawning, so this should not happen.
+            return
+        except Exception as e:
+            await _emit_task_merge_event(
+                sessionmaker=app.state.sessionmaker,
+                payload={
+                    "run_id": run_id,
+                    "node_id": None,
+                    "task_id": task_id,
+                    "kind": "merge_ff",
+                    "phase": "failed",
+                    "branch_name": plan.base_branch,
+                    "error": str(e),
+                },
+            )
+
+    asyncio.create_task(_run())
+
+    return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=plan.base_branch)
 
 
 @v1.get("/tasks/{task_id}/agent/logs", include_in_schema=False)

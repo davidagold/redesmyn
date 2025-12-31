@@ -1591,6 +1591,79 @@
         "title": "TaskAuthority",
         "type": "string"
       },
+      "TaskMergePlanStepResponse": {
+        "properties": {
+          "baseBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basebranch"
+          },
+          "branchName": {
+            "title": "Branchname",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "rebase",
+              "merge_ff"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "nodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodeid"
+          },
+          "taskId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskid"
+          },
+          "upstreamRef": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstreamref"
+          },
+          "worktreePath": {
+            "title": "Worktreepath",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "nodeId",
+          "taskId",
+          "branchName",
+          "worktreePath"
+        ],
+        "title": "TaskMergePlanStepResponse",
+        "type": "object"
+      },
       "TaskMergeReadyRequest": {
         "properties": {
           "ready": {
@@ -1602,6 +1675,88 @@
           "ready"
         ],
         "title": "TaskMergeReadyRequest",
+        "type": "object"
+      },
+      "TaskMergeRequest": {
+        "properties": {
+          "allowRunning": {
+            "default": false,
+            "title": "Allowrunning",
+            "type": "boolean"
+          },
+          "cascade": {
+            "default": false,
+            "title": "Cascade",
+            "type": "boolean"
+          },
+          "dryRun": {
+            "default": false,
+            "title": "Dryrun",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "scope": {
+            "default": "descendants",
+            "enum": [
+              "descendants",
+              "spine"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "title": "TaskMergeRequest",
+        "type": "object"
+      },
+      "TaskMergeResponse": {
+        "properties": {
+          "baseBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basebranch"
+          },
+          "dryRun": {
+            "default": false,
+            "title": "Dryrun",
+            "type": "boolean"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TaskMergePlanStepResponse"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "title": "TaskMergeResponse",
         "type": "object"
       },
       "TaskResponse": {
@@ -2494,6 +2649,55 @@
           }
         },
         "summary": "Stop Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/merge": {
+      "post": {
+        "operationId": "merge_task_v1_tasks__task_id__merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskMergeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Task"
       }
     },
     "/v1/tasks/{task_id}/merge-ready": {

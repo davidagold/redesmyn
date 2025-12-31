@@ -214,6 +214,42 @@ def git_status_porcelain(worktree_path: Path) -> str:
     return proc.stdout
 
 
+def git_has_in_progress_operation(worktree_path: Path) -> bool:
+    """Return True when the worktree is mid-mutation (rebase/merge/cherry-pick/revert)."""
+
+    def git_path(name: str) -> Path | None:
+        proc = _run_git(["rev-parse", "--git-path", name], cwd=worktree_path)
+        if proc.returncode != 0:
+            return None
+        raw = proc.stdout.strip()
+        if not raw:
+            return None
+        path = Path(raw)
+        if not path.is_absolute():
+            path = worktree_path / path
+        return path
+
+    candidates = (
+        "rebase-apply",
+        "rebase-merge",
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+    )
+    for name in candidates:
+        path = git_path(name)
+        if path is not None and path.exists():
+            return True
+    return False
+
+
+def git_rebase(worktree_path: Path, upstream_ref: str) -> None:
+    proc = _run_git(["rebase", upstream_ref], cwd=worktree_path)
+    if proc.returncode != 0:
+        output = (proc.stdout + "\n" + proc.stderr).strip()
+        raise GitCommandError(output or f"git rebase {upstream_ref} failed")
+
+
 def git_rebase_update_refs(worktree_path: Path, upstream_ref: str) -> None:
     proc = _run_git(["rebase", "--update-refs", upstream_ref], cwd=worktree_path)
     if proc.returncode != 0:

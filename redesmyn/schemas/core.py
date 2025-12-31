@@ -203,6 +203,32 @@ class TaskMergeReadyRequest(ApiRequest):
     ready: bool
 
 
+class TaskMergeRequest(ApiRequest):
+    run_id: str | None = None
+    cascade: bool = False
+    scope: Literal["descendants", "spine"] = "descendants"
+    dry_run: bool = False
+    allow_running: bool = False
+    force: bool = False
+
+
+class TaskMergePlanStepResponse(ApiResponse):
+    kind: Literal["rebase", "merge_ff"]
+    node_id: int | None
+    task_id: int | None
+    branch_name: str
+    worktree_path: str
+    upstream_ref: str | None = None
+    base_branch: str | None = None
+
+
+class TaskMergeResponse(ApiResponse):
+    run_id: str
+    dry_run: bool = False
+    base_branch: str | None = None
+    steps: list[TaskMergePlanStepResponse] = Field(default_factory=list)
+
+
 class HostUpsertRequest(ApiResponse):
     host_key: str
     display_name: str
@@ -362,6 +388,17 @@ class TaskAgentActionEventDataResponse(ApiResponse):
     error: str | None = None
 
 
+class TaskMergeEventDataResponse(ApiResponse):
+    type: Literal["task.merge"] = "task.merge"
+    run_id: str
+    node_id: int | None = None
+    task_id: int | None = None
+    kind: Literal["rebase", "merge_ff"]
+    phase: Literal["started", "finished", "failed"]
+    branch_name: str
+    error: str | None = None
+
+
 class UnknownEventDataResponse(ApiResponse):
     type: Literal["unknown"] = "unknown"
     event_type: str
@@ -377,6 +414,7 @@ EventDataResponse = Annotated[
     | BlockAckEventDataResponse
     | TaskAgentRunEventDataResponse
     | TaskAgentActionEventDataResponse
+    | TaskMergeEventDataResponse
     | UnknownEventDataResponse,
     Field(discriminator="type"),
 ]
