@@ -753,7 +753,7 @@ export function NodeCard({
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div
             className="min-w-0 truncate font-mono text-xs leading-none text-muted-foreground"
-            title={node.branchName}
+            title={node.branchName ?? undefined}
           >
             {branchLabel}
           </div>

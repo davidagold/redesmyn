@@ -34,13 +34,10 @@ export function NodeTree({
   return (
     <>
       {nodes.map((node) => {
-        const task =
-          node.primaryTaskId !== null
-            ? tasksById.get(node.primaryTaskId)
-            : undefined
+        const task = tasksById.get(node.id) ?? undefined
         const agent =
           node.agentId !== null ? agentsById.get(node.agentId) : undefined
-        const branchLabel = formatBranchName(node.branchName, epicSlug)
+        const branchLabel = formatBranchName(node.branchName ?? "", epicSlug)
         const children = childrenByParent.get(node.id) ?? []
 
         return (

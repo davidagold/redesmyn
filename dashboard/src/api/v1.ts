@@ -4,1920 +4,1830 @@
  */
 
 export interface paths {
-    "/v1/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Orchestration Config */
-        get: operations["get_orchestration_config_v1_config_get"];
-        put?: never;
-        /** Update Orchestration Config */
-        post: operations["update_orchestration_config_v1_config_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/daemons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Daemons */
-        get: operations["list_daemons_v1_daemons_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/daemons/{daemon_id}/commands": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Issue Daemon Command */
-        post: operations["issue_daemon_command_v1_daemons__daemon_id__commands_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/epics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Epics */
-        get: operations["list_epics_v1_epics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/epics/{epic}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Epic */
-        get: operations["get_epic_v1_epics__epic__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/epics/{epic}/graph": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Epic Graph */
-        get: operations["epic_graph_v1_epics__epic__graph_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/harness-profiles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Harness Profiles */
-        get: operations["list_harness_profiles_v1_harness_profiles_get"];
-        put?: never;
-        /** Upsert Harness Profile */
-        post: operations["upsert_harness_profile_v1_harness_profiles_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/healthz": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Healthz */
-        get: operations["healthz_v1_healthz_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/hosts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Hosts */
-        get: operations["list_hosts_v1_hosts_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/hosts/upsert": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Upsert Host */
-        post: operations["upsert_host_v1_hosts_upsert_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/linear/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Linear Status */
-        get: operations["linear_status_v1_linear_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/merge-runs/{run_id}/resume": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Resume Merge Run */
-        post: operations["resume_merge_run_v1_merge_runs__run_id__resume_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/nodes/{node_id}/agent": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Node Agent */
-        post: operations["set_node_agent_v1_nodes__node_id__agent_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sandbox/capabilities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Sandbox Capabilities */
-        get: operations["sandbox_capabilities_v1_sandbox_capabilities_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Api Status */
-        get: operations["api_status_v1_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/agent/actions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Bulk Task Agent Actions */
-        post: operations["bulk_task_agent_actions_v1_tasks_agent_actions_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/agent/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Run Task Agents Bulk */
-        post: operations["run_task_agents_bulk_v1_tasks_agent_run_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{task_id}/agent/restart": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restart Task Agent */
-        post: operations["restart_task_agent_v1_tasks__task_id__agent_restart_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{task_id}/agent/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Start Task Agent */
-        post: operations["start_task_agent_v1_tasks__task_id__agent_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{task_id}/agent/stop": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Stop Task Agent */
-        post: operations["stop_task_agent_v1_tasks__task_id__agent_stop_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{task_id}/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Merge Task */
-        post: operations["merge_task_v1_tasks__task_id__merge_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{task_id}/merge-ready": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Task Merge Ready */
-        post: operations["set_task_merge_ready_v1_tasks__task_id__merge_ready_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
+  "/v1/config": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Get Orchestration Config */
+    get: operations["get_orchestration_config_v1_config_get"]
+    put?: never
+    /** Update Orchestration Config */
+    post: operations["update_orchestration_config_v1_config_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/daemons": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Daemons */
+    get: operations["list_daemons_v1_daemons_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/daemons/{daemon_id}/commands": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Issue Daemon Command */
+    post: operations["issue_daemon_command_v1_daemons__daemon_id__commands_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/epics": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Epics */
+    get: operations["list_epics_v1_epics_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/epics/{epic}": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Get Epic */
+    get: operations["get_epic_v1_epics__epic__get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/epics/{epic}/graph": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Epic Graph */
+    get: operations["epic_graph_v1_epics__epic__graph_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/harness-profiles": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Harness Profiles */
+    get: operations["list_harness_profiles_v1_harness_profiles_get"]
+    put?: never
+    /** Upsert Harness Profile */
+    post: operations["upsert_harness_profile_v1_harness_profiles_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/healthz": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Healthz */
+    get: operations["healthz_v1_healthz_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/hosts": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Hosts */
+    get: operations["list_hosts_v1_hosts_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/hosts/upsert": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Upsert Host */
+    post: operations["upsert_host_v1_hosts_upsert_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/linear/status": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Linear Status */
+    get: operations["linear_status_v1_linear_status_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/merge-runs/{run_id}/resume": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Resume Merge Run */
+    post: operations["resume_merge_run_v1_merge_runs__run_id__resume_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/sandbox/capabilities": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Sandbox Capabilities */
+    get: operations["sandbox_capabilities_v1_sandbox_capabilities_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/status": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Api Status */
+    get: operations["api_status_v1_status_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/agent/actions": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Bulk Task Agent Actions */
+    post: operations["bulk_task_agent_actions_v1_tasks_agent_actions_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/agent/run": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Run Task Agents Bulk */
+    post: operations["run_task_agents_bulk_v1_tasks_agent_run_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/agent/restart": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Restart Task Agent */
+    post: operations["restart_task_agent_v1_tasks__task_id__agent_restart_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/agent/start": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Start Task Agent */
+    post: operations["start_task_agent_v1_tasks__task_id__agent_start_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/agent/stop": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Stop Task Agent */
+    post: operations["stop_task_agent_v1_tasks__task_id__agent_stop_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/merge": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Merge Task */
+    post: operations["merge_task_v1_tasks__task_id__merge_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/tasks/{task_id}/merge-ready": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Set Task Merge Ready */
+    post: operations["set_task_merge_ready_v1_tasks__task_id__merge_ready_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
-export type webhooks = Record<string, never>;
+export type webhooks = Record<string, never>
 export interface components {
-    schemas: {
-        /** AckReleaseResponse */
-        AckReleaseResponse: {
-            /** Requiredagentids */
-            requiredAgentIds: number[];
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "acks";
-        };
-        /** AgentResponse */
-        AgentResponse: {
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Displayname */
-            displayName: string;
-            /** Harnessprofileid */
-            harnessProfileId?: string | null;
-            /** Id */
-            id: number;
-            /** Lastseenat */
-            lastSeenAt: string | null;
-            resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null;
-            status: components["schemas"]["AgentStatus"];
-        };
-        /**
-         * AgentStatus
-         * @enum {string}
-         */
-        AgentStatus: "stopped" | "running" | "blocked" | "error";
-        /** ApiStatusResponse */
-        ApiStatusResponse: {
-            block: components["schemas"]["BlockStatusResponse"] | null;
-            /** Dbpath */
-            dbPath: string;
-            /** Defaultbranch */
-            defaultBranch: string | null;
-            /** Reporoot */
-            repoRoot: string;
-        };
-        /** AttachExternalResponse */
-        AttachExternalResponse: {
-            /** Hint */
-            hint: string;
-            /** Logpath */
-            logPath?: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "external";
-        };
-        /** AttachNoneResponse */
-        AttachNoneResponse: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "none";
-        };
-        /** AttachTmuxResponse */
-        AttachTmuxResponse: {
-            /** Logpath */
-            logPath?: string | null;
-            /** Session */
-            session: string;
-            /** Socketpath */
-            socketPath?: string | null;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "tmux";
-        };
-        /**
-         * BlockMode
-         * @enum {string}
-         */
-        BlockMode: "lax" | "strict";
-        /**
-         * BlockPolicy
-         * @enum {string}
-         */
-        BlockPolicy: "git_mutations" | "daemon_mutations";
-        /** BlockScopeResponse */
-        BlockScopeResponse: {
-            /** Frombranch */
-            fromBranch: string | null;
-            /** Repo */
-            repo: boolean;
-            /** Tobranch */
-            toBranch: string | null;
-        };
-        /** BlockStatusResponse */
-        BlockStatusResponse: {
-            mode: components["schemas"]["BlockMode"];
-            policy: components["schemas"]["BlockPolicy"];
-            /** Reason */
-            reason: string | null;
-            /** Release */
-            release: components["schemas"]["ManualReleaseResponse"] | components["schemas"]["CommandReleaseResponse"] | components["schemas"]["AckReleaseResponse"];
-            scope: components["schemas"]["BlockScopeResponse"];
-        };
-        /** CommandReleaseResponse */
-        CommandReleaseResponse: {
-            /** Commandid */
-            commandId: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "command";
-        };
-        /**
-         * CommandState
-         * @enum {string}
-         */
-        CommandState: "queued" | "running" | "succeeded" | "failed" | "canceled";
-        /** DaemonCommandResponse */
-        DaemonCommandResponse: {
-            /** Commandtype */
-            commandType: string;
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Daemonid */
-            daemonId: string;
-            /** Id */
-            id: number;
-            /** Payload */
-            payload: {
-                [key: string]: unknown;
-            };
-            /** Repoid */
-            repoId: string | null;
-            state: components["schemas"]["CommandState"];
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-            /** Workspaceid */
-            workspaceId: string | null;
-        };
-        /** DaemonPresenceResponse */
-        DaemonPresenceResponse: {
-            /** Attachedrepos */
-            attachedRepos: {
-                [key: string]: string;
-            }[];
-            /** Capabilities */
-            capabilities: {
-                [key: string]: unknown;
-            };
-            /** Connected */
-            connected: boolean;
-            /** Connectedat */
-            connectedAt: string | null;
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Daemonid */
-            daemonId: string;
-            /** Disconnectedat */
-            disconnectedAt: string | null;
-            /** Host */
-            host: string | null;
-            /** Lastseenat */
-            lastSeenAt: string | null;
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-        };
-        /** EpicGraphResponse */
-        EpicGraphResponse: {
-            /** Agents */
-            agents: components["schemas"]["AgentResponse"][];
-            epic: components["schemas"]["EpicResponse"];
-            /** Mergeruns */
-            mergeRuns?: components["schemas"]["MergeRunSummaryResponse"][];
-            /** Nodes */
-            nodes: components["schemas"]["NodeResponse"][];
-            /** Tasks */
-            tasks: components["schemas"]["TaskResponse"][];
-            trunk?: components["schemas"]["TrunkTimelineResponse"] | null;
-        };
-        /** EpicResponse */
-        EpicResponse: {
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Id */
-            id: number;
-            /** Linearprojectid */
-            linearProjectId: string | null;
-            /** Name */
-            name: string;
-            /** Repositoryid */
-            repositoryId: number;
-            /** Rootbranch */
-            rootBranch: string;
-            /** Slug */
-            slug: string;
-        };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
-        /** HarnessProfileDefinitionResponse */
-        HarnessProfileDefinitionResponse: {
-            /** Argv */
-            argv: string[];
-            /** Bootstrapprelude */
-            bootstrapPrelude?: string | null;
-            /** Env */
-            env: {
-                [key: string]: string;
-            };
-            /** Skillrecommendation */
-            skillRecommendation?: string | null;
-            /** Workingdir */
-            workingDir: string;
-        };
-        /** HarnessProfileResponse */
-        HarnessProfileResponse: {
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            definition: components["schemas"]["HarnessProfileDefinitionResponse"];
-            /** Displayname */
-            displayName: string;
-            /** Id */
-            id: string;
-            /** Kind */
-            kind: string;
-            source: components["schemas"]["HarnessProfileSource"];
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-        };
-        /**
-         * HarnessProfileSource
-         * @enum {string}
-         */
-        HarnessProfileSource: "builtin" | "user";
-        /** HarnessProfileUpsertRequest */
-        HarnessProfileUpsertRequest: {
-            definition: components["schemas"]["HarnessProfileDefinitionResponse"];
-            /** Displayname */
-            displayName: string;
-            /** Id */
-            id: string;
-            /** Kind */
-            kind: string;
-            /** @default user */
-            source: components["schemas"]["HarnessProfileSource"];
-        };
-        /** HostCapabilitiesResponse */
-        HostCapabilitiesResponse: {
-            /**
-             * Supportspathshim
-             * @default true
-             */
-            supportsPathShim: boolean;
-            /**
-             * Tmuxavailable
-             * @default false
-             */
-            tmuxAvailable: boolean;
-        };
-        /** HostResponse */
-        HostResponse: {
-            capabilities: components["schemas"]["HostCapabilitiesResponse"];
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Displayname */
-            displayName: string;
-            /** Hostkey */
-            hostKey: string;
-            /** Id */
-            id: number;
-            /** Lastseenat */
-            lastSeenAt: string | null;
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-        };
-        /** HostUpsertRequest */
-        HostUpsertRequest: {
-            capabilities?: components["schemas"]["HostCapabilitiesResponse"] | null;
-            /** Displayname */
-            displayName: string;
-            /** Hostkey */
-            hostKey: string;
-        };
-        /** IssueDaemonCommandRequest */
-        IssueDaemonCommandRequest: {
-            /** Command Type */
-            command_type: string;
-            /** Payload */
-            payload?: {
-                [key: string]: unknown;
-            };
-            /** Repo Id */
-            repo_id?: string | null;
-            /** Workspace Id */
-            workspace_id?: string | null;
-        };
-        /** LinearStatusResponse */
-        LinearStatusResponse: {
-            /** Connected */
-            connected: boolean;
-            /** Connectedat */
-            connectedAt: string | null;
-        };
-        /** ManualReleaseResponse */
-        ManualReleaseResponse: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            type: "manual";
-        };
-        /** MergeRunResumeRequest */
-        MergeRunResumeRequest: {
-            /**
-             * Allowrunning
-             * @default false
-             */
-            allowRunning: boolean;
-        };
-        /** MergeRunResumeResponse */
-        MergeRunResumeResponse: {
-            /** Basebranch */
-            baseBranch?: string | null;
-            /** Runid */
-            runId: string;
-        };
-        /**
-         * MergeRunStatus
-         * @enum {string}
-         */
-        MergeRunStatus: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled";
-        /** MergeRunSummaryResponse */
-        MergeRunSummaryResponse: {
-            /** Allowrunning */
-            allowRunning: boolean;
-            /** Blockedbranchname */
-            blockedBranchName?: string | null;
-            /** Blockederror */
-            blockedError?: string | null;
-            /** Blockednodeid */
-            blockedNodeId?: number | null;
-            /** Blockedstepindex */
-            blockedStepIndex?: number | null;
-            /** Blockedstepkind */
-            blockedStepKind?: string | null;
-            /** Blockedtaskid */
-            blockedTaskId?: number | null;
-            /** Blockedworktreepath */
-            blockedWorktreePath?: string | null;
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Currentstepindex */
-            currentStepIndex?: number | null;
-            /** Epicid */
-            epicId: number;
-            /** Force */
-            force: boolean;
-            /** Requestedtaskid */
-            requestedTaskId: number;
-            /**
-             * Restackmode
-             * @default strict
-             * @enum {string}
-             */
-            restackMode: "strict" | "merge_then_restack";
-            /** Runid */
-            runId: string;
-            /**
-             * Scope
-             * @enum {string}
-             */
-            scope: "descendants" | "spine";
-            status: components["schemas"]["MergeRunStatus"];
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-        };
-        /** NodeResponse */
-        NodeResponse: {
-            /** Agentid */
-            agentId: number | null;
-            /** Branchname */
-            branchName: string;
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Epicid */
-            epicId: number;
-            /** Githubprid */
-            githubPrId: string | null;
-            /** Id */
-            id: number;
-            /** Linearissueid */
-            linearIssueId: string | null;
-            /** Parentnodeid */
-            parentNodeId: number | null;
-            /** Primarytaskid */
-            primaryTaskId: number | null;
-            /** Stackinsync */
-            stackInSync?: boolean | null;
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-            /** Worktreepath */
-            worktreePath: string | null;
-        };
-        /** NodeSetAgentRequest */
-        NodeSetAgentRequest: {
-            /** Agentid */
-            agentId: number | null;
-        };
-        /** OrchestrationDefaultsResponse */
-        OrchestrationDefaultsResponse: {
-            /** Defaultepic */
-            defaultEpic?: string | null;
-            fleet: components["schemas"]["OrchestrationFleetDefaultsResponse"];
-            harness: components["schemas"]["OrchestrationHarnessDefaultsResponse"];
-            sandbox: components["schemas"]["OrchestrationSandboxDefaultsResponse"];
-        };
-        /** OrchestrationDefaultsUpdateRequest */
-        OrchestrationDefaultsUpdateRequest: {
-            /** Defaultepic */
-            defaultEpic?: string | null;
-            fleet?: components["schemas"]["OrchestrationFleetDefaultsUpdateRequest"] | null;
-            harness?: components["schemas"]["OrchestrationHarnessDefaultsUpdateRequest"] | null;
-            sandbox?: components["schemas"]["OrchestrationSandboxDefaultsUpdateRequest"] | null;
-        };
-        /** OrchestrationFleetDefaultsResponse */
-        OrchestrationFleetDefaultsResponse: {
-            /**
-             * Mode
-             * @enum {string}
-             */
-            mode: "fixed" | "auto";
-            /** Size */
-            size?: number | null;
-        };
-        /** OrchestrationFleetDefaultsUpdateRequest */
-        OrchestrationFleetDefaultsUpdateRequest: {
-            /** Mode */
-            mode?: ("fixed" | "auto") | null;
-            /** Size */
-            size?: number | null;
-        };
-        /** OrchestrationHarnessDefaultsResponse */
-        OrchestrationHarnessDefaultsResponse: {
-            /** Builtinpreludetemplate */
-            builtInPreludeTemplate: string;
-            /** Command */
-            command?: string | null;
-            /**
-             * Detach
-             * @default true
-             */
-            detach: boolean;
-            /** Prelude */
-            prelude?: string | null;
-            /**
-             * Sendprelude
-             * @default true
-             */
-            sendPrelude: boolean;
-            /**
-             * Submitprelude
-             * @default true
-             */
-            submitPrelude: boolean;
-        };
-        /** OrchestrationHarnessDefaultsUpdateRequest */
-        OrchestrationHarnessDefaultsUpdateRequest: {
-            /** Command */
-            command?: string | null;
-            /** Detach */
-            detach?: boolean | null;
-            /** Prelude */
-            prelude?: string | null;
-            /** Sendprelude */
-            sendPrelude?: boolean | null;
-            /** Submitprelude */
-            submitPrelude?: boolean | null;
-        };
-        /** OrchestrationSandboxDefaultsResponse */
-        OrchestrationSandboxDefaultsResponse: {
-            /**
-             * Network
-             * @default allow
-             * @enum {string}
-             */
-            network: "allow" | "deny";
-            /**
-             * Type
-             * @default none
-             * @enum {string}
-             */
-            type: "none" | "worktree";
-        };
-        /** OrchestrationSandboxDefaultsUpdateRequest */
-        OrchestrationSandboxDefaultsUpdateRequest: {
-            /** Network */
-            network?: ("allow" | "deny") | null;
-            /** Type */
-            type?: ("none" | "worktree") | null;
-        };
-        /** SandboxCapabilitiesResponse */
-        SandboxCapabilitiesResponse: {
-            /** Available */
-            available: boolean;
-            /** Provider */
-            provider: string;
-            /** Supportsnetworkdeny */
-            supportsNetworkDeny: boolean;
-            /** Supportsworktree */
-            supportsWorktree: boolean;
-            /** Unavailablereason */
-            unavailableReason?: string | null;
-        };
-        /** TaskAgentBulkActionItemRequest */
-        TaskAgentBulkActionItemRequest: {
-            /**
-             * Action
-             * @enum {string}
-             */
-            action: "start" | "restart" | "stop";
-            /** Taskid */
-            taskId: number;
-        };
-        /** TaskAgentBulkActionRequest */
-        TaskAgentBulkActionRequest: {
-            /** Actions */
-            actions?: components["schemas"]["TaskAgentBulkActionItemRequest"][];
-            /**
-             * Detach
-             * @default true
-             */
-            detach: boolean;
-            /** Harness */
-            harness?: string | null;
-            /** Prelude */
-            prelude?: string | null;
-            /** Runid */
-            runId?: string | null;
-        };
-        /** TaskAgentBulkActionResponse */
-        TaskAgentBulkActionResponse: {
-            /** Runid */
-            runId: string;
-            /** Submitted */
-            submitted: number;
-        };
-        /** TaskAgentBulkRunRequest */
-        TaskAgentBulkRunRequest: {
-            /**
-             * Detach
-             * @default true
-             */
-            detach: boolean;
-            /** Harness */
-            harness?: string | null;
-            /** Prelude */
-            prelude?: string | null;
-            /** Restarttaskids */
-            restartTaskIds?: number[];
-            /** Runid */
-            runId?: string | null;
-            /** Starttaskids */
-            startTaskIds?: number[];
-        };
-        /** TaskAgentBulkRunResponse */
-        TaskAgentBulkRunResponse: {
-            /** Runid */
-            runId: string;
-            /** Submitted */
-            submitted: number;
-        };
-        /** TaskAgentRestartRequest */
-        TaskAgentRestartRequest: {
-            /**
-             * Detach
-             * @default true
-             */
-            detach: boolean;
-            /** Harness */
-            harness?: string | null;
-            /** Prelude */
-            prelude?: string | null;
-        };
-        /** TaskAgentStartRequest */
-        TaskAgentStartRequest: {
-            /**
-             * Detach
-             * @default true
-             */
-            detach: boolean;
-            /** Harness */
-            harness: string;
-            /** Prelude */
-            prelude?: string | null;
-        };
-        /** TaskAgentStartResponse */
-        TaskAgentStartResponse: {
-            /** Agentid */
-            agentId: number;
-            /** Agentname */
-            agentName: string;
-            agentStatus: components["schemas"]["AgentStatus"];
-            /** Attach */
-            attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"];
-            /** Harnessprofileid */
-            harnessProfileId: string;
-            /** Nodeid */
-            nodeId: number;
-            resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null;
-            /**
-             * Started
-             * @default true
-             */
-            started: boolean;
-            /**
-             * Startedat
-             * Format: date-time
-             */
-            startedAt: string;
-            /** Taskid */
-            taskId: number;
-            /** Warnings */
-            warnings?: string[];
-        };
-        /** TaskAgentStopResponse */
-        TaskAgentStopResponse: {
-            /** Agentid */
-            agentId: number | null;
-            /** Agentname */
-            agentName: string | null;
-            agentStatus: components["schemas"]["AgentStatus"] | null;
-            /** Nodeid */
-            nodeId: number | null;
-            /** Stopped */
-            stopped: boolean;
-            /** Taskid */
-            taskId: number;
-        };
-        /**
-         * TaskAuthority
-         * @enum {string}
-         */
-        TaskAuthority: "local" | "linear" | "github";
-        /** TaskMergePlanStepResponse */
-        TaskMergePlanStepResponse: {
-            /** Basebranch */
-            baseBranch?: string | null;
-            /** Branchname */
-            branchName: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "rebase" | "merge_ff";
-            /** Nodeid */
-            nodeId: number | null;
-            /** Taskid */
-            taskId: number | null;
-            /** Upstreamref */
-            upstreamRef?: string | null;
-            /** Worktreepath */
-            worktreePath: string;
-        };
-        /** TaskMergeReadyRequest */
-        TaskMergeReadyRequest: {
-            /** Ready */
-            ready: boolean;
-        };
-        /** TaskMergeRequest */
-        TaskMergeRequest: {
-            /**
-             * Allowrunning
-             * @default false
-             */
-            allowRunning: boolean;
-            /**
-             * Cascade
-             * @default false
-             */
-            cascade: boolean;
-            /**
-             * Dryrun
-             * @default false
-             */
-            dryRun: boolean;
-            /**
-             * Force
-             * @default false
-             */
-            force: boolean;
-            /**
-             * Restackmode
-             * @default strict
-             * @enum {string}
-             */
-            restackMode: "strict" | "merge_then_restack";
-            /** Runid */
-            runId?: string | null;
-            /**
-             * Scope
-             * @default descendants
-             * @enum {string}
-             */
-            scope: "descendants" | "spine";
-        };
-        /** TaskMergeResponse */
-        TaskMergeResponse: {
-            /** Basebranch */
-            baseBranch?: string | null;
-            /**
-             * Dryrun
-             * @default false
-             */
-            dryRun: boolean;
-            /** Runid */
-            runId: string;
-            /** Steps */
-            steps?: components["schemas"]["TaskMergePlanStepResponse"][];
-        };
-        /** TaskResponse */
-        TaskResponse: {
-            authority: components["schemas"]["TaskAuthority"];
-            /**
-             * Createdat
-             * Format: date-time
-             */
-            createdAt: string;
-            /** Epicid */
-            epicId: number;
-            /** Githubissueid */
-            githubIssueId: string | null;
-            /** Id */
-            id: number;
-            /** Linearissueid */
-            linearIssueId: string | null;
-            /** Localpath */
-            localPath: string | null;
-            /** Mergereadyat */
-            mergeReadyAt?: string | null;
-            /** Nodeid */
-            nodeId: number | null;
-            /** Readme */
-            readme: string | null;
-            source: components["schemas"]["TaskSource"];
-            state: components["schemas"]["TaskState"];
-            /** Title */
-            title: string;
-            /**
-             * Updatedat
-             * Format: date-time
-             */
-            updatedAt: string;
-        };
-        /**
-         * TaskSource
-         * @enum {string}
-         */
-        TaskSource: "local" | "linear" | "github";
-        /**
-         * TaskState
-         * @enum {string}
-         */
-        TaskState: "todo" | "in_progress" | "blocked" | "done";
-        /** TrunkCommitResponse */
-        TrunkCommitResponse: {
-            /** Authoremail */
-            authorEmail?: string | null;
-            /** Authorname */
-            authorName?: string | null;
-            /** Authoredat */
-            authoredAt?: string | null;
-            /** Sha */
-            sha: string;
-        };
-        /** TrunkTimelineResponse */
-        TrunkTimelineResponse: {
-            baseCommit?: components["schemas"]["TrunkCommitResponse"] | null;
-            /** Basesha */
-            baseSha: string | null;
-            /** Commitsafter */
-            commitsAfter: components["schemas"]["TrunkCommitResponse"][];
-            /** Commitsbefore */
-            commitsBefore: components["schemas"]["TrunkCommitResponse"][];
-            /** Hasmoreafter */
-            hasMoreAfter: boolean;
-            /** Hasmorebefore */
-            hasMoreBefore: boolean;
-        };
-        /** ValidationError */
-        ValidationError: {
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
-        };
-    };
-    responses: never;
-    parameters: never;
-    requestBodies: never;
-    headers: never;
-    pathItems: never;
+  schemas: {
+    /** AckReleaseResponse */
+    AckReleaseResponse: {
+      /** Requiredagentids */
+      requiredAgentIds: number[]
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "acks"
+    }
+    /** AgentResponse */
+    AgentResponse: {
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Displayname */
+      displayName: string
+      /** Harnessprofileid */
+      harnessProfileId?: string | null
+      /** Id */
+      id: number
+      /** Lastseenat */
+      lastSeenAt: string | null
+      resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      status: components["schemas"]["AgentStatus"]
+    }
+    /**
+     * AgentStatus
+     * @enum {string}
+     */
+    AgentStatus: "stopped" | "running" | "blocked" | "error"
+    /** ApiStatusResponse */
+    ApiStatusResponse: {
+      block: components["schemas"]["BlockStatusResponse"] | null
+      /** Dbpath */
+      dbPath: string
+      /** Defaultbranch */
+      defaultBranch: string | null
+      /** Reporoot */
+      repoRoot: string
+    }
+    /** AttachExternalResponse */
+    AttachExternalResponse: {
+      /** Hint */
+      hint: string
+      /** Logpath */
+      logPath?: string | null
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "external"
+    }
+    /** AttachNoneResponse */
+    AttachNoneResponse: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "none"
+    }
+    /** AttachTmuxResponse */
+    AttachTmuxResponse: {
+      /** Logpath */
+      logPath?: string | null
+      /** Session */
+      session: string
+      /** Socketpath */
+      socketPath?: string | null
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "tmux"
+    }
+    /**
+     * BlockMode
+     * @enum {string}
+     */
+    BlockMode: "lax" | "strict"
+    /**
+     * BlockPolicy
+     * @enum {string}
+     */
+    BlockPolicy: "git_mutations" | "daemon_mutations"
+    /** BlockScopeResponse */
+    BlockScopeResponse: {
+      /** Frombranch */
+      fromBranch: string | null
+      /** Repo */
+      repo: boolean
+      /** Tobranch */
+      toBranch: string | null
+    }
+    /** BlockStatusResponse */
+    BlockStatusResponse: {
+      mode: components["schemas"]["BlockMode"]
+      policy: components["schemas"]["BlockPolicy"]
+      /** Reason */
+      reason: string | null
+      /** Release */
+      release: components["schemas"]["ManualReleaseResponse"] | components["schemas"]["CommandReleaseResponse"] | components["schemas"]["AckReleaseResponse"]
+      scope: components["schemas"]["BlockScopeResponse"]
+    }
+    /** CommandReleaseResponse */
+    CommandReleaseResponse: {
+      /** Commandid */
+      commandId: number
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "command"
+    }
+    /**
+     * CommandState
+     * @enum {string}
+     */
+    CommandState: "queued" | "running" | "succeeded" | "failed" | "canceled"
+    /** DaemonCommandResponse */
+    DaemonCommandResponse: {
+      /** Commandtype */
+      commandType: string
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Daemonid */
+      daemonId: string
+      /** Id */
+      id: number
+      /** Payload */
+      payload: {
+        [key: string]: unknown
+      }
+      /** Repoid */
+      repoId: string | null
+      state: components["schemas"]["CommandState"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+      /** Workspaceid */
+      workspaceId: string | null
+    }
+    /** DaemonPresenceResponse */
+    DaemonPresenceResponse: {
+      /** Attachedrepos */
+      attachedRepos: {
+        [key: string]: string
+      }[]
+      /** Capabilities */
+      capabilities: {
+        [key: string]: unknown
+      }
+      /** Connected */
+      connected: boolean
+      /** Connectedat */
+      connectedAt: string | null
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Daemonid */
+      daemonId: string
+      /** Disconnectedat */
+      disconnectedAt: string | null
+      /** Host */
+      host: string | null
+      /** Lastseenat */
+      lastSeenAt: string | null
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /** EpicGraphResponse */
+    EpicGraphResponse: {
+      /** Agents */
+      agents: components["schemas"]["AgentResponse"][]
+      epic: components["schemas"]["EpicResponse"]
+      /** Mergeruns */
+      mergeRuns?: components["schemas"]["MergeRunSummaryResponse"][]
+      /** Tasks */
+      tasks: components["schemas"]["TaskResponse"][]
+      trunk?: components["schemas"]["TrunkTimelineResponse"] | null
+    }
+    /** EpicResponse */
+    EpicResponse: {
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Id */
+      id: number
+      /** Linearprojectid */
+      linearProjectId: string | null
+      /** Name */
+      name: string
+      /** Repositoryid */
+      repositoryId: number
+      /** Rootbranch */
+      rootBranch: string
+      /** Slug */
+      slug: string
+    }
+    /** HTTPValidationError */
+    HTTPValidationError: {
+      /** Detail */
+      detail?: components["schemas"]["ValidationError"][]
+    }
+    /** HarnessProfileDefinitionResponse */
+    HarnessProfileDefinitionResponse: {
+      /** Argv */
+      argv: string[]
+      /** Bootstrapprelude */
+      bootstrapPrelude?: string | null
+      /** Env */
+      env: {
+        [key: string]: string
+      }
+      /** Skillrecommendation */
+      skillRecommendation?: string | null
+      /** Workingdir */
+      workingDir: string
+    }
+    /** HarnessProfileResponse */
+    HarnessProfileResponse: {
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      source: components["schemas"]["HarnessProfileSource"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /**
+     * HarnessProfileSource
+     * @enum {string}
+     */
+    HarnessProfileSource: "builtin" | "user"
+    /** HarnessProfileUpsertRequest */
+    HarnessProfileUpsertRequest: {
+      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      /** @default user */
+      source: components["schemas"]["HarnessProfileSource"]
+    }
+    /** HostCapabilitiesResponse */
+    HostCapabilitiesResponse: {
+      /**
+       * Supportspathshim
+       * @default true
+       */
+      supportsPathShim: boolean
+      /**
+       * Tmuxavailable
+       * @default false
+       */
+      tmuxAvailable: boolean
+    }
+    /** HostResponse */
+    HostResponse: {
+      capabilities: components["schemas"]["HostCapabilitiesResponse"]
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Displayname */
+      displayName: string
+      /** Hostkey */
+      hostKey: string
+      /** Id */
+      id: number
+      /** Lastseenat */
+      lastSeenAt: string | null
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /** HostUpsertRequest */
+    HostUpsertRequest: {
+      capabilities?: components["schemas"]["HostCapabilitiesResponse"] | null
+      /** Displayname */
+      displayName: string
+      /** Hostkey */
+      hostKey: string
+    }
+    /** IssueDaemonCommandRequest */
+    IssueDaemonCommandRequest: {
+      /** Command Type */
+      command_type: string
+      /** Payload */
+      payload?: {
+        [key: string]: unknown
+      }
+      /** Repo Id */
+      repo_id?: string | null
+      /** Workspace Id */
+      workspace_id?: string | null
+    }
+    /** LinearStatusResponse */
+    LinearStatusResponse: {
+      /** Connected */
+      connected: boolean
+      /** Connectedat */
+      connectedAt: string | null
+    }
+    /** ManualReleaseResponse */
+    ManualReleaseResponse: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "manual"
+    }
+    /** MergeRunResumeRequest */
+    MergeRunResumeRequest: {
+      /**
+       * Allowrunning
+       * @default false
+       */
+      allowRunning: boolean
+    }
+    /** MergeRunResumeResponse */
+    MergeRunResumeResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /** Runid */
+      runId: string
+    }
+    /**
+     * MergeRunStatus
+     * @enum {string}
+     */
+    MergeRunStatus: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled"
+    /** MergeRunSummaryResponse */
+    MergeRunSummaryResponse: {
+      /** Allowrunning */
+      allowRunning: boolean
+      /** Blockedbranchname */
+      blockedBranchName?: string | null
+      /** Blockederror */
+      blockedError?: string | null
+      /** Blockedstepindex */
+      blockedStepIndex?: number | null
+      /** Blockedstepkind */
+      blockedStepKind?: string | null
+      /** Blockedtaskid */
+      blockedTaskId?: number | null
+      /** Blockedworktreepath */
+      blockedWorktreePath?: string | null
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Currentstepindex */
+      currentStepIndex?: number | null
+      /** Epicid */
+      epicId: number
+      /** Force */
+      force: boolean
+      /** Requestedtaskid */
+      requestedTaskId: number
+      /**
+       * Restackmode
+       * @default strict
+       * @enum {string}
+       */
+      restackMode: "strict" | "merge_then_restack"
+      /** Runid */
+      runId: string
+      /**
+       * Scope
+       * @enum {string}
+       */
+      scope: "descendants" | "spine"
+      status: components["schemas"]["MergeRunStatus"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /** OrchestrationDefaultsResponse */
+    OrchestrationDefaultsResponse: {
+      /** Defaultepic */
+      defaultEpic?: string | null
+      fleet: components["schemas"]["OrchestrationFleetDefaultsResponse"]
+      harness: components["schemas"]["OrchestrationHarnessDefaultsResponse"]
+      sandbox: components["schemas"]["OrchestrationSandboxDefaultsResponse"]
+    }
+    /** OrchestrationDefaultsUpdateRequest */
+    OrchestrationDefaultsUpdateRequest: {
+      /** Defaultepic */
+      defaultEpic?: string | null
+      fleet?: components["schemas"]["OrchestrationFleetDefaultsUpdateRequest"] | null
+      harness?: components["schemas"]["OrchestrationHarnessDefaultsUpdateRequest"] | null
+      sandbox?: components["schemas"]["OrchestrationSandboxDefaultsUpdateRequest"] | null
+    }
+    /** OrchestrationFleetDefaultsResponse */
+    OrchestrationFleetDefaultsResponse: {
+      /**
+       * Mode
+       * @enum {string}
+       */
+      mode: "fixed" | "auto"
+      /** Size */
+      size?: number | null
+    }
+    /** OrchestrationFleetDefaultsUpdateRequest */
+    OrchestrationFleetDefaultsUpdateRequest: {
+      /** Mode */
+      mode?: "fixed" | "auto" | null
+      /** Size */
+      size?: number | null
+    }
+    /** OrchestrationHarnessDefaultsResponse */
+    OrchestrationHarnessDefaultsResponse: {
+      /** Builtinpreludetemplate */
+      builtInPreludeTemplate: string
+      /** Command */
+      command?: string | null
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Prelude */
+      prelude?: string | null
+      /**
+       * Sendprelude
+       * @default true
+       */
+      sendPrelude: boolean
+      /**
+       * Submitprelude
+       * @default true
+       */
+      submitPrelude: boolean
+    }
+    /** OrchestrationHarnessDefaultsUpdateRequest */
+    OrchestrationHarnessDefaultsUpdateRequest: {
+      /** Command */
+      command?: string | null
+      /** Detach */
+      detach?: boolean | null
+      /** Prelude */
+      prelude?: string | null
+      /** Sendprelude */
+      sendPrelude?: boolean | null
+      /** Submitprelude */
+      submitPrelude?: boolean | null
+    }
+    /** OrchestrationSandboxDefaultsResponse */
+    OrchestrationSandboxDefaultsResponse: {
+      /**
+       * Network
+       * @default allow
+       * @enum {string}
+       */
+      network: "allow" | "deny"
+      /**
+       * Type
+       * @default none
+       * @enum {string}
+       */
+      type: "none" | "worktree"
+    }
+    /** OrchestrationSandboxDefaultsUpdateRequest */
+    OrchestrationSandboxDefaultsUpdateRequest: {
+      /** Network */
+      network?: "allow" | "deny" | null
+      /** Type */
+      type?: "none" | "worktree" | null
+    }
+    /** SandboxCapabilitiesResponse */
+    SandboxCapabilitiesResponse: {
+      /** Available */
+      available: boolean
+      /** Provider */
+      provider: string
+      /** Supportsnetworkdeny */
+      supportsNetworkDeny: boolean
+      /** Supportsworktree */
+      supportsWorktree: boolean
+      /** Unavailablereason */
+      unavailableReason?: string | null
+    }
+    /** TaskAgentBulkActionItemRequest */
+    TaskAgentBulkActionItemRequest: {
+      /**
+       * Action
+       * @enum {string}
+       */
+      action: "start" | "restart" | "stop"
+      /** Taskid */
+      taskId: number
+    }
+    /** TaskAgentBulkActionRequest */
+    TaskAgentBulkActionRequest: {
+      /** Actions */
+      actions?: components["schemas"]["TaskAgentBulkActionItemRequest"][]
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+      /** Prelude */
+      prelude?: string | null
+      /** Runid */
+      runId?: string | null
+    }
+    /** TaskAgentBulkActionResponse */
+    TaskAgentBulkActionResponse: {
+      /** Runid */
+      runId: string
+      /** Submitted */
+      submitted: number
+    }
+    /** TaskAgentBulkRunRequest */
+    TaskAgentBulkRunRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+      /** Prelude */
+      prelude?: string | null
+      /** Restarttaskids */
+      restartTaskIds?: number[]
+      /** Runid */
+      runId?: string | null
+      /** Starttaskids */
+      startTaskIds?: number[]
+    }
+    /** TaskAgentBulkRunResponse */
+    TaskAgentBulkRunResponse: {
+      /** Runid */
+      runId: string
+      /** Submitted */
+      submitted: number
+    }
+    /** TaskAgentRestartRequest */
+    TaskAgentRestartRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+      /** Prelude */
+      prelude?: string | null
+    }
+    /** TaskAgentStartRequest */
+    TaskAgentStartRequest: {
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness: string
+      /** Prelude */
+      prelude?: string | null
+    }
+    /** TaskAgentStartResponse */
+    TaskAgentStartResponse: {
+      /** Agentid */
+      agentId: number
+      /** Agentname */
+      agentName: string
+      agentStatus: components["schemas"]["AgentStatus"]
+      /** Attach */
+      attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
+      /** Harnessprofileid */
+      harnessProfileId: string
+      resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /**
+       * Started
+       * @default true
+       */
+      started: boolean
+      /**
+       * Startedat
+       * Format: date-time
+       */
+      startedAt: string
+      /** Taskid */
+      taskId: number
+      /** Warnings */
+      warnings?: string[]
+    }
+    /** TaskAgentStopResponse */
+    TaskAgentStopResponse: {
+      /** Agentid */
+      agentId: number | null
+      /** Agentname */
+      agentName: string | null
+      agentStatus: components["schemas"]["AgentStatus"] | null
+      /** Stopped */
+      stopped: boolean
+      /** Taskid */
+      taskId: number
+    }
+    /**
+     * TaskAuthority
+     * @enum {string}
+     */
+    TaskAuthority: "local" | "linear" | "github"
+    /** TaskMergePlanStepResponse */
+    TaskMergePlanStepResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /** Branchname */
+      branchName: string
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "rebase" | "merge_ff"
+      /** Taskid */
+      taskId: number | null
+      /** Upstreamref */
+      upstreamRef?: string | null
+      /** Worktreepath */
+      worktreePath: string
+    }
+    /** TaskMergeReadyRequest */
+    TaskMergeReadyRequest: {
+      /** Ready */
+      ready: boolean
+    }
+    /** TaskMergeRequest */
+    TaskMergeRequest: {
+      /**
+       * Allowrunning
+       * @default false
+       */
+      allowRunning: boolean
+      /**
+       * Cascade
+       * @default false
+       */
+      cascade: boolean
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /**
+       * Force
+       * @default false
+       */
+      force: boolean
+      /**
+       * Restackmode
+       * @default strict
+       * @enum {string}
+       */
+      restackMode: "strict" | "merge_then_restack"
+      /** Runid */
+      runId?: string | null
+      /**
+       * Scope
+       * @default descendants
+       * @enum {string}
+       */
+      scope: "descendants" | "spine"
+    }
+    /** TaskMergeResponse */
+    TaskMergeResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /** Runid */
+      runId: string
+      /** Steps */
+      steps?: components["schemas"]["TaskMergePlanStepResponse"][]
+    }
+    /** TaskResponse */
+    TaskResponse: {
+      /** Agentid */
+      agentId: number | null
+      authority: components["schemas"]["TaskAuthority"]
+      /** Branchname */
+      branchName: string | null
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Epicid */
+      epicId: number
+      /** Githubissueid */
+      githubIssueId: string | null
+      /** Githubprid */
+      githubPrId: string | null
+      /** Id */
+      id: number
+      /** Linearissueid */
+      linearIssueId: string | null
+      /** Localpath */
+      localPath: string | null
+      /** Mergereadyat */
+      mergeReadyAt?: string | null
+      /** Parenttaskid */
+      parentTaskId: number | null
+      /** Readme */
+      readme: string | null
+      source: components["schemas"]["TaskSource"]
+      /** Stackinsync */
+      stackInSync?: boolean | null
+      state: components["schemas"]["TaskState"]
+      /** Title */
+      title: string
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+      /** Worktreepath */
+      worktreePath: string | null
+    }
+    /**
+     * TaskSource
+     * @enum {string}
+     */
+    TaskSource: "local" | "linear" | "github"
+    /**
+     * TaskState
+     * @enum {string}
+     */
+    TaskState: "todo" | "in_progress" | "blocked" | "done"
+    /** TrunkCommitResponse */
+    TrunkCommitResponse: {
+      /** Authoremail */
+      authorEmail?: string | null
+      /** Authorname */
+      authorName?: string | null
+      /** Authoredat */
+      authoredAt?: string | null
+      /** Sha */
+      sha: string
+    }
+    /** TrunkTimelineResponse */
+    TrunkTimelineResponse: {
+      baseCommit?: components["schemas"]["TrunkCommitResponse"] | null
+      /** Basesha */
+      baseSha: string | null
+      /** Commitsafter */
+      commitsAfter: components["schemas"]["TrunkCommitResponse"][]
+      /** Commitsbefore */
+      commitsBefore: components["schemas"]["TrunkCommitResponse"][]
+      /** Hasmoreafter */
+      hasMoreAfter: boolean
+      /** Hasmorebefore */
+      hasMoreBefore: boolean
+    }
+    /** ValidationError */
+    ValidationError: {
+      /** Location */
+      loc: (string | number)[]
+      /** Message */
+      msg: string
+      /** Error Type */
+      type: string
+    }
+  }
+  responses: never
+  parameters: never
+  requestBodies: never
+  headers: never
+  pathItems: never
 }
-export type $defs = Record<string, never>;
+export type $defs = Record<string, never>
 export interface operations {
-    get_orchestration_config_v1_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OrchestrationDefaultsResponse"];
-                };
-            };
-        };
-    };
-    update_orchestration_config_v1_config_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OrchestrationDefaultsUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OrchestrationDefaultsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_daemons_v1_daemons_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DaemonPresenceResponse"][];
-                };
-            };
-        };
-    };
-    issue_daemon_command_v1_daemons__daemon_id__commands_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                daemon_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["IssueDaemonCommandRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DaemonCommandResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_epics_v1_epics_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EpicResponse"][];
-                };
-            };
-        };
-    };
-    get_epic_v1_epics__epic__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                epic: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EpicResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    epic_graph_v1_epics__epic__graph_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                epic: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EpicGraphResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_harness_profiles_v1_harness_profiles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HarnessProfileResponse"][];
-                };
-            };
-        };
-    };
-    upsert_harness_profile_v1_harness_profiles_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HarnessProfileUpsertRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HarnessProfileResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    healthz_v1_healthz_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
-                };
-            };
-        };
-    };
-    list_hosts_v1_hosts_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HostResponse"][];
-                };
-            };
-        };
-    };
-    upsert_host_v1_hosts_upsert_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["HostUpsertRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HostResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    linear_status_v1_linear_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LinearStatusResponse"];
-                };
-            };
-        };
-    };
-    resume_merge_run_v1_merge_runs__run_id__resume_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MergeRunResumeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MergeRunResumeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_node_agent_v1_nodes__node_id__agent_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                node_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NodeSetAgentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["NodeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sandbox_capabilities_v1_sandbox_capabilities_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SandboxCapabilitiesResponse"];
-                };
-            };
-        };
-    };
-    api_status_v1_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiStatusResponse"];
-                };
-            };
-        };
-    };
-    bulk_task_agent_actions_v1_tasks_agent_actions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskAgentBulkActionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskAgentBulkActionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    run_task_agents_bulk_v1_tasks_agent_run_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskAgentBulkRunRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskAgentBulkRunResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restart_task_agent_v1_tasks__task_id__agent_restart_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskAgentRestartRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskAgentStartResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    start_task_agent_v1_tasks__task_id__agent_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskAgentStartRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskAgentStartResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    stop_task_agent_v1_tasks__task_id__agent_stop_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskAgentStopResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    merge_task_v1_tasks__task_id__merge_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskMergeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskMergeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_task_merge_ready_v1_tasks__task_id__merge_ready_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                task_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TaskMergeReadyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
+  get_orchestration_config_v1_config_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["OrchestrationDefaultsResponse"]
+        }
+      }
+    }
+  }
+  update_orchestration_config_v1_config_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["OrchestrationDefaultsUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["OrchestrationDefaultsResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  list_daemons_v1_daemons_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["DaemonPresenceResponse"][]
+        }
+      }
+    }
+  }
+  issue_daemon_command_v1_daemons__daemon_id__commands_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        daemon_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["IssueDaemonCommandRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["DaemonCommandResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  list_epics_v1_epics_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicResponse"][]
+        }
+      }
+    }
+  }
+  get_epic_v1_epics__epic__get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  epic_graph_v1_epics__epic__graph_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicGraphResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  list_harness_profiles_v1_harness_profiles_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HarnessProfileResponse"][]
+        }
+      }
+    }
+  }
+  upsert_harness_profile_v1_harness_profiles_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HarnessProfileUpsertRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HarnessProfileResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  healthz_v1_healthz_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": {
+            [key: string]: string
+          }
+        }
+      }
+    }
+  }
+  list_hosts_v1_hosts_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HostResponse"][]
+        }
+      }
+    }
+  }
+  upsert_host_v1_hosts_upsert_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["HostUpsertRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HostResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  linear_status_v1_linear_status_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LinearStatusResponse"]
+        }
+      }
+    }
+  }
+  resume_merge_run_v1_merge_runs__run_id__resume_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        run_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MergeRunResumeRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["MergeRunResumeResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  sandbox_capabilities_v1_sandbox_capabilities_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["SandboxCapabilitiesResponse"]
+        }
+      }
+    }
+  }
+  api_status_v1_status_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["ApiStatusResponse"]
+        }
+      }
+    }
+  }
+  bulk_task_agent_actions_v1_tasks_agent_actions_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentBulkActionRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentBulkActionResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  run_task_agents_bulk_v1_tasks_agent_run_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentBulkRunRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentBulkRunResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  restart_task_agent_v1_tasks__task_id__agent_restart_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentRestartRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStartResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  start_task_agent_v1_tasks__task_id__agent_start_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentStartRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStartResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  stop_task_agent_v1_tasks__task_id__agent_stop_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  merge_task_v1_tasks__task_id__merge_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskMergeRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskMergeResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  set_task_merge_ready_v1_tasks__task_id__merge_ready_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskMergeReadyRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
 }

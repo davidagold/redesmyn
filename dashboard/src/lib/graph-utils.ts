@@ -1,7 +1,7 @@
 import type { EpicGraph } from "@/api"
 
-export type GraphNode = EpicGraph["nodes"][number]
-export type Task = EpicGraph["tasks"][number] & { mergeReadyAt?: string | null }
+export type GraphNode = EpicGraph["tasks"][number]
+export type Task = EpicGraph["tasks"][number]
 export type Agent = EpicGraph["agents"][number]
 export type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 export type TrunkTimeline = EpicGraph["trunk"]
@@ -64,7 +64,7 @@ export function buildChildrenMap(
 ): Map<number | null, GraphNode[]> {
   const map = new Map<number | null, GraphNode[]>()
   for (const node of nodes) {
-    const key = node.parentNodeId ?? null
+    const key = node.parentTaskId ?? null
     map.set(key, [...(map.get(key) ?? []), node])
   }
   for (const [key, value] of map.entries()) {

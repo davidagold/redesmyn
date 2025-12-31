@@ -408,16 +408,16 @@ export function GraphView({
     const taskIds = new Set<number>()
     for (const selectedNodeId of selectedNodeIds) {
       const node = nodesById.get(selectedNodeId) ?? null
-      if (!node || node.primaryTaskId === null) {
+      if (!node) {
         continue
       }
-      const task = tasksById.get(node.primaryTaskId) ?? null
+      const task = tasksById.get(node.id) ?? null
       if (!task || task.state === "blocked" || task.state === "done") {
         continue
       }
 
       const agent =
-        node.agentId !== null ? (agentsById.get(node.agentId) ?? null) : null
+        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
       const status = agent?.status ?? null
 
       if (status === "running" || status === "blocked") {
@@ -534,7 +534,7 @@ export function GraphView({
         break
       }
       path.push(node)
-      currentId = node.parentNodeId ?? null
+      currentId = node.parentTaskId ?? null
     }
 
     if (!path.length) {
@@ -865,10 +865,7 @@ export function GraphView({
         continue
       }
 
-      const task =
-        graphNode.primaryTaskId !== null
-          ? tasksById.get(graphNode.primaryTaskId)
-          : undefined
+      const task = tasksById.get(graphNode.id) ?? undefined
       const agent =
         graphNode.agentId !== null
           ? agentsById.get(graphNode.agentId)
@@ -964,19 +961,19 @@ export function GraphView({
       if (!graphNode) {
         continue
       }
-      if (graphNode.parentNodeId === null) {
+      if (graphNode.parentTaskId === null) {
         continue
       }
-      if (!visibleNodeIds.has(String(graphNode.parentNodeId))) {
+      if (!visibleNodeIds.has(String(graphNode.parentTaskId))) {
         continue
       }
-      const edgeId = makeEdgeId(graphNode.parentNodeId, graphNode.id)
+      const edgeId = makeEdgeId(graphNode.parentTaskId, graphNode.id)
       const isSelected = selectedEdgeId === edgeId
       const isHovered = hoveredEdgeId === edgeId
       const pulse = edgePulseById[edgeId] ?? null
       mapped.push({
         id: edgeId,
-        source: String(graphNode.parentNodeId),
+        source: String(graphNode.parentTaskId),
         target: String(graphNode.id),
         type: "commitString",
         selectable: true,
@@ -1269,9 +1266,13 @@ export function GraphView({
                 </div>
               ) : null}
             </div>
-          </div>
-        ) : null}
-      </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="relative h-full overflow-auto p-6 text-sm text-muted-foreground">
+          No tasks.
+        </div>
+      )}
     </main>
   )
 }

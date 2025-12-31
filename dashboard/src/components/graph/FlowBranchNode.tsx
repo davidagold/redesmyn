@@ -44,7 +44,7 @@ export function FlowBranchNode({
     onSelectNode,
     onRequestRefresh,
   } = data
-  const branchLabel = formatBranchName(node.branchName, epicSlug)
+  const branchLabel = formatBranchName(node.branchName ?? "", epicSlug)
 
   return (
     <>

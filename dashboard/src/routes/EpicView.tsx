@@ -111,25 +111,25 @@ export function EpicView() {
   const navigate = useNavigate()
   const params = useParams({ strict: false })
   const epicSlug = params.epicSlug as string | undefined
-  const nodeIdParam = params.nodeId as string | undefined
-  const nodeId = nodeIdParam ? parseInt(nodeIdParam, 10) : null
-  const fromNodeIdParam = params.fromNodeId as string | undefined
-  const toNodeIdParam = params.toNodeId as string | undefined
-  const parsedFromNodeId = fromNodeIdParam
-    ? parseInt(fromNodeIdParam, 10)
+  const taskIdParam = params.taskId as string | undefined
+  const taskId = taskIdParam ? parseInt(taskIdParam, 10) : null
+  const fromTaskIdParam = params.fromTaskId as string | undefined
+  const toTaskIdParam = params.toTaskId as string | undefined
+  const parsedFromTaskId = fromTaskIdParam
+    ? parseInt(fromTaskIdParam, 10)
     : null
-  const parsedToNodeId = toNodeIdParam ? parseInt(toNodeIdParam, 10) : null
-  const fromNodeId =
-    parsedFromNodeId !== null && !Number.isNaN(parsedFromNodeId)
-      ? parsedFromNodeId
+  const parsedToTaskId = toTaskIdParam ? parseInt(toTaskIdParam, 10) : null
+  const fromTaskId =
+    parsedFromTaskId !== null && !Number.isNaN(parsedFromTaskId)
+      ? parsedFromTaskId
       : null
-  const toNodeId =
-    parsedToNodeId !== null && !Number.isNaN(parsedToNodeId)
-      ? parsedToNodeId
+  const toTaskId =
+    parsedToTaskId !== null && !Number.isNaN(parsedToTaskId)
+      ? parsedToTaskId
       : null
   const selectedEdgeId =
-    fromNodeId !== null && toNodeId !== null
-      ? makeEdgeId(fromNodeId, toNodeId)
+    fromTaskId !== null && toTaskId !== null
+      ? makeEdgeId(fromTaskId, toTaskId)
       : null
 
   const {
@@ -260,21 +260,13 @@ export function EpicView() {
     agentsById,
     mergeRunsByTaskId,
     childrenByParent,
-    nodesById,
     rootNodes,
   } = useGraph(selectedEpic?.id ?? null)
 
-  const selectedNode = useMemo(
-    () => (nodeId !== null ? (nodesById.get(nodeId) ?? null) : null),
-    [nodesById, nodeId],
+  const selectedTask = useMemo(
+    () => (taskId !== null ? (tasksById.get(taskId) ?? null) : null),
+    [taskId, tasksById],
   )
-
-  const selectedTask = useMemo(() => {
-    if (!selectedNode || selectedNode.primaryTaskId === null) {
-      return null
-    }
-    return tasksById.get(selectedNode.primaryTaskId) ?? null
-  }, [selectedNode, tasksById])
 
   const selectedMergeRun = useMemo(() => {
     if (!selectedTask) {
@@ -285,45 +277,36 @@ export function EpicView() {
 
   const selectedEdge = useMemo(() => {
     if (
-      fromNodeId === null ||
-      toNodeId === null ||
-      Number.isNaN(fromNodeId) ||
-      Number.isNaN(toNodeId)
+      fromTaskId === null ||
+      toTaskId === null ||
+      Number.isNaN(fromTaskId) ||
+      Number.isNaN(toTaskId)
     ) {
       return null
     }
-    const fromNode = nodesById.get(fromNodeId) ?? null
-    const toNode = nodesById.get(toNodeId) ?? null
-    if (!fromNode || !toNode) {
+    const fromTask = tasksById.get(fromTaskId) ?? null
+    const toTask = tasksById.get(toTaskId) ?? null
+    if (!fromTask || !toTask) {
       return null
     }
 
-    const fromTask =
-      fromNode.primaryTaskId !== null
-        ? (tasksById.get(fromNode.primaryTaskId) ?? null)
-        : null
-    const toTask =
-      toNode.primaryTaskId !== null
-        ? (tasksById.get(toNode.primaryTaskId) ?? null)
-        : null
-
     const fromLabel =
-      fromTask?.title ?? formatBranchName(fromNode.branchName, epicSlug)
+      fromTask.title ?? formatBranchName(fromTask.branchName ?? "", epicSlug)
     const toLabel =
-      toTask?.title ?? formatBranchName(toNode.branchName, epicSlug)
+      toTask.title ?? formatBranchName(toTask.branchName ?? "", epicSlug)
 
     return {
-      id: makeEdgeId(fromNode.id, toNode.id),
-      fromNodeId: fromNode.id,
-      toNodeId: toNode.id,
+      id: makeEdgeId(fromTask.id, toTask.id),
+      fromNodeId: fromTask.id,
+      toNodeId: toTask.id,
       fromLabel,
       toLabel,
     }
-  }, [epicSlug, fromNodeId, nodesById, tasksById, toNodeId])
+  }, [epicSlug, fromTaskId, tasksById, toTaskId])
 
-  const selectedLabel = selectedNode
-    ? (selectedTask?.title ??
-      formatBranchName(selectedNode.branchName, epicSlug))
+  const selectedLabel = selectedTask
+    ? (selectedTask.title ??
+      formatBranchName(selectedTask.branchName ?? "", epicSlug))
     : selectedEdge
       ? `${selectedEdge.fromLabel} → ${selectedEdge.toLabel}`
       : null
@@ -344,7 +327,7 @@ export function EpicView() {
     let outOfSync = 0
 
     for (const task of tasks) {
-      if (task.nodeId === null) {
+      if (task.branchName === null) {
         continue
       }
       if (task.state === "blocked") {
@@ -356,13 +339,10 @@ export function EpicView() {
       }
 
       eligible += 1
-      const node = nodesById.get(task.nodeId) ?? null
       const agent =
-        node && node.agentId !== null
-          ? (agentsById.get(node.agentId) ?? null)
-          : null
+        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
 
-      if (node?.stackInSync === false) {
+      if (task.stackInSync === false) {
         outOfSync += 1
       }
 
@@ -376,7 +356,7 @@ export function EpicView() {
     }
 
     return { eligible, running, blocked, failed, outOfSync }
-  }, [agentsById, graph, nodesById])
+  }, [agentsById, graph])
 
   const actionTargets = useMemo(() => {
     const empty = {
@@ -394,18 +374,15 @@ export function EpicView() {
     const allStop = new Set<number>()
 
     for (const task of graph.tasks ?? []) {
-      if (task.nodeId === null) {
+      if (task.branchName === null) {
         continue
       }
       if (task.state === "blocked" || task.state === "done") {
         continue
       }
 
-      const node = nodesById.get(task.nodeId) ?? null
       const agent =
-        node && node.agentId !== null
-          ? (agentsById.get(node.agentId) ?? null)
-          : null
+        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
       const status = agent?.status ?? null
 
       if (!agent || status === "stopped") {
@@ -424,16 +401,12 @@ export function EpicView() {
     const selectedStop = new Set<number>()
 
     for (const selectedNodeId of selectedNodeIds) {
-      const node = nodesById.get(selectedNodeId) ?? null
-      if (!node || node.primaryTaskId === null) {
-        continue
-      }
-      const task = tasksById.get(node.primaryTaskId) ?? null
+      const task = tasksById.get(selectedNodeId) ?? null
       if (!task || task.state === "blocked" || task.state === "done") {
         continue
       }
       const agent =
-        node.agentId !== null ? (agentsById.get(node.agentId) ?? null) : null
+        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
       const status = agent?.status ?? null
 
       if (!agent || status === "stopped") {
@@ -455,7 +428,7 @@ export function EpicView() {
     targets.selected.stop = [...selectedStop].sort((a, b) => a - b)
 
     return targets
-  }, [agentsById, graph, nodesById, selectedNodeIds, tasksById])
+  }, [agentsById, graph, selectedNodeIds, tasksById])
 
   const runBuckets = useMemo(() => {
     if (!graph) {
@@ -469,35 +442,32 @@ export function EpicView() {
     const outOfSync = new Set<number>()
 
     for (const task of graph.tasks ?? []) {
-      if (task.nodeId === null) {
+      if (task.branchName === null) {
         continue
       }
       if (task.state === "done") {
         continue
       }
 
-      const node = nodesById.get(task.nodeId) ?? null
-      if (node?.stackInSync === false) {
-        outOfSync.add(task.nodeId)
+      if (task.stackInSync === false) {
+        outOfSync.add(task.id)
       }
 
       if (task.state === "blocked") {
-        blocked.add(task.nodeId)
+        blocked.add(task.id)
         continue
       }
 
-      eligible.add(task.nodeId)
+      eligible.add(task.id)
       const agent =
-        node && node.agentId !== null
-          ? (agentsById.get(node.agentId) ?? null)
-          : null
+        task.agentId !== null ? (agentsById.get(task.agentId) ?? null) : null
 
       if (agent?.status === "running") {
-        running.add(task.nodeId)
+        running.add(task.id)
       } else if (agent?.status === "blocked") {
-        blocked.add(task.nodeId)
+        blocked.add(task.id)
       } else if (agent?.status === "error") {
-        failed.add(task.nodeId)
+        failed.add(task.id)
       }
     }
 
@@ -508,7 +478,7 @@ export function EpicView() {
       failed: Array.from(failed),
       outOfSync: Array.from(outOfSync),
     }
-  }, [agentsById, graph, nodesById])
+  }, [agentsById, graph])
 
   const selectionEquals = useCallback(
     (nodeIds: number[]) => {
@@ -597,20 +567,17 @@ export function EpicView() {
 
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      const nodeId =
-        "nodeId" in event.data && typeof event.data.nodeId === "number"
-          ? event.data.nodeId
-          : null
+      const taskId = typeof event.data.taskId === "number" ? event.data.taskId : null
 
       const observedAt = Date.parse(event.createdAt) || Date.now()
-      if (nodeId !== null) {
+      if (taskId !== null) {
         setActivityByNodeId((prev) => {
           const next = new Map(prev)
-          const current = next.get(nodeId) ?? {}
+          const current = next.get(taskId) ?? {}
           if (event.eventType === "git.commit") {
-            next.set(nodeId, { ...current, lastCommitAt: observedAt })
+            next.set(taskId, { ...current, lastCommitAt: observedAt })
           } else if (event.eventType === "worktree.health") {
-            next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
+            next.set(taskId, { ...current, lastWorktreeAt: observedAt })
           }
           return next
         })
@@ -626,11 +593,11 @@ export function EpicView() {
         if (
           data.type === "task.merge" &&
           data.phase === "started" &&
-          typeof data.nodeId === "number"
+          typeof data.taskId === "number"
         ) {
           setMergeStepCue({
-            id: `${event.id}:${data.runId}:${data.kind}:${data.nodeId}`,
-            nodeId: data.nodeId,
+            id: `${event.id}:${data.runId}:${data.kind}:${data.taskId}`,
+            nodeId: data.taskId,
             kind: data.kind,
           })
         }
@@ -715,22 +682,22 @@ export function EpicView() {
       setSelectedNodeIds(new Set())
       return
     }
-    if (nodeId === null) {
+    if (taskId === null) {
       setSelectedNodeIds(new Set())
       return
     }
     setSelectedNodeIds((current) => {
       if (current.size === 0) {
-        return new Set([nodeId])
+        return new Set([taskId])
       }
-      if (current.has(nodeId)) {
+      if (current.has(taskId)) {
         return current
       }
       const next = new Set(current)
-      next.add(nodeId)
+      next.add(taskId)
       return next
     })
-  }, [nodeId, selectedEdgeId])
+  }, [selectedEdgeId, taskId])
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -749,7 +716,7 @@ export function EpicView() {
           void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
           return
         }
-        if ((nodeId !== null || selectedEdgeId !== null) && epicSlug) {
+        if ((taskId !== null || selectedEdgeId !== null) && epicSlug) {
           setFocusMode(false)
           void navigate({ to: "/graph/$epicSlug", params: { epicSlug } })
         }
@@ -767,7 +734,7 @@ export function EpicView() {
       }
 
       if (e.key === "f" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (!selectedNode) {
+        if (!selectedTask) {
           return
         }
         setFocusMode((enabled) => !enabled)
@@ -782,9 +749,9 @@ export function EpicView() {
     epicMenuOpen,
     epicSlug,
     navigate,
-    nodeId,
     selectedEdgeId,
-    selectedNode,
+    selectedTask,
+    taskId,
   ])
 
   function handleSelectNode(id: number, options: { additive: boolean }) {
@@ -795,8 +762,8 @@ export function EpicView() {
     if (!options.additive) {
       setSelectedNodeIds(new Set([id]))
       void navigate({
-        to: "/graph/$epicSlug/$nodeId",
-        params: { epicSlug, nodeId: String(id) },
+        to: "/graph/$epicSlug/$taskId",
+        params: { epicSlug, taskId: String(id) },
       })
       return
     }
@@ -815,13 +782,13 @@ export function EpicView() {
 
     if (!wasSelected) {
       void navigate({
-        to: "/graph/$epicSlug/$nodeId",
-        params: { epicSlug, nodeId: String(id) },
+        to: "/graph/$epicSlug/$taskId",
+        params: { epicSlug, taskId: String(id) },
       })
       return
     }
 
-    if (nodeId !== id) {
+    if (taskId !== id) {
       return
     }
 
@@ -832,8 +799,8 @@ export function EpicView() {
     }
 
     void navigate({
-      to: "/graph/$epicSlug/$nodeId",
-      params: { epicSlug, nodeId: String(nextPrimary) },
+      to: "/graph/$epicSlug/$taskId",
+      params: { epicSlug, taskId: String(nextPrimary) },
     })
   }
 
@@ -842,11 +809,11 @@ export function EpicView() {
     setSelectedNodeIds(new Set())
     if (epicSlug) {
       void navigate({
-        to: "/graph/$epicSlug/e/$fromNodeId/$toNodeId",
+        to: "/graph/$epicSlug/e/$fromTaskId/$toTaskId",
         params: {
           epicSlug,
-          fromNodeId: String(fromId),
-          toNodeId: String(toId),
+          fromTaskId: String(fromId),
+          toTaskId: String(toId),
         },
       })
     }
@@ -1791,7 +1758,7 @@ export function EpicView() {
                         </div>
                         <div className="font-mono text-foreground/80">{`{branch}`}</div>
                         <div className="text-muted-foreground">
-                          Branch name for the task node.
+                          Branch name for the task.
                         </div>
                         <div className="font-mono text-foreground/80">{`{worktree}`}</div>
                         <div className="text-muted-foreground">
@@ -1815,7 +1782,7 @@ export function EpicView() {
             detach={configuredDetach}
             trunk={graph.trunk ?? null}
             selectedNodeIds={selectedNodeIds}
-            selectedNodeId={nodeId}
+            selectedNodeId={taskId}
             selectedEdgeId={selectedEdgeId}
             focusMode={focusMode}
             mergeStepCue={mergeStepCue}
@@ -1827,13 +1794,13 @@ export function EpicView() {
           />
 
           <DetailsPanel
-            open={!!selectedNode || !!selectedEdge}
-            node={selectedNode}
+            open={!!selectedTask || !!selectedEdge}
+            node={selectedTask}
             task={selectedTask}
             agent={
-              selectedNode?.agentId !== null &&
-              selectedNode?.agentId !== undefined
-                ? (agentsById.get(selectedNode.agentId) ?? null)
+              selectedTask?.agentId !== null &&
+              selectedTask?.agentId !== undefined
+                ? (agentsById.get(selectedTask.agentId) ?? null)
                 : null
             }
             mergeRun={selectedMergeRun}

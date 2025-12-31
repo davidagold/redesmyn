@@ -7,7 +7,7 @@ import {
 
 export type NodeLike = {
   id: number
-  parentNodeId: number | null
+  parentTaskId: number | null
 }
 
 export type FlowPosition = {
@@ -44,7 +44,7 @@ export function computeNodeSpan(
   let rootId: number = selectedNodeId
   while (!visitedUpstream.has(rootId)) {
     visitedUpstream.add(rootId)
-    const parentId = nodesById.get(rootId)?.parentNodeId ?? null
+    const parentId = nodesById.get(rootId)?.parentTaskId ?? null
     if (parentId === null) {
       break
     }
@@ -60,7 +60,7 @@ export function computeNodeSpan(
     if (cursor === rootId) {
       break
     }
-    cursor = nodesById.get(cursor)?.parentNodeId ?? null
+    cursor = nodesById.get(cursor)?.parentTaskId ?? null
   }
 
   if (!focusPathUp.length || focusPathUp[focusPathUp.length - 1] !== rootId) {

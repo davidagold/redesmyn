@@ -42,13 +42,13 @@ const epicRoute = createRoute({
 
 const edgeRoute = createRoute({
   getParentRoute: () => epicRoute,
-  path: "e/$fromNodeId/$toNodeId",
+  path: "e/$fromTaskId/$toTaskId",
   component: () => null,
 })
 
 const nodeRoute = createRoute({
   getParentRoute: () => epicRoute,
-  path: "$nodeId",
+  path: "$taskId",
   component: () => null,
 })
 

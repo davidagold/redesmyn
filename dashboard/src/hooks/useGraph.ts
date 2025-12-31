@@ -57,11 +57,11 @@ export function useGraph(epicId: number | null) {
   const agentsById = useMemo(() => buildAgentsMap(graph?.agents ?? []), [graph])
 
   const childrenByParent = useMemo(
-    () => buildChildrenMap(graph?.nodes ?? []),
+    () => buildChildrenMap(graph?.tasks ?? []),
     [graph],
   )
 
-  const nodesById = useMemo(() => buildNodesMap(graph?.nodes ?? []), [graph])
+  const nodesById = useMemo(() => buildNodesMap(graph?.tasks ?? []), [graph])
 
   const mergeRunsByTaskId = useMemo(() => {
     const runs = graph?.mergeRuns ?? []

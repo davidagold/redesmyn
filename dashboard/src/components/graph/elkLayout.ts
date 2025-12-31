@@ -53,10 +53,10 @@ export async function layoutWithElk(
 
   const edges: ElkEdgeRef[] = []
   for (const node of sortedNodes) {
-    if (node.parentNodeId === null) {
+    if (node.parentTaskId === null) {
       continue
     }
-    edges.push({ sourceId: node.parentNodeId, targetId: node.id })
+    edges.push({ sourceId: node.parentTaskId, targetId: node.id })
   }
   edges.sort((a, b) =>
     a.sourceId !== b.sourceId
