@@ -1,13 +1,35 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { restartTaskAgent, startTaskAgent, stopTaskAgent } from "@/api"
+import {
+  ApiHttpError,
+  mergeTask,
+  restartTaskAgent,
+  setTaskMergeReady,
+  startTaskAgent,
+  stopTaskAgent,
+} from "@/api"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
-import { Play, RotateCcw, Square, Terminal } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Ellipsis,
+  GitMerge,
+  Layers,
+  Play,
+  RotateCcw,
+  Square,
+  Terminal,
+} from "lucide-react"
 
 interface NodeCardProps {
   node: GraphNode
@@ -56,6 +78,8 @@ export function NodeCard({
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
+  const [pendingMerge, setPendingMerge] =
+    useState<"ready" | "merge" | "mergeStack" | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -73,11 +97,14 @@ export function NodeCard({
     !!onRequestRefresh &&
     task?.state !== "blocked" &&
     task?.state !== "done"
+  const isMergeReady = Boolean(task?.mergeReadyAt)
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
   const canStart =
     (!agent || agentStatus === "stopped") && harnessCommand.trim()
   const canRestart = isRunning || agentStatus === "error"
+  const canMerge =
+    taskId !== null && task?.state !== "blocked" && task?.state !== "done"
 
   async function handleAttach() {
     if (taskId === null) {
@@ -142,6 +169,49 @@ export function NodeCard({
       setActionError(e instanceof Error ? e.message : String(e))
     } finally {
       setPendingAction(null)
+    }
+  }
+
+  async function handleToggleMergeReady(next: boolean) {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingMerge("ready")
+    setActionError(null)
+    try {
+      await setTaskMergeReady(taskId, next)
+      onRequestRefresh()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
+  async function handleMerge({ cascade }: { cascade: boolean }) {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setPendingMerge(cascade ? "mergeStack" : "merge")
+    setActionError(null)
+    try {
+      await mergeTask(taskId, { cascade })
+      onRequestRefresh()
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409) {
+        const confirmed = window.confirm(
+          "This merge affects running tasks/agents.\n\nProceed anyway?",
+        )
+        if (!confirmed) {
+          return
+        }
+        await mergeTask(taskId, { cascade, allowRunning: true })
+        onRequestRefresh()
+        return
+      }
+      setActionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPendingMerge(null)
     }
   }
 
@@ -248,6 +318,7 @@ export function NodeCard({
       data-node-card
       className={cn(
         "group",
+        "relative overflow-visible",
         "py-0",
         "cursor-pointer transition-colors hover:bg-accent/40",
         task?.state === "done" ? "border-emerald-500/40" : null,
@@ -267,6 +338,82 @@ export function NodeCard({
         }
       }}
     >
+      {taskId !== null && onRequestRefresh ? (
+        <div
+          className={cn(
+            "absolute -top-2 -right-2 z-10 transition-opacity",
+            isSelected
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+          )}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+          }}
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(triggerProps) => (
+                <Button
+                  {...triggerProps}
+                  variant="secondary"
+                  size="icon-xs"
+                  aria-label="Task actions"
+                  title="Task actions"
+                  disabledReason={
+                    pendingMerge !== null ? "Action in progress" : null
+                  }
+                  className={cn(
+                    "rounded-full shadow-sm",
+                    triggerProps.className,
+                  )}
+                  onClick={(event) => {
+                    triggerProps.onClick?.(event)
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                >
+                  <Ellipsis className="size-3" />
+                </Button>
+              )}
+            />
+            <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void handleToggleMergeReady(!isMergeReady)
+                }}
+              >
+                {isMergeReady ? "Unmark ready to merge" : "Mark ready to merge"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={!canMerge || !isMergeReady || pendingMerge !== null}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void handleMerge({ cascade: false })
+                }}
+              >
+                <GitMerge className="size-3.5" />
+                Merge
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canMerge || !isMergeReady || pendingMerge !== null}
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void handleMerge({ cascade: true })
+                }}
+              >
+                <Layers className="size-3.5" />
+                Merge stack
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : null}
       <CardContent className="flex h-full flex-col gap-2 p-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div

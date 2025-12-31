@@ -25,6 +25,32 @@ export type TaskAgentBulkActionRequest = components["schemas"]["TaskAgentBulkAct
 }
 export type TaskAgentBulkActionResponse = components["schemas"]["TaskAgentBulkActionResponse"]
 
+export type TaskMergeRequest = {
+  runId?: string | null
+  cascade?: boolean
+  scope?: "descendants" | "spine"
+  dryRun?: boolean
+  allowRunning?: boolean
+  force?: boolean
+}
+
+export type TaskMergePlanStep = {
+  kind: "rebase" | "mergeFf"
+  nodeId: number | null
+  taskId: number | null
+  branchName: string
+  worktreePath: string
+  upstreamRef?: string | null
+  baseBranch?: string | null
+}
+
+export type TaskMergeResponse = {
+  runId: string
+  dryRun: boolean
+  baseBranch?: string | null
+  steps: TaskMergePlanStep[]
+}
+
 export type TaskAgentLogsResponse = {
   path: string
   text: string
@@ -86,6 +112,31 @@ export async function setTaskMergeReady(
   return response.json() as Promise<Task>
 }
 
+export async function mergeTask(
+  taskId: number,
+  request: TaskMergeRequest,
+): Promise<TaskMergeResponse> {
+  const response = await fetch(`/v1/tasks/${taskId}/merge`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new ApiHttpError(
+      `POST /v1/tasks/${taskId}/merge failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+      response.status,
+      detail,
+    )
+  }
+  return response.json() as Promise<TaskMergeResponse>
+}
+
 export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefaults> {
   const response = await fetch("/v1/config", {
     headers: { Accept: "application/json" },
@@ -116,6 +167,18 @@ export async function updateOrchestrationDefaults(
     )
   }
   return response.json() as Promise<OrchestrationDefaults>
+}
+
+export class ApiHttpError extends Error {
+  status: number
+  detail: string | null
+
+  constructor(message: string, status: number, detail: string | null) {
+    super(message)
+    this.name = "ApiHttpError"
+    this.status = status
+    this.detail = detail
+  }
 }
 
 async function readErrorDetail(response: Response): Promise<string | null> {
