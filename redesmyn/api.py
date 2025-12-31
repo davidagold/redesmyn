@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, overload
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -20,7 +20,7 @@ from starlette.responses import RedirectResponse
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
-from redesmyn.agent_runtime import agent_log_path_for_row
+from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_row
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
@@ -490,22 +490,23 @@ async def start_task_agent(
     task_id: int,
     request: TaskAgentStartRequest,
 ) -> TaskAgentStartResponse:
+    run_id = uuid4().hex
     try:
-        result = await app.state.runner_backend.start_task_agent(
+        _, node, result, warnings = await _perform_task_agent_action(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
             task_id=task_id,
-            harness_command=request.harness,
+            action="start",
+            harness=request.harness,
             detach=request.detach,
-            prelude_override=request.prelude,
+            prelude=request.prelude,
         )
     except RunnerBackendError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        _, node = await _require_task_node(session, task_id=task_id)
+    row = result.agent  # type: ignore[attr-defined]
 
     return TaskAgentStartResponse(
         task_id=task_id,
@@ -519,8 +520,8 @@ async def start_task_agent(
             HarnessProfileDefinitionResponse | None
         ).validate_python(row.resolved_profile),
         started_at=row.started_at or datetime.now(UTC),
-        started=result.started,
-        warnings=list(result.warnings),
+        started=result.started,  # type: ignore[attr-defined]
+        warnings=warnings,
     )
 
 
@@ -599,6 +600,138 @@ async def _emit_task_agent_action_event(
             )
         )
         await session.commit()
+
+
+async def _task_node_info(
+    sessionmaker: async_sessionmaker[AsyncSession], *, task_id: int
+) -> tuple[Task, Node, int | None]:
+    async with sessionmaker() as session:
+        task, node = await _require_task_node(session, task_id=task_id)
+        return task, node, node.agent_id
+
+
+@overload
+async def _perform_task_agent_action(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    task_id: int,
+    action: Literal["stop"],
+    harness: str | None,
+    detach: bool,
+    prelude: str | None,
+) -> tuple[Task, Node, bool, list[str]]: ...
+
+
+@overload
+async def _perform_task_agent_action(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    task_id: int,
+    action: Literal["start", "restart"],
+    harness: str | None,
+    detach: bool,
+    prelude: str | None,
+) -> tuple[Task, Node, StartAgentResult, list[str]]: ...
+
+
+async def _perform_task_agent_action(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    task_id: int,
+    action: Literal["start", "restart", "stop"],
+    harness: str | None,
+    detach: bool,
+    prelude: str | None,
+) -> tuple[Task, Node, StartAgentResult | bool, list[str]]:
+    """Execute an agent action and emit WS-visible progress events.
+
+    Returns (task, node, result, warnings).
+
+    - For start/restart, result is a StartAgentResult.
+    - For stop, result is a bool (stopped).
+    """
+
+    task, node, existing_agent_id = await _task_node_info(sessionmaker, task_id=task_id)
+    await _emit_task_agent_action_event(
+        sessionmaker=sessionmaker,
+        run_id=run_id,
+        node_id=node.id,
+        task_id=task.id,
+        action=action,
+        phase="requested",
+    )
+
+    try:
+        if action == "start":
+            result = await app.state.runner_backend.start_task_agent(
+                task_id=task.id,
+                harness_command=harness or "",
+                detach=detach,
+                prelude_override=prelude,
+            )
+            warnings = list(result.warnings)
+            await _emit_task_agent_action_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node.id,
+                task_id=task.id,
+                action="start",
+                phase="started",
+                agent_id=result.agent.id,
+                warnings=warnings,
+            )
+            return task, node, result, warnings
+
+        if action == "restart":
+            result = await app.state.runner_backend.restart_task_agent(
+                task_id=task.id,
+                harness_command=harness,
+                detach=detach,
+                prelude_override=prelude,
+            )
+            warnings = list(result.warnings)
+            await _emit_task_agent_action_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node.id,
+                task_id=task.id,
+                action="restart",
+                phase="started",
+                agent_id=result.agent.id,
+                warnings=warnings,
+            )
+            return task, node, result, warnings
+
+        if action == "stop":
+            stopped = await app.state.runner_backend.stop_task_agent(task_id=task.id)
+            await _emit_task_agent_action_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node.id,
+                task_id=task.id,
+                action="stop",
+                phase="stopped",
+                agent_id=existing_agent_id,
+                stopped=stopped,
+            )
+            return task, node, stopped, []
+
+        raise ValueError(f"Unknown action: {action!r}")
+    except Exception as e:
+        await _emit_task_agent_action_event(
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            node_id=node.id,
+            task_id=task.id,
+            action=action,
+            phase="failed",
+            agent_id=existing_agent_id,
+            error=str(e),
+        )
+        raise
 
 
 async def _run_task_agents_bulk(
@@ -702,102 +835,19 @@ async def _run_task_agents_bulk_actions(
     detach: bool,
     prelude: str | None,
 ) -> None:
-    async def _task_node_info(task_id: int) -> tuple[int, int | None]:
-        async with sessionmaker() as session:
-            _, node = await _require_task_node(session, task_id=task_id)
-            return node.id, node.agent_id
-
     for item in sorted(actions, key=lambda a: (a.task_id, a.action)):
-        task_id = item.task_id
-        action = item.action
         try:
-            node_id, existing_agent_id = await _task_node_info(task_id)
-        except HTTPException:
+            await _perform_task_agent_action(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                task_id=item.task_id,
+                action=item.action,
+                harness=harness,
+                detach=detach,
+                prelude=prelude,
+            )
+        except Exception:
             continue
-
-        await _emit_task_agent_action_event(
-            sessionmaker=sessionmaker,
-            run_id=run_id,
-            node_id=node_id,
-            task_id=task_id,
-            action=action,
-            phase="requested",
-        )
-
-        try:
-            if action == "start":
-                result = await app.state.runner_backend.start_task_agent(
-                    task_id=task_id,
-                    harness_command=harness or "",
-                    detach=detach,
-                    prelude_override=prelude,
-                )
-                await _emit_task_agent_action_event(
-                    sessionmaker=sessionmaker,
-                    run_id=run_id,
-                    node_id=node_id,
-                    task_id=task_id,
-                    action="start",
-                    phase="started",
-                    agent_id=result.agent.id,
-                    warnings=list(result.warnings),
-                )
-                continue
-
-            if action == "restart":
-                result = await app.state.runner_backend.restart_task_agent(
-                    task_id=task_id,
-                    harness_command=harness,
-                    detach=detach,
-                    prelude_override=prelude,
-                )
-                await _emit_task_agent_action_event(
-                    sessionmaker=sessionmaker,
-                    run_id=run_id,
-                    node_id=node_id,
-                    task_id=task_id,
-                    action="restart",
-                    phase="started",
-                    agent_id=result.agent.id,
-                    warnings=list(result.warnings),
-                )
-                continue
-
-            if action == "stop":
-                stopped = await app.state.runner_backend.stop_task_agent(
-                    task_id=task_id
-                )
-                await _emit_task_agent_action_event(
-                    sessionmaker=sessionmaker,
-                    run_id=run_id,
-                    node_id=node_id,
-                    task_id=task_id,
-                    action="stop",
-                    phase="stopped",
-                    agent_id=existing_agent_id,
-                    stopped=stopped,
-                )
-                continue
-
-            await _emit_task_agent_action_event(
-                sessionmaker=sessionmaker,
-                run_id=run_id,
-                node_id=node_id,
-                task_id=task_id,
-                action=action,
-                phase="failed",
-                error=f"Unknown action: {action!r}",
-            )
-        except Exception as e:
-            await _emit_task_agent_action_event(
-                sessionmaker=sessionmaker,
-                run_id=run_id,
-                node_id=node_id,
-                task_id=task_id,
-                action=action,
-                phase="failed",
-                error=str(e),
-            )
 
 
 @v1.post("/tasks/agent/actions", response_model=TaskAgentBulkActionResponse)
@@ -853,8 +903,17 @@ async def run_task_agents_bulk(
 
 @v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)
 async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
+    run_id = uuid4().hex
     try:
-        stopped = await app.state.runner_backend.stop_task_agent(task_id=task_id)
+        _, node, stopped, _ = await _perform_task_agent_action(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            action="stop",
+            harness=None,
+            detach=True,
+            prelude=None,
+        )
     except RunnerBackendError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except RuntimeError as e:
@@ -862,7 +921,6 @@ async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
 
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        _, node = await _require_task_node(session, task_id=task_id)
         agent = await session.get(Agent, node.agent_id) if node.agent_id else None
 
     return TaskAgentStopResponse(
@@ -880,22 +938,23 @@ async def restart_task_agent(
     task_id: int,
     request: TaskAgentRestartRequest,
 ) -> TaskAgentStartResponse:
+    run_id = uuid4().hex
     try:
-        result = await app.state.runner_backend.restart_task_agent(
+        _, node, result, warnings = await _perform_task_agent_action(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
             task_id=task_id,
-            harness_command=request.harness,
+            action="restart",
+            harness=request.harness,
             detach=request.detach,
-            prelude_override=request.prelude,
+            prelude=request.prelude,
         )
     except RunnerBackendError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        _, node = await _require_task_node(session, task_id=task_id)
+    row = result.agent  # type: ignore[attr-defined]
 
     return TaskAgentStartResponse(
         task_id=task_id,
@@ -909,8 +968,8 @@ async def restart_task_agent(
             HarnessProfileDefinitionResponse | None
         ).validate_python(row.resolved_profile),
         started_at=row.started_at or datetime.now(UTC),
-        started=result.started,
-        warnings=list(result.warnings),
+        started=result.started,  # type: ignore[attr-defined]
+        warnings=warnings,
     )
 
 
