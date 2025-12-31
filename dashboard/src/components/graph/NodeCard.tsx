@@ -379,10 +379,16 @@ export function NodeCard({
       ) : null
     ) : null
 
-  const tooltip = [
+  const tooltipParts = [
     agent ? `Agent: ${agent.displayName}` : "Agent: (not started)",
     `Status: ${statusSummary(task, agent)}`,
-  ].join("\n")
+    stackInSync === true
+      ? "Stack: in sync"
+      : stackInSync === false
+        ? "Stack: out of sync"
+        : null,
+  ]
+  const tooltip = tooltipParts.filter(Boolean).join("\n")
 
   return (
     <Card
@@ -565,7 +571,9 @@ export function NodeCard({
             <div
               className={cn(
                 "relative inline-flex size-5 items-center justify-center rounded-full",
-                outOfSync ? "ring-2 ring-amber-400/70 ring-offset-1" : null,
+                outOfSync
+                  ? "ring-2 ring-amber-400/70 ring-offset-1 ring-offset-background"
+                  : null,
               )}
               title={tooltip}
             >
