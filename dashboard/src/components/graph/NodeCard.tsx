@@ -395,11 +395,9 @@ export function NodeCard({
         actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done"
           ? "ring-emerald-500/35"
-          : outOfSync
-            ? "ring-amber-400/40"
-            : mergeReady
-              ? "ring-emerald-400/50"
-              : null,
+          : mergeReady
+            ? "ring-emerald-400/50"
+            : null,
         isSelected
           ? "ring-2 ring-ring"
           : isHighlighted
@@ -565,7 +563,10 @@ export function NodeCard({
               </div>
             ) : null}
             <div
-              className="relative inline-flex size-5 items-center justify-center"
+              className={cn(
+                "relative inline-flex size-5 items-center justify-center rounded-full",
+                outOfSync ? "ring-2 ring-amber-400/70 ring-offset-1" : null,
+              )}
               title={tooltip}
             >
               {commitHot ? (
