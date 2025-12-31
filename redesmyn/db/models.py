@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -62,7 +62,7 @@ class EventData(BaseModel):
 
 
 class GitCommitEventData(BaseModel):
-    node_id: int
+    task_id: int
     branch_name: str
     sha: str
     author_name: str | None = None
@@ -73,7 +73,7 @@ class GitCommitEventData(BaseModel):
 
 
 class WorktreeHealthEventData(BaseModel):
-    node_id: int
+    task_id: int
     branch_name: str
     worktree_path: str
     exists: bool
@@ -85,8 +85,10 @@ class WorktreeHealthEventData(BaseModel):
 class MergeRunPlanStepData(BaseModel):
     index: int
     kind: Literal["rebase", "merge_ff"]
-    node_id: int | None = None
-    task_id: int | None = None
+    task_id: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("task_id", "node_id"),
+    )
     branch_name: str
     worktree_path: str
     upstream_ref: str | None = None
@@ -98,8 +100,14 @@ class MergeRunPlanData(BaseModel):
     base_worktree: str
     scope: Literal["descendants", "spine"]
     restack_mode: Literal["strict", "merge_then_restack"] = "strict"
-    spine_node_ids: list[int] = Field(default_factory=list)
-    affected_node_ids: list[int] = Field(default_factory=list)
+    spine_task_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("spine_task_ids", "spine_node_ids"),
+    )
+    affected_task_ids: list[int] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("affected_task_ids", "affected_node_ids"),
+    )
     steps: list[MergeRunPlanStepData] = Field(default_factory=list)
 
 
@@ -111,7 +119,7 @@ class HostCapabilities(BaseModel):
 class HarnessProfileDefinition(BaseModel):
     argv: list[str]
     env: dict[str, str] = Field(default_factory=dict)
-    working_dir: Literal["node_worktree"] = "node_worktree"
+    working_dir: Literal["node_worktree", "task_worktree"] = "task_worktree"
     bootstrap_prelude: str | None = None
     skill_recommendation: str | None = None
 
@@ -234,6 +242,15 @@ class Task(Base):
     epic_id: Mapped[int] = mapped_column(
         ForeignKey("epics.id"), nullable=False, index=True
     )
+    branch_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    parent_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
+    )
+    agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id"), nullable=True, index=True
+    )
+    worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[TaskSource] = mapped_column(
@@ -251,9 +268,6 @@ class Task(Base):
         default=TaskState.Todo,
         nullable=False,
     )
-    node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nodes.id"), nullable=True, index=True
-    )
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     github_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -269,40 +283,8 @@ class Task(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
-
-class Node(Base):
-    __tablename__ = "nodes"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    epic_id: Mapped[int] = mapped_column(
-        ForeignKey("epics.id"), nullable=False, index=True
-    )
-    branch_name: Mapped[str] = mapped_column(String, nullable=False)
-    parent_node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nodes.id"), nullable=True, index=True
-    )
-    agent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("agents.id"), nullable=True, index=True
-    )
-    worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    primary_task_id: Mapped[int | None] = mapped_column(
-        ForeignKey("tasks.id"), nullable=True, index=True
-    )
-    github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
     __table_args__ = (
-        UniqueConstraint("epic_id", "branch_name", name="uq_nodes_epic_branch"),
+        UniqueConstraint("epic_id", "branch_name", name="uq_tasks_epic_branch"),
     )
 
 
@@ -424,8 +406,8 @@ class Command(Base):
     target_agent_id: Mapped[int | None] = mapped_column(
         ForeignKey("agents.id"), nullable=True, index=True
     )
-    target_node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nodes.id"), nullable=True, index=True
+    target_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
     )
     data: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
@@ -547,9 +529,6 @@ class MergeRun(Base):
     current_step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     blocked_step_kind: Mapped[str | None] = mapped_column(String, nullable=True)
-    blocked_node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nodes.id"), nullable=True, index=True
-    )
     blocked_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True, index=True
     )

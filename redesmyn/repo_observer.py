@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Event, MergeRun, Node
+from redesmyn.db import Agent, Event, MergeRun, Task
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus
 from redesmyn.repo import current_branch, git_has_in_progress_operation
@@ -27,8 +27,8 @@ class WorktreeObservation:
 
 @dataclass(slots=True)
 class RepoObserverState:
-    last_head_by_node_id: dict[int, str] = field(default_factory=dict)
-    last_worktree_by_node_id: dict[int, WorktreeObservation] = field(
+    last_head_by_task_id: dict[int, str] = field(default_factory=dict)
+    last_worktree_by_task_id: dict[int, WorktreeObservation] = field(
         default_factory=dict
     )
     initialized: bool = False
@@ -170,13 +170,16 @@ def worktree_dirty(worktree_path: Path) -> bool | None:
     return bool(proc.stdout.strip())
 
 
-def observe_worktree(*, node: Node, ctx: RepoContext) -> WorktreeObservation:
-    if node.worktree_path:
-        path = Path(node.worktree_path)
+def observe_worktree(*, task: Task, ctx: RepoContext) -> WorktreeObservation:
+    if task.branch_name is None:
+        raise RuntimeError("Task has no branch_name")
+
+    if task.worktree_path:
+        path = Path(task.worktree_path)
     else:
         path = _find_existing_worktree_path_for_branch(
-            ctx.repo_root, branch=node.branch_name
-        ) or default_worktree_path(ctx, branch=node.branch_name)
+            ctx.repo_root, branch=task.branch_name
+        ) or default_worktree_path(ctx, branch=task.branch_name)
     if not path.exists():
         return WorktreeObservation(
             worktree_path=str(path),
@@ -188,7 +191,7 @@ def observe_worktree(*, node: Node, ctx: RepoContext) -> WorktreeObservation:
 
     branch = current_branch(cwd=path)
     dirty = worktree_dirty(path)
-    mismatch = branch not in {node.branch_name, "HEAD"}
+    mismatch = branch not in {task.branch_name, "HEAD"}
     return WorktreeObservation(
         worktree_path=str(path),
         exists=True,
@@ -205,24 +208,28 @@ async def observe_once(
     *,
     emit_baseline: bool,
 ) -> int:
-    nodes = list(await session.scalars(select(Node).order_by(Node.id)))
-    if not nodes:
+    tasks = list(
+        await session.scalars(
+            select(Task).where(Task.branch_name.is_not(None)).order_by(Task.id)
+        )
+    )
+    if not tasks:
         if not state.initialized:
             state.initialized = True
         return 0
 
-    agent_ids = [n.agent_id for n in nodes if n.agent_id is not None]
+    agent_ids = [t.agent_id for t in tasks if t.agent_id is not None]
     agents = (
         list(await session.scalars(select(Agent).where(Agent.id.in_(agent_ids))))
         if agent_ids
         else []
     )
     agent_by_id = {a.id: a for a in agents}
-    active_agent_id_by_node_id: dict[int, int] = {
-        n.id: n.agent_id
-        for n in nodes
-        if n.agent_id is not None
-        and (agent := agent_by_id.get(n.agent_id)) is not None
+    active_agent_id_by_task_id: dict[int, int] = {
+        t.id: t.agent_id
+        for t in tasks
+        if t.agent_id is not None
+        and (agent := agent_by_id.get(t.agent_id)) is not None
         and agent.status in {AgentStatus.Running, AgentStatus.Blocked}
     }
 
@@ -230,40 +237,42 @@ async def observe_once(
 
     now = datetime.now(UTC)
     events_added = 0
-    nodes_updated = 0
     merge_runs_updated = 0
+    tasks_updated = 0
 
     new_shas: list[str] = []
-    new_commits: list[tuple[Node, str]] = []
-    for node in nodes:
-        sha = heads.get(node.branch_name)
+    new_commits: list[tuple[Task, str]] = []
+    for task in tasks:
+        if task.branch_name is None:
+            continue
+        sha = heads.get(task.branch_name)
         if not sha:
             continue
-        prev = state.last_head_by_node_id.get(node.id)
+        prev = state.last_head_by_task_id.get(task.id)
         if prev is None:
-            state.last_head_by_node_id[node.id] = sha
+            state.last_head_by_task_id[task.id] = sha
             if emit_baseline:
                 new_shas.append(sha)
-                new_commits.append((node, sha))
+                new_commits.append((task, sha))
             continue
         if prev == sha:
             continue
-        state.last_head_by_node_id[node.id] = sha
+        state.last_head_by_task_id[task.id] = sha
         new_shas.append(sha)
-        new_commits.append((node, sha))
+        new_commits.append((task, sha))
 
     summaries = read_commit_summaries(ctx.repo_root, shas=new_shas)
-    for node, sha in new_commits:
+    for task, sha in new_commits:
         summary = summaries.get(sha)
         data = GitCommitEventData(
-            node_id=node.id,
-            branch_name=node.branch_name,
+            task_id=task.id,
+            branch_name=task.branch_name or "",
             sha=sha,
             author_name=summary.author_name if summary else None,
             author_email=summary.author_email if summary else None,
             authored_at=summary.authored_at if summary else None,
             subject=summary.subject if summary else None,
-            agent_id=active_agent_id_by_node_id.get(node.id),
+            agent_id=active_agent_id_by_task_id.get(task.id),
         )
         session.add(
             Event(
@@ -274,28 +283,28 @@ async def observe_once(
         )
         events_added += 1
 
-    for node in nodes:
-        observed = observe_worktree(node=node, ctx=ctx)
+    for task in tasks:
+        observed = observe_worktree(task=task, ctx=ctx)
         if (
-            node.worktree_path is None
+            task.worktree_path is None
             and observed.exists
-            and observed.current_branch == node.branch_name
+            and observed.current_branch == task.branch_name
         ):
-            node.worktree_path = observed.worktree_path
-            nodes_updated += 1
+            task.worktree_path = observed.worktree_path
+            tasks_updated += 1
 
-        prev = state.last_worktree_by_node_id.get(node.id)
+        prev = state.last_worktree_by_task_id.get(task.id)
         if prev is None:
-            state.last_worktree_by_node_id[node.id] = observed
+            state.last_worktree_by_task_id[task.id] = observed
             if not emit_baseline:
                 continue
         elif prev == observed:
             continue
 
-        state.last_worktree_by_node_id[node.id] = observed
+        state.last_worktree_by_task_id[task.id] = observed
         data = WorktreeHealthEventData(
-            node_id=node.id,
-            branch_name=node.branch_name,
+            task_id=task.id,
+            branch_name=task.branch_name or "",
             worktree_path=observed.worktree_path,
             exists=observed.exists,
             current_branch=observed.current_branch,
@@ -317,7 +326,7 @@ async def observe_once(
         )
     )
     for run in blocked_runs:
-        if not run.blocked_worktree_path or not run.blocked_node_id:
+        if not run.blocked_worktree_path or not run.blocked_task_id:
             continue
         path = Path(run.blocked_worktree_path)
         if not path.exists():
@@ -331,7 +340,7 @@ async def observe_once(
                 event_type="merge.run",
                 data={
                     "run_id": run.run_id,
-                    "node_id": run.blocked_node_id,
+                    "task_id": run.blocked_task_id,
                     "epic_id": run.epic_id,
                     "requested_task_id": run.requested_task_id,
                     "status": run.status,
@@ -341,7 +350,7 @@ async def observe_once(
         )
         events_added += 1
 
-    if events_added or nodes_updated or merge_runs_updated:
+    if events_added or tasks_updated or merge_runs_updated:
         await session.commit()
     if not state.initialized:
         state.initialized = True

@@ -35,7 +35,6 @@ from redesmyn.db import (
     Host,
     LinearAuth,
     MergeRun,
-    Node,
     Repository,
     Task,
     create_engine,
@@ -93,8 +92,6 @@ from redesmyn.schemas.core import (
     MergeRunResumeRequest,
     MergeRunResumeResponse,
     MergeRunSummaryResponse,
-    NodeSetAgentRequest,
-    NodeResponse,
     OrchestrationDefaultsResponse,
     OrchestrationFleetDefaultsResponse,
     OrchestrationHarnessDefaultsResponse,
@@ -348,12 +345,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                 select(Task).where(Task.epic_id == epic_row.id).order_by(Task.id)
             )
         )
-        nodes = list(
-            await session.scalars(
-                select(Node).where(Node.epic_id == epic_row.id).order_by(Node.id)
-            )
-        )
-        agent_ids = {n.agent_id for n in nodes if n.agent_id is not None}
+        agent_ids = {t.agent_id for t in tasks if t.agent_id is not None}
         agents = (
             list(
                 await session.scalars(
@@ -383,27 +375,31 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             )
         )
 
-    stack_in_sync_by_node_id: dict[int, bool | None] = {}
+    stack_in_sync_by_task_id: dict[int, bool | None] = {}
     try:
         repo_root = app.state.ctx.repo_root
-        nodes_by_id: dict[int, Node] = {n.id: n for n in nodes}
-        for node in nodes:
-            if not branch_exists(repo_root, node.branch_name):
-                stack_in_sync_by_node_id[node.id] = None
+        tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+        for task in tasks:
+            if task.branch_name is None or not branch_exists(repo_root, task.branch_name):
+                stack_in_sync_by_task_id[task.id] = None
                 continue
-            if node.parent_node_id is None:
+            if task.parent_task_id is None:
                 upstream = epic_row.root_branch
             else:
-                parent = nodes_by_id.get(node.parent_node_id)
-                upstream = parent.branch_name if parent is not None else None
+                parent = tasks_by_id.get(task.parent_task_id)
+                upstream = (
+                    parent.branch_name
+                    if parent is not None and parent.branch_name is not None
+                    else None
+                )
             if upstream is None or not branch_exists(repo_root, upstream):
-                stack_in_sync_by_node_id[node.id] = None
+                stack_in_sync_by_task_id[task.id] = None
                 continue
-            stack_in_sync_by_node_id[node.id] = git_is_ancestor(
-                repo_root, upstream, node.branch_name
+            stack_in_sync_by_task_id[task.id] = git_is_ancestor(
+                repo_root, upstream, task.branch_name
             )
     except Exception:
-        stack_in_sync_by_node_id = {}
+        stack_in_sync_by_task_id = {}
 
     trunk: TrunkTimelineResponse | None = None
     try:
@@ -412,12 +408,14 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         commits = git_rev_list(repo_root, root_branch, first_parent=True)
         base_sha = commits[0] if commits else None
         if commits:
-            root_nodes = [n for n in nodes if n.parent_node_id is None]
+            root_tasks = [
+                t for t in tasks if t.branch_name and t.parent_task_id is None
+            ]
             merge_bases = {
                 mb
                 for mb in (
                     git_merge_base(repo_root, root_branch, n.branch_name)
-                    for n in root_nodes
+                    for n in root_tasks
                 )
                 if mb
             }
@@ -476,16 +474,15 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
     except Exception:
         trunk = None
 
-    node_responses: list[NodeResponse] = []
-    for node in nodes:
-        resp = NodeResponse.model_validate(node, from_attributes=True)
-        resp.stack_in_sync = stack_in_sync_by_node_id.get(node.id)
-        node_responses.append(resp)
+    task_responses: list[TaskResponse] = []
+    for task in tasks:
+        resp = TaskResponse.model_validate(task, from_attributes=True)
+        resp.stack_in_sync = stack_in_sync_by_task_id.get(task.id)
+        task_responses.append(resp)
 
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
-        tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
-        nodes=node_responses,
+        tasks=task_responses,
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
         merge_runs=[
             MergeRunSummaryResponse.model_validate(r, from_attributes=True)
@@ -572,18 +569,11 @@ async def upsert_harness_profile(
         return HarnessProfileResponse.model_validate(row, from_attributes=True)
 
 
-async def _require_task_node(
-    session: AsyncSession, *, task_id: int
-) -> tuple[Task, Node]:
+async def _require_task(session: AsyncSession, *, task_id: int) -> Task:
     task = await session.get(Task, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task.node_id is None:
-        raise HTTPException(status_code=409, detail="Task is not mapped to a node")
-    node = await session.get(Node, task.node_id)
-    if node is None:
-        raise HTTPException(status_code=409, detail="Node not found for task")
-    return task, node
+    return task
 
 
 @v1.post("/tasks/{task_id}/agent/start", response_model=TaskAgentStartResponse)
@@ -593,7 +583,7 @@ async def start_task_agent(
 ) -> TaskAgentStartResponse:
     run_id = uuid4().hex
     try:
-        _, node, result, warnings = await _perform_task_agent_action(
+        _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
             run_id=run_id,
             task_id=task_id,
@@ -607,11 +597,9 @@ async def start_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent  # type: ignore[attr-defined]
-
+    row = result.agent
     return TaskAgentStartResponse(
         task_id=task_id,
-        node_id=node.id,
         agent_id=row.id,
         agent_name=row.display_name,
         agent_status=row.status,
@@ -630,7 +618,6 @@ async def _emit_task_agent_run_event(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     run_id: str,
-    node_id: int,
     task_id: int,
     action: str,
     phase: str,
@@ -640,7 +627,6 @@ async def _emit_task_agent_run_event(
 ) -> None:
     payload: dict[str, object] = {
         "run_id": run_id,
-        "node_id": node_id,
         "task_id": task_id,
         "action": action,
         "phase": phase,
@@ -667,7 +653,6 @@ async def _emit_task_agent_action_event(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     run_id: str,
-    node_id: int,
     task_id: int,
     action: str,
     phase: str,
@@ -678,7 +663,6 @@ async def _emit_task_agent_action_event(
 ) -> None:
     payload: dict[str, object] = {
         "run_id": run_id,
-        "node_id": node_id,
         "task_id": task_id,
         "action": action,
         "phase": phase,
@@ -723,7 +707,7 @@ async def _emit_merge_run_event(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     run_id: str,
-    node_id: int,
+    task_id: int,
     epic_id: int,
     requested_task_id: int,
     status: MergeRunStatus,
@@ -733,7 +717,7 @@ async def _emit_merge_run_event(
 ) -> None:
     data: dict[str, object] = {
         "run_id": run_id,
-        "node_id": node_id,
+        "task_id": task_id,
         "epic_id": epic_id,
         "requested_task_id": requested_task_id,
         "status": status,
@@ -761,7 +745,6 @@ def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
         MergeRunPlanStepData(
             index=index,
             kind=step.kind,
-            node_id=step.node_id,
             task_id=step.task_id,
             branch_name=step.branch_name,
             worktree_path=str(step.worktree_path),
@@ -775,8 +758,8 @@ def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
         base_worktree=str(plan.base_worktree),
         scope=plan.scope,
         restack_mode=plan.restack_mode,
-        spine_node_ids=list(plan.spine_node_ids),
-        affected_node_ids=list(plan.affected_node_ids),
+        spine_task_ids=list(plan.spine_task_ids),
+        affected_task_ids=list(plan.affected_task_ids),
         steps=steps,
     )
     return payload.model_dump(mode="python")
@@ -819,7 +802,6 @@ async def _upsert_merge_run(
             row.current_step_index = None
             row.blocked_step_index = None
             row.blocked_step_kind = None
-            row.blocked_node_id = None
             row.blocked_task_id = None
             row.blocked_branch_name = None
             row.blocked_worktree_path = None
@@ -845,28 +827,26 @@ async def _record_merge_run_step_update(
             )
             row.blocked_step_index = update.step_index
             row.blocked_step_kind = update.step.kind
-            row.blocked_node_id = update.step.node_id
             row.blocked_task_id = update.step.task_id
             row.blocked_branch_name = update.step.branch_name
             row.blocked_worktree_path = str(update.step.worktree_path)
             row.blocked_error = update.error
-            if update.step.node_id is not None:
-                session.add(
-                    Event(
-                        event_type="merge.run",
-                        data={
-                            "run_id": run_id,
-                            "node_id": update.step.node_id,
-                            "epic_id": row.epic_id,
-                            "requested_task_id": row.requested_task_id,
-                            "status": row.status,
-                            "blocked_step_index": row.blocked_step_index,
-                            "blocked_step_kind": row.blocked_step_kind,
-                            "blocked_branch_name": row.blocked_branch_name,
-                        },
-                        created_at=now,
-                    )
+            session.add(
+                Event(
+                    event_type="merge.run",
+                    data={
+                        "run_id": run_id,
+                        "task_id": update.step.task_id,
+                        "epic_id": row.epic_id,
+                        "requested_task_id": row.requested_task_id,
+                        "status": row.status,
+                        "blocked_step_index": row.blocked_step_index,
+                        "blocked_step_kind": row.blocked_step_kind,
+                        "blocked_branch_name": row.blocked_branch_name,
+                    },
+                    created_at=now,
                 )
+            )
         await session.commit()
 
 
@@ -883,26 +863,25 @@ async def _set_merge_run_status(
         if row is None:
             return
 
-        node_id: int | None = row.blocked_node_id
+        task_id: int | None = row.blocked_task_id
         blocked_step_index = row.blocked_step_index
         blocked_step_kind = row.blocked_step_kind
         blocked_branch_name = row.blocked_branch_name
-        if node_id is None:
+        if task_id is None:
             try:
                 plan = MergeRunPlanData.model_validate(row.plan)
-                if plan.spine_node_ids:
-                    node_id = plan.spine_node_ids[-1]
-                elif plan.steps:
-                    node_id = plan.steps[0].node_id
+                if plan.spine_task_ids:
+                    task_id = plan.spine_task_ids[-1]
+                elif plan.steps and plan.steps[0].task_id is not None:
+                    task_id = plan.steps[0].task_id
             except Exception:
-                node_id = None
+                task_id = None
 
         row.status = status
         if status in {MergeRunStatus.Succeeded, MergeRunStatus.Canceled}:
             row.current_step_index = None
             row.blocked_step_index = None
             row.blocked_step_kind = None
-            row.blocked_node_id = None
             row.blocked_task_id = None
             row.blocked_branch_name = None
             row.blocked_worktree_path = None
@@ -910,10 +889,10 @@ async def _set_merge_run_status(
         if error is not None:
             row.blocked_error = error
 
-        if node_id is not None:
+        if task_id is not None:
             data: dict[str, object] = {
                 "run_id": run_id,
-                "node_id": node_id,
+                "task_id": task_id,
                 "epic_id": row.epic_id,
                 "requested_task_id": row.requested_task_id,
                 "status": status,
@@ -934,12 +913,12 @@ async def _set_merge_run_status(
         await session.commit()
 
 
-async def _task_node_info(
+async def _task_info(
     sessionmaker: async_sessionmaker[AsyncSession], *, task_id: int
-) -> tuple[Task, Node, int | None]:
+) -> tuple[Task, int | None]:
     async with sessionmaker() as session:
-        task, node = await _require_task_node(session, task_id=task_id)
-        return task, node, node.agent_id
+        task = await _require_task(session, task_id=task_id)
+        return task, task.agent_id
 
 
 @overload
@@ -952,7 +931,7 @@ async def _perform_task_agent_action(
     harness: str | None,
     detach: bool,
     prelude: str | None,
-) -> tuple[Task, Node, bool, list[str]]: ...
+) -> tuple[Task, bool, list[str]]: ...
 
 
 @overload
@@ -965,7 +944,7 @@ async def _perform_task_agent_action(
     harness: str | None,
     detach: bool,
     prelude: str | None,
-) -> tuple[Task, Node, StartAgentResult, list[str]]: ...
+) -> tuple[Task, StartAgentResult, list[str]]: ...
 
 
 async def _perform_task_agent_action(
@@ -977,20 +956,19 @@ async def _perform_task_agent_action(
     harness: str | None,
     detach: bool,
     prelude: str | None,
-) -> tuple[Task, Node, StartAgentResult | bool, list[str]]:
+) -> tuple[Task, StartAgentResult | bool, list[str]]:
     """Execute an agent action and emit WS-visible progress events.
 
-    Returns (task, node, result, warnings).
+    Returns (task, result, warnings).
 
     - For start/restart, result is a StartAgentResult.
     - For stop, result is a bool (stopped).
     """
 
-    task, node, existing_agent_id = await _task_node_info(sessionmaker, task_id=task_id)
+    task, existing_agent_id = await _task_info(sessionmaker, task_id=task_id)
     await _emit_task_agent_action_event(
         sessionmaker=sessionmaker,
         run_id=run_id,
-        node_id=node.id,
         task_id=task.id,
         action=action,
         phase="requested",
@@ -1008,14 +986,13 @@ async def _perform_task_agent_action(
             await _emit_task_agent_action_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node.id,
                 task_id=task.id,
                 action="start",
                 phase="started",
                 agent_id=result.agent.id,
                 warnings=warnings,
             )
-            return task, node, result, warnings
+            return task, result, warnings
 
         if action == "restart":
             result = await app.state.runner_backend.restart_task_agent(
@@ -1028,35 +1005,32 @@ async def _perform_task_agent_action(
             await _emit_task_agent_action_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node.id,
                 task_id=task.id,
                 action="restart",
                 phase="started",
                 agent_id=result.agent.id,
                 warnings=warnings,
             )
-            return task, node, result, warnings
+            return task, result, warnings
 
         if action == "stop":
             stopped = await app.state.runner_backend.stop_task_agent(task_id=task.id)
             await _emit_task_agent_action_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node.id,
                 task_id=task.id,
                 action="stop",
                 phase="stopped",
                 agent_id=existing_agent_id,
                 stopped=stopped,
             )
-            return task, node, stopped, []
+            return task, stopped, []
 
         raise ValueError(f"Unknown action: {action!r}")
     except Exception as e:
         await _emit_task_agent_action_event(
             sessionmaker=sessionmaker,
             run_id=run_id,
-            node_id=node.id,
             task_id=task.id,
             action=action,
             phase="failed",
@@ -1076,17 +1050,10 @@ async def _run_task_agents_bulk(
     detach: bool,
     prelude: str | None,
 ) -> None:
-    async def _node_id_for_task(task_id: int) -> int:
-        async with sessionmaker() as session:
-            _, node = await _require_task_node(session, task_id=task_id)
-            return node.id
-
     for task_id in sorted(set(start_task_ids)):
-        node_id = await _node_id_for_task(task_id)
         await _emit_task_agent_run_event(
             sessionmaker=sessionmaker,
             run_id=run_id,
-            node_id=node_id,
             task_id=task_id,
             action="start",
             phase="requested",
@@ -1101,7 +1068,6 @@ async def _run_task_agents_bulk(
             await _emit_task_agent_run_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node_id,
                 task_id=task_id,
                 action="start",
                 phase="started",
@@ -1112,7 +1078,6 @@ async def _run_task_agents_bulk(
             await _emit_task_agent_run_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node_id,
                 task_id=task_id,
                 action="start",
                 phase="failed",
@@ -1120,11 +1085,9 @@ async def _run_task_agents_bulk(
             )
 
     for task_id in sorted(set(restart_task_ids)):
-        node_id = await _node_id_for_task(task_id)
         await _emit_task_agent_run_event(
             sessionmaker=sessionmaker,
             run_id=run_id,
-            node_id=node_id,
             task_id=task_id,
             action="restart",
             phase="requested",
@@ -1139,7 +1102,6 @@ async def _run_task_agents_bulk(
             await _emit_task_agent_run_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node_id,
                 task_id=task_id,
                 action="restart",
                 phase="started",
@@ -1150,7 +1112,6 @@ async def _run_task_agents_bulk(
             await _emit_task_agent_run_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
-                node_id=node_id,
                 task_id=task_id,
                 action="restart",
                 phase="failed",
@@ -1237,7 +1198,7 @@ async def run_task_agents_bulk(
 async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
     run_id = uuid4().hex
     try:
-        _, node, stopped, _ = await _perform_task_agent_action(
+        task, stopped, _ = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
             run_id=run_id,
             task_id=task_id,
@@ -1253,11 +1214,10 @@ async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
 
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        agent = await session.get(Agent, node.agent_id) if node.agent_id else None
+        agent = await session.get(Agent, task.agent_id) if task.agent_id else None
 
     return TaskAgentStopResponse(
         task_id=task_id,
-        node_id=node.id,
         agent_id=None if agent is None else agent.id,
         agent_name=None if agent is None else agent.display_name,
         agent_status=None if agent is None else agent.status,
@@ -1272,7 +1232,7 @@ async def restart_task_agent(
 ) -> TaskAgentStartResponse:
     run_id = uuid4().hex
     try:
-        _, node, result, warnings = await _perform_task_agent_action(
+        _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
             run_id=run_id,
             task_id=task_id,
@@ -1286,11 +1246,9 @@ async def restart_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent  # type: ignore[attr-defined]
-
+    row = result.agent
     return TaskAgentStartResponse(
         task_id=task_id,
-        node_id=node.id,
         agent_id=row.id,
         agent_name=row.display_name,
         agent_status=row.status,
@@ -1351,7 +1309,6 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
         steps = [
             TaskMergePlanStepResponse(
                 kind=step.kind,
-                node_id=step.node_id,
                 task_id=step.task_id,
                 branch_name=step.branch_name,
                 worktree_path=str(step.worktree_path),
@@ -1378,20 +1335,15 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
         force=request.force,
         plan_snapshot=plan_snapshot,
     )
-    merge_node_id = (
-        plan.spine_node_ids[-1]
-        if plan.spine_node_ids
-        else next((s.node_id for s in plan.steps if s.node_id is not None), None)
+    merge_task_id = plan.spine_task_ids[-1] if plan.spine_task_ids else task_id
+    await _emit_merge_run_event(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        task_id=merge_task_id,
+        epic_id=plan.epic_id,
+        requested_task_id=task_id,
+        status=MergeRunStatus.Running,
     )
-    if merge_node_id is not None:
-        await _emit_merge_run_event(
-            sessionmaker=app.state.sessionmaker,
-            run_id=run_id,
-            node_id=merge_node_id,
-            epic_id=plan.epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-        )
 
     async def _run() -> None:
         try:
@@ -1430,7 +1382,6 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                 sessionmaker=app.state.sessionmaker,
                 payload={
                     "run_id": run_id,
-                    "node_id": None,
                     "task_id": task_id,
                     "kind": "merge_ff",
                     "phase": "failed",
@@ -1518,20 +1469,15 @@ async def resume_merge_run(
         force=force,
         plan_snapshot=plan_snapshot,
     )
-    merge_node_id = (
-        plan.spine_node_ids[-1]
-        if plan.spine_node_ids
-        else next((s.node_id for s in plan.steps if s.node_id is not None), None)
+    merge_task_id = plan.spine_task_ids[-1] if plan.spine_task_ids else task_id
+    await _emit_merge_run_event(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        task_id=merge_task_id,
+        epic_id=plan.epic_id,
+        requested_task_id=task_id,
+        status=MergeRunStatus.Running,
     )
-    if merge_node_id is not None:
-        await _emit_merge_run_event(
-            sessionmaker=app.state.sessionmaker,
-            run_id=run_id,
-            node_id=merge_node_id,
-            epic_id=plan.epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-        )
 
     async def _run() -> None:
         try:
@@ -1569,7 +1515,6 @@ async def resume_merge_run(
                 sessionmaker=app.state.sessionmaker,
                 payload={
                     "run_id": run_id,
-                    "node_id": None,
                     "task_id": task_id,
                     "kind": "merge_ff",
                     "phase": "failed",
@@ -1592,8 +1537,8 @@ async def task_agent_logs(
     """Return a tail of the agent log for a task (best-effort)."""
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        _, node = await _require_task_node(session, task_id=task_id)
-        agent = await session.get(Agent, node.agent_id) if node.agent_id else None
+        task = await _require_task(session, task_id=task_id)
+        agent = await session.get(Agent, task.agent_id) if task.agent_id else None
 
     if agent is None:
         raise HTTPException(status_code=404, detail="No agent for this task")
@@ -1611,41 +1556,6 @@ async def task_agent_logs(
         "text": text,
         "truncated": truncated,
     }
-
-
-@v1.post("/nodes/{node_id}/agent", response_model=NodeResponse)
-async def set_node_agent(node_id: int, request: NodeSetAgentRequest) -> NodeResponse:
-    sessionmaker = app.state.sessionmaker
-    async with sessionmaker() as session:
-        node = await session.get(Node, node_id)
-        if node is None:
-            raise HTTPException(status_code=404, detail="Node not found")
-
-        previous_agent_id = node.agent_id
-        if request.agent_id is not None:
-            agent = await session.get(Agent, request.agent_id)
-            if agent is None:
-                raise HTTPException(status_code=400, detail="Unknown agent id")
-            node.agent_id = agent.id
-        else:
-            node.agent_id = None
-
-        if node.agent_id != previous_agent_id:
-            session.add(
-                Event(
-                    event_type="node.agent_set",
-                    data={
-                        "node_id": node.id,
-                        "agent_id": node.agent_id,
-                        "previous_agent_id": previous_agent_id,
-                    },
-                    created_at=datetime.now(UTC),
-                )
-            )
-
-        await session.commit()
-        await session.refresh(node)
-        return NodeResponse.model_validate(node, from_attributes=True)
 
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)

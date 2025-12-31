@@ -39,31 +39,21 @@ class EpicResponse(ApiResponse):
 class TaskResponse(ApiResponse):
     id: int
     epic_id: int
+    branch_name: str | None
+    parent_task_id: int | None
+    stack_in_sync: bool | None = None
+    agent_id: int | None
+    worktree_path: str | None
+    github_pr_id: str | None
     title: str
     readme: str | None = Field(validation_alias="body")
     source: TaskSource
     authority: TaskAuthority
     state: TaskState
-    node_id: int | None
     linear_issue_id: str | None
     github_issue_id: str | None
     local_path: str | None
     merge_ready_at: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class NodeResponse(ApiResponse):
-    id: int
-    epic_id: int
-    branch_name: str
-    parent_node_id: int | None
-    stack_in_sync: bool | None = None
-    agent_id: int | None
-    worktree_path: str | None
-    primary_task_id: int | None
-    github_pr_id: str | None
-    linear_issue_id: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -148,7 +138,6 @@ class TaskAgentRestartRequest(ApiResponse):
 
 class TaskAgentStartResponse(ApiResponse):
     task_id: int
-    node_id: int
     agent_id: int
     agent_name: str
     agent_status: AgentStatus
@@ -162,7 +151,6 @@ class TaskAgentStartResponse(ApiResponse):
 
 class TaskAgentStopResponse(ApiResponse):
     task_id: int
-    node_id: int | None
     agent_id: int | None
     agent_name: str | None
     agent_status: AgentStatus | None
@@ -227,7 +215,6 @@ class MergeRunSummaryResponse(ApiResponse):
     current_step_index: int | None = None
     blocked_step_index: int | None = None
     blocked_step_kind: str | None = None
-    blocked_node_id: int | None = None
     blocked_task_id: int | None = None
     blocked_branch_name: str | None = None
     blocked_worktree_path: str | None = None
@@ -238,7 +225,6 @@ class MergeRunSummaryResponse(ApiResponse):
 
 class TaskMergePlanStepResponse(ApiResponse):
     kind: Literal["rebase", "merge_ff"]
-    node_id: int | None
     task_id: int | None
     branch_name: str
     worktree_path: str
@@ -276,29 +262,11 @@ class HarnessProfileUpsertRequest(ApiResponse):
     source: HarnessProfileSource = HarnessProfileSource.User
 
 
-class NodeSetAgentRequest(ApiResponse):
-    agent_id: int | None
-
-
-class NodeStartSessionRequest(ApiResponse):
-    """Request to start a runner-owned session for a node."""
-
-    command: str
-    detach: bool = True
-
-
-class NodeRestartSessionRequest(ApiResponse):
-    """Request to restart a runner-owned session for a node."""
-
-    command: str | None = None
-    detach: bool = True
-
-
 class CommandResponse(ApiResponse):
     id: int
     command_type: str
     target_agent_id: int | None
-    target_node_id: int | None
+    target_task_id: int | None
     payload: dict[str, Any]
     state: CommandState
     created_at: datetime
@@ -345,7 +313,7 @@ class BlockResponse(ApiResponse):
 
 class GitCommitEventDataResponse(ApiResponse):
     type: Literal["git.commit"] = "git.commit"
-    node_id: int
+    task_id: int
     branch_name: str
     sha: str
     author_name: str | None = None
@@ -357,7 +325,7 @@ class GitCommitEventDataResponse(ApiResponse):
 
 class WorktreeHealthEventDataResponse(ApiResponse):
     type: Literal["worktree.health"] = "worktree.health"
-    node_id: int
+    task_id: int
     branch_name: str
     worktree_path: str
     exists: bool
@@ -366,9 +334,9 @@ class WorktreeHealthEventDataResponse(ApiResponse):
     branch_mismatch: bool | None = None
 
 
-class NodeAgentSetEventDataResponse(ApiResponse):
-    type: Literal["node.agent_set"] = "node.agent_set"
-    node_id: int
+class TaskAgentSetEventDataResponse(ApiResponse):
+    type: Literal["task.agent_set"] = "task.agent_set"
+    task_id: int
     agent_id: int | None
     previous_agent_id: int | None
 
@@ -399,7 +367,6 @@ class BlockAckEventDataResponse(ApiResponse):
 class TaskAgentRunEventDataResponse(ApiResponse):
     type: Literal["task.agent_run"] = "task.agent_run"
     run_id: str
-    node_id: int
     task_id: int
     action: Literal["start", "restart"]
     phase: Literal["requested", "started", "failed"]
@@ -411,7 +378,6 @@ class TaskAgentRunEventDataResponse(ApiResponse):
 class TaskAgentActionEventDataResponse(ApiResponse):
     type: Literal["task.agent_action"] = "task.agent_action"
     run_id: str
-    node_id: int
     task_id: int
     action: Literal["start", "restart", "stop"]
     phase: Literal["requested", "started", "stopped", "failed"]
@@ -424,7 +390,6 @@ class TaskAgentActionEventDataResponse(ApiResponse):
 class TaskMergeEventDataResponse(ApiResponse):
     type: Literal["task.merge"] = "task.merge"
     run_id: str
-    node_id: int | None = None
     task_id: int | None = None
     kind: Literal["rebase", "merge_ff"]
     phase: Literal["started", "finished", "failed"]
@@ -435,7 +400,7 @@ class TaskMergeEventDataResponse(ApiResponse):
 class MergeRunEventDataResponse(ApiResponse):
     type: Literal["merge.run"] = "merge.run"
     run_id: str
-    node_id: int
+    task_id: int
     epic_id: int
     requested_task_id: int
     status: MergeRunStatus
@@ -453,7 +418,7 @@ class UnknownEventDataResponse(ApiResponse):
 EventDataResponse = Annotated[
     GitCommitEventDataResponse
     | WorktreeHealthEventDataResponse
-    | NodeAgentSetEventDataResponse
+    | TaskAgentSetEventDataResponse
     | BlockSetEventDataResponse
     | BlockClearedEventDataResponse
     | BlockAckEventDataResponse
@@ -596,7 +561,6 @@ class TrunkTimelineResponse(ApiResponse):
 class EpicGraphResponse(ApiResponse):
     epic: EpicResponse
     tasks: list[TaskResponse]
-    nodes: list[NodeResponse]
     agents: list[AgentResponse]
     merge_runs: list[MergeRunSummaryResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redesmyn.db import Epic, Event, Node
+from redesmyn.db import Epic, Event, Task
 from redesmyn.schemas.core import EventResponse
 
 WS_PROTOCOL_VERSION = 1
@@ -37,21 +37,21 @@ async def _resolve_epic_id(session: AsyncSession, epic: str) -> int:
     return row.id
 
 
-async def epic_node_ids(session: AsyncSession, epic: str) -> set[int]:
+async def epic_task_ids(session: AsyncSession, epic: str) -> set[int]:
     epic_id = await _resolve_epic_id(session, epic)
-    rows = await session.scalars(select(Node.id).where(Node.epic_id == epic_id))
+    rows = await session.scalars(select(Task.id).where(Task.epic_id == epic_id))
     return set(rows)
 
 
-def node_id_from_event(event: Event) -> int | None:
+def task_id_from_event(event: Event) -> int | None:
     try:
         payload = event.data
     except Exception:
         return None
     if isinstance(payload, dict):
-        node_id = payload.get("node_id")
-        if isinstance(node_id, int):
-            return node_id
+        task_id = payload.get("task_id")
+        if isinstance(task_id, int):
+            return task_id
     return None
 
 
@@ -121,7 +121,7 @@ async def run_event_stream(
 ) -> None:
     async with sessionmaker() as session:
         last_id = await current_last_event_id(session)
-        node_ids = await epic_node_ids(session, epic) if epic else None
+        task_ids = await epic_task_ids(session, epic) if epic else None
 
     active_epic = epic
     subscription = EventStreamSubscription(epic=epic, after_id=after_id or last_id)
@@ -158,20 +158,20 @@ async def run_event_stream(
             await send_error(websocket, f"Unknown message type: {msg_type!r}")
 
     async def send_loop() -> None:
-        nonlocal active_epic, node_ids
+        nonlocal active_epic, task_ids
         while True:
             async with sessionmaker() as session:
                 if subscription.epic is None:
                     active_epic = None
-                    node_ids = None
-                elif node_ids is None or subscription.epic != active_epic:
+                    task_ids = None
+                elif task_ids is None or subscription.epic != active_epic:
                     try:
-                        node_ids = await epic_node_ids(session, subscription.epic)
+                        task_ids = await epic_task_ids(session, subscription.epic)
                         active_epic = subscription.epic
                     except ValueError as e:
                         await send_error(websocket, str(e))
                         active_epic = None
-                        node_ids = None
+                        task_ids = None
 
                 rows = list(
                     await session.scalars(
@@ -188,11 +188,11 @@ async def run_event_stream(
 
             for row in rows:
                 subscription.after_id = row.id
-                node_id = node_id_from_event(row)
+                task_id = task_id_from_event(row)
                 if (
-                    node_ids is not None
-                    and node_id is not None
-                    and node_id not in node_ids
+                    task_ids is not None
+                    and task_id is not None
+                    and task_id not in task_ids
                 ):
                     continue
                 await send_event(websocket, row)

@@ -39,7 +39,6 @@ from redesmyn.db import (
     Agent,
     Epic,
     LinearAuth,
-    Node,
     Repository,
     Task,
     create_engine,
@@ -99,7 +98,6 @@ block_app = typer.Typer(
 )
 epic_app = typer.Typer(add_completion=False, help="Epic management.")
 task_app = typer.Typer(add_completion=False, help="Task management.")
-node_app = typer.Typer(add_completion=False, help="Node/branch graph management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
 observer_app = typer.Typer(add_completion=False, help="Repo observer + telemetry.")
@@ -111,8 +109,8 @@ class SyncStats:
     epics_updated: int = 0
     tasks_created: int = 0
     tasks_updated: int = 0
-    nodes_created: int = 0
-    nodes_updated: int = 0
+    branches_created: int = 0
+    branches_updated: int = 0
 
 
 @app.command()
@@ -137,10 +135,10 @@ def sync(
     project: str | None = typer.Option(
         None, "--project", help="Linear project id (when syncing from/to Linear)."
     ),
-    create_nodes: bool = typer.Option(
+    create_branches: bool = typer.Option(
         True,
-        "--create-nodes/--no-create-nodes",
-        help="Create/update nodes in the branch graph.",
+        "--create-branches/--no-create-branches",
+        help="Create/update the branch graph for tasks.",
     ),
 ) -> None:
     """Synchronize between local task docs, Linear, and the DB projection."""
@@ -165,13 +163,13 @@ def sync(
         src = from_.lower()
         if src == "local":
             stats = asyncio.run(
-                _sync_from_local(ctx, epic=epic, create_nodes=create_nodes)
+                _sync_from_local(ctx, epic=epic, create_branches=create_branches)
             )
             typer.echo(
                 "Synced from local: "
                 f"epics +{stats.epics_created}/~{stats.epics_updated}, "
                 f"tasks +{stats.tasks_created}/~{stats.tasks_updated}, "
-                f"nodes +{stats.nodes_created}/~{stats.nodes_updated}"
+                f"branches +{stats.branches_created}/~{stats.branches_updated}"
             )
             return
         if src == "linear":
@@ -180,14 +178,14 @@ def sync(
                     ctx,
                     epic=epic,
                     project=project,
-                    create_nodes=create_nodes,
+                    create_branches=create_branches,
                 )
             )
             typer.echo(
                 "Synced from Linear: "
                 f"epics +{stats.epics_created}/~{stats.epics_updated}, "
                 f"tasks +{stats.tasks_created}/~{stats.tasks_updated}, "
-                f"nodes +{stats.nodes_created}/~{stats.nodes_updated}"
+                f"branches +{stats.branches_created}/~{stats.branches_updated}"
             )
             return
         typer.echo("error: --from must be one of: local, linear", err=True)
@@ -583,29 +581,17 @@ def run(
                         if task is None:
                             continue
                         tasks.append(task)
+                task_by_id = {t.id: t for t in tasks}
 
-                nodes = (
-                    list(
-                        await session.scalars(
-                            select(Node)
-                            .where(Node.epic_id == epic_row.id)
-                            .order_by(Node.id)
-                        )
-                    )
-                    if epic_row is not None
-                    else []
-                )
-                node_by_id = {n.id: n for n in nodes}
-
-                def node_depth(node_id: int, cache: dict[int, int]) -> int:
-                    if node_id in cache:
-                        return cache[node_id]
-                    node = node_by_id.get(node_id)
-                    if node is None or node.parent_node_id is None:
-                        cache[node_id] = 0
+                def task_depth(task_id: int, cache: dict[int, int]) -> int:
+                    if task_id in cache:
+                        return cache[task_id]
+                    task = task_by_id.get(task_id)
+                    if task is None or task.parent_task_id is None:
+                        cache[task_id] = 0
                         return 0
-                    value = 1 + node_depth(node.parent_node_id, cache)
-                    cache[node_id] = value
+                    value = 1 + task_depth(task.parent_task_id, cache)
+                    cache[task_id] = value
                     return value
 
                 eligible: list[Task] = []
@@ -617,15 +603,15 @@ def run(
                             skipped.append((task_id, "not found"))
 
                 for task in tasks:
-                    if task.node_id is None:
-                        skipped.append((task.id, "no node backing"))
+                    if task.branch_name is None:
+                        skipped.append((task.id, "no branch backing"))
                         continue
                     if task.state in {TaskState.Blocked, TaskState.Done}:
                         skipped.append((task.id, f"state={task.state.value}"))
                         continue
                     eligible.append(task)
 
-                active_node_ids: set[int] = set()
+                active_task_ids: set[int] = set()
                 if eligible:
                     tmux_sessions: set[str] = set()
                     if has_tmux():
@@ -644,20 +630,13 @@ def run(
                             }
 
                     for task in eligible:
-                        if task.node_id is None:
-                            continue
                         tmux_name = tmux_session_name_for_task(task_id=task.id)
                         if tmux_name in tmux_sessions:
-                            active_node_ids.add(task.node_id)
+                            active_task_ids.add(task.id)
 
                 if epic_row is not None:
                     cache: dict[int, int] = {}
-                    eligible.sort(
-                        key=lambda t: (
-                            node_depth(t.node_id or 0, cache),
-                            t.id,
-                        )
-                    )
+                    eligible.sort(key=lambda t: (task_depth(t.id, cache), t.id))
 
                 if task_ids is None:
                     effective_fleet_size: int | None = fleet_size
@@ -675,23 +654,17 @@ def run(
                     if restart:
                         selected = eligible[:effective_fleet_size]
                     else:
-                        selected = [
-                            t for t in eligible if t.node_id not in active_node_ids
-                        ][:effective_fleet_size]
+                        selected = [t for t in eligible if t.id not in active_task_ids][
+                            :effective_fleet_size
+                        ]
                 else:
                     if restart:
                         selected = eligible
                     else:
-                        selected = [
-                            t for t in eligible if t.node_id not in active_node_ids
-                        ]
+                        selected = [t for t in eligible if t.id not in active_task_ids]
 
                 if not restart:
-                    already_running = [
-                        t
-                        for t in eligible
-                        if t.node_id is not None and t.node_id in active_node_ids
-                    ]
+                    already_running = [t for t in eligible if t.id in active_task_ids]
                     for t in already_running:
                         skipped.append((t.id, "already running"))
 
@@ -854,7 +827,7 @@ async def _sync_from_local(
     ctx: RepoContext,
     *,
     epic: str | None,
-    create_nodes: bool,
+    create_branches: bool,
 ) -> SyncStats:
     epic_fs = _infer_single_epic_slug_from_fs(ctx.worktree_root)
     requested = epic or epic_fs
@@ -957,8 +930,8 @@ async def _sync_from_local(
                 except DocLoadError as e:
                     raise typer.BadParameter(str(e)) from e
 
-            node_by_ref: dict[str, Node] = {}
-            node_by_path: dict[Path, Node] = {}
+            task_by_ref: dict[str, Task] = {}
+            task_by_path: dict[Path, Task] = {}
 
             for doc in task_docs:
                 if doc.title is None:
@@ -1019,7 +992,7 @@ async def _sync_from_local(
                     if updated:
                         stats.tasks_updated += 1
 
-                if not create_nodes:
+                if not create_branches:
                     continue
 
                 branch = meta.node.branch if meta.node and meta.node.branch else None
@@ -1030,58 +1003,56 @@ async def _sync_from_local(
                     )
                     branch = f"rn/{epic_row.slug}/{identifier}-{short}"
 
-                node = await session.scalar(
-                    select(Node).where(
-                        Node.epic_id == epic_row.id,
-                        Node.branch_name == branch,
+                existing = await session.scalar(
+                    select(Task).where(
+                        Task.epic_id == epic_row.id,
+                        Task.branch_name == branch,
+                        Task.id != task.id,
                     )
                 )
-                if node is None:
-                    node = Node(
-                        epic_id=epic_row.id,
-                        branch_name=branch,
-                        linear_issue_id=linear_issue_id,
+                if existing is not None:
+                    raise typer.BadParameter(
+                        f"Ambiguous branch {branch!r}; assigned to multiple tasks ({existing.id} and {task.id})"
                     )
-                    session.add(node)
-                    await session.flush()
-                    stats.nodes_created += 1
-                else:
-                    updated = False
-                    if linear_issue_id and node.linear_issue_id != linear_issue_id:
-                        node.linear_issue_id = linear_issue_id
-                        updated = True
-                    if updated:
-                        stats.nodes_updated += 1
 
-                task.node_id = node.id
-                node.primary_task_id = task.id
-                node_by_path[doc.path] = node
+                if task.branch_name != branch:
+                    if task.branch_name is None and branch is not None:
+                        stats.branches_created += 1
+                    else:
+                        stats.branches_updated += 1
+                    task.branch_name = branch
+
+                task_by_path[doc.path] = task
 
                 for ref in (meta.id, linear_identifier, linear_issue_id):
                     if not ref:
                         continue
-                    existing = node_by_ref.get(ref)
-                    if existing is not None and existing.id != node.id:
+                    existing_ref = task_by_ref.get(ref)
+                    if existing_ref is not None and existing_ref.id != task.id:
                         raise typer.BadParameter(
                             f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
                         )
-                    node_by_ref[ref] = node
+                    task_by_ref[ref] = task
 
-            if create_nodes:
+            if create_branches:
                 for doc in task_docs:
-                    node = node_by_path.get(doc.path)
-                    if node is None:
+                    task = task_by_path.get(doc.path)
+                    if task is None:
                         continue
                     parent_ref = doc.metadata.stacked_on
                     if not parent_ref:
-                        node.parent_node_id = None
+                        if task.parent_task_id is not None:
+                            task.parent_task_id = None
+                            stats.branches_updated += 1
                         continue
-                    parent_node = node_by_ref.get(parent_ref)
-                    if parent_node is None:
+                    parent_task = task_by_ref.get(parent_ref)
+                    if parent_task is None:
                         raise typer.BadParameter(
                             f"Unknown stacked_on ref {parent_ref!r} in {doc.path}"
                         )
-                    node.parent_node_id = parent_node.id
+                    if task.parent_task_id != parent_task.id:
+                        task.parent_task_id = parent_task.id
+                        stats.branches_updated += 1
 
             await session.commit()
             return stats
@@ -1094,7 +1065,7 @@ async def _sync_from_linear(
     *,
     epic: str | None,
     project: str | None,
-    create_nodes: bool,
+    create_branches: bool,
 ) -> SyncStats:
     auth = await _load_linear_auth(ctx)
     if auth is None:
@@ -1217,7 +1188,9 @@ async def _sync_from_linear(
         )
         readme.write_text(markdown, encoding="utf-8")
 
-    return await _sync_from_local(ctx, epic=epic_row.slug, create_nodes=create_nodes)
+    return await _sync_from_local(
+        ctx, epic=epic_row.slug, create_branches=create_branches
+    )
 
 
 def _default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
@@ -1692,172 +1665,12 @@ def task_list(
         typer.echo("No tasks.")
         return
     for t in tasks:
-        node = f" node={t.node_id}" if t.node_id is not None else ""
-        typer.echo(f"{t.id}:{node} {t.title}")
-
-
-@task_app.command("link")
-def task_link(
-    task_id: int = typer.Argument(..., help="Task id."),
-    node_id: int = typer.Option(..., "--node", help="Node id."),
-) -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> tuple[Task, Node]:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                task = await session.get(Task, task_id)
-                if task is None:
-                    raise typer.BadParameter(f"Unknown task id: {task_id}")
-                node = await session.get(Node, node_id)
-                if node is None:
-                    raise typer.BadParameter(f"Unknown node id: {node_id}")
-                task.node_id = node.id
-                node.primary_task_id = task.id
-                await session.commit()
-                await session.refresh(task)
-                await session.refresh(node)
-                return task, node
-        finally:
-            await engine.dispose()
-
-    task, node = asyncio.run(_run())
-    typer.echo(f"Linked task {task.id} -> node {node.id} ({node.branch_name})")
+        branch = f" branch={t.branch_name}" if t.branch_name else ""
+        parent = f" parent={t.parent_task_id}" if t.parent_task_id else ""
+        typer.echo(f"{t.id}:{branch}{parent} {t.title}")
 
 
 app.add_typer(task_app, name="task")
-
-
-@node_app.command("create")
-def node_create(
-    branch: str = typer.Option(..., "--branch", help="Branch name for this node."),
-    parent: int | None = typer.Option(
-        None, "--parent", help="Parent node id (defaults to epic root)."
-    ),
-    epic: str | None = typer.Option(
-        None, help="Epic slug or id (defaults if only one epic)."
-    ),
-    worktree: Path | None = typer.Option(
-        None, help="Worktree path (defaults under .redesmyn/worktrees)."
-    ),
-) -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> Node:
-        epic_row = await _resolve_epic(ctx, epic=epic)
-
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                parent_node: Node | None = None
-                if parent is not None:
-                    parent_node = await session.get(Node, parent)
-                    if parent_node is None:
-                        raise typer.BadParameter(f"Unknown parent node id: {parent}")
-
-                existing = await session.scalar(
-                    select(Node).where(
-                        Node.epic_id == epic_row.id,
-                        Node.branch_name == branch,
-                    )
-                )
-                if existing is not None:
-                    return existing
-
-                base_ref = (
-                    parent_node.branch_name
-                    if parent_node is not None
-                    else epic_row.root_branch
-                )
-                worktree_path = worktree or _default_worktree_path(ctx, branch=branch)
-
-                if worktree_path.exists():
-                    raise typer.BadParameter(
-                        f"Worktree path already exists: {worktree_path}"
-                    )
-
-                try:
-                    git_worktree_add(
-                        ctx.repo_root,
-                        worktree_path=worktree_path,
-                        branch_name=branch,
-                        base_ref=base_ref,
-                    )
-                except GitCommandError as e:
-                    raise typer.BadParameter(str(e)) from e
-
-                node = Node(
-                    epic_id=epic_row.id,
-                    branch_name=branch,
-                    parent_node_id=parent_node.id if parent_node else None,
-                    worktree_path=str(worktree_path),
-                )
-                session.add(node)
-                await session.commit()
-                await session.refresh(node)
-                return node
-        finally:
-            await engine.dispose()
-
-    node = asyncio.run(_run())
-    typer.echo(
-        f"Node: {node.id} branch={node.branch_name} worktree={node.worktree_path}"
-    )
-
-
-@node_app.command("list")
-def node_list(
-    epic: str | None = typer.Option(
-        None, help="Epic slug or id (defaults if only one epic)."
-    ),
-) -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> list[Node]:
-        epic_row = await _resolve_epic(ctx, epic=epic)
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                rows = await session.scalars(
-                    select(Node).where(Node.epic_id == epic_row.id).order_by(Node.id)
-                )
-                return list(rows)
-        finally:
-            await engine.dispose()
-
-    nodes = asyncio.run(_run())
-    if not nodes:
-        typer.echo("No nodes.")
-        return
-    for n in nodes:
-        parent_id = n.parent_node_id or "-"
-        agent_id = n.agent_id or "-"
-        wt = n.worktree_path or "-"
-        typer.echo(
-            f"{n.id}: branch={n.branch_name} parent={parent_id} agent={agent_id} wt={wt}"
-        )
-
-
-app.add_typer(node_app, name="node")
 
 
 @agent_app.command("register")
@@ -1913,40 +1726,6 @@ def agent_list() -> None:
         return
     for a in agents:
         typer.echo(f"{a.id}: {a.display_name} status={a.status.value}")
-
-
-@agent_app.command("assign")
-def agent_assign(
-    agent_id: int = typer.Argument(..., help="Agent id."),
-    node_id: int = typer.Option(..., "--node", help="Node id."),
-) -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> tuple[Agent, Node]:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                agent = await session.get(Agent, agent_id)
-                if agent is None:
-                    raise typer.BadParameter(f"Unknown agent id: {agent_id}")
-                node = await session.get(Node, node_id)
-                if node is None:
-                    raise typer.BadParameter(f"Unknown node id: {node_id}")
-                node.agent_id = agent.id
-                await session.commit()
-                await session.refresh(node)
-                return agent, node
-        finally:
-            await engine.dispose()
-
-    agent, node = asyncio.run(_run())
-    typer.echo(f"Assigned agent {agent.id} -> node {node.id} ({node.branch_name})")
 
 
 @agent_app.command("start")
@@ -2309,10 +2088,10 @@ def linear_import(
     epic: str | None = typer.Option(
         None, help="Epic slug or id (defaults if only one epic)."
     ),
-    create_nodes: bool = typer.Option(
+    create_branches: bool = typer.Option(
         True,
-        "--create-nodes/--no-create-nodes",
-        help="Create nodes/branches by default.",
+        "--create-branches/--no-create-branches",
+        help="Create branches/worktrees for imported tasks.",
     ),
 ) -> None:
     try:
@@ -2407,7 +2186,7 @@ def linear_import(
                         f"Epic is linked to a different Linear project ({epic_db.linear_project_id})"
                     )
 
-                node_by_issue_id: dict[str, Node] = {}
+                task_by_issue_id: dict[str, Task] = {}
                 for issue in issues_sorted:
                     task = await session.scalar(
                         select(Task).where(
@@ -2433,48 +2212,49 @@ def linear_import(
                         task.body = issue.description
                         task.state = _task_state_from_linear(issue.state_type)
 
-                    if not create_nodes:
+                    task_by_issue_id[issue.id] = task
+
+                    if not create_branches:
                         continue
 
                     branch = _branch_name(issue.identifier, issue.title)
-                    node = await session.scalar(
-                        select(Node).where(
-                            Node.epic_id == epic_db.id,
-                            Node.branch_name == branch,
+                    existing = await session.scalar(
+                        select(Task).where(
+                            Task.epic_id == epic_db.id,
+                            Task.branch_name == branch,
+                            Task.id != task.id,
                         )
                     )
-                    if node is None:
-                        node = Node(
-                            epic_id=epic_db.id,
-                            branch_name=branch,
-                            linear_issue_id=issue.id,
+                    if existing is not None:
+                        raise typer.BadParameter(
+                            f"Ambiguous branch {branch!r}; assigned to multiple tasks ({existing.id} and {task.id})"
                         )
-                        session.add(node)
-                        await session.flush()
-                    else:
-                        node.linear_issue_id = issue.id
+                    task.branch_name = branch
 
-                    node_by_issue_id[issue.id] = node
-
-                if not create_nodes:
+                if not create_branches:
                     await session.commit()
                     return
 
                 for issue in issues_sorted:
-                    node = node_by_issue_id[issue.id]
                     parent_issue_id = parent_by_issue.get(issue.id)
-                    parent_node = (
-                        node_by_issue_id[parent_issue_id]
+                    task = task_by_issue_id[issue.id]
+                    parent_task = (
+                        task_by_issue_id[parent_issue_id]
                         if parent_issue_id is not None
                         else None
                     )
-                    node.parent_node_id = parent_node.id if parent_node else None
+                    task.parent_task_id = parent_task.id if parent_task else None
 
                     base_ref = (
-                        parent_node.branch_name if parent_node else epic_db.root_branch
+                        parent_task.branch_name
+                        if parent_task is not None
+                        and parent_task.branch_name is not None
+                        else epic_db.root_branch
                     )
-                    if node.worktree_path is None:
-                        branch = node.branch_name
+                    if task.worktree_path is None:
+                        branch = task.branch_name
+                        if branch is None:
+                            continue
                         worktree_path = _default_worktree_path(ctx, branch=branch)
                         if worktree_path.exists():
                             raise typer.BadParameter(
@@ -2489,17 +2269,7 @@ def linear_import(
                             )
                         except GitCommandError as e:
                             raise typer.BadParameter(str(e)) from e
-                        node.worktree_path = str(worktree_path)
-
-                    task = await session.scalar(
-                        select(Task).where(
-                            Task.epic_id == epic_db.id,
-                            Task.linear_issue_id == issue.id,
-                        )
-                    )
-                    if task is not None:
-                        task.node_id = node.id
-                        node.primary_task_id = task.id
+                        task.worktree_path = str(worktree_path)
 
                 await session.commit()
         finally:

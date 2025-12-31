@@ -7,7 +7,6 @@ from redesmyn.schemas.core import (
     EpicResponse,
     EventResponse,
     LinearStatusResponse,
-    NodeResponse,
     RepositoryResponse,
     TaskResponse,
 )
@@ -21,7 +20,6 @@ __all__ = [
     "EpicResponse",
     "EventResponse",
     "LinearStatusResponse",
-    "NodeResponse",
     "RepositoryResponse",
     "TaskResponse",
 ]

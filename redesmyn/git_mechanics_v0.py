@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Epic, Node, Task
+from redesmyn.db import Agent, Epic, Task
 from redesmyn.domain.enums import AgentStatus, TaskState
 from redesmyn.repo import (
     GitCommandError,
@@ -30,8 +30,7 @@ class MergePlanError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class RunningAgentInfo:
-    node_id: int
-    task_id: int | None
+    task_id: int
     branch_name: str
     agent_id: int
     agent_name: str
@@ -45,13 +44,12 @@ class MergeBlockedByRunningAgents(MergePlanError):
 
 
 @dataclass(frozen=True, slots=True)
-class MergeNodeInfo:
-    node_id: int
-    parent_node_id: int | None
+class MergeTaskInfo:
+    task_id: int
+    parent_task_id: int | None
     branch_name: str
     upstream_ref: str
     worktree_path: Path
-    primary_task_id: int | None
 
 
 MergeStepKind = Literal["rebase", "merge_ff"]
@@ -60,8 +58,7 @@ MergeStepKind = Literal["rebase", "merge_ff"]
 @dataclass(frozen=True, slots=True)
 class MergePlanStep:
     kind: MergeStepKind
-    node_id: int | None
-    task_id: int | None
+    task_id: int
     branch_name: str
     worktree_path: Path
     upstream_ref: str | None = None
@@ -76,9 +73,9 @@ class MergeCascadePlan:
     base_worktree: Path
     scope: MergeCascadeScope
     restack_mode: MergeRestackMode
-    spine_node_ids: tuple[int, ...]
-    affected_node_ids: tuple[int, ...]
-    nodes: dict[int, MergeNodeInfo]
+    spine_task_ids: tuple[int, ...]
+    affected_task_ids: tuple[int, ...]
+    tasks: dict[int, MergeTaskInfo]
     steps: tuple[MergePlanStep, ...]
     running_agents: tuple[RunningAgentInfo, ...]
 
@@ -97,72 +94,68 @@ class MergeRunStepUpdate:
 
 async def _load_task_node_epic(
     session: AsyncSession, *, task_id: int
-) -> tuple[Task, Node, Epic]:
+) -> tuple[Task, Epic]:
     task = await session.get(Task, task_id)
     if task is None:
         raise MergePlanError(f"Unknown task id: {task_id}")
-    if task.node_id is None:
+    if task.branch_name is None:
         raise MergePlanError(
-            "Task has no node/branch yet (node_id is null). "
-            "Run `rn sync --from local --create-nodes`."
+            "Task has no branch backing (branch_name is null). "
+            "Run `rn sync --from local --create-branches`."
         )
-    node = await session.get(Node, task.node_id)
-    if node is None:
-        raise MergePlanError(f"Task node not found: {task.node_id}")
     epic = await session.get(Epic, task.epic_id)
     if epic is None:
         raise MergePlanError(f"Epic not found: {task.epic_id}")
-    return task, node, epic
+    return task, epic
 
 
-def _compute_spine_node_ids(
-    *, nodes_by_id: dict[int, Node], leaf_node_id: int
+def _compute_spine_task_ids(
+    *, tasks_by_id: dict[int, Task], leaf_task_id: int
 ) -> list[int]:
     spine: list[int] = []
-    cursor: int | None = leaf_node_id
+    cursor: int | None = leaf_task_id
     while cursor is not None:
         spine.append(cursor)
-        parent = nodes_by_id.get(cursor)
-        if parent is None:
+        task = tasks_by_id.get(cursor)
+        if task is None:
             break
-        cursor = parent.parent_node_id
+        cursor = task.parent_task_id
     spine.reverse()
     return spine
 
 
 def _compute_descendants(
-    *, children_by_parent: dict[int | None, list[int]], start_node_ids: Sequence[int]
+    *, children_by_parent: dict[int | None, list[int]], start_task_ids: Sequence[int]
 ) -> set[int]:
     seen: set[int] = set()
-    queue: list[int] = list(start_node_ids)
+    queue: list[int] = list(start_task_ids)
     while queue:
-        node_id = queue.pop()
-        if node_id in seen:
+        task_id = queue.pop()
+        if task_id in seen:
             continue
-        seen.add(node_id)
-        for child in children_by_parent.get(node_id, []):
+        seen.add(task_id)
+        for child in children_by_parent.get(task_id, []):
             queue.append(child)
     return seen
 
 
 def _topo_sort_by_depth(
-    *, nodes_by_id: dict[int, Node], node_ids: set[int]
+    *, tasks_by_id: dict[int, Task], task_ids: set[int]
 ) -> list[int]:
     depth_cache: dict[int, int] = {}
 
-    def depth(node_id: int) -> int:
-        if node_id in depth_cache:
-            return depth_cache[node_id]
-        node = nodes_by_id.get(node_id)
-        if node is None or node.parent_node_id is None:
-            depth_cache[node_id] = 0
+    def depth(task_id: int) -> int:
+        if task_id in depth_cache:
+            return depth_cache[task_id]
+        task = tasks_by_id.get(task_id)
+        if task is None or task.parent_task_id is None:
+            depth_cache[task_id] = 0
             return 0
-        value = depth(node.parent_node_id) + 1
-        depth_cache[node_id] = value
+        value = depth(task.parent_task_id) + 1
+        depth_cache[task_id] = value
         return value
 
-    ordered = sorted(node_ids, key=lambda nid: (depth(nid), nid))
-    return ordered
+    return sorted(task_ids, key=lambda tid: (depth(tid), tid))
 
 
 async def build_merge_cascade_plan(
@@ -176,29 +169,35 @@ async def build_merge_cascade_plan(
     force: bool,
 ) -> MergeCascadePlan:
     async with sessionmaker() as session:
-        task, leaf_node, epic = await _load_task_node_epic(session, task_id=task_id)
+        task, epic = await _load_task_node_epic(session, task_id=task_id)
         base_branch = epic.root_branch
 
-        nodes = list(await session.scalars(select(Node).where(Node.epic_id == epic.id)))
-        nodes_by_id: dict[int, Node] = {n.id: n for n in nodes}
+        tasks = list(
+            await session.scalars(select(Task).where(Task.epic_id == epic.id))
+        )
+        tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
         children_by_parent: dict[int | None, list[int]] = {}
-        for n in nodes:
-            children_by_parent.setdefault(n.parent_node_id, []).append(n.id)
+        for t in tasks:
+            if t.branch_name is None:
+                continue
+            children_by_parent.setdefault(t.parent_task_id, []).append(t.id)
         for value in children_by_parent.values():
             value.sort()
 
-        spine_node_ids = _compute_spine_node_ids(
-            nodes_by_id=nodes_by_id, leaf_node_id=leaf_node.id
+        spine_task_ids = _compute_spine_task_ids(
+            tasks_by_id=tasks_by_id,
+            leaf_task_id=task.id,
         )
 
-        affected_ids: set[int] = set(spine_node_ids)
+        affected_ids: set[int] = set(spine_task_ids)
         if scope == "descendants":
             affected_ids = _compute_descendants(
-                children_by_parent=children_by_parent, start_node_ids=spine_node_ids
+                children_by_parent=children_by_parent, start_task_ids=spine_task_ids
             )
 
-        ordered_node_ids = _topo_sort_by_depth(
-            nodes_by_id=nodes_by_id, node_ids=affected_ids
+        ordered_task_ids = _topo_sort_by_depth(
+            tasks_by_id=tasks_by_id,
+            task_ids=affected_ids,
         )
 
         base_worktree = git_worktree_path_for_branch(ctx.repo_root, base_branch)
@@ -210,119 +209,91 @@ async def build_merge_cascade_plan(
 
         # Merge-ready gating (spine).
         if not force:
-            spine_tasks = list(
-                await session.scalars(
-                    select(Task).where(Task.node_id.in_(spine_node_ids))
-                )
-            )
-            task_by_id = {t.id: t for t in spine_tasks}
             missing_ready: list[str] = []
-            for node_id in spine_node_ids:
-                node = nodes_by_id.get(node_id)
-                if node is None:
+            for spine_task_id in spine_task_ids:
+                spine_task = tasks_by_id.get(spine_task_id)
+                if spine_task is None:
                     continue
-                primary_id = node.primary_task_id
-                candidate = (
-                    task_by_id.get(primary_id)
-                    if primary_id is not None
-                    else next((t for t in spine_tasks if t.node_id == node_id), None)
-                )
-                if candidate is None:
+                if spine_task.state == TaskState.Done:
                     continue
-                if candidate.state == TaskState.Done:
-                    continue
-                if candidate.merge_ready_at is None:
-                    missing_ready.append(f"{candidate.id} ({node.branch_name})")
+                if spine_task.merge_ready_at is None:
+                    missing_ready.append(
+                        f"{spine_task.id} ({spine_task.branch_name or 'no-branch'})"
+                    )
             if missing_ready:
                 raise MergePlanError(
                     "Task(s) on the merge spine are not marked ready: "
                     + ", ".join(missing_ready)
                 )
 
-        tasks_for_affected = list(
-            await session.scalars(
-                select(Task).where(Task.node_id.in_(ordered_node_ids))
-            )
-        )
-        task_by_node_id: dict[int, Task] = {}
-        active_task_by_node_id: dict[int, Task] = {}
-        for t in tasks_for_affected:
-            if t.node_id is None:
-                continue
-            existing = task_by_node_id.get(t.node_id)
-            if existing is None:
-                task_by_node_id[t.node_id] = t
-            else:
-                # Prefer merge-ready/primary-ish task, but best-effort only.
-                if existing.merge_ready_at is None and t.merge_ready_at is not None:
-                    task_by_node_id[t.node_id] = t
+        active_task_by_id: dict[int, Task] = {
+            t.id: t
+            for t in tasks_by_id.values()
+            if t.branch_name is not None and t.state in {TaskState.InProgress, TaskState.Blocked}
+        }
 
-            if t.state in {TaskState.InProgress, TaskState.Blocked}:
-                active_task_by_node_id.setdefault(t.node_id, t)
-
-        def resolve_worktree_path(node: Node) -> Path | None:
-            if node.worktree_path:
-                candidate = Path(node.worktree_path)
+        def resolve_worktree_path(task_row: Task) -> Path | None:
+            if task_row.worktree_path:
+                candidate = Path(task_row.worktree_path)
                 if candidate.exists():
                     return candidate
-            return git_worktree_path_for_branch(ctx.repo_root, node.branch_name)
+            if task_row.branch_name is None:
+                return None
+            return git_worktree_path_for_branch(ctx.repo_root, task_row.branch_name)
 
-        spine_set = set(spine_node_ids)
+        spine_set = set(spine_task_ids)
 
-        # Decide which nodes to rebase based on worktree presence and state.
-        node_infos: dict[int, MergeNodeInfo] = {}
+        # Decide which tasks to rebase based on worktree presence and state.
+        task_infos: dict[int, MergeTaskInfo] = {}
         missing_spine: list[str] = []
         missing_active_descendants: list[str] = []
-        for node_id in ordered_node_ids:
-            node = nodes_by_id.get(node_id)
-            if node is None:
+        for candidate_task_id in ordered_task_ids:
+            task_row = tasks_by_id.get(candidate_task_id)
+            if task_row is None or task_row.branch_name is None:
                 continue
 
-            worktree_path = resolve_worktree_path(node)
-            task_row = task_by_node_id.get(node_id)
-
+            worktree_path = resolve_worktree_path(task_row)
+            parent_task = (
+                tasks_by_id.get(task_row.parent_task_id)
+                if task_row.parent_task_id is not None
+                else None
+            )
             upstream_ref = (
-                nodes_by_id[node.parent_node_id].branch_name
-                if node.parent_node_id is not None
-                and node.parent_node_id in nodes_by_id
+                parent_task.branch_name
+                if parent_task is not None and parent_task.branch_name is not None
                 else base_branch
             )
 
-            if node_id in spine_set:
+            if candidate_task_id in spine_set:
                 if worktree_path is None:
-                    missing_spine.append(
-                        f"{node.branch_name}"
-                        + (f" (T-{task_row.id})" if task_row else "")
-                    )
+                    missing_spine.append(f"T-{task_row.id} {task_row.branch_name}")
                     continue
-                node_infos[node_id] = MergeNodeInfo(
-                    node_id=node.id,
-                    parent_node_id=node.parent_node_id,
-                    branch_name=node.branch_name,
+                task_infos[candidate_task_id] = MergeTaskInfo(
+                    task_id=task_row.id,
+                    parent_task_id=task_row.parent_task_id,
+                    branch_name=task_row.branch_name,
                     upstream_ref=upstream_ref,
                     worktree_path=worktree_path,
-                    primary_task_id=node.primary_task_id,
                 )
                 continue
 
-            # Descendants: do not create worktrees. Only restack nodes that already have them.
-            active_task = active_task_by_node_id.get(node_id)
+            # Descendants: do not create worktrees. Only restack tasks that already have them.
+            active_task = active_task_by_id.get(candidate_task_id)
             if active_task is not None and worktree_path is None:
                 missing_active_descendants.append(
-                    f"{node.branch_name} (T-{active_task.id}, {active_task.state})"
+                    f"T-{task_row.id} {task_row.branch_name} ({active_task.state})"
                 )
                 continue
 
             if worktree_path is None:
                 continue
 
-            node_infos[node_id] = MergeNodeInfo(
-                node_id=node.id,
-                parent_node_id=node.parent_node_id,
-                branch_name=node.branch_name,
+            task_infos[candidate_task_id] = MergeTaskInfo(
+                task_id=task_row.id,
+                parent_task_id=task_row.parent_task_id,
+                branch_name=task_row.branch_name,
                 upstream_ref=upstream_ref,
                 worktree_path=worktree_path,
-                primary_task_id=node.primary_task_id,
             )
 
         if missing_spine:
@@ -339,9 +310,9 @@ async def build_merge_cascade_plan(
         # Running-agent detection for affected set.
         running_agents: list[RunningAgentInfo] = []
         agent_ids = [
-            nodes_by_id[nid].agent_id
-            for nid in node_infos
-            if nid in nodes_by_id and nodes_by_id[nid].agent_id is not None
+            tasks_by_id[tid].agent_id
+            for tid in task_infos
+            if tid in tasks_by_id and tasks_by_id[tid].agent_id is not None
         ]
         agents_by_id: dict[int, Agent] = {}
         if agent_ids:
@@ -350,21 +321,19 @@ async def build_merge_cascade_plan(
             )
             agents_by_id = {a.id: a for a in rows}
 
-        for node_id in node_infos:
-            node = nodes_by_id.get(node_id)
-            if node is None or node.agent_id is None:
+        for plan_task_id in task_infos:
+            task_row = tasks_by_id.get(plan_task_id)
+            if task_row is None or task_row.agent_id is None:
                 continue
-            agent = agents_by_id.get(node.agent_id)
+            agent = agents_by_id.get(task_row.agent_id)
             if agent is None:
                 continue
             if agent.status not in {AgentStatus.Running, AgentStatus.Blocked}:
                 continue
-            task_row = task_by_node_id.get(node_id)
             running_agents.append(
                 RunningAgentInfo(
-                    node_id=node_id,
-                    task_id=None if task_row is None else task_row.id,
-                    branch_name=node.branch_name,
+                    task_id=plan_task_id,
+                    branch_name=task_row.branch_name or "unknown",
                     agent_id=agent.id,
                     agent_name=agent.display_name,
                     agent_status=agent.status,
@@ -386,8 +355,8 @@ async def build_merge_cascade_plan(
                 f"Base worktree has an in-progress git operation: {base_worktree}"
             )
 
-        for node_id in ordered_node_ids:
-            info = node_infos.get(node_id)
+        for plan_task_id in ordered_task_ids:
+            info = task_infos.get(plan_task_id)
             if info is None:
                 continue
             if current_branch(cwd=info.worktree_path) != info.branch_name:
@@ -406,48 +375,43 @@ async def build_merge_cascade_plan(
         raise MergePlanError(str(e)) from e
 
     steps: list[MergePlanStep] = []
-
     if scope == "descendants" and restack_mode == "merge_then_restack":
-        for node_id in ordered_node_ids:
-            if node_id not in spine_set:
-                continue
-            info = node_infos.get(node_id)
+        for spine_task_id in spine_task_ids:
+            info = task_infos.get(spine_task_id)
             if info is None:
                 continue
             steps.append(
                 MergePlanStep(
                     kind="rebase",
-                    node_id=info.node_id,
-                    task_id=info.primary_task_id,
+                    task_id=info.task_id,
                     branch_name=info.branch_name,
                     worktree_path=info.worktree_path,
                     upstream_ref=info.upstream_ref,
                 )
             )
     else:
-        for node_id in ordered_node_ids:
-            info = node_infos.get(node_id)
+        for plan_task_id in ordered_task_ids:
+            info = task_infos.get(plan_task_id)
             if info is None:
                 continue
             steps.append(
                 MergePlanStep(
                     kind="rebase",
-                    node_id=info.node_id,
-                    task_id=info.primary_task_id,
+                    task_id=info.task_id,
                     branch_name=info.branch_name,
                     worktree_path=info.worktree_path,
                     upstream_ref=info.upstream_ref,
                 )
             )
-    for node_id in spine_node_ids:
-        info = node_infos.get(node_id)
+
+    for spine_task_id in spine_task_ids:
+        info = task_infos.get(spine_task_id)
         if info is None:
             continue
         steps.append(
             MergePlanStep(
                 kind="merge_ff",
-                node_id=info.node_id,
-                task_id=info.primary_task_id,
+                task_id=info.task_id,
                 branch_name=info.branch_name,
                 worktree_path=base_worktree,
                 base_branch=base_branch,
@@ -455,17 +419,16 @@ async def build_merge_cascade_plan(
         )
 
     if scope == "descendants" and restack_mode == "merge_then_restack":
-        for node_id in ordered_node_ids:
-            if node_id in spine_set:
+        for plan_task_id in ordered_task_ids:
+            if plan_task_id in spine_set:
                 continue
-            info = node_infos.get(node_id)
+            info = task_infos.get(plan_task_id)
             if info is None:
                 continue
             steps.append(
                 MergePlanStep(
                     kind="rebase",
-                    node_id=info.node_id,
-                    task_id=info.primary_task_id,
+                    task_id=info.task_id,
                     branch_name=info.branch_name,
                     worktree_path=info.worktree_path,
                     upstream_ref=info.upstream_ref,
@@ -479,9 +442,9 @@ async def build_merge_cascade_plan(
         base_worktree=base_worktree,
         scope=scope,
         restack_mode=restack_mode,
-        spine_node_ids=tuple(spine_node_ids),
-        affected_node_ids=tuple([nid for nid in ordered_node_ids if nid in node_infos]),
-        nodes=node_infos,
+        spine_task_ids=tuple(spine_task_ids),
+        affected_task_ids=tuple([tid for tid in ordered_task_ids if tid in task_infos]),
+        tasks=task_infos,
         steps=tuple(steps),
         running_agents=tuple(running_agents),
     )
@@ -510,7 +473,6 @@ async def execute_merge_cascade_plan(
     ):
         payload: dict[str, object] = {
             "run_id": plan.run_id,
-            "node_id": step.node_id,
             "task_id": step.task_id,
             "kind": step.kind,
             "branch_name": step.branch_name,
@@ -556,14 +518,10 @@ async def execute_merge_cascade_plan(
     async with sessionmaker() as session:
         # Mark the merged task's ancestors as complete (best-effort), and clear merge-ready.
         # We intentionally keep this scoped to ancestors because branch refs for unrelated
-        # nodes may not reflect updated history in worktree-heavy workflows.
+        # tasks may not reflect updated history in worktree-heavy workflows.
         #
-        # Note: plan.spine_node_ids is already root->leaf order.
-        rows = list(
-            await session.scalars(
-                select(Task).where(Task.node_id.in_(plan.spine_node_ids))
-            )
-        )
+        # Note: plan.spine_task_ids is already root->leaf order.
+        rows = list(await session.scalars(select(Task).where(Task.id.in_(plan.spine_task_ids))))
         for task_row in rows:
             if task_row.state != TaskState.Done:
                 task_row.state = TaskState.Done
@@ -592,8 +550,8 @@ def format_merge_plan(plan: MergeCascadePlan) -> str:
     lines.append(f"Epic base: {plan.base_branch} ({plan.base_worktree})")
     lines.append(f"Scope: {plan.scope}")
     lines.append(f"Restack mode: {plan.restack_mode}")
-    lines.append(f"Spine: {len(plan.spine_node_ids)} node(s)")
-    lines.append(f"Affected: {len(plan.affected_node_ids)} node(s)")
+    lines.append(f"Spine: {len(plan.spine_task_ids)} task(s)")
+    lines.append(f"Affected: {len(plan.affected_task_ids)} task(s)")
     lines.append("")
     for step in plan.steps:
         if step.kind == "rebase":

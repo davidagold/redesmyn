@@ -24,7 +24,6 @@ from redesmyn.db import (
     Epic,
     HarnessProfile,
     Host,
-    Node,
     Task,
     create_engine,
     create_sessionmaker,
@@ -497,87 +496,83 @@ def harness_profile_id_for_definition(
     return f"{slugify(kind)}/sha256-{digest}"
 
 
-async def ensure_node_worktree(
+async def ensure_task_worktree(
     session: AsyncSession,
     ctx: RepoContext,
     *,
-    node: Node,
+    task: Task,
     epic: Epic,
 ) -> Path:
-    if node.worktree_path:
-        path = Path(node.worktree_path)
+    if task.branch_name is None:
+        raise RuntimeError("Task has no branch backing; sync docs to create branches")
+
+    if task.worktree_path:
+        path = Path(task.worktree_path)
         if path.exists():
             return path
-        node.worktree_path = None
+        task.worktree_path = None
         await session.flush()
 
-    parent_node: Node | None = None
-    if node.parent_node_id is not None:
-        parent_node = await session.get(Node, node.parent_node_id)
+    parent_task: Task | None = None
+    if task.parent_task_id is not None:
+        parent_task = await session.get(Task, task.parent_task_id)
 
-    base_ref = parent_node.branch_name if parent_node is not None else epic.root_branch
+    base_ref = (
+        parent_task.branch_name
+        if parent_task is not None and parent_task.branch_name is not None
+        else epic.root_branch
+    )
 
     existing_path = _find_existing_worktree_path_for_branch(
-        ctx.repo_root, branch=node.branch_name
+        ctx.repo_root, branch=task.branch_name
     )
     if existing_path is not None:
-        node.worktree_path = str(existing_path)
+        task.worktree_path = str(existing_path)
         await session.flush()
         return existing_path
 
-    worktree_path = default_worktree_path(ctx, branch=node.branch_name)
+    worktree_path = default_worktree_path(ctx, branch=task.branch_name)
 
     if worktree_path.exists():
         branch = current_branch(cwd=worktree_path)
-        if branch != node.branch_name:
+        if branch != task.branch_name:
             raise RuntimeError(
                 f"Worktree path already exists but is on {branch!r} "
-                f"(expected {node.branch_name!r}): {worktree_path}"
+                f"(expected {task.branch_name!r}): {worktree_path}"
             )
     else:
         try:
             git_worktree_add(
                 ctx.repo_root,
                 worktree_path=worktree_path,
-                branch_name=node.branch_name,
+                branch_name=task.branch_name,
                 base_ref=base_ref,
             )
         except GitCommandError as e:
             raise RuntimeError(str(e)) from e
 
-    node.worktree_path = str(worktree_path)
+    task.worktree_path = str(worktree_path)
     await session.flush()
     return worktree_path
 
 
-async def load_node_agent(session: AsyncSession, *, node: Node) -> Agent | None:
-    if node.agent_id is None:
+async def load_task_agent_row(session: AsyncSession, *, task: Task) -> Agent | None:
+    if task.agent_id is None:
         return None
-    agent = await session.get(Agent, node.agent_id)
+    agent = await session.get(Agent, task.agent_id)
     if agent is None:
-        raise RuntimeError("Node has an invalid agent_id")
-    return agent
-
-
-async def load_task_agent_row(
-    session: AsyncSession, *, task: Task, node: Node
-) -> Agent | None:
-    agent = await load_node_agent(session, node=node)
-    if agent is None:
-        return None
+        raise RuntimeError("Task has an invalid agent_id")
 
     expected = f"a-{task.id}"
     if agent.display_name != expected:
         raise RuntimeError(
-            f"Node is assigned to {agent.display_name!r} but expected {expected!r}"
+            f"Task is assigned to {agent.display_name!r} but expected {expected!r}"
         )
     return agent
 
 
-async def get_or_create_task_agent(
-    session: AsyncSession, *, task: Task, node: Node
-) -> Agent:
-    agent = await load_task_agent_row(session, task=task, node=node)
+async def get_or_create_task_agent(session: AsyncSession, *, task: Task) -> Agent:
+    agent = await load_task_agent_row(session, task=task)
     if agent is not None:
         return agent
 
@@ -588,15 +583,15 @@ async def get_or_create_task_agent(
         session.add(agent)
         await session.flush()
     else:
-        other_node = await session.scalar(
-            select(Node).where(Node.agent_id == agent.id, Node.id != node.id).limit(1)
+        other_task = await session.scalar(
+            select(Task).where(Task.agent_id == agent.id, Task.id != task.id).limit(1)
         )
-        if other_node is not None:
+        if other_task is not None:
             raise RuntimeError(
-                f"Agent {expected!r} is already assigned to node {other_node.id} ({other_node.branch_name})"
+                f"Agent {expected!r} is already assigned to task {other_task.id} ({other_task.title})"
             )
 
-    node.agent_id = agent.id
+    task.agent_id = agent.id
     await session.flush()
     return agent
 
@@ -628,36 +623,34 @@ async def start_tmux_session(
     return AttachTmux(session=tmux_name, socket_path=None, log_path=str(log_path))
 
 
-async def _load_task_and_node(
+async def _load_task_and_epic(
     session: AsyncSession,
     *,
     task_id: int,
-) -> tuple[Task, Node, Epic]:
+) -> tuple[Task, Epic]:
     task = await session.get(Task, task_id)
     if task is None:
         raise RuntimeError(f"Unknown task id: {task_id}")
-    if task.node_id is None:
-        raise RuntimeError("Task has no node backing; sync docs to create nodes first")
+    if task.branch_name is None:
+        raise RuntimeError(
+            "Task has no branch backing; sync docs to create branches first"
+        )
 
-    node = await session.get(Node, task.node_id)
-    if node is None:
-        raise RuntimeError("Node not found for task")
-
-    epic = await session.get(Epic, node.epic_id)
+    epic = await session.get(Epic, task.epic_id)
     if epic is None:
         raise RuntimeError("Epic not found for task")
 
-    return task, node, epic
+    return task, epic
 
 
 async def checkout_task_worktree(ctx: RepoContext, *, task_id: int) -> Path:
-    """Ensure a task's worktree exists and is recorded on the Node row."""
+    """Ensure a task's worktree exists and is recorded on the Task row."""
     engine = create_engine(ctx.db_path)
     try:
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
-            _, node, epic = await _load_task_and_node(session, task_id=task_id)
-            path = await ensure_node_worktree(session, ctx, node=node, epic=epic)
+            task, epic = await _load_task_and_epic(session, task_id=task_id)
+            path = await ensure_task_worktree(session, ctx, task=task, epic=epic)
             await session.commit()
             return path
     finally:
@@ -667,7 +660,6 @@ async def checkout_task_worktree(ctx: RepoContext, *, task_id: int) -> Path:
 def _agent_prelude_lines(
     *,
     task: Task,
-    node: Node,
     epic: Epic,
     worktree_path: Path,
     template: str | None,
@@ -684,7 +676,7 @@ def _agent_prelude_lines(
         task_doc=task.local_path or "(unknown path)",
         epic_slug=epic.slug,
         epic_readme=f"epics/{epic.slug}/README.md",
-        branch=node.branch_name,
+        branch=task.branch_name or "(no branch)",
         worktree=str(worktree_path),
     )
 
@@ -701,7 +693,6 @@ def _agent_prelude_lines(
 async def send_agent_prelude(
     *,
     task: Task,
-    node: Node,
     epic: Epic,
     worktree_path: Path,
     template: str | None,
@@ -721,7 +712,6 @@ async def send_agent_prelude(
         name=tmux_name,
         lines=_agent_prelude_lines(
             task=task,
-            node=node,
             epic=epic,
             worktree_path=worktree_path,
             template=template,
@@ -751,29 +741,8 @@ async def start_task_agent(
     try:
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
-            task, node, epic = await _load_task_and_node(session, task_id=task_id)
-
-            agent = await load_task_agent_row(session, task=task, node=node)
-            should_link_agent = agent is None
-            if agent is None:
-                expected = f"a-{task.id}"
-                agent = await session.scalar(
-                    select(Agent).where(Agent.display_name == expected)
-                )
-                if agent is None:
-                    agent = Agent(display_name=expected)
-                    session.add(agent)
-                    await session.flush()
-                else:
-                    other_node = await session.scalar(
-                        select(Node)
-                        .where(Node.agent_id == agent.id, Node.id != node.id)
-                        .limit(1)
-                    )
-                    if other_node is not None:
-                        raise RuntimeError(
-                            f"Agent {expected!r} is already assigned to node {other_node.id} ({other_node.branch_name})"
-                        )
+            task, epic = await _load_task_and_epic(session, task_id=task_id)
+            agent = await get_or_create_task_agent(session, task=task)
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             if _tmux_has_session(name=tmux_name):
@@ -796,9 +765,6 @@ async def start_task_agent(
                     log_path=str(log_path),
                 )
                 agent.attach = attach.model_dump(mode="python")
-                if should_link_agent:
-                    node.agent_id = agent.id
-                    await session.flush()
                 await session.commit()
                 await session.refresh(agent)
                 return StartAgentResult(
@@ -806,40 +772,11 @@ async def start_task_agent(
                     attach=attach,
                     started=False,
                     warnings=(),
-                )
+            )
 
             host = await ensure_host_row(session, ctx)
-            warnings: list[str] = []
-
-            parent_node = (
-                await session.get(Node, node.parent_node_id)
-                if node.parent_node_id is not None
-                else None
-            )
-            base_ref = (
-                parent_node.branch_name if parent_node is not None else epic.root_branch
-            )
-            if not branch_exists(ctx.repo_root, node.branch_name):
-                base_worktree_path: Path | None = None
-                try:
-                    base_worktree_path = git_worktree_path_for_branch(
-                        ctx.repo_root, base_ref
-                    )
-                except GitCommandError:
-                    base_worktree_path = None
-                if base_worktree_path is not None:
-                    try:
-                        status = git_status_porcelain(base_worktree_path).strip()
-                    except GitCommandError:
-                        status = ""
-                    if status:
-                        warnings.append(
-                            f"Parent/base worktree for {base_ref!r} is dirty; creating "
-                            f"{node.branch_name!r} will use the last committed tip and "
-                            "will not include uncommitted changes."
-                        )
-            worktree_path = await ensure_node_worktree(
-                session, ctx, node=node, epic=epic
+            worktree_path = await ensure_task_worktree(
+                session, ctx, task=task, epic=epic
             )
 
             definition = HarnessProfileDefinition(argv=argv)
@@ -851,22 +788,32 @@ async def start_task_agent(
                 definition=definition,
             )
 
-            if not git_is_ancestor(ctx.repo_root, base_ref, node.branch_name):
-                if parent_node is not None:
+            warnings: list[str] = []
+            parent_task = (
+                await session.get(Task, task.parent_task_id)
+                if task.parent_task_id is not None
+                else None
+            )
+            base_ref = (
+                parent_task.branch_name
+                if parent_task is not None and parent_task.branch_name is not None
+                else epic.root_branch
+            )
+            if not git_is_ancestor(ctx.repo_root, base_ref, task.branch_name or ""):
+                if parent_task is not None:
                     warnings.append(
-                        f"Branch {node.branch_name!r} does not include the latest parent tip "
+                        f"Branch {task.branch_name!r} does not include the latest parent tip "
                         f"{base_ref!r}; consider rebasing before starting new work."
                     )
                 else:
                     warnings.append(
-                        f"Branch {node.branch_name!r} does not include the latest base tip "
+                        f"Branch {task.branch_name!r} does not include the latest base tip "
                         f"{base_ref!r}; consider rebasing before starting new work."
                     )
             shim_path = shutil.which("rn")
             runtime_env = {
                 "REDESMYN_AGENT_ID": str(agent.id),
                 "REDESMYN_TASK_ID": str(task.id),
-                "REDESMYN_NODE_ID": str(node.id),
                 "REDESMYN_HOST_KEY": host.host_key,
                 "PATH": os.environ.get("PATH", ""),
             }
@@ -973,10 +920,6 @@ async def start_task_agent(
             )
             pid = None
 
-            if should_link_agent:
-                node.agent_id = agent.id
-                await session.flush()
-
             agent.host_id = host.id
             agent.harness_profile_id = profile.id
             agent.cwd_path = str(worktree_path)
@@ -1031,7 +974,6 @@ async def start_task_agent(
                 if send_prelude:
                     await send_agent_prelude(
                         task=task,
-                        node=node,
                         epic=epic,
                         worktree_path=worktree_path,
                         template=prelude,
@@ -1058,8 +1000,8 @@ async def stop_task_agent(
     try:
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
-            task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await load_task_agent_row(session, task=task, node=node)
+            task, _ = await _load_task_and_epic(session, task_id=task_id)
+            agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return False
 
@@ -1102,8 +1044,8 @@ async def restart_task_agent(
         try:
             sessionmaker = create_sessionmaker(engine)
             async with sessionmaker() as session:
-                task, node, _ = await _load_task_and_node(session, task_id=task_id)
-                agent = await load_task_agent_row(session, task=task, node=node)
+                task, _ = await _load_task_and_epic(session, task_id=task_id)
+                agent = await load_task_agent_row(session, task=task)
                 if agent is None:
                     raise RuntimeError(
                         "No prior agent run found; pass --harness to restart"
@@ -1145,8 +1087,8 @@ async def load_task_agent(
     try:
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
-            task, node, _ = await _load_task_and_node(session, task_id=task_id)
-            agent = await load_task_agent_row(session, task=task, node=node)
+            task, _ = await _load_task_and_epic(session, task_id=task_id)
+            agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return None
             if active_only:

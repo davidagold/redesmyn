@@ -543,13 +543,6 @@
             "title": "Mergeruns",
             "type": "array"
           },
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/NodeResponse"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
           "tasks": {
             "items": {
               "$ref": "#/components/schemas/TaskResponse"
@@ -571,7 +564,6 @@
         "required": [
           "epic",
           "tasks",
-          "nodes",
           "agents"
         ],
         "title": "EpicGraphResponse",
@@ -1023,17 +1015,6 @@
             ],
             "title": "Blockederror"
           },
-          "blockedNodeId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Blockednodeid"
-          },
           "blockedStepIndex": {
             "anyOf": [
               {
@@ -1148,144 +1129,6 @@
           "updatedAt"
         ],
         "title": "MergeRunSummaryResponse",
-        "type": "object"
-      },
-      "NodeResponse": {
-        "properties": {
-          "agentId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agentid"
-          },
-          "branchName": {
-            "title": "Branchname",
-            "type": "string"
-          },
-          "createdAt": {
-            "format": "date-time",
-            "title": "Createdat",
-            "type": "string"
-          },
-          "epicId": {
-            "title": "Epicid",
-            "type": "integer"
-          },
-          "githubPrId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Githubprid"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "linearIssueId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Linearissueid"
-          },
-          "parentNodeId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parentnodeid"
-          },
-          "primaryTaskId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Primarytaskid"
-          },
-          "stackInSync": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stackinsync"
-          },
-          "updatedAt": {
-            "format": "date-time",
-            "title": "Updatedat",
-            "type": "string"
-          },
-          "worktreePath": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Worktreepath"
-          }
-        },
-        "required": [
-          "id",
-          "epicId",
-          "branchName",
-          "parentNodeId",
-          "agentId",
-          "worktreePath",
-          "primaryTaskId",
-          "githubPrId",
-          "linearIssueId",
-          "createdAt",
-          "updatedAt"
-        ],
-        "title": "NodeResponse",
-        "type": "object"
-      },
-      "NodeSetAgentRequest": {
-        "properties": {
-          "agentId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agentid"
-          }
-        },
-        "required": [
-          "agentId"
-        ],
-        "title": "NodeSetAgentRequest",
         "type": "object"
       },
       "OrchestrationDefaultsResponse": {
@@ -1905,10 +1748,6 @@
             "title": "Harnessprofileid",
             "type": "string"
           },
-          "nodeId": {
-            "title": "Nodeid",
-            "type": "integer"
-          },
           "resolvedProfile": {
             "anyOf": [
               {
@@ -1943,7 +1782,6 @@
         },
         "required": [
           "taskId",
-          "nodeId",
           "agentId",
           "agentName",
           "agentStatus",
@@ -1989,17 +1827,6 @@
               }
             ]
           },
-          "nodeId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nodeid"
-          },
           "stopped": {
             "title": "Stopped",
             "type": "boolean"
@@ -2011,7 +1838,6 @@
         },
         "required": [
           "taskId",
-          "nodeId",
           "agentId",
           "agentName",
           "agentStatus",
@@ -2054,17 +1880,6 @@
             "title": "Kind",
             "type": "string"
           },
-          "nodeId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nodeid"
-          },
           "taskId": {
             "anyOf": [
               {
@@ -2094,7 +1909,6 @@
         },
         "required": [
           "kind",
-          "nodeId",
           "taskId",
           "branchName",
           "worktreePath"
@@ -2208,8 +2022,30 @@
       },
       "TaskResponse": {
         "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
           "authority": {
             "$ref": "#/components/schemas/TaskAuthority"
+          },
+          "branchName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branchname"
           },
           "createdAt": {
             "format": "date-time",
@@ -2230,6 +2066,17 @@
               }
             ],
             "title": "Githubissueid"
+          },
+          "githubPrId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubprid"
           },
           "id": {
             "title": "Id",
@@ -2269,7 +2116,7 @@
             ],
             "title": "Mergereadyat"
           },
-          "nodeId": {
+          "parentTaskId": {
             "anyOf": [
               {
                 "type": "integer"
@@ -2278,7 +2125,7 @@
                 "type": "null"
               }
             ],
-            "title": "Nodeid"
+            "title": "Parenttaskid"
           },
           "readme": {
             "anyOf": [
@@ -2294,6 +2141,17 @@
           "source": {
             "$ref": "#/components/schemas/TaskSource"
           },
+          "stackInSync": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stackinsync"
+          },
           "state": {
             "$ref": "#/components/schemas/TaskState"
           },
@@ -2305,17 +2163,32 @@
             "format": "date-time",
             "title": "Updatedat",
             "type": "string"
+          },
+          "worktreePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktreepath"
           }
         },
         "required": [
           "id",
           "epicId",
+          "branchName",
+          "parentTaskId",
+          "agentId",
+          "worktreePath",
+          "githubPrId",
           "title",
           "readme",
           "source",
           "authority",
           "state",
-          "nodeId",
           "linearIssueId",
           "githubIssueId",
           "localPath",
@@ -2918,55 +2791,6 @@
           }
         },
         "summary": "Resume Merge Run"
-      }
-    },
-    "/v1/nodes/{node_id}/agent": {
-      "post": {
-        "operationId": "set_node_agent_v1_nodes__node_id__agent_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "node_id",
-            "required": true,
-            "schema": {
-              "title": "Node Id",
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NodeSetAgentRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Set Node Agent"
       }
     },
     "/v1/sandbox/capabilities": {

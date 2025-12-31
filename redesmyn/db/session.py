@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from redesmyn.db.models import Base
+from redesmyn.db.migrate import stamp_revision, upgrade_to_head
 from redesmyn.db.migrations.sqlite.agent_status_stopped import (
     migrate_agent_status_to_stopped,
 )
@@ -29,11 +29,55 @@ def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+async def _sqlite_has_table(conn, *, name: str) -> bool:
+    row = (
+        await conn.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (name,)
+        )
+    ).fetchone()
+    return row is not None
+
+
 async def init_db(engine: AsyncEngine) -> None:
+    db_path_raw = engine.url.database
+    if not db_path_raw:
+        raise RuntimeError("Database URL is missing a path")
+
+    db_path = Path(db_path_raw)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not db_path.exists():
+        upgrade_to_head(db_path=db_path)
+        return
+
+    should_stamp_baseline = False
+    dialect_name: str | None = None
+    has_alembic_version = False
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        if conn.dialect.name == "sqlite":
+        dialect_name = conn.dialect.name
+        if dialect_name != "sqlite":
+            return
+
+        has_alembic_version = await _sqlite_has_table(conn, name="alembic_version")
+        if has_alembic_version:
+            return
+
+        has_nodes = await _sqlite_has_table(conn, name="nodes")
+        if has_nodes:
+            # Pre-Alembic local DB: apply legacy SQLite migrations so the schema
+            # matches the Alembic baseline before stamping.
             await _migrate_sqlite(conn)
+            should_stamp_baseline = True
+
+    if dialect_name != "sqlite":
+        upgrade_to_head(db_path=db_path)
+        return
+    if has_alembic_version:
+        upgrade_to_head(db_path=db_path)
+        return
+    if should_stamp_baseline:
+        stamp_revision(db_path=db_path, revision="0001_baseline")
+    upgrade_to_head(db_path=db_path)
 
 
 async def _migrate_sqlite(conn) -> None:

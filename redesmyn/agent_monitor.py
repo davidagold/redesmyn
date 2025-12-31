@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Node
+from redesmyn.db import Agent, Task
 from redesmyn.db.models import AttachTmux
 from redesmyn.domain.enums import AgentStatus
 from redesmyn.agent_runtime import agent_log_path, has_tmux, tmux_session_name_for_task
@@ -18,7 +18,7 @@ from redesmyn.agent_runtime import agent_log_path, has_tmux, tmux_session_name_f
 
 @dataclass(frozen=True, slots=True)
 class AgentLivenessRow:
-    node: Node
+    task: Task
     agent: Agent
 
 
@@ -49,15 +49,15 @@ def _tmux_pipe_to_log(*, session_name: str, log_path: str, timeout_s: float) -> 
 async def _load_liveness_rows(session: AsyncSession) -> list[AgentLivenessRow]:
     rows = list(
         await session.execute(
-            select(Node, Agent)
-            .join(Agent, Node.agent_id == Agent.id)
+            select(Task, Agent)
+            .join(Agent, Task.agent_id == Agent.id)
             .where(
-                Node.agent_id.is_not(None),
+                Task.agent_id.is_not(None),
             )
-            .order_by(Node.id)
+            .order_by(Task.id)
         )
     )
-    return [AgentLivenessRow(node=node, agent=agent) for node, agent in rows]
+    return [AgentLivenessRow(task=task, agent=agent) for task, agent in rows]
 
 
 async def observe_agents_once(
@@ -74,9 +74,7 @@ async def observe_agents_once(
     updated = 0
 
     for row in await _load_liveness_rows(session):
-        task_id = row.node.primary_task_id
-        if task_id is None:
-            continue
+        task_id = row.task.id
 
         tmux_name = tmux_session_name_for_task(task_id=task_id)
         is_running = tmux_name in sessions

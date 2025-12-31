@@ -15,7 +15,6 @@ from redesmyn.db.models import (
     Host,
     LinearAuth,
     MergeRun,
-    Node,
     Repository,
     Task,
 )
@@ -41,7 +40,6 @@ __all__ = [
     "Host",
     "LinearAuth",
     "MergeRun",
-    "Node",
     "Repository",
     "Task",
     "async_session",
