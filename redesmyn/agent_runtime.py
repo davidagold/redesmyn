@@ -41,8 +41,11 @@ from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
     GitCommandError,
+    branch_exists,
     current_branch,
     git_is_ancestor,
+    git_status_porcelain,
+    git_worktree_path_for_branch,
     git_worktree_add,
 )
 from redesmyn.sandbox import (
@@ -806,6 +809,35 @@ async def start_task_agent(
                 )
 
             host = await ensure_host_row(session, ctx)
+            warnings: list[str] = []
+
+            parent_node = (
+                await session.get(Node, node.parent_node_id)
+                if node.parent_node_id is not None
+                else None
+            )
+            base_ref = (
+                parent_node.branch_name if parent_node is not None else epic.root_branch
+            )
+            if not branch_exists(ctx.repo_root, node.branch_name):
+                base_worktree_path: Path | None = None
+                try:
+                    base_worktree_path = git_worktree_path_for_branch(
+                        ctx.repo_root, base_ref
+                    )
+                except GitCommandError:
+                    base_worktree_path = None
+                if base_worktree_path is not None:
+                    try:
+                        status = git_status_porcelain(base_worktree_path).strip()
+                    except GitCommandError:
+                        status = ""
+                    if status:
+                        warnings.append(
+                            f"Parent/base worktree for {base_ref!r} is dirty; creating "
+                            f"{node.branch_name!r} will use the last committed tip and "
+                            "will not include uncommitted changes."
+                        )
             worktree_path = await ensure_node_worktree(
                 session, ctx, node=node, epic=epic
             )
@@ -819,15 +851,6 @@ async def start_task_agent(
                 definition=definition,
             )
 
-            warnings: list[str] = []
-            parent_node = (
-                await session.get(Node, node.parent_node_id)
-                if node.parent_node_id is not None
-                else None
-            )
-            base_ref = (
-                parent_node.branch_name if parent_node is not None else epic.root_branch
-            )
             if not git_is_ancestor(ctx.repo_root, base_ref, node.branch_name):
                 if parent_node is not None:
                     warnings.append(
