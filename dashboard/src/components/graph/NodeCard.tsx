@@ -351,9 +351,13 @@ export function NodeCard({
         "group",
         "relative overflow-visible",
         "py-0",
-        "cursor-pointer transition-colors hover:bg-accent/40",
+        "cursor-pointer transition-[background-color,box-shadow] duration-200 hover:bg-accent/40",
         actionsMenuOpen ? "bg-accent/40" : null,
-        task?.state === "done" ? "border-emerald-500/40" : null,
+        task?.state === "done"
+          ? "ring-emerald-500/35"
+          : mergeReady
+            ? "ring-emerald-400/50"
+            : null,
         isSelected
           ? "ring-2 ring-ring"
           : isHighlighted
@@ -373,7 +377,7 @@ export function NodeCard({
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
-            "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[calc(100%+6px)] transition-opacity",
+            "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[calc(100%+8px)] transition-opacity",
             isSelected || actionsMenuOpen
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
