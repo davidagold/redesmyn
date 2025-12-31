@@ -341,11 +341,12 @@ export function NodeCard({
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
-            "absolute right-0 top-1/2 z-10 translate-x-full -translate-y-1/2 transition-opacity",
+            "absolute right-0 top-2.5 z-40 translate-x-[40%] transition-opacity",
             isSelected
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
           )}
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
           <DropdownMenu>
@@ -364,14 +365,6 @@ export function NodeCard({
                     "rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60",
                     triggerProps.className,
                   )}
-                  onClickCapture={(event) => {
-                    event.stopPropagation()
-                    triggerProps.onClick?.(event)
-                  }}
-                  onPointerDownCapture={(event) => {
-                    event.stopPropagation()
-                    triggerProps.onPointerDown?.(event)
-                  }}
                 >
                   <EllipsisVertical className="size-4" />
                 </Button>
