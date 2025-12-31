@@ -61,11 +61,21 @@ class TaskResponse(ApiResponse):
 class AgentResponse(ApiResponse):
     id: int
     display_name: str
+    current_session_id: int | None = None
+    created_at: datetime
+
+
+class AgentSessionResponse(ApiResponse):
+    id: int
+    agent_id: int
+    agent_name: str
+    task_id: int | None
+    node_id: int | None
+    status: AgentStatus
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None
-    status: AgentStatus
-    last_seen_at: datetime | None
-    created_at: datetime
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
 
 
 class HostCapabilitiesResponse(ApiResponse):
@@ -139,6 +149,7 @@ class TaskAgentRestartRequest(ApiResponse):
 class TaskAgentStartResponse(ApiResponse):
     task_id: int
     agent_id: int
+    agent_session_id: int
     agent_name: str
     agent_status: AgentStatus
     harness_profile_id: str
@@ -567,6 +578,6 @@ class TrunkTimelineResponse(ApiResponse):
 class EpicGraphResponse(ApiResponse):
     epic: EpicResponse
     tasks: list[TaskResponse]
-    agents: list[AgentResponse]
+    agent_sessions: list[AgentSessionResponse]
     merge_runs: list[MergeRunSummaryResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None

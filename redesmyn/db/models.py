@@ -293,14 +293,64 @@ class Agent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+    # Best-effort pointer to the currently running session (if any). Intentionally
+    # not a foreign key to avoid circular FK constraints (SQLite).
+    current_session_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AgentConfig(Base):
+    __tablename__ = "agent_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"), nullable=False, index=True, unique=True
+    )
+    harness_profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("harness_profiles.id"), nullable=True, index=True
+    )
+    definition: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: HarnessProfileDefinition
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"), nullable=False, index=True
+    )
+    agent_config_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_configs.id"), nullable=True, index=True
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
+    )
+    node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
+
     status: Mapped[AgentStatus] = mapped_column(
-        _enum_type(AgentStatus, "agent_status"),
+        _enum_type(AgentStatus, "agent_session_status"),
         default=AgentStatus.Stopped,
         nullable=False,
     )
-    last_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+
     host_id: Mapped[int | None] = mapped_column(
         ForeignKey("hosts.id"), nullable=True, index=True
     )
@@ -321,6 +371,7 @@ class Agent(Base):
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    prelude_rendered: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

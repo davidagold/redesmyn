@@ -23,16 +23,27 @@
         "title": "AckReleaseResponse",
         "type": "object"
       },
-      "AgentResponse": {
+      "AgentSessionResponse": {
         "properties": {
-          "createdAt": {
-            "format": "date-time",
-            "title": "Createdat",
+          "agentId": {
+            "title": "Agentid",
+            "type": "integer"
+          },
+          "agentName": {
+            "title": "Agentname",
             "type": "string"
           },
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
+          "endedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endedat"
           },
           "harnessProfileId": {
             "anyOf": [
@@ -49,17 +60,16 @@
             "title": "Id",
             "type": "integer"
           },
-          "lastSeenAt": {
+          "nodeId": {
             "anyOf": [
               {
-                "format": "date-time",
-                "type": "string"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Lastseenat"
+            "title": "Nodeid"
           },
           "resolvedProfile": {
             "anyOf": [
@@ -71,18 +81,42 @@
               }
             ]
           },
+          "startedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
           "status": {
             "$ref": "#/components/schemas/AgentStatus"
+          },
+          "taskId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskid"
           }
         },
         "required": [
           "id",
-          "displayName",
-          "status",
-          "lastSeenAt",
-          "createdAt"
+          "agentId",
+          "agentName",
+          "taskId",
+          "nodeId",
+          "status"
         ],
-        "title": "AgentResponse",
+        "title": "AgentSessionResponse",
         "type": "object"
       },
       "AgentStatus": {
@@ -528,11 +562,11 @@
       },
       "EpicGraphResponse": {
         "properties": {
-          "agents": {
+          "agentSessions": {
             "items": {
-              "$ref": "#/components/schemas/AgentResponse"
+              "$ref": "#/components/schemas/AgentSessionResponse"
             },
-            "title": "Agents",
+            "title": "Agentsessions",
             "type": "array"
           },
           "epic": {
@@ -566,7 +600,7 @@
         "required": [
           "epic",
           "tasks",
-          "agents"
+          "agentSessions"
         ],
         "title": "EpicGraphResponse",
         "type": "object"
@@ -1739,6 +1773,10 @@
             "title": "Agentname",
             "type": "string"
           },
+          "agentSessionId": {
+            "title": "Agentsessionid",
+            "type": "integer"
+          },
           "agentStatus": {
             "$ref": "#/components/schemas/AgentStatus"
           },
@@ -1803,6 +1841,7 @@
         "required": [
           "taskId",
           "agentId",
+          "agentSessionId",
           "agentName",
           "agentStatus",
           "harnessProfileId",

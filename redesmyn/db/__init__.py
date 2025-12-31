@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from redesmyn.db.models import (
     Agent,
+    AgentConfig,
+    AgentSession,
     Base,
     Block,
     BlockAck,
@@ -31,6 +33,8 @@ from redesmyn.db.session import (
 __all__ = [
     "Base",
     "Agent",
+    "AgentConfig",
+    "AgentSession",
     "Block",
     "BlockAck",
     "BlockScope",

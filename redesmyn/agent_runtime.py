@@ -12,15 +12,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
 from redesmyn.db import (
     Agent,
+    AgentConfig,
+    AgentSession,
     Epic,
     HarnessProfile,
     Host,
@@ -123,6 +126,16 @@ def agent_dir(ctx: RepoContext, *, agent_id: int) -> Path:
     return ctx.state_dir / "agents" / str(agent_id)
 
 
+def agent_session_dir(ctx: RepoContext, *, agent_id: int, session_id: int) -> Path:
+    return agent_dir(ctx, agent_id=agent_id) / "sessions" / str(session_id)
+
+
+def agent_session_log_path(ctx: RepoContext, *, agent_id: int, session_id: int) -> Path:
+    return (
+        agent_session_dir(ctx, agent_id=agent_id, session_id=session_id) / "output.log"
+    )
+
+
 def agent_log_path(ctx: RepoContext, *, agent_id: int) -> Path:
     return agent_dir(ctx, agent_id=agent_id) / "output.log"
 
@@ -217,10 +230,11 @@ def write_agent_launcher(
     *,
     ctx: RepoContext,
     agent_id: int,
+    session_id: int,
     argv: list[str],
     env: dict[str, str],
 ) -> Path:
-    run_dir = agent_dir(ctx, agent_id=agent_id)
+    run_dir = agent_session_dir(ctx, agent_id=agent_id, session_id=session_id)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     log_path = run_dir / "output.log"
@@ -593,9 +607,95 @@ async def get_or_create_task_agent(session: AsyncSession, *, task: Task) -> Agen
     return agent
 
 
+async def upsert_agent_config(
+    session: AsyncSession,
+    *,
+    agent: Agent,
+    harness_profile: HarnessProfile,
+    definition: HarnessProfileDefinition,
+) -> AgentConfig:
+    row = await session.scalar(
+        select(AgentConfig).where(AgentConfig.agent_id == agent.id)
+    )
+    if row is None:
+        row = AgentConfig(
+            agent_id=agent.id,
+            harness_profile_id=harness_profile.id,
+            definition=definition.model_dump(mode="python"),
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    row.harness_profile_id = harness_profile.id
+    row.definition = definition.model_dump(mode="python")
+    await session.flush()
+    return row
+
+
+async def load_latest_task_agent_session_row(
+    session: AsyncSession, *, task: Task
+) -> AgentSession | None:
+    return await session.scalar(
+        select(AgentSession)
+        .where(AgentSession.task_id == task.id)
+        .order_by(desc(AgentSession.id))
+        .limit(1)
+    )
+
+
+async def ensure_current_agent_session(
+    session: AsyncSession,
+    *,
+    agent: Agent,
+    task: Task,
+    now: datetime,
+) -> AgentSession:
+    current: AgentSession | None = None
+    if agent.current_session_id is not None:
+        current = await session.get(AgentSession, agent.current_session_id)
+        if current is not None and current.ended_at is not None:
+            current = None
+
+    if current is None:
+        current = await session.scalar(
+            select(AgentSession)
+            .where(AgentSession.agent_id == agent.id)
+            .where(AgentSession.ended_at.is_(None))
+            .order_by(desc(AgentSession.id))
+            .limit(1)
+        )
+
+    if current is None:
+        current = AgentSession(
+            agent_id=agent.id,
+            agent_config_id=None,
+            task_id=task.id,
+            node_id=task.id,
+            status=AgentStatus.Running,
+            started_at=now,
+            ended_at=None,
+        )
+        session.add(current)
+        await session.flush()
+
+    if current.task_id is None:
+        current.task_id = task.id
+    if current.node_id is None:
+        current.node_id = task.id
+    if current.started_at is None:
+        current.started_at = now
+    current.ended_at = None
+
+    agent.current_session_id = current.id
+    await session.flush()
+    return current
+
+
 @dataclass(frozen=True, slots=True)
 class StartAgentResult:
     agent: Agent
+    agent_session: AgentSession
     attach: AttachInfo
     started: bool = True
     warnings: tuple[str, ...] = ()
@@ -606,13 +706,16 @@ async def start_tmux_session(
     *,
     task_id: int,
     agent_id: int,
+    session_id: int,
     worktree_path: Path,
     argv: list[str],
     env: dict[str, str],
 ) -> AttachTmux:
     tmux_name = tmux_session_name_for_task(task_id=task_id)
-    log_path = agent_log_path(ctx, agent_id=agent_id)
-    script_path = write_agent_launcher(ctx=ctx, agent_id=agent_id, argv=argv, env=env)
+    log_path = agent_session_log_path(ctx, agent_id=agent_id, session_id=session_id)
+    script_path = write_agent_launcher(
+        ctx=ctx, agent_id=agent_id, session_id=session_id, argv=argv, env=env
+    )
 
     _tmux_kill_session(name=tmux_name)
     _tmux_new_session(name=tmux_name, cwd=worktree_path, script_path=script_path)
@@ -739,18 +842,24 @@ async def start_task_agent(
         sessionmaker = create_sessionmaker(engine)
         async with sessionmaker() as session:
             task, epic = await _load_task_and_epic(session, task_id=task_id)
+            host = await ensure_host_row(session, ctx)
             agent = await get_or_create_task_agent(session, task=task)
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             if _tmux_has_session(name=tmux_name):
                 now = datetime.now(UTC)
-                agent.status = AgentStatus.Running
-                agent.last_seen_at = now
-                if agent.started_at is None:
-                    agent.started_at = now
-                agent.ended_at = None
+                agent_session = await ensure_current_agent_session(
+                    session,
+                    agent=agent,
+                    task=task,
+                    now=now,
+                )
+                agent_session.status = AgentStatus.Running
+                agent_session.host_id = host.id
 
-                log_path = agent_log_path(ctx, agent_id=agent.id)
+                log_path = agent_session_log_path(
+                    ctx, agent_id=agent.id, session_id=agent_session.id
+                )
                 try:
                     _tmux_pipe_to_log(name=tmux_name, log_path=log_path)
                 except RuntimeError:
@@ -761,20 +870,19 @@ async def start_task_agent(
                     socket_path=None,
                     log_path=str(log_path),
                 )
-                agent.attach = attach.model_dump(mode="python")
+                agent_session.attach = attach.model_dump(mode="python")
                 await session.commit()
-                await session.refresh(agent)
+                await session.refresh(agent_session)
                 return StartAgentResult(
                     agent=agent,
+                    agent_session=agent_session,
                     attach=attach,
                     started=False,
                     warnings=(),
                 )
 
-            host = await ensure_host_row(session, ctx)
-            worktree_path = await ensure_task_worktree(
-                session, ctx, task=task, epic=epic
-            )
+            warnings: list[str] = []
+            worktree_path = await ensure_task_worktree(session, ctx, task=task, epic=epic)
 
             definition = HarnessProfileDefinition(argv=argv)
             profile_id = harness_profile_id_for_definition(argv[0], definition)
@@ -784,8 +892,10 @@ async def start_task_agent(
                 kind=argv[0],
                 definition=definition,
             )
+            agent_config = await upsert_agent_config(
+                session, agent=agent, harness_profile=profile, definition=definition
+            )
 
-            warnings: list[str] = []
             parent_task = (
                 await session.get(Task, task.parent_task_id)
                 if task.parent_task_id is not None
@@ -810,6 +920,7 @@ async def start_task_agent(
             shim_path = shutil.which("rn")
             runtime_env = {
                 "REDESMYN_AGENT_ID": str(agent.id),
+                "REDESMYN_AGENT_SESSION_ID": "",
                 "REDESMYN_TASK_ID": str(task.id),
                 "REDESMYN_HOST_KEY": host.host_key,
                 "PATH": os.environ.get("PATH", ""),
@@ -900,6 +1011,28 @@ async def start_task_agent(
                     )
 
             sandbox_provider = make_sandbox_provider()
+            now = datetime.now(UTC)
+            agent_session = AgentSession(
+                agent_id=agent.id,
+                agent_config_id=agent_config.id,
+                task_id=task.id,
+                node_id=task.id,
+                status=AgentStatus.Running,
+                host_id=host.id,
+                harness_profile_id=profile.id,
+                cwd_path=str(worktree_path),
+                pid=None,
+                resolved_profile=definition.model_dump(mode="python"),
+                exit_code=None,
+                started_at=now,
+                ended_at=None,
+            )
+            session.add(agent_session)
+            await session.flush()
+            agent.current_session_id = agent_session.id
+            await session.flush()
+            runtime_env["REDESMYN_AGENT_SESSION_ID"] = str(agent_session.id)
+
             wrapped = sandbox_provider.wrap(
                 argv=definition.argv,
                 cwd=worktree_path,
@@ -911,29 +1044,22 @@ async def start_task_agent(
                 ctx,
                 task_id=task.id,
                 agent_id=agent.id,
+                session_id=agent_session.id,
                 worktree_path=worktree_path,
                 argv=wrapped.argv,
                 env=wrapped.env,
             )
-            pid = None
-
-            agent.host_id = host.id
-            agent.harness_profile_id = profile.id
-            agent.cwd_path = str(worktree_path)
-            agent.pid = pid
-            agent.attach = attach.model_dump(mode="python")
-            agent.resolved_profile = definition.model_dump(mode="python")
-            agent.exit_code = None
-            agent.started_at = datetime.now(UTC)
-            agent.ended_at = None
+            agent_session.attach = attach.model_dump(mode="python")
 
             await asyncio.sleep(0.25)
             if not _tmux_has_session(name=tmux_name):
                 now = datetime.now(UTC)
-                agent.status = AgentStatus.Error
-                agent.last_seen_at = now
-                agent.ended_at = now
-                log_path = agent_log_path(ctx, agent_id=agent.id)
+                agent_session.status = AgentStatus.Error
+                agent_session.ended_at = now
+                agent.current_session_id = None
+                log_path = agent_session_log_path(
+                    ctx, agent_id=agent.id, session_id=agent_session.id
+                )
                 tail = _tail_text(log_path)
                 if tail:
                     warnings.append(
@@ -942,20 +1068,20 @@ async def start_task_agent(
                 else:
                     warnings.append("Harness exited immediately (no logs captured).")
                 await session.commit()
-                await session.refresh(agent)
+                await session.refresh(agent_session)
                 return StartAgentResult(
                     agent=agent,
+                    agent_session=agent_session,
                     attach=attach,
                     started=False,
                     warnings=tuple(warnings),
                 )
 
             now = datetime.now(UTC)
-            agent.status = AgentStatus.Running
-            agent.last_seen_at = now
+            agent_session.status = AgentStatus.Running
 
             await session.commit()
-            await session.refresh(agent)
+            await session.refresh(agent_session)
             try:
                 prelude = None
                 send_prelude = True
@@ -969,6 +1095,15 @@ async def start_task_agent(
                 except RuntimeError:
                     prelude = prelude_override or None
                 if send_prelude:
+                    prelude_lines = _agent_prelude_lines(
+                        task=task,
+                        node=node,
+                        epic=epic,
+                        worktree_path=worktree_path,
+                        template=prelude,
+                    )
+                    agent_session.prelude_rendered = "\n".join(prelude_lines)
+                    await session.commit()
                     await send_agent_prelude(
                         task=task,
                         epic=epic,
@@ -980,6 +1115,7 @@ async def start_task_agent(
                 warnings.append(f"Failed to send agent prelude: {e}")
             return StartAgentResult(
                 agent=agent,
+                agent_session=agent_session,
                 attach=attach,
                 started=True,
                 warnings=tuple(warnings),
@@ -1001,26 +1137,37 @@ async def stop_task_agent(
             agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return False
+            agent_session = await load_latest_task_agent_session_row(
+                session, task=task, node=node
+            )
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             was_running = has_tmux() and _tmux_has_session(name=tmux_name)
             if was_running:
                 _tmux_kill_session(name=tmux_name)
             else:
-                if agent.status in {AgentStatus.Running, AgentStatus.Blocked}:
+                if (
+                    agent_session is not None
+                    and agent_session.status
+                    in {AgentStatus.Running, AgentStatus.Blocked}
+                    and agent_session.ended_at is None
+                ):
                     now = datetime.now(UTC)
-                    agent.status = AgentStatus.Error
-                    agent.last_seen_at = now
-                    agent.ended_at = now
-                    agent.pid = None
+                    agent_session.status = AgentStatus.Error
+                    agent_session.ended_at = now
+                    agent_session.pid = None
+                    agent.current_session_id = None
                     await session.commit()
                 return False
 
             now = datetime.now(UTC)
-            agent.status = AgentStatus.Stopped
-            agent.last_seen_at = now
-            agent.ended_at = now
-            agent.pid = None
+            agent_session = await ensure_current_agent_session(
+                session, agent=agent, task=task, node=node, now=now
+            )
+            agent_session.status = AgentStatus.Stopped
+            agent_session.ended_at = now
+            agent_session.pid = None
+            agent.current_session_id = None
 
             await session.commit()
             return True
@@ -1047,12 +1194,24 @@ async def restart_task_agent(
                     raise RuntimeError(
                         "No prior agent run found; pass --harness to restart"
                     )
-                if agent.resolved_profile is None:
+                config = await session.scalar(
+                    select(AgentConfig).where(AgentConfig.agent_id == agent.id)
+                )
+                resolved_profile: dict[str, Any] | None = (
+                    None if config is None else config.definition
+                )
+                if resolved_profile is None:
+                    latest = await load_latest_task_agent_session_row(
+                        session, task=task, node=node
+                    )
+                    if latest is not None:
+                        resolved_profile = latest.resolved_profile
+                if resolved_profile is None:
                     raise RuntimeError(
-                        "No prior agent run found; pass --harness to restart"
+                        "No prior agent config found; pass --harness to restart"
                     )
                 definition = TypeAdapter(HarnessProfileDefinition).validate_python(
-                    agent.resolved_profile
+                    resolved_profile
                 )
                 harness_command = shlex.join(definition.argv)
         finally:
@@ -1074,12 +1233,12 @@ async def restart_task_agent(
     )
 
 
-async def load_task_agent(
+async def load_task_agent_session(
     ctx: RepoContext,
     *,
     task_id: int,
     active_only: bool = True,
-) -> Agent | None:
+) -> AgentSession | None:
     engine = create_engine(ctx.db_path)
     try:
         sessionmaker = create_sessionmaker(engine)
@@ -1088,24 +1247,39 @@ async def load_task_agent(
             agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return None
+            agent_session = await load_latest_task_agent_session_row(
+                session, task=task, node=node
+            )
             if active_only:
                 tmux_name = tmux_session_name_for_task(task_id=task.id)
-                if not (has_tmux() and _tmux_has_session(name=tmux_name)):
+                if has_tmux() and _tmux_has_session(name=tmux_name):
+                    if agent_session is None:
+                        now = datetime.now(UTC)
+                        agent_session = await ensure_current_agent_session(
+                            session, agent=agent, task=task, node=node, now=now
+                        )
+                        await session.commit()
+                        await session.refresh(agent_session)
+                else:
                     return None
-            return agent
+            return agent_session
     finally:
         await engine.dispose()
 
 
-def agent_log_path_for_row(ctx: RepoContext, *, agent_row: Agent) -> Path:
-    attach = TypeAdapter(AttachInfo).validate_python(agent_row.attach)
+def agent_log_path_for_session_row(
+    ctx: RepoContext, *, agent_session_row: AgentSession
+) -> Path:
+    attach = TypeAdapter(AttachInfo).validate_python(agent_session_row.attach)
     if isinstance(attach, (AttachExternal, AttachTmux)) and attach.log_path:
         return Path(attach.log_path)
-    return agent_log_path(ctx, agent_id=agent_row.id)
+    return agent_session_log_path(
+        ctx, agent_id=agent_session_row.agent_id, session_id=agent_session_row.id
+    )
 
 
-def attach_agent(*, agent_row: Agent) -> int:
-    attach = TypeAdapter(AttachInfo).validate_python(agent_row.attach)
+def attach_agent_session(*, agent_session_row: AgentSession) -> int:
+    attach = TypeAdapter(AttachInfo).validate_python(agent_session_row.attach)
     if isinstance(attach, AttachTmux):
         return _tmux_attach(name=attach.session)
     raise RuntimeError("Attach is not available for this agent")

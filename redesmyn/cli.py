@@ -17,11 +17,11 @@ from sqlalchemy import desc, select
 
 from redesmyn import __version__
 from redesmyn.agent_runtime import (
-    attach_agent,
-    agent_log_path_for_row,
+    attach_agent_session,
+    agent_log_path_for_session_row,
     checkout_task_worktree,
     has_tmux,
-    load_task_agent,
+    load_task_agent_session,
     restart_task_agent,
     start_task_agent,
     stop_task_agent,
@@ -1748,7 +1748,8 @@ def agent_list() -> None:
         typer.echo("No agents.")
         return
     for a in agents:
-        typer.echo(f"{a.id}: {a.display_name} status={a.status.value}")
+        current = a.current_session_id if a.current_session_id is not None else "-"
+        typer.echo(f"{a.id}: {a.display_name} current_session={current}")
 
 
 @agent_app.command("start")
@@ -1878,20 +1879,24 @@ def agent_attach(
         raise typer.Exit(2)
 
     try:
-        agent_row = asyncio.run(load_task_agent(repo_ctx, task_id=task_id))
+        agent_session_row = asyncio.run(
+            load_task_agent_session(repo_ctx, task_id=task_id)
+        )
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if agent_row is None:
+    if agent_session_row is None:
         typer.echo("No running agent for this task.", err=True)
         raise typer.Exit(1)
 
     try:
-        code = attach_agent(agent_row=agent_row)
+        code = attach_agent_session(agent_session_row=agent_session_row)
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
-        log_path = agent_log_path_for_row(repo_ctx, agent_row=agent_row)
+        log_path = agent_log_path_for_session_row(
+            repo_ctx, agent_session_row=agent_session_row
+        )
         typer.echo(f"Logs: rn agent logs --task {task_id}  (path: {log_path})")
         raise typer.Exit(2)
     raise typer.Exit(code)
@@ -1940,18 +1945,20 @@ def agent_logs(
         raise typer.Exit(2)
 
     try:
-        agent_row = asyncio.run(
-            load_task_agent(repo_ctx, task_id=task_id, active_only=False)
+        agent_session_row = asyncio.run(
+            load_task_agent_session(repo_ctx, task_id=task_id, active_only=False)
         )
     except RuntimeError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    if agent_row is None:
+    if agent_session_row is None:
         typer.echo("No agent found for this task.", err=True)
         raise typer.Exit(1)
 
-    log_path = agent_log_path_for_row(repo_ctx, agent_row=agent_row)
+    log_path = agent_log_path_for_session_row(
+        repo_ctx, agent_session_row=agent_session_row
+    )
     if not log_path.exists():
         typer.echo(f"No log file found: {log_path}", err=True)
         raise typer.Exit(1)

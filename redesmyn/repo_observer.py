@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Event, MergeRun, Task
+from redesmyn.db import AgentSession, Event, MergeRun, Task
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus
 from redesmyn.repo import current_branch, git_has_in_progress_operation
@@ -218,19 +218,26 @@ async def observe_once(
             state.initialized = True
         return 0
 
-    agent_ids = [t.agent_id for t in tasks if t.agent_id is not None]
-    agents = (
-        list(await session.scalars(select(Agent).where(Agent.id.in_(agent_ids))))
-        if agent_ids
-        else []
-    )
-    agent_by_id = {a.id: a for a in agents}
+    task_ids = [t.id for t in tasks]
+    latest_session_by_task_id: dict[int, AgentSession] = {}
+    if task_ids:
+        sessions = list(
+            await session.scalars(
+                select(AgentSession)
+                .where(AgentSession.task_id.in_(task_ids))
+                .order_by(desc(AgentSession.id))
+            )
+        )
+        for sess in sessions:
+            if sess.task_id is None or sess.task_id in latest_session_by_task_id:
+                continue
+            latest_session_by_task_id[sess.task_id] = sess
+
     active_agent_id_by_task_id: dict[int, int] = {
-        t.id: t.agent_id
-        for t in tasks
-        if t.agent_id is not None
-        and (agent := agent_by_id.get(t.agent_id)) is not None
-        and agent.status in {AgentStatus.Running, AgentStatus.Blocked}
+        task_id: sess.agent_id
+        for task_id, sess in latest_session_by_task_id.items()
+        if sess.status in {AgentStatus.Running, AgentStatus.Blocked}
+        and sess.ended_at is None
     }
 
     heads = read_branch_heads(ctx.repo_root)

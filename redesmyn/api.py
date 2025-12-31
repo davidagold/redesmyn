@@ -21,10 +21,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
-from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_row
+from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_session_row
 from redesmyn.context import RepoContext, build_repo_context
 from redesmyn.db import (
     Agent,
+    AgentSession,
     Block,
     BlockScope,
     DaemonConnection,
@@ -69,7 +70,7 @@ from redesmyn.runner_backend import (
 from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.schemas.core import (
     ApiStatusResponse,
-    AgentResponse,
+    AgentSessionResponse,
     AttachInfoResponse,
     BlockScopeResponse,
     BlockStatusResponse,
@@ -362,19 +363,40 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                 select(Task).where(Task.epic_id == epic_row.id).order_by(Task.id)
             )
         )
-        agent_ids = {t.agent_id for t in tasks if t.agent_id is not None}
-        agents = (
-            list(
-                await session.scalars(
-                    select(Agent)
-                    .where(Agent.id.in_(list(agent_ids)))
-                    .where(Agent.started_at.is_not(None))
-                    .order_by(Agent.id)
+        task_ids = [t.id for t in tasks]
+        latest_sessions: list[AgentSessionResponse] = []
+        if task_ids:
+            rows = list(
+                await session.execute(
+                    select(AgentSession, Agent)
+                    .join(Agent, AgentSession.agent_id == Agent.id)
+                    .where(AgentSession.task_id.in_(task_ids))
+                    .order_by(desc(AgentSession.id))
                 )
             )
-            if agent_ids
-            else []
-        )
+            seen_task_ids: set[int] = set()
+            for session_row, agent_row in rows:
+                if session_row.task_id is None:
+                    continue
+                if session_row.task_id in seen_task_ids:
+                    continue
+                seen_task_ids.add(session_row.task_id)
+                latest_sessions.append(
+                    AgentSessionResponse(
+                        id=session_row.id,
+                        agent_id=agent_row.id,
+                        agent_name=agent_row.display_name,
+                        task_id=session_row.task_id,
+                        node_id=session_row.node_id,
+                        status=session_row.status,
+                        harness_profile_id=session_row.harness_profile_id,
+                        resolved_profile=TypeAdapter(
+                            HarnessProfileDefinitionResponse | None
+                        ).validate_python(session_row.resolved_profile),
+                        started_at=session_row.started_at,
+                        ended_at=session_row.ended_at,
+                    )
+                )
         merge_runs = list(
             await session.scalars(
                 select(MergeRun)
@@ -411,7 +433,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=task_responses,
-        agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
+        agent_sessions=latest_sessions,
         merge_runs=[
             MergeRunSummaryResponse.model_validate(r, from_attributes=True)
             for r in merge_runs
@@ -525,19 +547,22 @@ async def start_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent
+    agent_row = result.agent
+    session_row = result.agent_session
+
     return TaskAgentStartResponse(
         task_id=task_id,
-        agent_id=row.id,
-        agent_name=row.display_name,
-        agent_status=row.status,
-        harness_profile_id=row.harness_profile_id or "",
-        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
+        agent_id=agent_row.id,
+        agent_session_id=session_row.id,
+        agent_name=agent_row.display_name,
+        agent_status=session_row.status,
+        harness_profile_id=session_row.harness_profile_id or "",
+        attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
         resolved_profile=TypeAdapter(
             HarnessProfileDefinitionResponse | None
-        ).validate_python(row.resolved_profile),
-        started_at=row.started_at or datetime.now(UTC),
-        started=result.started,  # type: ignore[attr-defined]
+        ).validate_python(session_row.resolved_profile),
+        started_at=session_row.started_at or datetime.now(UTC),
+        started=result.started,
         warnings=warnings,
     )
 
@@ -1143,12 +1168,20 @@ async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         agent = await session.get(Agent, task.agent_id) if task.agent_id else None
+        latest_session: AgentSession | None = None
+        if task.agent_id is not None:
+            latest_session = await session.scalar(
+                select(AgentSession)
+                .where(AgentSession.task_id == task_id)
+                .order_by(desc(AgentSession.id))
+                .limit(1)
+            )
 
     return TaskAgentStopResponse(
         task_id=task_id,
         agent_id=None if agent is None else agent.id,
         agent_name=None if agent is None else agent.display_name,
-        agent_status=None if agent is None else agent.status,
+        agent_status=None if latest_session is None else latest_session.status,
         stopped=stopped,
     )
 
@@ -1174,19 +1207,22 @@ async def restart_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    row = result.agent
+    agent_row = result.agent
+    session_row = result.agent_session
+
     return TaskAgentStartResponse(
         task_id=task_id,
-        agent_id=row.id,
-        agent_name=row.display_name,
-        agent_status=row.status,
-        harness_profile_id=row.harness_profile_id or "",
-        attach=TypeAdapter(AttachInfoResponse).validate_python(row.attach),
+        agent_id=agent_row.id,
+        agent_session_id=session_row.id,
+        agent_name=agent_row.display_name,
+        agent_status=session_row.status,
+        harness_profile_id=session_row.harness_profile_id or "",
+        attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
         resolved_profile=TypeAdapter(
             HarnessProfileDefinitionResponse | None
-        ).validate_python(row.resolved_profile),
-        started_at=row.started_at or datetime.now(UTC),
-        started=result.started,  # type: ignore[attr-defined]
+        ).validate_python(session_row.resolved_profile),
+        started_at=session_row.started_at or datetime.now(UTC),
+        started=result.started,
         warnings=warnings,
     )
 
@@ -1467,11 +1503,21 @@ async def task_agent_logs(
     async with sessionmaker() as session:
         task = await _require_task(session, task_id=task_id)
         agent = await session.get(Agent, task.agent_id) if task.agent_id else None
+        agent_session: AgentSession | None = None
+        if agent is not None:
+            agent_session = await session.scalar(
+                select(AgentSession)
+                .where(AgentSession.task_id == task_id)
+                .order_by(desc(AgentSession.id))
+                .limit(1)
+            )
 
-    if agent is None:
-        raise HTTPException(status_code=404, detail="No agent for this task")
+    if agent_session is None:
+        raise HTTPException(status_code=404, detail="No agent session for this task")
 
-    log_path = agent_log_path_for_row(app.state.ctx, agent_row=agent)
+    log_path = agent_log_path_for_session_row(
+        app.state.ctx, agent_session_row=agent_session
+    )
     if not log_path.exists():
         raise HTTPException(status_code=404, detail="No log file found")
 

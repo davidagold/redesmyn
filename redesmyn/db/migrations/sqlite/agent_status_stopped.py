@@ -7,6 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 
 async def migrate_agent_status_to_stopped(conn: AsyncConnection) -> None:
+    column_rows = (await conn.exec_driver_sql("PRAGMA table_info(agents)")).fetchall()
+    columns = [row[1] for row in column_rows if row and row[1]]
+    if "status" not in columns:
+        return
+
     # SQLite can't alter CHECK constraints in place, so when the Enum-backed
     # constraint still references `'idle'` we rebuild the table to update it.
     rows = (
@@ -16,7 +21,11 @@ async def migrate_agent_status_to_stopped(conn: AsyncConnection) -> None:
     ).fetchall()
     create_sql = rows[0][0] if rows and rows[0][0] else None
 
-    if create_sql is not None and "'idle'" in create_sql and "'stopped'" not in create_sql:
+    if (
+        create_sql is not None
+        and "'idle'" in create_sql
+        and "'stopped'" not in create_sql
+    ):
         index_rows = (
             await conn.exec_driver_sql(
                 "SELECT sql FROM sqlite_master "
@@ -34,8 +43,6 @@ async def migrate_agent_status_to_stopped(conn: AsyncConnection) -> None:
         )
         table_sql = table_sql.replace("'idle'", "'stopped'")
 
-        column_rows = (await conn.exec_driver_sql("PRAGMA table_info(agents)")).fetchall()
-        columns = [row[1] for row in column_rows if row and row[1]]
         if not columns:
             return
 
@@ -66,4 +73,3 @@ async def migrate_agent_status_to_stopped(conn: AsyncConnection) -> None:
             await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
     await conn.execute(text("UPDATE agents SET status='stopped' WHERE status='idle'"))
-
