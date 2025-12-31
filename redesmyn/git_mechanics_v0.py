@@ -14,7 +14,6 @@ from redesmyn.repo import (
     GitCommandError,
     current_branch,
     git_has_in_progress_operation,
-    git_is_ancestor,
     git_merge_ff_only,
     git_rebase,
     git_status_porcelain,
@@ -527,23 +526,6 @@ async def execute_merge_cascade_plan(
         for task_row in rows:
             if task_row.state != TaskState.Done:
                 task_row.state = TaskState.Done
-            if task_row.merge_ready_at is not None:
-                task_row.merge_ready_at = None
-
-        # Also reflect tasks whose branch is now included in the base branch history.
-        result = await session.execute(
-            select(Task, Node)
-            .join(Node, Task.node_id == Node.id)
-            .where(Task.epic_id == plan.epic_id)
-        )
-        for task_row, node_row in result.all():
-            if task_row.state == TaskState.Done:
-                continue
-            if not git_is_ancestor(
-                ctx.repo_root, node_row.branch_name, plan.base_branch
-            ):
-                continue
-            task_row.state = TaskState.Done
             if task_row.merge_ready_at is not None:
                 task_row.merge_ready_at = None
 
