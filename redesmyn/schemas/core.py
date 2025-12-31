@@ -58,6 +58,7 @@ class NodeResponse(ApiResponse):
     epic_id: int
     branch_name: str
     parent_node_id: int | None
+    stack_in_sync: bool | None = None
     agent_id: int | None
     worktree_path: str | None
     primary_task_id: int | None

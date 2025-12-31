@@ -997,6 +997,17 @@
             ],
             "title": "Primarytaskid"
           },
+          "stackInSync": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stackinsync"
+          },
           "updatedAt": {
             "format": "date-time",
             "title": "Updatedat",

@@ -7,7 +7,6 @@ from typing import Awaitable, Callable, Literal, Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redesmyn.agent_runtime import ensure_node_worktree
 from redesmyn.context import RepoContext
 from redesmyn.db import Agent, Epic, Node, Task
 from redesmyn.domain.enums import AgentStatus, TaskState
@@ -207,35 +206,6 @@ async def build_merge_cascade_plan(
                 f"Check out {base_branch} in a worktree and retry."
             )
 
-        # Ensure worktrees exist and persist their paths.
-        node_infos: dict[int, MergeNodeInfo] = {}
-        for node_id in ordered_node_ids:
-            node = nodes_by_id.get(node_id)
-            if node is None:
-                continue
-            worktree_path = await ensure_node_worktree(
-                session,
-                ctx,
-                node=node,
-                epic=epic,
-            )
-            upstream_ref = (
-                nodes_by_id[node.parent_node_id].branch_name
-                if node.parent_node_id is not None
-                and node.parent_node_id in nodes_by_id
-                else base_branch
-            )
-            node_infos[node_id] = MergeNodeInfo(
-                node_id=node.id,
-                parent_node_id=node.parent_node_id,
-                branch_name=node.branch_name,
-                upstream_ref=upstream_ref,
-                worktree_path=worktree_path,
-                primary_task_id=node.primary_task_id,
-            )
-
-        await session.commit()
-
         # Merge-ready gating (spine).
         if not force:
             spine_tasks = list(
@@ -267,11 +237,108 @@ async def build_merge_cascade_plan(
                     + ", ".join(missing_ready)
                 )
 
+        tasks_for_affected = list(
+            await session.scalars(
+                select(Task).where(Task.node_id.in_(ordered_node_ids))
+            )
+        )
+        task_by_node_id: dict[int, Task] = {}
+        active_task_by_node_id: dict[int, Task] = {}
+        for t in tasks_for_affected:
+            if t.node_id is None:
+                continue
+            existing = task_by_node_id.get(t.node_id)
+            if existing is None:
+                task_by_node_id[t.node_id] = t
+            else:
+                # Prefer merge-ready/primary-ish task, but best-effort only.
+                if existing.merge_ready_at is None and t.merge_ready_at is not None:
+                    task_by_node_id[t.node_id] = t
+
+            if t.state in {TaskState.InProgress, TaskState.Blocked}:
+                active_task_by_node_id.setdefault(t.node_id, t)
+
+        def resolve_worktree_path(node: Node) -> Path | None:
+            if node.worktree_path:
+                candidate = Path(node.worktree_path)
+                if candidate.exists():
+                    return candidate
+            return git_worktree_path_for_branch(ctx.repo_root, node.branch_name)
+
+        spine_set = set(spine_node_ids)
+
+        # Decide which nodes to rebase based on worktree presence and state.
+        node_infos: dict[int, MergeNodeInfo] = {}
+        missing_spine: list[str] = []
+        missing_active_descendants: list[str] = []
+        for node_id in ordered_node_ids:
+            node = nodes_by_id.get(node_id)
+            if node is None:
+                continue
+
+            worktree_path = resolve_worktree_path(node)
+            task_row = task_by_node_id.get(node_id)
+
+            upstream_ref = (
+                nodes_by_id[node.parent_node_id].branch_name
+                if node.parent_node_id is not None
+                and node.parent_node_id in nodes_by_id
+                else base_branch
+            )
+
+            if node_id in spine_set:
+                if worktree_path is None:
+                    missing_spine.append(
+                        f"{node.branch_name}"
+                        + (f" (T-{task_row.id})" if task_row else "")
+                    )
+                    continue
+                node_infos[node_id] = MergeNodeInfo(
+                    node_id=node.id,
+                    parent_node_id=node.parent_node_id,
+                    branch_name=node.branch_name,
+                    upstream_ref=upstream_ref,
+                    worktree_path=worktree_path,
+                    primary_task_id=node.primary_task_id,
+                )
+                continue
+
+            # Descendants: do not create worktrees. Only restack nodes that already have them.
+            active_task = active_task_by_node_id.get(node_id)
+            if active_task is not None and worktree_path is None:
+                missing_active_descendants.append(
+                    f"{node.branch_name} (T-{active_task.id}, {active_task.state})"
+                )
+                continue
+
+            if worktree_path is None:
+                continue
+
+            node_infos[node_id] = MergeNodeInfo(
+                node_id=node.id,
+                parent_node_id=node.parent_node_id,
+                branch_name=node.branch_name,
+                upstream_ref=upstream_ref,
+                worktree_path=worktree_path,
+                primary_task_id=node.primary_task_id,
+            )
+
+        if missing_spine:
+            raise MergePlanError(
+                "Missing worktree(s) for merge spine branch(es): "
+                + ", ".join(missing_spine)
+            )
+        if missing_active_descendants:
+            raise MergePlanError(
+                "Descendant task(s) are active but have no worktree: "
+                + ", ".join(missing_active_descendants)
+            )
+
         # Running-agent detection for affected set.
         running_agents: list[RunningAgentInfo] = []
         agent_ids = [
             nodes_by_id[nid].agent_id
-            for nid in ordered_node_ids
+            for nid in node_infos
             if nid in nodes_by_id and nodes_by_id[nid].agent_id is not None
         ]
         agents_by_id: dict[int, Agent] = {}
@@ -281,24 +348,7 @@ async def build_merge_cascade_plan(
             )
             agents_by_id = {a.id: a for a in rows}
 
-        tasks_for_affected = list(
-            await session.scalars(
-                select(Task).where(Task.node_id.in_(ordered_node_ids))
-            )
-        )
-        task_by_node_id: dict[int, Task] = {}
-        for t in tasks_for_affected:
-            if t.node_id is None:
-                continue
-            existing = task_by_node_id.get(t.node_id)
-            if existing is None:
-                task_by_node_id[t.node_id] = t
-                continue
-            # Prefer merge-ready/primary-ish task, but best-effort only.
-            if existing.merge_ready_at is None and t.merge_ready_at is not None:
-                task_by_node_id[t.node_id] = t
-
-        for node_id in ordered_node_ids:
+        for node_id in node_infos:
             node = nodes_by_id.get(node_id)
             if node is None or node.agent_id is None:
                 continue
@@ -390,7 +440,7 @@ async def build_merge_cascade_plan(
         base_worktree=base_worktree,
         scope=scope,
         spine_node_ids=tuple(spine_node_ids),
-        affected_node_ids=tuple(ordered_node_ids),
+        affected_node_ids=tuple([nid for nid in ordered_node_ids if nid in node_infos]),
         nodes=node_infos,
         steps=tuple(steps),
         running_agents=tuple(running_agents),

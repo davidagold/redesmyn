@@ -319,6 +319,7 @@ export function EpicView() {
     let running = 0
     let blocked = 0
     let failed = 0
+    let outOfSync = 0
 
     for (const task of tasks) {
       if (task.nodeId === null) {
@@ -339,6 +340,10 @@ export function EpicView() {
           ? (agentsById.get(node.agentId) ?? null)
           : null
 
+      if (node?.stackInSync === false) {
+        outOfSync += 1
+      }
+
       if (agent?.status === "running") {
         running += 1
       } else if (agent?.status === "blocked") {
@@ -348,7 +353,7 @@ export function EpicView() {
       }
     }
 
-    return { eligible, running, blocked, failed }
+    return { eligible, running, blocked, failed, outOfSync }
   }, [agentsById, graph, nodesById])
 
   const actionTargets = useMemo(() => {
@@ -439,6 +444,7 @@ export function EpicView() {
     const running = new Set<number>()
     const blocked = new Set<number>()
     const failed = new Set<number>()
+    const outOfSync = new Set<number>()
 
     for (const task of graph.tasks ?? []) {
       if (task.nodeId === null) {
@@ -447,14 +453,18 @@ export function EpicView() {
       if (task.state === "done") {
         continue
       }
+
+      const node = nodesById.get(task.nodeId) ?? null
+      if (node?.stackInSync === false) {
+        outOfSync.add(task.nodeId)
+      }
+
       if (task.state === "blocked") {
         blocked.add(task.nodeId)
         continue
       }
 
       eligible.add(task.nodeId)
-
-      const node = nodesById.get(task.nodeId) ?? null
       const agent =
         node && node.agentId !== null
           ? (agentsById.get(node.agentId) ?? null)
@@ -474,6 +484,7 @@ export function EpicView() {
       running: Array.from(running),
       blocked: Array.from(blocked),
       failed: Array.from(failed),
+      outOfSync: Array.from(outOfSync),
     }
   }, [agentsById, graph, nodesById])
 
@@ -1193,6 +1204,25 @@ export function EpicView() {
                   <span className="truncate">Failed</span>
                   <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/80">
                     {runSummary.failed}
+                  </span>
+                </Button>
+                <Button
+                  variant={
+                    selectionEquals(runBuckets.outOfSync)
+                      ? "secondary"
+                      : "ghost"
+                  }
+                  size="sm"
+                  className="h-full rounded-none border-0 border-l px-1.5 leading-none"
+                  title="Tasks whose branch is out of sync with its upstream"
+                  onClick={() => selectBucketNodes(runBuckets.outOfSync)}
+                  disabledReason={
+                    runSummary.outOfSync > 0 ? null : "No tasks to select"
+                  }
+                >
+                  <span className="truncate">Out of sync</span>
+                  <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
+                    {runSummary.outOfSync}
                   </span>
                 </Button>
               </div>

@@ -703,6 +703,8 @@ export interface components {
       parentNodeId: number | null
       /** Primarytaskid */
       primaryTaskId: number | null
+      /** Stackinsync */
+      stackInSync?: boolean | null
       /**
        * Updatedat
        * Format: date-time

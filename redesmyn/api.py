@@ -55,7 +55,14 @@ from redesmyn.orchestration_config import (
     set_config_value,
     write_config,
 )
-from redesmyn.repo import GitCommandError, git_commit_info, git_merge_base, git_rev_list
+from redesmyn.repo import (
+    GitCommandError,
+    branch_exists,
+    git_commit_info,
+    git_is_ancestor,
+    git_merge_base,
+    git_rev_list,
+)
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.runner_backend import (
     RunnerBackend,
@@ -348,6 +355,28 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             )
         )
 
+    stack_in_sync_by_node_id: dict[int, bool | None] = {}
+    try:
+        repo_root = app.state.ctx.repo_root
+        nodes_by_id: dict[int, Node] = {n.id: n for n in nodes}
+        for node in nodes:
+            if not branch_exists(repo_root, node.branch_name):
+                stack_in_sync_by_node_id[node.id] = None
+                continue
+            if node.parent_node_id is None:
+                upstream = epic_row.root_branch
+            else:
+                parent = nodes_by_id.get(node.parent_node_id)
+                upstream = parent.branch_name if parent is not None else None
+            if upstream is None or not branch_exists(repo_root, upstream):
+                stack_in_sync_by_node_id[node.id] = None
+                continue
+            stack_in_sync_by_node_id[node.id] = git_is_ancestor(
+                repo_root, upstream, node.branch_name
+            )
+    except Exception:
+        stack_in_sync_by_node_id = {}
+
     trunk: TrunkTimelineResponse | None = None
     try:
         repo_root = app.state.ctx.repo_root
@@ -415,10 +444,16 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
     except Exception:
         trunk = None
 
+    node_responses: list[NodeResponse] = []
+    for node in nodes:
+        resp = NodeResponse.model_validate(node, from_attributes=True)
+        resp.stack_in_sync = stack_in_sync_by_node_id.get(node.id)
+        node_responses.append(resp)
+
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
-        nodes=[NodeResponse.model_validate(n, from_attributes=True) for n in nodes],
+        nodes=node_responses,
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
         merge_runs=[
             MergeRunSummaryResponse.model_validate(r, from_attributes=True)
