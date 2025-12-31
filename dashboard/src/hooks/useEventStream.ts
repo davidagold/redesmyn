@@ -1,5 +1,33 @@
 import { useEffect, useRef, useState } from "react"
 
+function cursorStorageKey(epic: string) {
+  return `redesmyn:event-stream:cursor:${epic}`
+}
+
+function readStoredCursor(epic: string): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(cursorStorageKey(epic))
+    if (!raw) {
+      return null
+    }
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function storeCursor(epic: string, value: number) {
+  try {
+    window.sessionStorage.setItem(cursorStorageKey(epic), String(value))
+  } catch {
+    // ignore
+  }
+}
+
 export type StreamHelloMessage = {
   type: "hello"
   protocol: number
@@ -140,6 +168,7 @@ export function useEventStream(options: {
     }
 
     const epicValue = epic
+    lastEventIdRef.current = readStoredCursor(epicValue)
 
     let closed = false
     let socket: WebSocket | null = null
@@ -196,11 +225,13 @@ export function useEventStream(options: {
 
           if (msg.type === "hello") {
             lastEventIdRef.current = msg.lastEventId
+            storeCursor(epicValue, msg.lastEventId)
             return
           }
 
           if (msg.type === "event") {
             lastEventIdRef.current = msg.event.id
+            storeCursor(epicValue, msg.event.id)
             onEvent?.(msg.event)
             return
           }

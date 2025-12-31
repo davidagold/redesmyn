@@ -1044,121 +1044,120 @@ export function GraphView({
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
       <DotGrid />
-      {rootNodes.length > 0 ? (
-        <div ref={containerRef} className="relative h-full">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
-            edgeTypes={{ commitString: CommitStringEdge }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            onInit={setFlow}
-            onPaneClick={onClearSelection}
-            onEdgeClick={(e, edge) => {
-              if (!edge.id.startsWith("edge:")) {
-                return
-              }
-              e.stopPropagation()
-              const fromId = Number(edge.source)
-              const toId = Number(edge.target)
-              if (Number.isNaN(fromId) || Number.isNaN(toId)) {
-                return
-              }
-              onSelectEdge(fromId, toId)
-            }}
-            onEdgeMouseEnter={(_, edge) => {
-              if (edge.id.startsWith("edge:")) {
-                setHoveredEdgeId(edge.id)
-              }
-            }}
-            onEdgeMouseLeave={(_, edge) => {
-              if (!edge.id.startsWith("edge:")) {
-                return
-              }
-              setHoveredEdgeId((current) =>
-                current === edge.id ? null : current,
-              )
-            }}
-            elevateEdgesOnSelect
-            defaultEdgeOptions={defaultEdgeOptions}
-            style={
-              {
-                // Let our own background (surface + dot grid) show through.
-                // React Flow's default dark background doesn't match our theme.
-                "--xy-background-color": "transparent",
-              } as CSSProperties
+      <div ref={containerRef} className="relative h-full">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={{ branch: FlowBranchNode, trunk: TrunkNode }}
+          edgeTypes={{ commitString: CommitStringEdge }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          onInit={setFlow}
+          onPaneClick={onClearSelection}
+          onEdgeClick={(e, edge) => {
+            if (!edge.id.startsWith("edge:")) {
+              return
             }
-          />
-          {selectionBarMounted ? (
-            <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
-              <div
-                className={
-                  "pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-all duration-200 will-change-transform " +
-                  (selectionBarVisible
-                    ? "translate-y-0 opacity-100"
-                    : "-translate-y-12 opacity-0")
-                }
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="text-xs text-muted-foreground">
-                  {selectedNodeIds.size} selected
-                </div>
-                <div className="flex overflow-hidden rounded-md border border-border/60">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="rounded-none border-0"
-                    disabledReason={
-                      selectedRunningTaskIds.length === 0
-                        ? "No running selected agents"
-                        : null
-                    }
-                    title={
-                      selectedRunningTaskIds.length
-                        ? "Copy a tmux command to attach (sequentially) to running selected agents"
-                        : "No running selected agents"
-                    }
-                    onClick={() => {
-                      const sessions = selectedRunningTaskIds.map(
-                        (taskId) => `rn-a-${taskId}`,
-                      )
-                      const cmd =
-                        `for s in ${sessions.map((s) => `'${s}'`).join(" ")}; do ` +
-                        `tmux has-session -t "$s" 2>/dev/null && tmux attach -t "$s"; ` +
-                        "done"
-                      void copyToClipboard(cmd)
-                        .then(() => setSelectionNotice("Attach command copied"))
-                        .catch((e: unknown) =>
-                          setSelectionNotice(
-                            e instanceof Error ? e.message : String(e),
-                          ),
-                        )
-                    }}
-                  >
-                    Copy attach
-                  </Button>
-                </div>
-                <Button variant="ghost" size="sm" onClick={onClearSelection}>
-                  Clear
-                </Button>
-                {selectionNotice ? (
-                  <div
-                    className="max-w-[24rem] truncate text-xs text-destructive"
-                    title={selectionNotice}
-                  >
-                    {selectionNotice}
-                  </div>
-                ) : null}
+            e.stopPropagation()
+            const fromId = Number(edge.source)
+            const toId = Number(edge.target)
+            if (Number.isNaN(fromId) || Number.isNaN(toId)) {
+              return
+            }
+            onSelectEdge(fromId, toId)
+          }}
+          onEdgeMouseEnter={(_, edge) => {
+            if (edge.id.startsWith("edge:")) {
+              setHoveredEdgeId(edge.id)
+            }
+          }}
+          onEdgeMouseLeave={(_, edge) => {
+            if (!edge.id.startsWith("edge:")) {
+              return
+            }
+            setHoveredEdgeId((current) =>
+              current === edge.id ? null : current,
+            )
+          }}
+          elevateEdgesOnSelect
+          defaultEdgeOptions={defaultEdgeOptions}
+          style={
+            {
+              // Let our own background (surface + dot grid) show through.
+              // React Flow's default dark background doesn't match our theme.
+              "--xy-background-color": "transparent",
+            } as CSSProperties
+          }
+        />
+        {nodes.length === 0 ? (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-sm text-muted-foreground">
+            No nodes.
+          </div>
+        ) : null}
+        {selectionBarMounted ? (
+          <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center px-4">
+            <div
+              className={
+                "pointer-events-auto flex items-center gap-3 rounded-lg bg-background/80 px-3 py-2 shadow-sm ring-1 ring-foreground/10 backdrop-blur transition-all duration-200 will-change-transform " +
+                (selectionBarVisible
+                  ? "translate-y-0 opacity-100"
+                  : "-translate-y-12 opacity-0")
+              }
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-xs text-muted-foreground">
+                {selectedNodeIds.size} selected
               </div>
+              <div className="flex overflow-hidden rounded-md border border-border/60">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-none border-0"
+                  disabledReason={
+                    selectedRunningTaskIds.length === 0
+                      ? "No running selected agents"
+                      : null
+                  }
+                  title={
+                    selectedRunningTaskIds.length
+                      ? "Copy a tmux command to attach (sequentially) to running selected agents"
+                      : "No running selected agents"
+                  }
+                  onClick={() => {
+                    const sessions = selectedRunningTaskIds.map(
+                      (taskId) => `rn-a-${taskId}`,
+                    )
+                    const cmd =
+                      `for s in ${sessions.map((s) => `'${s}'`).join(" ")}; do ` +
+                      `tmux has-session -t "$s" 2>/dev/null && tmux attach -t "$s"; ` +
+                      "done"
+                    void copyToClipboard(cmd)
+                      .then(() => setSelectionNotice("Attach command copied"))
+                      .catch((e: unknown) =>
+                        setSelectionNotice(
+                          e instanceof Error ? e.message : String(e),
+                        ),
+                      )
+                  }}
+                >
+                  Copy attach
+                </Button>
+              </div>
+              <Button variant="ghost" size="sm" onClick={onClearSelection}>
+                Clear
+              </Button>
+              {selectionNotice ? (
+                <div
+                  className="max-w-[24rem] truncate text-xs text-destructive"
+                  title={selectionNotice}
+                >
+                  {selectionNotice}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="relative h-full overflow-auto p-6 text-sm text-muted-foreground">
-          No nodes.
-        </div>
-      )}
+          </div>
+        ) : null}
+      </div>
     </main>
   )
 }

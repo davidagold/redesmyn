@@ -41,6 +41,57 @@ function shellQuote(value: string) {
   return `'${value.split("'").join("'\\\\''")}'`
 }
 
+const BULK_RUN_TTL_MS = 10 * 60 * 1000
+
+type BulkRunState = {
+  runId: string
+  total: number
+  completed: number
+  failed: number
+  startedAt: number
+}
+
+function bulkRunStorageKey(epicSlug: string) {
+  return `redesmyn:bulk-run:${epicSlug}`
+}
+
+function readStoredBulkRun(epicSlug: string): BulkRunState | null {
+  try {
+    const raw = window.sessionStorage.getItem(bulkRunStorageKey(epicSlug))
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== "object") {
+      return null
+    }
+    const state = parsed as Partial<BulkRunState>
+    if (
+      typeof state.runId !== "string" ||
+      typeof state.total !== "number" ||
+      typeof state.completed !== "number" ||
+      typeof state.failed !== "number" ||
+      typeof state.startedAt !== "number"
+    ) {
+      return null
+    }
+    if (
+      !Number.isFinite(state.total) ||
+      !Number.isFinite(state.completed) ||
+      !Number.isFinite(state.failed) ||
+      !Number.isFinite(state.startedAt)
+    ) {
+      return null
+    }
+    if (state.total <= 0 || state.completed < 0 || state.failed < 0) {
+      return null
+    }
+    return state as BulkRunState
+  } catch {
+    return null
+  }
+}
+
 export function EpicView() {
   const navigate = useNavigate()
   const params = useParams({ strict: false })
@@ -78,13 +129,9 @@ export function EpicView() {
   const selectedNodeIdsRef = useRef(selectedNodeIds)
   const [runAction, setRunAction] =
     useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
-  const [bulkRun, setBulkRun] = useState<{
-    runId: string
-    total: number
-    completed: number
-    failed: number
-  } | null>(null)
+  const [bulkRun, setBulkRun] = useState<BulkRunState | null>(null)
   const refreshTimerRef = useRef<number | null>(null)
+  const streamRefreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
   const [, setActivityTick] = useState(0)
@@ -136,6 +183,51 @@ export function EpicView() {
     () => epics.find((e) => e.slug === epicSlug) ?? null,
     [epics, epicSlug],
   )
+
+  useEffect(() => {
+    if (!selectedEpic?.slug) {
+      setBulkRun(null)
+      return
+    }
+
+    const stored = readStoredBulkRun(selectedEpic.slug)
+    if (!stored) {
+      return
+    }
+
+    const ageMs = Date.now() - stored.startedAt
+    if (
+      ageMs < 0 ||
+      ageMs > BULK_RUN_TTL_MS ||
+      stored.completed >= stored.total
+    ) {
+      try {
+        window.sessionStorage.removeItem(bulkRunStorageKey(selectedEpic.slug))
+      } catch {
+        // ignore
+      }
+      return
+    }
+
+    setBulkRun(stored)
+  }, [selectedEpic?.slug])
+
+  useEffect(() => {
+    if (!selectedEpic?.slug) {
+      return
+    }
+
+    const key = bulkRunStorageKey(selectedEpic.slug)
+    try {
+      if (bulkRun === null) {
+        window.sessionStorage.removeItem(key)
+      } else {
+        window.sessionStorage.setItem(key, JSON.stringify(bulkRun))
+      }
+    } catch {
+      // ignore
+    }
+  }, [bulkRun, selectedEpic?.slug])
 
   const {
     graph,
@@ -452,24 +544,42 @@ export function EpicView() {
     }, 250)
   }, [refreshGraph])
 
+  const scheduleStreamGraphRefresh = useCallback(() => {
+    if (streamRefreshTimerRef.current !== null) {
+      return
+    }
+    streamRefreshTimerRef.current = window.setTimeout(() => {
+      streamRefreshTimerRef.current = null
+      void refreshGraph()
+    }, 750)
+  }, [refreshGraph])
+
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      if (!("nodeId" in event.data) || typeof event.data.nodeId !== "number") {
-        return
-      }
-      const nodeId = event.data.nodeId
+      const nodeId =
+        "nodeId" in event.data && typeof event.data.nodeId === "number"
+          ? event.data.nodeId
+          : null
 
       const observedAt = Date.parse(event.createdAt) || Date.now()
-      setActivityByNodeId((prev) => {
-        const next = new Map(prev)
-        const current = next.get(nodeId) ?? {}
-        if (event.eventType === "git.commit") {
-          next.set(nodeId, { ...current, lastCommitAt: observedAt })
-        } else if (event.eventType === "worktree.health") {
-          next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
-        }
-        return next
-      })
+      if (nodeId !== null) {
+        setActivityByNodeId((prev) => {
+          const next = new Map(prev)
+          const current = next.get(nodeId) ?? {}
+          if (event.eventType === "git.commit") {
+            next.set(nodeId, { ...current, lastCommitAt: observedAt })
+          } else if (event.eventType === "worktree.health") {
+            next.set(nodeId, { ...current, lastWorktreeAt: observedAt })
+          }
+          return next
+        })
+      }
+
+      if (event.eventType !== "task.agent_run") {
+        return
+      }
+
+      scheduleStreamGraphRefresh()
 
       if (event.data.type !== "task.agent_run") {
         return
@@ -495,14 +605,14 @@ export function EpicView() {
               ? `Started (with ${failed} failure${failed === 1 ? "" : "s"})`
               : "Started",
           )
+          scheduleGraphRefresh()
           return null
         }
 
         return { ...current, completed, failed }
       })
-      scheduleGraphRefresh()
     },
-    [scheduleGraphRefresh],
+    [scheduleGraphRefresh, scheduleStreamGraphRefresh],
   )
 
   useEventStream({
@@ -515,6 +625,9 @@ export function EpicView() {
     return () => {
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current)
+      }
+      if (streamRefreshTimerRef.current !== null) {
+        window.clearTimeout(streamRefreshTimerRef.current)
       }
     }
   }, [])
@@ -807,7 +920,7 @@ export function EpicView() {
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    setBulkRun({ runId, total, completed: 0, failed: 0 })
+    setBulkRun({ runId, total, completed: 0, failed: 0, startedAt: Date.now() })
 
     await runTaskAgentsBulk({
       runId,
