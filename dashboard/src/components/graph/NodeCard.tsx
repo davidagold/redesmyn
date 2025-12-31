@@ -615,9 +615,25 @@ export function NodeCard({
         ) : null}
       </CardContent>
       {outOfSync ? (
-        <span className="pointer-events-none absolute bottom-2 right-2 text-amber-300/70">
-          <GitBranch className="size-4" />
-        </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={(triggerProps) => (
+              <span
+                {...triggerProps}
+                className={cn(
+                  "nodrag nopan absolute bottom-3 right-3 text-amber-300/70",
+                  triggerProps.className,
+                )}
+                aria-label="Out of sync with upstream"
+              >
+                <GitBranch className="size-4" />
+              </span>
+            )}
+          />
+          <TooltipContent side="left" sideOffset={12} align="center">
+            Branch is out of sync with its upstream.
+          </TooltipContent>
+        </Tooltip>
       ) : null}
     </Card>
   )

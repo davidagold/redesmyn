@@ -17,6 +17,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
@@ -24,6 +29,7 @@ import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
+import { cn } from "@/lib/utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
 
@@ -1206,25 +1212,51 @@ export function EpicView() {
                     {runSummary.failed}
                   </span>
                 </Button>
-                <Button
-                  variant={
-                    selectionEquals(runBuckets.outOfSync)
-                      ? "secondary"
-                      : "ghost"
-                  }
-                  size="sm"
-                  className="h-full rounded-none border-0 border-l px-1.5 leading-none"
-                  title="Tasks whose branch is out of sync with its upstream"
-                  onClick={() => selectBucketNodes(runBuckets.outOfSync)}
-                  disabledReason={
-                    runSummary.outOfSync > 0 ? null : "No tasks to select"
-                  }
-                >
-                  <span className="truncate">Out of sync</span>
-                  <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
-                    {runSummary.outOfSync}
-                  </span>
-                </Button>
+                {runSummary.outOfSync > 0 ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant={
+                            selectionEquals(runBuckets.outOfSync)
+                              ? "secondary"
+                              : "ghost"
+                          }
+                          size="sm"
+                          className={cn(
+                            "h-full rounded-none border-0 border-l px-1.5 leading-none",
+                            triggerProps.className,
+                          )}
+                          onClick={() =>
+                            selectBucketNodes(runBuckets.outOfSync)
+                          }
+                        >
+                          <span className="truncate">Out of sync</span>
+                          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
+                            {runSummary.outOfSync}
+                          </span>
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent side="bottom" align="center">
+                      Tasks whose branch is out of sync with its upstream.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-full rounded-none border-0 border-l px-1.5 leading-none"
+                    onClick={() => selectBucketNodes(runBuckets.outOfSync)}
+                    disabledReason="No tasks to select"
+                  >
+                    <span className="truncate">Out of sync</span>
+                    <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
+                      {runSummary.outOfSync}
+                    </span>
+                  </Button>
+                )}
               </div>
             ) : null}
             <div className="flex items-center gap-2">
