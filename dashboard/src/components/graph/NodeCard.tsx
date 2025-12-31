@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip"
 import {
   EllipsisVertical,
+  GitBranch,
   GitMerge,
   Layers,
   Play,
@@ -569,12 +570,7 @@ export function NodeCard({
               </div>
             ) : null}
             <div
-              className={cn(
-                "relative inline-flex size-5 items-center justify-center rounded-full",
-                outOfSync
-                  ? "ring-2 ring-amber-400/70 ring-offset-1 ring-offset-background"
-                  : null,
-              )}
+              className="relative inline-flex size-5 items-center justify-center"
               title={tooltip}
             >
               {commitHot ? (
@@ -618,6 +614,11 @@ export function NodeCard({
           </div>
         ) : null}
       </CardContent>
+      {outOfSync ? (
+        <span className="pointer-events-none absolute bottom-2 right-2 text-amber-300/70">
+          <GitBranch className="size-4" />
+        </span>
+      ) : null}
     </Card>
   )
 }
