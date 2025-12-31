@@ -85,6 +85,7 @@ export function NodeCard({
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
   const harnessKind = agent?.harnessProfileId?.split("/")[0] ?? null
   const stackInSync = node.stackInSync ?? null
+  const outOfSync = stackInSync === false
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -394,9 +395,11 @@ export function NodeCard({
         actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done"
           ? "ring-emerald-500/35"
-          : mergeReady
-            ? "ring-emerald-400/50"
-            : null,
+          : outOfSync
+            ? "ring-amber-400/40"
+            : mergeReady
+              ? "ring-emerald-400/50"
+              : null,
         isSelected
           ? "ring-2 ring-ring"
           : isHighlighted
@@ -569,12 +572,6 @@ export function NodeCard({
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-sky-400/60 opacity-75" />
               ) : worktreeHot ? (
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
-              ) : null}
-              {stackInSync === false ? (
-                <span
-                  className="absolute -right-0.5 -top-0.5 inline-flex size-2 rounded-full bg-amber-400 ring-1 ring-background/60"
-                  title="Out of sync with upstream"
-                />
               ) : null}
               <AgentStatusIcon
                 status={agent?.status ?? null}
