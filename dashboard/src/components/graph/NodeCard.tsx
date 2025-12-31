@@ -465,8 +465,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Same merge, plus rebase downstream branches to keep the stack
-                  intact.
+                  Fast-forward the task and ancestors as in [Merge], plus rebase
+                  downstream branches to keep the stack intact.
                 </TooltipContent>
               </Tooltip>
             </DropdownMenuContent>
