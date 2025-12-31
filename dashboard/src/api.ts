@@ -20,6 +20,10 @@ export type TaskAgentBulkRunRequest = components["schemas"]["TaskAgentBulkRunReq
   prelude?: string | null
 }
 export type TaskAgentBulkRunResponse = components["schemas"]["TaskAgentBulkRunResponse"]
+export type TaskAgentBulkActionRequest = components["schemas"]["TaskAgentBulkActionRequest"] & {
+  prelude?: string | null
+}
+export type TaskAgentBulkActionResponse = components["schemas"]["TaskAgentBulkActionResponse"]
 
 export type TaskAgentLogsResponse = {
   path: string
@@ -174,6 +178,28 @@ export async function runTaskAgentsBulk(
     )
   }
   return response.json() as Promise<TaskAgentBulkRunResponse>
+}
+
+export async function bulkTaskAgentActions(
+  request: TaskAgentBulkActionRequest,
+): Promise<TaskAgentBulkActionResponse> {
+  const response = await fetch("/v1/tasks/agent/actions", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(
+      `POST /v1/tasks/agent/actions failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+    )
+  }
+  return response.json() as Promise<TaskAgentBulkActionResponse>
 }
 
 export async function stopTaskAgent(

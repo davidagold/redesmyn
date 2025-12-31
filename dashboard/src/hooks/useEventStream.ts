@@ -77,6 +77,19 @@ export type TaskAgentRunEventData = {
   error?: string | null
 }
 
+export type TaskAgentActionEventData = {
+  type: "task.agent_action"
+  runId: string
+  nodeId: number
+  taskId: number
+  action: "start" | "restart" | "stop"
+  phase: "requested" | "started" | "stopped" | "failed"
+  agentId?: number | null
+  stopped?: boolean | null
+  warnings?: string[]
+  error?: string | null
+}
+
 export type NodeAgentSetEventData = {
   type: "node.agent_set"
   nodeId: number
@@ -113,7 +126,7 @@ export type UnknownEventData = {
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"

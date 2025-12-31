@@ -210,6 +210,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/agent/actions": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Bulk Task Agent Actions */
+    post: operations["bulk_task_agent_actions_v1_tasks_agent_actions_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/tasks/agent/run": {
     parameters: {
       query?: never
@@ -702,6 +719,39 @@ export interface components {
       supportsWorktree: boolean
       /** Unavailablereason */
       unavailableReason?: string | null
+    }
+    /** TaskAgentBulkActionItemRequest */
+    TaskAgentBulkActionItemRequest: {
+      /**
+       * Action
+       * @enum {string}
+       */
+      action: "start" | "restart" | "stop"
+      /** Taskid */
+      taskId: number
+    }
+    /** TaskAgentBulkActionRequest */
+    TaskAgentBulkActionRequest: {
+      /** Actions */
+      actions?: components["schemas"]["TaskAgentBulkActionItemRequest"][]
+      /**
+       * Detach
+       * @default true
+       */
+      detach: boolean
+      /** Harness */
+      harness?: string | null
+      /** Prelude */
+      prelude?: string | null
+      /** Runid */
+      runId?: string | null
+    }
+    /** TaskAgentBulkActionResponse */
+    TaskAgentBulkActionResponse: {
+      /** Runid */
+      runId: string
+      /** Submitted */
+      submitted: number
     }
     /** TaskAgentBulkRunRequest */
     TaskAgentBulkRunRequest: {
@@ -1246,6 +1296,39 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["ApiStatusResponse"]
+        }
+      }
+    }
+  }
+  bulk_task_agent_actions_v1_tasks_agent_actions_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentBulkActionRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentBulkActionResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

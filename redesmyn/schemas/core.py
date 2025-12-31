@@ -181,6 +181,24 @@ class TaskAgentBulkRunResponse(ApiResponse):
     submitted: int
 
 
+class TaskAgentBulkActionItemRequest(ApiRequest):
+    task_id: int
+    action: Literal["start", "restart", "stop"]
+
+
+class TaskAgentBulkActionRequest(ApiRequest):
+    run_id: str | None = None
+    actions: list[TaskAgentBulkActionItemRequest] = Field(default_factory=list)
+    harness: str | None = None
+    detach: bool = True
+    prelude: str | None = None
+
+
+class TaskAgentBulkActionResponse(ApiResponse):
+    run_id: str
+    submitted: int
+
+
 class TaskMergeReadyRequest(ApiRequest):
     ready: bool
 
@@ -331,6 +349,19 @@ class TaskAgentRunEventDataResponse(ApiResponse):
     error: str | None = None
 
 
+class TaskAgentActionEventDataResponse(ApiResponse):
+    type: Literal["task.agent_action"] = "task.agent_action"
+    run_id: str
+    node_id: int
+    task_id: int
+    action: Literal["start", "restart", "stop"]
+    phase: Literal["requested", "started", "stopped", "failed"]
+    agent_id: int | None = None
+    stopped: bool | None = None
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class UnknownEventDataResponse(ApiResponse):
     type: Literal["unknown"] = "unknown"
     event_type: str
@@ -345,6 +376,7 @@ EventDataResponse = Annotated[
     | BlockClearedEventDataResponse
     | BlockAckEventDataResponse
     | TaskAgentRunEventDataResponse
+    | TaskAgentActionEventDataResponse
     | UnknownEventDataResponse,
     Field(discriminator="type"),
 ]

@@ -17,11 +17,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
-import {
-  runTaskAgentsBulk,
-  stopTaskAgent,
-  updateOrchestrationDefaults,
-} from "@/api"
+import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
@@ -41,23 +37,26 @@ function shellQuote(value: string) {
   return `'${value.split("'").join("'\\\\''")}'`
 }
 
-const BULK_RUN_TTL_MS = 10 * 60 * 1000
+const BULK_ACTION_TTL_MS = 10 * 60 * 1000
 
-type BulkRunState = {
+type BulkActionKind = "run" | "stop"
+
+type BulkActionState = {
   runId: string
+  kind: BulkActionKind
   total: number
   completed: number
   failed: number
   startedAt: number
 }
 
-function bulkRunStorageKey(epicSlug: string) {
-  return `redesmyn:bulk-run:${epicSlug}`
+function bulkActionStorageKey(epicSlug: string) {
+  return `redesmyn:bulk-action:${epicSlug}`
 }
 
-function readStoredBulkRun(epicSlug: string): BulkRunState | null {
+function readStoredBulkAction(epicSlug: string): BulkActionState | null {
   try {
-    const raw = window.sessionStorage.getItem(bulkRunStorageKey(epicSlug))
+    const raw = window.sessionStorage.getItem(bulkActionStorageKey(epicSlug))
     if (!raw) {
       return null
     }
@@ -65,9 +64,10 @@ function readStoredBulkRun(epicSlug: string): BulkRunState | null {
     if (!parsed || typeof parsed !== "object") {
       return null
     }
-    const state = parsed as Partial<BulkRunState>
+    const state = parsed as Partial<BulkActionState>
     if (
       typeof state.runId !== "string" ||
+      (state.kind !== "run" && state.kind !== "stop") ||
       typeof state.total !== "number" ||
       typeof state.completed !== "number" ||
       typeof state.failed !== "number" ||
@@ -86,7 +86,7 @@ function readStoredBulkRun(epicSlug: string): BulkRunState | null {
     if (state.total <= 0 || state.completed < 0 || state.failed < 0) {
       return null
     }
-    return state as BulkRunState
+    return state as BulkActionState
   } catch {
     return null
   }
@@ -129,7 +129,7 @@ export function EpicView() {
   const selectedNodeIdsRef = useRef(selectedNodeIds)
   const [runAction, setRunAction] =
     useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
-  const [bulkRun, setBulkRun] = useState<BulkRunState | null>(null)
+  const [bulkAction, setBulkAction] = useState<BulkActionState | null>(null)
   const refreshTimerRef = useRef<number | null>(null)
   const streamRefreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
@@ -186,11 +186,11 @@ export function EpicView() {
 
   useEffect(() => {
     if (!selectedEpic?.slug) {
-      setBulkRun(null)
+      setBulkAction(null)
       return
     }
 
-    const stored = readStoredBulkRun(selectedEpic.slug)
+    const stored = readStoredBulkAction(selectedEpic.slug)
     if (!stored) {
       return
     }
@@ -198,18 +198,20 @@ export function EpicView() {
     const ageMs = Date.now() - stored.startedAt
     if (
       ageMs < 0 ||
-      ageMs > BULK_RUN_TTL_MS ||
+      ageMs > BULK_ACTION_TTL_MS ||
       stored.completed >= stored.total
     ) {
       try {
-        window.sessionStorage.removeItem(bulkRunStorageKey(selectedEpic.slug))
+        window.sessionStorage.removeItem(
+          bulkActionStorageKey(selectedEpic.slug),
+        )
       } catch {
         // ignore
       }
       return
     }
 
-    setBulkRun(stored)
+    setBulkAction(stored)
   }, [selectedEpic?.slug])
 
   useEffect(() => {
@@ -217,17 +219,17 @@ export function EpicView() {
       return
     }
 
-    const key = bulkRunStorageKey(selectedEpic.slug)
+    const key = bulkActionStorageKey(selectedEpic.slug)
     try {
-      if (bulkRun === null) {
+      if (bulkAction === null) {
         window.sessionStorage.removeItem(key)
       } else {
-        window.sessionStorage.setItem(key, JSON.stringify(bulkRun))
+        window.sessionStorage.setItem(key, JSON.stringify(bulkAction))
       }
     } catch {
       // ignore
     }
-  }, [bulkRun, selectedEpic?.slug])
+  }, [bulkAction, selectedEpic?.slug])
 
   const {
     graph,
@@ -576,34 +578,46 @@ export function EpicView() {
       }
 
       if (event.eventType !== "task.agent_run") {
-        return
+        if (event.eventType !== "task.agent_action") {
+          return
+        }
       }
 
       scheduleStreamGraphRefresh()
 
-      if (event.data.type !== "task.agent_run") {
+      const runId =
+        event.data.type === "task.agent_action" ||
+        event.data.type === "task.agent_run"
+          ? event.data.runId
+          : null
+      const phase =
+        event.data.type === "task.agent_action" ||
+        event.data.type === "task.agent_run"
+          ? event.data.phase
+          : null
+
+      if (!runId) {
         return
       }
 
-      const data = event.data
-
-      if (data.phase !== "started" && data.phase !== "failed") {
+      if (phase !== "started" && phase !== "stopped" && phase !== "failed") {
         return
       }
 
-      setBulkRun((current) => {
-        if (!current || current.runId !== data.runId) {
+      setBulkAction((current) => {
+        if (!current || current.runId !== runId) {
           return current
         }
 
         const completed = current.completed + 1
-        const failed = current.failed + (data.phase === "failed" ? 1 : 0)
+        const failed = current.failed + (phase === "failed" ? 1 : 0)
 
         if (completed >= current.total) {
+          const label = current.kind === "stop" ? "Stopped" : "Started"
           setRunNotice(
             failed > 0
-              ? `Started (with ${failed} failure${failed === 1 ? "" : "s"})`
-              : "Started",
+              ? `${label} (with ${failed} failure${failed === 1 ? "" : "s"})`
+              : label,
           )
           scheduleGraphRefresh()
           return null
@@ -883,36 +897,37 @@ export function EpicView() {
     selectedNodeIds.size > 1 && actionTargets.selected.start.length > 0
   const canRunAll =
     runAction === null &&
-    bulkRun === null &&
+    bulkAction === null &&
     (actionTargets.all.start.length > 0 ||
       actionTargets.all.restart.length > 0) &&
     (!needsHarnessForAll || !!configuredHarnessCommand)
   const canStopAll =
-    runAction === null && bulkRun === null && actionTargets.all.stop.length > 0
+    runAction === null &&
+    bulkAction === null &&
+    actionTargets.all.stop.length > 0
   const showSelectedActions = selectedNodeIds.size > 1
   const canRunSelected =
     runAction === null &&
-    bulkRun === null &&
+    bulkAction === null &&
     showSelectedActions &&
     (actionTargets.selected.start.length > 0 ||
       actionTargets.selected.restart.length > 0) &&
     (!needsHarnessForSelected || !!configuredHarnessCommand)
   const canStopSelected =
     runAction === null &&
-    bulkRun === null &&
+    bulkAction === null &&
     showSelectedActions &&
     actionTargets.selected.stop.length > 0
 
-  async function runTargets(targets: {
-    start: number[]
-    restart: number[]
-    stop: number[]
+  async function submitBulkActions(options: {
+    kind: BulkActionKind
+    actions: Array<{ taskId: number action: "start" | "restart" | "stop" }>
+    harness: string | null
   }) {
-    const total = targets.start.length + targets.restart.length
-    if (total === 0) {
+    if (options.actions.length === 0) {
       return
     }
-    if (targets.start.length > 0 && !configuredHarnessCommand) {
+    if (options.actions.some((a) => a.action === "start") && !options.harness) {
       throw new Error("Set a harness command in Configure")
     }
 
@@ -920,22 +935,25 @@ export function EpicView() {
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-    setBulkRun({ runId, total, completed: 0, failed: 0, startedAt: Date.now() })
-
-    await runTaskAgentsBulk({
+    setBulkAction({
       runId,
-      startTaskIds: targets.start,
-      restartTaskIds: targets.restart,
-      harness: targets.start.length > 0 ? configuredHarnessCommand : null,
+      kind: options.kind,
+      total: options.actions.length,
+      completed: 0,
+      failed: 0,
+      startedAt: Date.now(),
+    })
+
+    await bulkTaskAgentActions({
+      runId,
+      actions: options.actions.map((a) => ({
+        taskId: a.taskId,
+        action: a.action,
+      })),
+      harness: options.harness,
       detach: configuredDetach,
       prelude: null,
     })
-  }
-
-  async function stopTargets(targets: { stop: number[] }) {
-    for (const taskId of targets.stop) {
-      await stopTaskAgent(taskId)
-    }
   }
 
   async function handleRunAll() {
@@ -944,12 +962,26 @@ export function EpicView() {
     }
     setRunAction("runAll")
     try {
-      await runTargets(actionTargets.all)
+      await submitBulkActions({
+        kind: "run",
+        actions: [
+          ...actionTargets.all.start.map((taskId) => ({
+            taskId,
+            action: "start" as const,
+          })),
+          ...actionTargets.all.restart.map((taskId) => ({
+            taskId,
+            action: "restart" as const,
+          })),
+        ],
+        harness:
+          actionTargets.all.start.length > 0 ? configuredHarnessCommand : null,
+      })
       scheduleGraphRefresh()
       setRunNotice("Starting…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
-      setBulkRun(null)
+      setBulkAction(null)
     } finally {
       setRunAction(null)
     }
@@ -961,11 +993,19 @@ export function EpicView() {
     }
     setRunAction("stopAll")
     try {
-      await stopTargets(actionTargets.all)
+      await submitBulkActions({
+        kind: "stop",
+        actions: actionTargets.all.stop.map((taskId) => ({
+          taskId,
+          action: "stop" as const,
+        })),
+        harness: null,
+      })
       scheduleGraphRefresh()
-      setRunNotice("Stopped")
+      setRunNotice("Stopping…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
+      setBulkAction(null)
     } finally {
       setRunAction(null)
     }
@@ -977,12 +1017,28 @@ export function EpicView() {
     }
     setRunAction("runSelected")
     try {
-      await runTargets(actionTargets.selected)
+      await submitBulkActions({
+        kind: "run",
+        actions: [
+          ...actionTargets.selected.start.map((taskId) => ({
+            taskId,
+            action: "start" as const,
+          })),
+          ...actionTargets.selected.restart.map((taskId) => ({
+            taskId,
+            action: "restart" as const,
+          })),
+        ],
+        harness:
+          actionTargets.selected.start.length > 0
+            ? configuredHarnessCommand
+            : null,
+      })
       scheduleGraphRefresh()
       setRunNotice("Starting selection…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
-      setBulkRun(null)
+      setBulkAction(null)
     } finally {
       setRunAction(null)
     }
@@ -994,11 +1050,19 @@ export function EpicView() {
     }
     setRunAction("stopSelected")
     try {
-      await stopTargets(actionTargets.selected)
+      await submitBulkActions({
+        kind: "stop",
+        actions: actionTargets.selected.stop.map((taskId) => ({
+          taskId,
+          action: "stop" as const,
+        })),
+        harness: null,
+      })
       scheduleGraphRefresh()
-      setRunNotice("Stopped selection")
+      setRunNotice("Stopping selection…")
     } catch (e) {
       setRunNotice(e instanceof Error ? e.message : String(e))
+      setBulkAction(null)
     } finally {
       setRunAction(null)
     }
@@ -1132,7 +1196,7 @@ export function EpicView() {
                   disabledReason={
                     canRunAll
                       ? null
-                      : runAction !== null || bulkRun !== null
+                      : runAction !== null || bulkAction !== null
                         ? "Action in progress"
                         : needsHarnessForAll && !configuredHarnessCommand
                           ? "Set a harness command in Configure"
@@ -1140,7 +1204,11 @@ export function EpicView() {
                   }
                   onClick={() => void handleRunAll()}
                 >
-                  {bulkRun ? <Loader2 className="animate-spin" /> : <Play />}
+                  {bulkAction?.kind === "run" ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Play />
+                  )}
                   Run all
                 </Button>
                 <div
@@ -1159,7 +1227,7 @@ export function EpicView() {
                     disabledReason={
                       canRunSelected
                         ? null
-                        : runAction !== null || bulkRun !== null
+                        : runAction !== null || bulkAction !== null
                           ? "Action in progress"
                           : needsHarnessForSelected && !configuredHarnessCommand
                             ? "Set a harness command in Configure"
@@ -1169,7 +1237,9 @@ export function EpicView() {
                     }
                     onClick={() => void handleRunSelected()}
                   >
-                    {bulkRun ? <Loader2 className="animate-spin" /> : null}
+                    {bulkAction?.kind === "run" ? (
+                      <Loader2 className="animate-spin" />
+                    ) : null}
                     Selected
                   </Button>
                 </div>
@@ -1184,13 +1254,17 @@ export function EpicView() {
                   disabledReason={
                     canStopAll
                       ? null
-                      : runAction !== null || bulkRun !== null
+                      : runAction !== null || bulkAction !== null
                         ? "Action in progress"
                         : "Nothing to stop"
                   }
                   onClick={() => void handleStopAll()}
                 >
-                  <Square />
+                  {bulkAction?.kind === "stop" ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Square />
+                  )}
                   Stop all
                 </Button>
                 <div
@@ -1209,7 +1283,7 @@ export function EpicView() {
                     disabledReason={
                       canStopSelected
                         ? null
-                        : runAction !== null || bulkRun !== null
+                        : runAction !== null || bulkAction !== null
                           ? "Action in progress"
                           : !showSelectedActions
                             ? "Select 2+ tasks"
@@ -1217,6 +1291,9 @@ export function EpicView() {
                     }
                     onClick={() => void handleStopSelected()}
                   >
+                    {bulkAction?.kind === "stop" ? (
+                      <Loader2 className="animate-spin" />
+                    ) : null}
                     Selected
                   </Button>
                 </div>
@@ -1234,11 +1311,14 @@ export function EpicView() {
               </Button>
             </div>
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
-            {bulkRun ? (
+            {bulkAction ? (
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Starting {bulkRun.completed}/{bulkRun.total}
-                {bulkRun.failed > 0 ? ` (${bulkRun.failed} failed)` : null}
+                {bulkAction.kind === "stop" ? "Stopping" : "Starting"}{" "}
+                {bulkAction.completed}/{bulkAction.total}
+                {bulkAction.failed > 0
+                  ? ` (${bulkAction.failed} failed)`
+                  : null}
               </div>
             ) : runNotice ? (
               <div className="text-xs text-muted-foreground">{runNotice}</div>

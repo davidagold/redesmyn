@@ -90,6 +90,9 @@ from redesmyn.schemas.core import (
     TaskAgentStartRequest,
     TaskAgentStartResponse,
     TaskAgentStopResponse,
+    TaskAgentBulkActionItemRequest,
+    TaskAgentBulkActionRequest,
+    TaskAgentBulkActionResponse,
     TaskAgentBulkRunRequest,
     TaskAgentBulkRunResponse,
     TaskMergeReadyRequest,
@@ -558,6 +561,46 @@ async def _emit_task_agent_run_event(
         await session.commit()
 
 
+async def _emit_task_agent_action_event(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    node_id: int,
+    task_id: int,
+    action: str,
+    phase: str,
+    agent_id: int | None = None,
+    stopped: bool | None = None,
+    warnings: list[str] | None = None,
+    error: str | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "node_id": node_id,
+        "task_id": task_id,
+        "action": action,
+        "phase": phase,
+    }
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    if stopped is not None:
+        payload["stopped"] = stopped
+    if warnings is not None:
+        payload["warnings"] = warnings
+    if error is not None:
+        payload["error"] = error
+
+    async with sessionmaker() as session:
+        session.add(
+            Event(
+                event_type="task.agent_action",
+                data=payload,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
 async def _run_task_agents_bulk(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -648,6 +691,139 @@ async def _run_task_agents_bulk(
                 phase="failed",
                 error=str(e),
             )
+
+
+async def _run_task_agents_bulk_actions(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    actions: list[TaskAgentBulkActionItemRequest],
+    harness: str | None,
+    detach: bool,
+    prelude: str | None,
+) -> None:
+    async def _task_node_info(task_id: int) -> tuple[int, int | None]:
+        async with sessionmaker() as session:
+            _, node = await _require_task_node(session, task_id=task_id)
+            return node.id, node.agent_id
+
+    for item in sorted(actions, key=lambda a: (a.task_id, a.action)):
+        task_id = item.task_id
+        action = item.action
+        try:
+            node_id, existing_agent_id = await _task_node_info(task_id)
+        except HTTPException:
+            continue
+
+        await _emit_task_agent_action_event(
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            node_id=node_id,
+            task_id=task_id,
+            action=action,
+            phase="requested",
+        )
+
+        try:
+            if action == "start":
+                result = await app.state.runner_backend.start_task_agent(
+                    task_id=task_id,
+                    harness_command=harness or "",
+                    detach=detach,
+                    prelude_override=prelude,
+                )
+                await _emit_task_agent_action_event(
+                    sessionmaker=sessionmaker,
+                    run_id=run_id,
+                    node_id=node_id,
+                    task_id=task_id,
+                    action="start",
+                    phase="started",
+                    agent_id=result.agent.id,
+                    warnings=list(result.warnings),
+                )
+                continue
+
+            if action == "restart":
+                result = await app.state.runner_backend.restart_task_agent(
+                    task_id=task_id,
+                    harness_command=harness,
+                    detach=detach,
+                    prelude_override=prelude,
+                )
+                await _emit_task_agent_action_event(
+                    sessionmaker=sessionmaker,
+                    run_id=run_id,
+                    node_id=node_id,
+                    task_id=task_id,
+                    action="restart",
+                    phase="started",
+                    agent_id=result.agent.id,
+                    warnings=list(result.warnings),
+                )
+                continue
+
+            if action == "stop":
+                stopped = await app.state.runner_backend.stop_task_agent(
+                    task_id=task_id
+                )
+                await _emit_task_agent_action_event(
+                    sessionmaker=sessionmaker,
+                    run_id=run_id,
+                    node_id=node_id,
+                    task_id=task_id,
+                    action="stop",
+                    phase="stopped",
+                    agent_id=existing_agent_id,
+                    stopped=stopped,
+                )
+                continue
+
+            await _emit_task_agent_action_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action=action,
+                phase="failed",
+                error=f"Unknown action: {action!r}",
+            )
+        except Exception as e:
+            await _emit_task_agent_action_event(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                node_id=node_id,
+                task_id=task_id,
+                action=action,
+                phase="failed",
+                error=str(e),
+            )
+
+
+@v1.post("/tasks/agent/actions", response_model=TaskAgentBulkActionResponse)
+async def bulk_task_agent_actions(
+    request: TaskAgentBulkActionRequest,
+) -> TaskAgentBulkActionResponse:
+    actions = request.actions
+    requires_harness = any(a.action == "start" for a in actions)
+    if requires_harness and not request.harness:
+        raise HTTPException(
+            status_code=400,
+            detail="harness is required when the action list includes 'start'",
+        )
+    run_id = request.run_id or uuid4().hex
+    submitted = len(actions)
+    asyncio.create_task(
+        _run_task_agents_bulk_actions(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            actions=actions,
+            harness=request.harness,
+            detach=request.detach,
+            prelude=request.prelude,
+        )
+    )
+    return TaskAgentBulkActionResponse(run_id=run_id, submitted=submitted)
 
 
 @v1.post("/tasks/agent/run", response_model=TaskAgentBulkRunResponse)
