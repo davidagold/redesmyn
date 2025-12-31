@@ -13,64 +13,35 @@ local formatters = new Mapping<String, Step> {
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
-            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
+            "dashboard/**/*.mjs",
         )
         stage = List(
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
-            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
+            "dashboard/**/*.mjs",
         )
         check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
         fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
     }
 }
 
-local precommit_steps = new Mapping<String, Step> {
+local precommit_steps = (formatters) {
     ["openapi_types"] {
         glob = List(
-            "scripts/export_openapi.py",
             "redesmyn/api.py",
             "redesmyn/api/**/*.py",
             "redesmyn/schemas/**/*.py",
             "openapi/openapi.json",
-            "dashboard/package.json",
-            "dashboard/package-lock.json",
             "dashboard/src/api/v1.ts",
         )
-        fix = "npm --prefix dashboard run api:update"
+        fix = "npm --prefix dashboard run api:update && dashboard/node_modules/.bin/oxfmt dashboard/src/api/v1.ts"
         stage = List(
             "dashboard/src/api/v1.ts",
             "openapi/openapi.json",
         )
-    }
-
-    ["ruff_format"] {
-        glob = List("**/*.py", "**/*.pyi")
-        stage = List("**/*.py", "**/*.pyi")
-        check = "uv run ruff format --check {{files}}"
-        fix = "uv run ruff format {{files}}"
-    }
-
-    ["oxfmt"] {
-        glob = List(
-            "dashboard/**/*.ts",
-            "dashboard/**/*.tsx",
-            "dashboard/**/*.js",
-            "dashboard/**/*.mjs",
-            "dashboard/**/*.jsx",
-        )
-        stage = List(
-            "dashboard/**/*.ts",
-            "dashboard/**/*.tsx",
-            "dashboard/**/*.js",
-            "dashboard/**/*.mjs",
-            "dashboard/**/*.jsx",
-        )
-        check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
-        fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
     }
 }
 
