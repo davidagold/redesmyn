@@ -10,10 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Event, Node
+from redesmyn.db import Agent, Event, MergeRun, Node
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
-from redesmyn.domain.enums import AgentStatus
-from redesmyn.repo import current_branch
+from redesmyn.domain.enums import AgentStatus, MergeRunStatus
+from redesmyn.repo import current_branch, git_has_in_progress_operation
 
 
 @dataclass(slots=True, frozen=True)
@@ -231,6 +231,7 @@ async def observe_once(
     now = datetime.now(UTC)
     events_added = 0
     nodes_updated = 0
+    merge_runs_updated = 0
 
     new_shas: list[str] = []
     new_commits: list[tuple[Node, str]] = []
@@ -310,7 +311,37 @@ async def observe_once(
         )
         events_added += 1
 
-    if events_added or nodes_updated:
+    blocked_runs = list(
+        await session.scalars(
+            select(MergeRun).where(MergeRun.status == MergeRunStatus.Blocked)
+        )
+    )
+    for run in blocked_runs:
+        if not run.blocked_worktree_path or not run.blocked_node_id:
+            continue
+        path = Path(run.blocked_worktree_path)
+        if not path.exists():
+            continue
+        if git_has_in_progress_operation(path):
+            continue
+        run.status = MergeRunStatus.Resumable
+        merge_runs_updated += 1
+        session.add(
+            Event(
+                event_type="merge.run",
+                data={
+                    "run_id": run.run_id,
+                    "node_id": run.blocked_node_id,
+                    "epic_id": run.epic_id,
+                    "requested_task_id": run.requested_task_id,
+                    "status": run.status,
+                },
+                created_at=now,
+            )
+        )
+        events_added += 1
+
+    if events_added or nodes_updated or merge_runs_updated:
         await session.commit()
     if not state.initialized:
         state.initialized = True

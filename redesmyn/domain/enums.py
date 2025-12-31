@@ -50,3 +50,12 @@ class BlockPolicy(StrEnum):
 class BlockMode(StrEnum):
     Lax = "lax"
     Strict = "strict"
+
+
+class MergeRunStatus(StrEnum):
+    Running = "running"
+    Blocked = "blocked"
+    Resumable = "resumable"
+    Succeeded = "succeeded"
+    Failed = "failed"
+    Canceled = "canceled"

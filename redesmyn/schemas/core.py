@@ -11,6 +11,7 @@ from redesmyn.domain.enums import (
     BlockPolicy,
     CommandState,
     HarnessProfileSource,
+    MergeRunStatus,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -212,6 +213,26 @@ class TaskMergeRequest(ApiRequest):
     force: bool = False
 
 
+class MergeRunSummaryResponse(ApiResponse):
+    run_id: str
+    epic_id: int
+    requested_task_id: int
+    status: MergeRunStatus
+    scope: Literal["descendants", "spine"]
+    allow_running: bool
+    force: bool
+    current_step_index: int | None = None
+    blocked_step_index: int | None = None
+    blocked_step_kind: str | None = None
+    blocked_node_id: int | None = None
+    blocked_task_id: int | None = None
+    blocked_branch_name: str | None = None
+    blocked_worktree_path: str | None = None
+    blocked_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class TaskMergePlanStepResponse(ApiResponse):
     kind: Literal["rebase", "merge_ff"]
     node_id: int | None
@@ -227,6 +248,15 @@ class TaskMergeResponse(ApiResponse):
     dry_run: bool = False
     base_branch: str | None = None
     steps: list[TaskMergePlanStepResponse] = Field(default_factory=list)
+
+
+class MergeRunResumeRequest(ApiRequest):
+    allow_running: bool = False
+
+
+class MergeRunResumeResponse(ApiResponse):
+    run_id: str
+    base_branch: str | None = None
 
 
 class HostUpsertRequest(ApiResponse):
@@ -399,6 +429,18 @@ class TaskMergeEventDataResponse(ApiResponse):
     error: str | None = None
 
 
+class MergeRunEventDataResponse(ApiResponse):
+    type: Literal["merge.run"] = "merge.run"
+    run_id: str
+    node_id: int
+    epic_id: int
+    requested_task_id: int
+    status: MergeRunStatus
+    blocked_step_index: int | None = None
+    blocked_step_kind: str | None = None
+    blocked_branch_name: str | None = None
+
+
 class UnknownEventDataResponse(ApiResponse):
     type: Literal["unknown"] = "unknown"
     event_type: str
@@ -415,6 +457,7 @@ EventDataResponse = Annotated[
     | TaskAgentRunEventDataResponse
     | TaskAgentActionEventDataResponse
     | TaskMergeEventDataResponse
+    | MergeRunEventDataResponse
     | UnknownEventDataResponse,
     Field(discriminator="type"),
 ]
@@ -527,4 +570,5 @@ class EpicGraphResponse(ApiResponse):
     tasks: list[TaskResponse]
     nodes: list[NodeResponse]
     agents: list[AgentResponse]
+    merge_runs: list[MergeRunSummaryResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None

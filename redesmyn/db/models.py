@@ -29,6 +29,7 @@ from redesmyn.domain.enums import (
     BlockPolicy,
     CommandState,
     HarnessProfileSource,
+    MergeRunStatus,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -79,6 +80,26 @@ class WorktreeHealthEventData(BaseModel):
     current_branch: str | None = None
     dirty: bool | None = None
     branch_mismatch: bool | None = None
+
+
+class MergeRunPlanStepData(BaseModel):
+    index: int
+    kind: Literal["rebase", "merge_ff"]
+    node_id: int | None = None
+    task_id: int | None = None
+    branch_name: str
+    worktree_path: str
+    upstream_ref: str | None = None
+    base_branch: str | None = None
+
+
+class MergeRunPlanData(BaseModel):
+    base_branch: str
+    base_worktree: str
+    scope: Literal["descendants", "spine"]
+    spine_node_ids: list[int] = Field(default_factory=list)
+    affected_node_ids: list[int] = Field(default_factory=list)
+    steps: list[MergeRunPlanStepData] = Field(default_factory=list)
 
 
 class HostCapabilities(BaseModel):
@@ -487,4 +508,60 @@ class Event(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MergeRun(Base):
+    __tablename__ = "merge_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
+    requested_task_id: Mapped[int] = mapped_column(
+        ForeignKey("tasks.id"), nullable=False, index=True
+    )
+
+    status: Mapped[MergeRunStatus] = mapped_column(
+        _enum_type(MergeRunStatus, "merge_run_status"),
+        default=MergeRunStatus.Running,
+        nullable=False,
+        index=True,
+    )
+    scope: Mapped[str] = mapped_column(String, nullable=False, default="spine")
+    allow_running: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    force: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    plan: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=lambda: MergeRunPlanData(
+            base_branch="",
+            base_worktree="",
+            scope="spine",
+        ).model_dump(mode="python"),
+    )
+
+    current_step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    blocked_step_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    blocked_step_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nodes.id"), nullable=True, index=True
+    )
+    blocked_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
+    )
+    blocked_branch_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    blocked_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )

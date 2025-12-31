@@ -159,6 +159,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/merge-runs/{run_id}/resume": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Resume Merge Run */
+    post: operations["resume_merge_run_v1_merge_runs__run_id__resume_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/nodes/{node_id}/agent": {
     parameters: {
       query?: never
@@ -454,6 +471,8 @@ export interface components {
       /** Agents */
       agents: components["schemas"]["AgentResponse"][]
       epic: components["schemas"]["EpicResponse"]
+      /** Mergeruns */
+      mergeRuns?: components["schemas"]["MergeRunSummaryResponse"][]
       /** Nodes */
       nodes: components["schemas"]["NodeResponse"][]
       /** Tasks */
@@ -595,6 +614,71 @@ export interface components {
        * @enum {string}
        */
       type: "manual"
+    }
+    /** MergeRunResumeRequest */
+    MergeRunResumeRequest: {
+      /**
+       * Allowrunning
+       * @default false
+       */
+      allowRunning: boolean
+    }
+    /** MergeRunResumeResponse */
+    MergeRunResumeResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /** Runid */
+      runId: string
+    }
+    /**
+     * MergeRunStatus
+     * @enum {string}
+     */
+    MergeRunStatus: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled"
+    /** MergeRunSummaryResponse */
+    MergeRunSummaryResponse: {
+      /** Allowrunning */
+      allowRunning: boolean
+      /** Blockedbranchname */
+      blockedBranchName?: string | null
+      /** Blockederror */
+      blockedError?: string | null
+      /** Blockednodeid */
+      blockedNodeId?: number | null
+      /** Blockedstepindex */
+      blockedStepIndex?: number | null
+      /** Blockedstepkind */
+      blockedStepKind?: string | null
+      /** Blockedtaskid */
+      blockedTaskId?: number | null
+      /** Blockedworktreepath */
+      blockedWorktreePath?: string | null
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      /** Currentstepindex */
+      currentStepIndex?: number | null
+      /** Epicid */
+      epicId: number
+      /** Force */
+      force: boolean
+      /** Requestedtaskid */
+      requestedTaskId: number
+      /** Runid */
+      runId: string
+      /**
+       * Scope
+       * @enum {string}
+       */
+      scope: "descendants" | "spine"
+      status: components["schemas"]["MergeRunStatus"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
     }
     /** NodeResponse */
     NodeResponse: {
@@ -1303,6 +1387,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["LinearStatusResponse"]
+        }
+      }
+    }
+  }
+  resume_merge_run_v1_merge_runs__run_id__resume_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        run_id: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MergeRunResumeRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["MergeRunResumeResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

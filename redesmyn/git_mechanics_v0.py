@@ -83,6 +83,18 @@ class MergeCascadePlan:
     running_agents: tuple[RunningAgentInfo, ...]
 
 
+MergeStepPhase = Literal["started", "finished", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class MergeRunStepUpdate:
+    step_index: int
+    step: MergePlanStep
+    phase: MergeStepPhase
+    blocked: bool = False
+    error: str | None = None
+
+
 async def _load_task_node_epic(
     session: AsyncSession, *, task_id: int
 ) -> tuple[Task, Node, Epic]:
@@ -392,11 +404,20 @@ async def execute_merge_cascade_plan(
     plan: MergeCascadePlan,
     allow_running: bool,
     emit_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
+    update_run: Callable[[MergeRunStepUpdate], Awaitable[None]] | None = None,
+    start_at_step_index: int = 0,
 ) -> None:
     if plan.running_agents and not allow_running:
         raise MergeBlockedByRunningAgents(plan.running_agents)
 
-    for step in plan.steps:
+    if start_at_step_index < 0:
+        raise ValueError("start_at_step_index must be >= 0")
+    if start_at_step_index > len(plan.steps):
+        raise ValueError("start_at_step_index is out of range")
+
+    for step_index, step in enumerate(
+        plan.steps[start_at_step_index:], start_at_step_index
+    ):
         payload: dict[str, object] = {
             "run_id": plan.run_id,
             "node_id": step.node_id,
@@ -406,6 +427,10 @@ async def execute_merge_cascade_plan(
         }
         if emit_event is not None:
             await emit_event({**payload, "phase": "started"})
+        if update_run is not None:
+            await update_run(
+                MergeRunStepUpdate(step_index=step_index, step=step, phase="started")
+            )
         try:
             if step.kind == "rebase":
                 assert step.upstream_ref is not None
@@ -415,11 +440,28 @@ async def execute_merge_cascade_plan(
             else:
                 raise RuntimeError(f"Unknown merge step kind: {step.kind!r}")
         except GitCommandError as e:
+            blocked = step.kind == "rebase" and git_has_in_progress_operation(
+                step.worktree_path
+            )
+            if update_run is not None:
+                await update_run(
+                    MergeRunStepUpdate(
+                        step_index=step_index,
+                        step=step,
+                        phase="failed",
+                        blocked=blocked,
+                        error=str(e),
+                    )
+                )
             if emit_event is not None:
                 await emit_event({**payload, "phase": "failed", "error": str(e)})
             raise
         if emit_event is not None:
             await emit_event({**payload, "phase": "finished"})
+        if update_run is not None:
+            await update_run(
+                MergeRunStepUpdate(step_index=step_index, step=step, phase="finished")
+            )
 
     async with sessionmaker() as session:
         # Mark the merged task's ancestors as complete (best-effort), and clear merge-ready.

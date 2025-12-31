@@ -31,14 +31,15 @@ from redesmyn.db import (
     HarnessProfile,
     Host,
     LinearAuth,
+    MergeRun,
     Node,
     Repository,
     Task,
     create_engine,
     create_sessionmaker,
 )
-from redesmyn.db.models import HostCapabilities
-from redesmyn.domain.enums import BlockPolicy
+from redesmyn.db.models import HostCapabilities, MergeRunPlanData, MergeRunPlanStepData
+from redesmyn.domain.enums import BlockPolicy, MergeRunStatus
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
@@ -54,7 +55,7 @@ from redesmyn.orchestration_config import (
     set_config_value,
     write_config,
 )
-from redesmyn.repo import git_commit_info, git_merge_base, git_rev_list
+from redesmyn.repo import GitCommandError, git_commit_info, git_merge_base, git_rev_list
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.runner_backend import (
     RunnerBackend,
@@ -76,6 +77,9 @@ from redesmyn.schemas.core import (
     HostResponse,
     HostUpsertRequest,
     LinearStatusResponse,
+    MergeRunResumeRequest,
+    MergeRunResumeResponse,
+    MergeRunSummaryResponse,
     NodeSetAgentRequest,
     NodeResponse,
     OrchestrationDefaultsResponse,
@@ -106,6 +110,7 @@ from redesmyn.settings import load_settings
 from redesmyn.git_mechanics_v0 import (
     MergeBlockedByRunningAgents,
     MergePlanError,
+    MergeRunStepUpdate,
     build_merge_cascade_plan,
     execute_merge_cascade_plan,
 )
@@ -326,6 +331,22 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             if agent_ids
             else []
         )
+        merge_runs = list(
+            await session.scalars(
+                select(MergeRun)
+                .where(MergeRun.epic_id == epic_row.id)
+                .where(
+                    MergeRun.status.in_(
+                        [
+                            MergeRunStatus.Running,
+                            MergeRunStatus.Blocked,
+                            MergeRunStatus.Resumable,
+                        ]
+                    )
+                )
+                .order_by(desc(MergeRun.id))
+            )
+        )
 
     trunk: TrunkTimelineResponse | None = None
     try:
@@ -399,6 +420,10 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         tasks=[TaskResponse.model_validate(t, from_attributes=True) for t in tasks],
         nodes=[NodeResponse.model_validate(n, from_attributes=True) for n in nodes],
         agents=[AgentResponse.model_validate(a, from_attributes=True) for a in agents],
+        merge_runs=[
+            MergeRunSummaryResponse.model_validate(r, from_attributes=True)
+            for r in merge_runs
+        ],
         trunk=trunk,
     )
 
@@ -624,6 +649,220 @@ async def _emit_task_merge_event(
                 created_at=datetime.now(UTC),
             )
         )
+        await session.commit()
+
+
+async def _emit_merge_run_event(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    node_id: int,
+    epic_id: int,
+    requested_task_id: int,
+    status: MergeRunStatus,
+    blocked_step_index: int | None = None,
+    blocked_step_kind: str | None = None,
+    blocked_branch_name: str | None = None,
+) -> None:
+    data: dict[str, object] = {
+        "run_id": run_id,
+        "node_id": node_id,
+        "epic_id": epic_id,
+        "requested_task_id": requested_task_id,
+        "status": status,
+    }
+    if blocked_step_index is not None:
+        data["blocked_step_index"] = blocked_step_index
+    if blocked_step_kind is not None:
+        data["blocked_step_kind"] = blocked_step_kind
+    if blocked_branch_name is not None:
+        data["blocked_branch_name"] = blocked_branch_name
+
+    async with sessionmaker() as session:
+        session.add(
+            Event(
+                event_type="merge.run",
+                data=data,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+
+def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
+    steps = [
+        MergeRunPlanStepData(
+            index=index,
+            kind=step.kind,
+            node_id=step.node_id,
+            task_id=step.task_id,
+            branch_name=step.branch_name,
+            worktree_path=str(step.worktree_path),
+            upstream_ref=step.upstream_ref,
+            base_branch=step.base_branch,
+        )
+        for index, step in enumerate(plan.steps)
+    ]
+    payload = MergeRunPlanData(
+        base_branch=plan.base_branch,
+        base_worktree=str(plan.base_worktree),
+        scope=plan.scope,
+        spine_node_ids=list(plan.spine_node_ids),
+        affected_node_ids=list(plan.affected_node_ids),
+        steps=steps,
+    )
+    return payload.model_dump(mode="python")
+
+
+async def _upsert_merge_run(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    epic_id: int,
+    task_id: int,
+    scope: str,
+    allow_running: bool,
+    force: bool,
+    plan_snapshot: dict[str, object],
+) -> None:
+    async with sessionmaker() as session:
+        row = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
+        if row is None:
+            session.add(
+                MergeRun(
+                    run_id=run_id,
+                    epic_id=epic_id,
+                    requested_task_id=task_id,
+                    status=MergeRunStatus.Running,
+                    scope=scope,
+                    allow_running=allow_running,
+                    force=force,
+                    plan=plan_snapshot,
+                )
+            )
+        else:
+            row.epic_id = epic_id
+            row.requested_task_id = task_id
+            row.status = MergeRunStatus.Running
+            row.scope = scope
+            row.allow_running = allow_running
+            row.force = force
+            row.plan = plan_snapshot
+            row.current_step_index = None
+            row.blocked_step_index = None
+            row.blocked_step_kind = None
+            row.blocked_node_id = None
+            row.blocked_task_id = None
+            row.blocked_branch_name = None
+            row.blocked_worktree_path = None
+            row.blocked_error = None
+        await session.commit()
+
+
+async def _record_merge_run_step_update(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    update: MergeRunStepUpdate,
+) -> None:
+    now = datetime.now(UTC)
+    async with sessionmaker() as session:
+        row = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
+        if row is None:
+            return
+        row.current_step_index = update.step_index
+        if update.phase == "failed":
+            row.status = (
+                MergeRunStatus.Blocked if update.blocked else MergeRunStatus.Failed
+            )
+            row.blocked_step_index = update.step_index
+            row.blocked_step_kind = update.step.kind
+            row.blocked_node_id = update.step.node_id
+            row.blocked_task_id = update.step.task_id
+            row.blocked_branch_name = update.step.branch_name
+            row.blocked_worktree_path = str(update.step.worktree_path)
+            row.blocked_error = update.error
+            if update.step.node_id is not None:
+                session.add(
+                    Event(
+                        event_type="merge.run",
+                        data={
+                            "run_id": run_id,
+                            "node_id": update.step.node_id,
+                            "epic_id": row.epic_id,
+                            "requested_task_id": row.requested_task_id,
+                            "status": row.status,
+                            "blocked_step_index": row.blocked_step_index,
+                            "blocked_step_kind": row.blocked_step_kind,
+                            "blocked_branch_name": row.blocked_branch_name,
+                        },
+                        created_at=now,
+                    )
+                )
+        await session.commit()
+
+
+async def _set_merge_run_status(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    status: MergeRunStatus,
+    error: str | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    async with sessionmaker() as session:
+        row = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
+        if row is None:
+            return
+
+        node_id: int | None = row.blocked_node_id
+        blocked_step_index = row.blocked_step_index
+        blocked_step_kind = row.blocked_step_kind
+        blocked_branch_name = row.blocked_branch_name
+        if node_id is None:
+            try:
+                plan = MergeRunPlanData.model_validate(row.plan)
+                if plan.spine_node_ids:
+                    node_id = plan.spine_node_ids[-1]
+                elif plan.steps:
+                    node_id = plan.steps[0].node_id
+            except Exception:
+                node_id = None
+
+        row.status = status
+        if status in {MergeRunStatus.Succeeded, MergeRunStatus.Canceled}:
+            row.current_step_index = None
+            row.blocked_step_index = None
+            row.blocked_step_kind = None
+            row.blocked_node_id = None
+            row.blocked_task_id = None
+            row.blocked_branch_name = None
+            row.blocked_worktree_path = None
+            row.blocked_error = None
+        if error is not None:
+            row.blocked_error = error
+
+        if node_id is not None:
+            data: dict[str, object] = {
+                "run_id": run_id,
+                "node_id": node_id,
+                "epic_id": row.epic_id,
+                "requested_task_id": row.requested_task_id,
+                "status": status,
+            }
+            if blocked_step_index is not None:
+                data["blocked_step_index"] = blocked_step_index
+            if blocked_step_kind is not None:
+                data["blocked_step_kind"] = blocked_step_kind
+            if blocked_branch_name is not None:
+                data["blocked_branch_name"] = blocked_branch_name
+            session.add(
+                Event(
+                    event_type="merge.run",
+                    data=data,
+                    created_at=now,
+                )
+            )
         await session.commit()
 
 
@@ -1058,6 +1297,32 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
             steps=steps,
         )
 
+    plan_snapshot = _merge_run_plan_snapshot(plan=plan)
+    await _upsert_merge_run(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        epic_id=plan.epic_id,
+        task_id=task_id,
+        scope=scope,
+        allow_running=request.allow_running,
+        force=request.force,
+        plan_snapshot=plan_snapshot,
+    )
+    merge_node_id = (
+        plan.spine_node_ids[-1]
+        if plan.spine_node_ids
+        else next((s.node_id for s in plan.steps if s.node_id is not None), None)
+    )
+    if merge_node_id is not None:
+        await _emit_merge_run_event(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            node_id=merge_node_id,
+            epic_id=plan.epic_id,
+            requested_task_id=task_id,
+            status=MergeRunStatus.Running,
+        )
+
     async def _run() -> None:
         try:
             await execute_merge_cascade_plan(
@@ -1068,12 +1333,29 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                 emit_event=lambda payload: _emit_task_merge_event(
                     sessionmaker=app.state.sessionmaker, payload=payload
                 ),
+                update_run=lambda update: _record_merge_run_step_update(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    update=update,
+                ),
+            )
+            await _set_merge_run_status(
+                sessionmaker=app.state.sessionmaker,
+                run_id=run_id,
+                status=MergeRunStatus.Succeeded,
             )
         except MergeBlockedByRunningAgents:
             # The plan was computed with running agents, but the request didn't allow them.
             # We return 409 to the caller before spawning, so this should not happen.
             return
         except Exception as e:
+            if not isinstance(e, GitCommandError):
+                await _set_merge_run_status(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    status=MergeRunStatus.Failed,
+                    error=str(e),
+                )
             await _emit_task_merge_event(
                 sessionmaker=app.state.sessionmaker,
                 payload={
@@ -1090,6 +1372,143 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
     asyncio.create_task(_run())
 
     return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=plan.base_branch)
+
+
+@v1.post("/merge-runs/{run_id}/resume", response_model=MergeRunResumeResponse)
+async def resume_merge_run(
+    run_id: str, request: MergeRunResumeRequest
+) -> MergeRunResumeResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        run = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
+        if run is None:
+            raise HTTPException(status_code=404, detail="Merge run not found")
+
+        if run.status == MergeRunStatus.Running:
+            raise HTTPException(status_code=409, detail="Merge run is already running")
+        if run.status == MergeRunStatus.Blocked:
+            raise HTTPException(
+                status_code=409,
+                detail="Merge run is blocked; resolve the in-progress git operation first.",
+            )
+        if run.status != MergeRunStatus.Resumable:
+            raise HTTPException(status_code=400, detail="Merge run is not resumable")
+
+        task_id = run.requested_task_id
+        scope_value = run.scope
+        force = run.force
+        allow_running = run.allow_running or request.allow_running
+
+        blocked_step_index = run.blocked_step_index
+        blocked_step_kind = run.blocked_step_kind
+        blocked_branch_name = run.blocked_branch_name
+
+    normalized_scope = scope_value.strip().lower()
+    if normalized_scope not in {"descendants", "spine"}:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid merge run scope: {scope_value!r}"
+        )
+
+    try:
+        plan = await build_merge_cascade_plan(
+            ctx=app.state.ctx,
+            sessionmaker=app.state.sessionmaker,
+            task_id=task_id,
+            run_id=run_id,
+            scope=normalized_scope,  # type: ignore[arg-type]
+            force=force,
+        )
+    except MergePlanError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if plan.running_agents and not allow_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+        )
+
+    start_at_step_index = blocked_step_index or 0
+    if start_at_step_index >= len(plan.steps):
+        start_at_step_index = 0
+    if start_at_step_index and blocked_step_kind and blocked_branch_name:
+        step = plan.steps[start_at_step_index]
+        if step.kind != blocked_step_kind or step.branch_name != blocked_branch_name:
+            start_at_step_index = 0
+
+    plan_snapshot = _merge_run_plan_snapshot(plan=plan)
+    await _upsert_merge_run(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        epic_id=plan.epic_id,
+        task_id=task_id,
+        scope=normalized_scope,
+        allow_running=allow_running,
+        force=force,
+        plan_snapshot=plan_snapshot,
+    )
+    merge_node_id = (
+        plan.spine_node_ids[-1]
+        if plan.spine_node_ids
+        else next((s.node_id for s in plan.steps if s.node_id is not None), None)
+    )
+    if merge_node_id is not None:
+        await _emit_merge_run_event(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            node_id=merge_node_id,
+            epic_id=plan.epic_id,
+            requested_task_id=task_id,
+            status=MergeRunStatus.Running,
+        )
+
+    async def _run() -> None:
+        try:
+            await execute_merge_cascade_plan(
+                ctx=app.state.ctx,
+                sessionmaker=app.state.sessionmaker,
+                plan=plan,
+                allow_running=allow_running,
+                emit_event=lambda payload: _emit_task_merge_event(
+                    sessionmaker=app.state.sessionmaker, payload=payload
+                ),
+                update_run=lambda update: _record_merge_run_step_update(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    update=update,
+                ),
+                start_at_step_index=start_at_step_index,
+            )
+            await _set_merge_run_status(
+                sessionmaker=app.state.sessionmaker,
+                run_id=run_id,
+                status=MergeRunStatus.Succeeded,
+            )
+        except MergeBlockedByRunningAgents:
+            return
+        except Exception as e:
+            if not isinstance(e, GitCommandError):
+                await _set_merge_run_status(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    status=MergeRunStatus.Failed,
+                    error=str(e),
+                )
+            await _emit_task_merge_event(
+                sessionmaker=app.state.sessionmaker,
+                payload={
+                    "run_id": run_id,
+                    "node_id": None,
+                    "task_id": task_id,
+                    "kind": "merge_ff",
+                    "phase": "failed",
+                    "branch_name": plan.base_branch,
+                    "error": str(e),
+                },
+            )
+
+    asyncio.create_task(_run())
+
+    return MergeRunResumeResponse(run_id=run_id, base_branch=plan.base_branch)
 
 
 @v1.get("/tasks/{task_id}/agent/logs", include_in_schema=False)

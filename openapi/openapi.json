@@ -358,6 +358,13 @@
           "epic": {
             "$ref": "#/components/schemas/EpicResponse"
           },
+          "mergeRuns": {
+            "items": {
+              "$ref": "#/components/schemas/MergeRunSummaryResponse"
+            },
+            "title": "Mergeruns",
+            "type": "array"
+          },
           "nodes": {
             "items": {
               "$ref": "#/components/schemas/NodeResponse"
@@ -721,6 +728,199 @@
           }
         },
         "title": "ManualReleaseResponse",
+        "type": "object"
+      },
+      "MergeRunResumeRequest": {
+        "properties": {
+          "allowRunning": {
+            "default": false,
+            "title": "Allowrunning",
+            "type": "boolean"
+          }
+        },
+        "title": "MergeRunResumeRequest",
+        "type": "object"
+      },
+      "MergeRunResumeResponse": {
+        "properties": {
+          "baseBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basebranch"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "title": "MergeRunResumeResponse",
+        "type": "object"
+      },
+      "MergeRunStatus": {
+        "enum": [
+          "running",
+          "blocked",
+          "resumable",
+          "succeeded",
+          "failed",
+          "canceled"
+        ],
+        "title": "MergeRunStatus",
+        "type": "string"
+      },
+      "MergeRunSummaryResponse": {
+        "properties": {
+          "allowRunning": {
+            "title": "Allowrunning",
+            "type": "boolean"
+          },
+          "blockedBranchName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockedbranchname"
+          },
+          "blockedError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockederror"
+          },
+          "blockedNodeId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockednodeid"
+          },
+          "blockedStepIndex": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockedstepindex"
+          },
+          "blockedStepKind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockedstepkind"
+          },
+          "blockedTaskId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockedtaskid"
+          },
+          "blockedWorktreePath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blockedworktreepath"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "currentStepIndex": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentstepindex"
+          },
+          "epicId": {
+            "title": "Epicid",
+            "type": "integer"
+          },
+          "force": {
+            "title": "Force",
+            "type": "boolean"
+          },
+          "requestedTaskId": {
+            "title": "Requestedtaskid",
+            "type": "integer"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "descendants",
+              "spine"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MergeRunStatus"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "epicId",
+          "requestedTaskId",
+          "status",
+          "scope",
+          "allowRunning",
+          "force",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "MergeRunSummaryResponse",
         "type": "object"
       },
       "NodeResponse": {
@@ -2351,6 +2551,55 @@
           }
         },
         "summary": "Linear Status"
+      }
+    },
+    "/v1/merge-runs/{run_id}/resume": {
+      "post": {
+        "operationId": "resume_merge_run_v1_merge_runs__run_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRunResumeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeRunResumeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Merge Run"
       }
     },
     "/v1/nodes/{node_id}/agent": {
