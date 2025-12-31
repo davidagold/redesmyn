@@ -82,6 +82,9 @@ export function NodeCard({
   const [pendingMerge, setPendingMerge] =
     useState<"ready" | "merge" | "mergeStack" | null>(null)
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
+  const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
+    useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -94,12 +97,30 @@ export function NodeCard({
 
   const agentStatus = agent?.status ?? null
   const taskId = task?.id ?? null
+
+  useEffect(() => {
+    setMergeReady(Boolean(task?.mergeReadyAt))
+  }, [taskId, task?.mergeReadyAt])
+
+  useEffect(() => {
+    if (!refreshPendingAfterMenuClose) {
+      return
+    }
+    if (actionsMenuOpen) {
+      return
+    }
+    if (!onRequestRefresh) {
+      return
+    }
+    onRequestRefresh()
+    setRefreshPendingAfterMenuClose(false)
+  }, [actionsMenuOpen, onRequestRefresh, refreshPendingAfterMenuClose])
+
   const quickActionsEnabled =
     taskId !== null &&
     !!onRequestRefresh &&
     task?.state !== "blocked" &&
     task?.state !== "done"
-  const isMergeReady = Boolean(task?.mergeReadyAt)
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
   const canStart =
@@ -178,12 +199,19 @@ export function NodeCard({
     if (taskId === null || !onRequestRefresh) {
       return
     }
+    const previous = mergeReady
     setPendingMerge("ready")
+    setMergeReady(next)
     setActionError(null)
     try {
       await setTaskMergeReady(taskId, next)
-      onRequestRefresh()
+      if (actionsMenuOpen) {
+        setRefreshPendingAfterMenuClose(true)
+      } else {
+        onRequestRefresh()
+      }
     } catch (e) {
+      setMergeReady(previous)
       setActionError(e instanceof Error ? e.message : String(e))
     } finally {
       setPendingMerge(null)
@@ -194,6 +222,7 @@ export function NodeCard({
     if (taskId === null || !onRequestRefresh) {
       return
     }
+    setRefreshPendingAfterMenuClose(false)
     setPendingMerge(cascade ? "mergeStack" : "merge")
     setActionError(null)
     try {
@@ -375,7 +404,7 @@ export function NodeCard({
             />
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
               <DropdownMenuCheckboxItem
-                checked={isMergeReady}
+                checked={mergeReady}
                 disabled={!canMerge || pendingMerge !== null}
                 closeOnClick={false}
                 onClick={(e) => e.stopPropagation()}
@@ -387,7 +416,7 @@ export function NodeCard({
               </DropdownMenuCheckboxItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                disabled={!canMerge || !isMergeReady || pendingMerge !== null}
+                disabled={!canMerge || !mergeReady || pendingMerge !== null}
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -398,7 +427,7 @@ export function NodeCard({
                 Merge
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!canMerge || !isMergeReady || pendingMerge !== null}
+                disabled={!canMerge || !mergeReady || pendingMerge !== null}
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
