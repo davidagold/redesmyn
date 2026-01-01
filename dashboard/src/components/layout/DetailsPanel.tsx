@@ -217,7 +217,7 @@ function MergeRunDetails({
                   {mergeRun.status === "resumable" ? (
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="xs"
                       className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
                       disabledReason={
                         resumePending
@@ -229,9 +229,9 @@ function MergeRunDetails({
                       onClick={() => void handleResumeMerge(false)}
                     >
                       {resumePending ? (
-                        <Loader2 className="size-3 animate-spin" />
+                        <Loader2 className="animate-spin" />
                       ) : (
-                        <Play className="size-3" />
+                        <Play />
                       )}
                       Resume merge
                     </Button>
