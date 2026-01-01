@@ -55,3 +55,4 @@ If an operation affects multiple branches with running tasks (agents), prompt on
 - `epics/git-mechanics-v0/tasks/T-1/README.md`: Stack-preserving cascade merge (CLI + API + dashboard actions).
 - `epics/git-mechanics-v0/tasks/T-2/README.md`: Detect + surface “out-of-sync / left-behind” branches in the UI.
 - `epics/git-mechanics-v0/tasks/T-3/README.md`: Abort merge runs (cancel) + future rollback design.
+- `epics/git-mechanics-v0/tasks/T-4/README.md`: Skip rebasing already-merged/done spine tasks when merging.
