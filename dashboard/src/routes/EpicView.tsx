@@ -276,6 +276,13 @@ export function EpicView() {
     return tasksById.get(selectedNode.primaryTaskId) ?? null
   }, [selectedNode, tasksById])
 
+  const selectedMergeRun = useMemo(() => {
+    if (!selectedTask) {
+      return null
+    }
+    return mergeRunsByTaskId.get(selectedTask.id) ?? null
+  }, [mergeRunsByTaskId, selectedTask])
+
   const selectedEdge = useMemo(() => {
     if (
       fromNodeId === null ||
@@ -1829,6 +1836,7 @@ export function EpicView() {
                 ? (agentsById.get(selectedNode.agentId) ?? null)
                 : null
             }
+            mergeRun={selectedMergeRun}
             onRequestRefresh={scheduleGraphRefresh}
             edge={selectedEdge}
           />

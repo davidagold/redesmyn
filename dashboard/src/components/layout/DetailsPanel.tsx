@@ -8,6 +8,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import {
   fetchTaskAgentLogs,
@@ -16,12 +17,21 @@ import {
   startTaskAgent,
   stopTaskAgent,
 } from "@/api"
-import type { Agent, GraphNode, Task } from "@/lib/graph-utils"
+import type { Agent, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
+import { getRebaseRemediation } from "@/lib/merge-remediation"
+import { cn } from "@/lib/utils"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { FloatingActions } from "@/components/ui/floating-actions"
-import { RotateCcw, Square, Terminal } from "lucide-react"
+import {
+  AlertTriangle,
+  MessageSquareText,
+  Play,
+  RotateCcw,
+  Square,
+  Terminal,
+} from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 
 type EdgeSelection = {
@@ -47,8 +57,187 @@ interface DetailsPanelProps {
   task: Task | null
   node?: GraphNode | null
   agent?: Agent | null
+  mergeRun?: MergeRun | null
   onRequestRefresh?: () => void
   edge?: EdgeSelection | null
+}
+
+function MergeRunDetails({
+  mergeRun,
+  node,
+}: {
+  mergeRun: MergeRun
+  node: GraphNode | null | undefined
+}) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
+  const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
+
+  const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
+  const blockedError = mergeRun.blockedError?.trim() || null
+  const blockedBranch = mergeRun.blockedBranchName ?? null
+  const blockedWorktree = mergeRun.blockedWorktreePath ?? null
+  const blockedStepKind = mergeRun.blockedStepKind ?? null
+
+  const showCallout =
+    mergeRun.status === "blocked" ||
+    mergeRun.status === "resumable" ||
+    mergeRun.status === "failed"
+
+  const calloutTone =
+    mergeRun.status === "blocked" || mergeRun.status === "failed"
+      ? "destructive"
+      : mergeRun.status === "resumable"
+        ? "amber"
+        : "default"
+
+  const calloutClasses =
+    calloutTone === "destructive"
+      ? "border border-destructive/25 bg-destructive/10 ring-destructive/10"
+      : calloutTone === "amber"
+        ? "border border-amber-200/25 bg-amber-200/10 ring-amber-200/10"
+        : "border border-border/60 bg-background/30 ring-border/10"
+
+  const calloutTitle =
+    mergeRun.status === "blocked"
+      ? "Merge blocked (conflicts)"
+      : mergeRun.status === "resumable"
+        ? "Merge ready to resume"
+        : mergeRun.status === "failed"
+          ? "Merge failed"
+          : null
+
+  const calloutIcon =
+    mergeRun.status === "resumable" ? (
+      <Play className="size-3.5 text-amber-200" />
+    ) : (
+      <AlertTriangle className="size-3.5 text-destructive" />
+    )
+
+  const attachCommand = remediation?.attachCommand ?? null
+  const agentNote = remediation?.message ?? null
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-1">
+        <div className="text-xs text-muted-foreground">Status</div>
+        <div className="text-sm">{statusLabel}</div>
+      </div>
+
+      <div className="grid gap-1">
+        <div className="text-xs text-muted-foreground">Scope</div>
+        <div className="text-sm capitalize">{mergeRun.scope}</div>
+      </div>
+
+      {showCallout && calloutTitle ? (
+        <Card
+          size="sm"
+          className={cn("gap-2 py-2 shadow-sm backdrop-blur", calloutClasses)}
+        >
+          <CardContent className="px-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                {calloutIcon}
+                <div className="truncate text-xs font-medium text-foreground">
+                  {calloutTitle}
+                </div>
+              </div>
+            </div>
+
+            {blockedStepKind ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Step: <span className="font-mono">{blockedStepKind}</span>
+              </div>
+            ) : null}
+
+            {blockedBranch ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Branch:{" "}
+                <span className="break-words font-mono text-foreground/80">
+                  {blockedBranch}
+                </span>
+              </div>
+            ) : null}
+
+            {blockedWorktree ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Worktree:{" "}
+                <span className="break-words font-mono text-foreground/80">
+                  {blockedWorktree}
+                </span>
+              </div>
+            ) : null}
+
+            {mergeRun.status === "blocked" && remediation ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={
+                    attachCommand
+                      ? null
+                      : "No task id recorded for this blocked step."
+                  }
+                  onClick={() => {
+                    if (!attachCommand) {
+                      return
+                    }
+                    void copyToClipboard(attachCommand)
+                  }}
+                >
+                  <Terminal className="size-3" />
+                  Copy attach
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={
+                    agentNote ? null : "No remediation message available."
+                  }
+                  onClick={() => {
+                    if (!agentNote) {
+                      return
+                    }
+                    void copyToClipboard(agentNote)
+                  }}
+                >
+                  <MessageSquareText className="size-3" />
+                  Copy agent note
+                </Button>
+              </div>
+            ) : null}
+
+            {blockedError ? (
+              <div className="mt-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setDetailsExpanded((open) => !open)}
+                  >
+                    {detailsExpanded ? "Hide" : "Show"} details
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => void copyToClipboard(blockedError)}
+                  >
+                    Copy
+                  </Button>
+                </div>
+                {detailsExpanded ? (
+                  <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                    <div className="whitespace-pre-wrap break-words">
+                      {blockedError}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
+  )
 }
 
 function AgentActions({
@@ -584,6 +773,7 @@ export function DetailsPanel({
   task,
   node,
   agent,
+  mergeRun,
   onRequestRefresh,
   edge,
 }: DetailsPanelProps) {
@@ -595,7 +785,15 @@ export function DetailsPanel({
         ? `task:${task.id}`
         : "none"
 
-  const defaultSections = edge ? ["contract"] : ["agent", "readme"]
+  const defaultSections = edge
+    ? ["contract"]
+    : mergeRun &&
+        (mergeRun.status === "blocked" ||
+          mergeRun.status === "resumable" ||
+          mergeRun.status === "running" ||
+          mergeRun.status === "failed")
+      ? ["agent", "merge-run", "readme"]
+      : ["agent", "readme"]
   const floatingActionsPortalId = "details-panel-floating-actions"
 
   return (
@@ -672,6 +870,15 @@ export function DetailsPanel({
                   ) : null}
                 </AccordionContent>
               </AccordionItem>
+
+              {mergeRun ? (
+                <AccordionItem value="merge-run">
+                  <AccordionTrigger>Merge Run</AccordionTrigger>
+                  <AccordionContent className="pt-3">
+                    <MergeRunDetails mergeRun={mergeRun} node={node} />
+                  </AccordionContent>
+                </AccordionItem>
+              ) : null}
 
               <AccordionItem value="readme">
                 <AccordionTrigger>README</AccordionTrigger>

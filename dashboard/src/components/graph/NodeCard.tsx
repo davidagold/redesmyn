@@ -13,6 +13,7 @@ import {
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { Agent, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
+import { getRebaseRemediation } from "@/lib/merge-remediation"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import {
@@ -23,6 +24,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import {
   Tooltip,
   TooltipContent,
@@ -36,6 +46,7 @@ import {
   GitBranch,
   GitMerge,
   Layers,
+  Loader2,
   MessageSquareText,
   Play,
   RotateCcw,
@@ -58,6 +69,18 @@ interface NodeCardProps {
   onSelect: (options: { additive: boolean }) => void
   onRequestRefresh?: () => void
 }
+
+interface MergeAllowRunningPrompt {
+  kind: "merge"
+  cascade: boolean
+}
+
+interface ResumeAllowRunningPrompt {
+  kind: "resume"
+  runId: string
+}
+
+type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt
 
 function statusSummary(task: Task | undefined, agent: Agent | undefined) {
   if (task?.state === "blocked") {
@@ -95,8 +118,8 @@ export function NodeCard({
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunBlocked = mergeRunStatus === "blocked"
   const mergeRunResumable = mergeRunStatus === "resumable"
-  const mergeRunBlockedRebase =
-    mergeRunBlocked && mergeRun?.blockedStepKind === "rebase"
+  const rebaseRemediation = getRebaseRemediation(mergeRun, node.branchName)
+  const mergeRunBlockedRebase = rebaseRemediation !== null
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -112,6 +135,9 @@ export function NodeCard({
     summary: string
     raw: string
   } | null>(null)
+  const [allowRunningPrompt, setAllowRunningPrompt] =
+    useState<AllowRunningPrompt | null>(null)
+  const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
 
   function clearActionError() {
     setActionError(null)
@@ -281,24 +307,11 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        const confirmed = window.confirm(
-          "This merge affects running tasks/agents.\n\nProceed anyway?",
-        )
-        if (!confirmed) {
-          return
-        }
-        try {
-          await mergeTask(taskId, { cascade, allowRunning: true })
-          onRequestRefresh()
-        } catch (inner) {
-          setActionErrorFromException(
-            cascade ? "Merge and Restack" : "Merge",
-            inner,
-          )
-        }
+        setAllowRunningPrompt({ kind: "merge", cascade })
         return
       }
       setActionErrorFromException(cascade ? "Merge and Restack" : "Merge", e)
+      return
     } finally {
       setPendingMerge(null)
     }
@@ -316,23 +329,52 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        const confirmed = window.confirm(
-          "This merge affects running tasks/agents.\n\nProceed anyway?",
-        )
-        if (!confirmed) {
-          return
-        }
-        try {
-          await resumeMergeRun(mergeRun.runId, { allowRunning: true })
-          onRequestRefresh()
-        } catch (inner) {
-          setActionErrorFromException("Resume merge", inner)
-        }
+        setAllowRunningPrompt({ kind: "resume", runId: mergeRun.runId })
         return
       }
       setActionErrorFromException("Resume merge", e)
     } finally {
       setPendingMerge(null)
+    }
+  }
+
+  async function confirmAllowRunning() {
+    if (!allowRunningPrompt || !onRequestRefresh) {
+      return
+    }
+
+    setAllowRunningConfirming(true)
+    clearActionError()
+
+    const actionLabel =
+      allowRunningPrompt.kind === "merge"
+        ? allowRunningPrompt.cascade
+          ? "Merge and Restack"
+          : "Merge"
+        : "Resume merge"
+
+    try {
+      if (allowRunningPrompt.kind === "merge") {
+        if (taskId === null) {
+          throw new Error("Task id missing for merge confirmation.")
+        }
+        setPendingMerge(allowRunningPrompt.cascade ? "mergeStack" : "merge")
+        await mergeTask(taskId, {
+          cascade: allowRunningPrompt.cascade,
+          allowRunning: true,
+        })
+      } else {
+        setPendingMerge("resume")
+        await resumeMergeRun(allowRunningPrompt.runId, { allowRunning: true })
+      }
+      setAllowRunningPrompt(null)
+      onRequestRefresh()
+    } catch (e) {
+      setAllowRunningPrompt(null)
+      setActionErrorFromException(actionLabel, e)
+    } finally {
+      setPendingMerge(null)
+      setAllowRunningConfirming(false)
     }
   }
 
@@ -440,38 +482,8 @@ export function NodeCard({
   ]
   const tooltip = tooltipParts.filter(Boolean).join("\n")
 
-  const rebaseRemediationTaskId = mergeRun?.blockedTaskId ?? null
-  const rebaseRemediationWorktree = mergeRun?.blockedWorktreePath ?? null
-  const rebaseRemediationBranch =
-    mergeRun?.blockedBranchName ??
-    (mergeRun?.blockedStepKind === "rebase" ? node.branchName : null)
-
-  const rebaseRemediationMessage =
-    mergeRunBlockedRebase &&
-    rebaseRemediationWorktree &&
-    rebaseRemediationBranch
-      ? [
-          "We hit a rebase conflict while merging the stack.",
-          "",
-          `Branch: ${rebaseRemediationBranch}`,
-          `Worktree: ${rebaseRemediationWorktree}`,
-          "",
-          "Please:",
-          "- Review and resolve the conflict(s).",
-          `- \`cd ${rebaseRemediationWorktree}\``,
-          "- `git status` (to see conflicted files)",
-          "- `git add -A`",
-          "- `git rebase --continue`",
-          "- Repeat until the rebase completes (resolving any further conflicts).",
-          "",
-          "Once the rebase finishes and the worktree is clean, let me know so I can resume the merge run.",
-        ].join("\n")
-      : null
-
-  const rebaseAttachCommand =
-    mergeRunBlockedRebase && rebaseRemediationTaskId !== null
-      ? `rn agent attach --task ${rebaseRemediationTaskId}`
-      : null
+  const rebaseAttachCommand = rebaseRemediation?.attachCommand ?? null
+  const rebaseRemediationMessage = rebaseRemediation?.message ?? null
 
   const gitAttentionKind: "mergeBlocked" | "mergeResumable" | "outOfSync" | null =
     mergeRunBlocked
@@ -510,6 +522,15 @@ export function NodeCard({
   if (outOfSync) {
     gitAttentionTooltipLines.push("Branch is out of sync with its upstream.")
   }
+
+  const allowRunningActionLabel =
+    allowRunningPrompt?.kind === "merge"
+      ? allowRunningPrompt.cascade
+        ? "Merge and Restack"
+        : "Merge"
+      : allowRunningPrompt?.kind === "resume"
+        ? "Resume merge"
+        : null
 
   return (
     <Card
@@ -881,6 +902,60 @@ export function NodeCard({
           </TooltipContent>
         </Tooltip>
       ) : null}
+      <AlertDialog
+        open={allowRunningPrompt !== null}
+        onOpenChange={(open) => {
+          if (open) {
+            return
+          }
+          if (allowRunningConfirming) {
+            return
+          }
+          setAllowRunningPrompt(null)
+        }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Proceed anyway?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This {allowRunningActionLabel ?? "merge"} affects running
+              tasks/agents.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              disabledReason={
+                allowRunningConfirming ? "Action in progress" : null
+              }
+              onClick={(e) => {
+                e.preventDefault()
+                setAllowRunningPrompt(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <AlertDialogAction
+              disabledReason={
+                allowRunningConfirming ? "Action in progress" : null
+              }
+              onClick={(e) => {
+                e.preventDefault()
+                void confirmAllowRunning()
+              }}
+            >
+              {allowRunningConfirming ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Proceeding…
+                </>
+              ) : (
+                "Proceed"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }
