@@ -30,6 +30,7 @@ from redesmyn.db import (
     DaemonConnection,
     DaemonCommand,
     Epic,
+    Event,
     HarnessProfile,
     Host,
     LinearAuth,
@@ -379,7 +380,9 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         repo_root = app.state.ctx.repo_root
         tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
         for task in tasks:
-            if task.branch_name is None or not branch_exists(repo_root, task.branch_name):
+            if task.branch_name is None or not branch_exists(
+                repo_root, task.branch_name
+            ):
                 stack_in_sync_by_task_id[task.id] = None
                 continue
             if task.parent_task_id is None:

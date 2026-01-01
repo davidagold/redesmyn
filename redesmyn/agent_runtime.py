@@ -40,11 +40,8 @@ from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
     GitCommandError,
-    branch_exists,
     current_branch,
     git_is_ancestor,
-    git_status_porcelain,
-    git_worktree_path_for_branch,
     git_worktree_add,
 )
 from redesmyn.sandbox import (
@@ -772,7 +769,7 @@ async def start_task_agent(
                     attach=attach,
                     started=False,
                     warnings=(),
-            )
+                )
 
             host = await ensure_host_row(session, ctx)
             worktree_path = await ensure_task_worktree(
