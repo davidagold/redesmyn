@@ -29,6 +29,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
+  ChevronDown,
+  ChevronUp,
   EllipsisVertical,
   AlertTriangle,
   GitBranch,
@@ -38,6 +40,7 @@ import {
   RotateCcw,
   Square,
   Terminal,
+  X,
 } from "lucide-react"
 
 interface NodeCardProps {
@@ -100,15 +103,44 @@ export function NodeCard({
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
   const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
     useState(false)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionErrorExpanded, setActionErrorExpanded] = useState(false)
+  const [actionError, setActionError] = useState<{
+    title: string
+    summary: string
+    raw: string
+  } | null>(null)
 
-  useEffect(() => {
-    if (!actionError) {
+  function clearActionError() {
+    setActionError(null)
+    setActionErrorExpanded(false)
+  }
+
+  function setActionErrorFromException(
+    actionLabel: string,
+    exception: unknown,
+  ) {
+    setActionErrorExpanded(false)
+
+    if (exception instanceof ApiHttpError) {
+      const summary = exception.detail?.trim() || exception.message
+      setActionError({
+        title: `${actionLabel} failed`,
+        summary,
+        raw: exception.message,
+      })
       return
     }
-    const id = window.setTimeout(() => setActionError(null), 2_000)
-    return () => window.clearTimeout(id)
-  }, [actionError])
+
+    const raw =
+      exception instanceof Error ? exception.message : String(exception)
+    const httpDetailMatch = raw.match(/failed \\(\\d+\\): (.+)$/)
+    const summary = httpDetailMatch?.[1]?.trim() || raw
+    setActionError({
+      title: `${actionLabel} failed`,
+      summary,
+      raw,
+    })
+  }
 
   const agentStatus = agent?.status ?? null
   const taskId = task?.id ?? null
@@ -150,11 +182,11 @@ export function NodeCard({
       return
     }
     setPendingAction("attach")
-    setActionError(null)
+    clearActionError()
     try {
       await copyToClipboard(`rn agent attach --task ${taskId}`)
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Copy attach command", e)
     } finally {
       setPendingAction(null)
     }
@@ -168,12 +200,12 @@ export function NodeCard({
       return
     }
     setPendingAction("start")
-    setActionError(null)
+    clearActionError()
     try {
       await startTaskAgent(taskId, { harness: harnessCommand, detach })
       onRequestRefresh()
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Start agent", e)
     } finally {
       setPendingAction(null)
     }
@@ -184,12 +216,12 @@ export function NodeCard({
       return
     }
     setPendingAction("stop")
-    setActionError(null)
+    clearActionError()
     try {
       await stopTaskAgent(taskId)
       onRequestRefresh()
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Stop agent", e)
     } finally {
       setPendingAction(null)
     }
@@ -200,12 +232,12 @@ export function NodeCard({
       return
     }
     setPendingAction("restart")
-    setActionError(null)
+    clearActionError()
     try {
       await restartTaskAgent(taskId, { detach: true })
       onRequestRefresh()
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Restart agent", e)
     } finally {
       setPendingAction(null)
     }
@@ -218,7 +250,7 @@ export function NodeCard({
     const previous = mergeReady
     setPendingMerge("ready")
     setMergeReady(next)
-    setActionError(null)
+    clearActionError()
     try {
       await setTaskMergeReady(taskId, next)
       if (actionsMenuOpen) {
@@ -228,7 +260,7 @@ export function NodeCard({
       }
     } catch (e) {
       setMergeReady(previous)
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Set merge readiness", e)
     } finally {
       setPendingMerge(null)
     }
@@ -240,7 +272,7 @@ export function NodeCard({
     }
     setRefreshPendingAfterMenuClose(false)
     setPendingMerge(cascade ? "mergeStack" : "merge")
-    setActionError(null)
+    clearActionError()
     try {
       await mergeTask(taskId, { cascade })
       onRequestRefresh()
@@ -252,11 +284,18 @@ export function NodeCard({
         if (!confirmed) {
           return
         }
-        await mergeTask(taskId, { cascade, allowRunning: true })
-        onRequestRefresh()
+        try {
+          await mergeTask(taskId, { cascade, allowRunning: true })
+          onRequestRefresh()
+        } catch (inner) {
+          setActionErrorFromException(
+            cascade ? "Merge and Restack" : "Merge",
+            inner,
+          )
+        }
         return
       }
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException(cascade ? "Merge and Restack" : "Merge", e)
     } finally {
       setPendingMerge(null)
     }
@@ -268,7 +307,7 @@ export function NodeCard({
     }
     setRefreshPendingAfterMenuClose(false)
     setPendingMerge("resume")
-    setActionError(null)
+    clearActionError()
     try {
       await resumeMergeRun(mergeRun.runId, {})
       onRequestRefresh()
@@ -280,11 +319,15 @@ export function NodeCard({
         if (!confirmed) {
           return
         }
-        await resumeMergeRun(mergeRun.runId, { allowRunning: true })
-        onRequestRefresh()
+        try {
+          await resumeMergeRun(mergeRun.runId, { allowRunning: true })
+          onRequestRefresh()
+        } catch (inner) {
+          setActionErrorFromException("Resume merge", inner)
+        }
         return
       }
-      setActionError(e instanceof Error ? e.message : String(e))
+      setActionErrorFromException("Resume merge", e)
     } finally {
       setPendingMerge(null)
     }
@@ -633,15 +676,6 @@ export function NodeCard({
           {task?.title ?? "—"}
         </div>
 
-        {actionError ? (
-          <div
-            className="truncate text-xs text-destructive"
-            title={actionError}
-          >
-            {actionError}
-          </div>
-        ) : null}
-
         {agent ? (
           <div className="mt-auto flex flex-wrap items-end justify-start gap-2">
             <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
@@ -655,6 +689,93 @@ export function NodeCard({
           </div>
         ) : null}
       </CardContent>
+      {actionError ? (
+        <div
+          className="nodrag nopan absolute left-0 top-full z-50 mt-2 w-full"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Card
+            size="sm"
+            className="gap-2 border border-destructive/25 bg-destructive/10 py-2 shadow-lg ring-destructive/10 backdrop-blur"
+          >
+            <CardContent className="px-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AlertTriangle className="size-3.5 text-destructive" />
+                  <div
+                    className="truncate text-xs font-medium text-foreground"
+                    title={actionError.title}
+                  >
+                    {actionError.title}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Dismiss error"
+                  title="Dismiss error"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    clearActionError()
+                  }}
+                >
+                  <X className="size-3" />
+                </Button>
+              </div>
+
+              <div
+                className={cn(
+                  "text-xs text-foreground/80",
+                  actionErrorExpanded ? "whitespace-pre-wrap" : "line-clamp-2",
+                )}
+                title={actionError.summary}
+              >
+                {actionError.summary}
+              </div>
+
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setActionErrorExpanded((current) => !current)
+                  }}
+                >
+                  {actionErrorExpanded ? (
+                    <ChevronUp className="size-3" />
+                  ) : (
+                    <ChevronDown className="size-3" />
+                  )}
+                  {actionErrorExpanded ? "Hide" : "Show"} details
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void copyToClipboard(actionError.raw)
+                  }}
+                >
+                  Copy
+                </Button>
+              </div>
+
+              {actionErrorExpanded ? (
+                <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                  <div className="whitespace-pre-wrap break-words">
+                    {actionError.raw}
+                  </div>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
       {gitAttentionKind && gitAttentionIcon ? (
         <Tooltip>
           <TooltipTrigger
