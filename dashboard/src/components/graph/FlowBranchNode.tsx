@@ -14,6 +14,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   task?: Task
   agent?: Agent
   mergeRun?: MergeRun
+  blockingMergeRun?: MergeRun
   activity?: NodeActivity
   epicSlug?: string | null
   harnessCommand: string
@@ -34,6 +35,7 @@ export function FlowBranchNode({
     task,
     agent,
     mergeRun,
+    blockingMergeRun,
     activity,
     epicSlug,
     harnessCommand,
@@ -61,6 +63,7 @@ export function FlowBranchNode({
         task={task}
         agent={agent}
         mergeRun={mergeRun}
+        blockingMergeRun={blockingMergeRun}
         activity={activity}
         branchLabel={branchLabel}
         harnessCommand={harnessCommand}

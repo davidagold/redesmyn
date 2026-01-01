@@ -367,6 +367,18 @@ export function GraphView({
     return map
   }, [childrenByParent, rootNodes])
 
+  const mergeRunsByBlockedTaskId = useMemo(() => {
+    const map = new Map<number, MergeRun>()
+    for (const run of mergeRunsByTaskId.values()) {
+      const blockedTaskId = run.blockedTaskId ?? null
+      if (blockedTaskId === null || map.has(blockedTaskId)) {
+        continue
+      }
+      map.set(blockedTaskId, run)
+    }
+    return map
+  }, [mergeRunsByTaskId])
+
   const graphNodes = useMemo(
     () => [...nodesById.values()].sort((a, b) => a.id - b.id),
     [nodesById],
@@ -862,6 +874,9 @@ export function GraphView({
           ? agentsById.get(graphNode.agentId)
           : undefined
       const mergeRun = task ? mergeRunsByTaskId.get(task.id) : undefined
+      const blockingMergeRun = task
+        ? mergeRunsByBlockedTaskId.get(task.id)
+        : undefined
       const activity = activityByNodeId.get(graphNode.id)
 
       mapped.push({
@@ -873,6 +888,7 @@ export function GraphView({
           task,
           agent,
           mergeRun,
+          blockingMergeRun,
           activity,
           epicSlug,
           harnessCommand,
@@ -910,6 +926,7 @@ export function GraphView({
     selectedNodeIds,
     tasksById,
     trunkLayout,
+    mergeRunsByBlockedTaskId,
   ])
 
   const edges = useMemo(() => {

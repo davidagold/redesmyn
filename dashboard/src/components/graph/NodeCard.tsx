@@ -60,6 +60,7 @@ interface NodeCardProps {
   task?: Task
   agent?: Agent
   mergeRun?: MergeRun
+  blockingMergeRun?: MergeRun
   activity?: NodeActivity
   branchLabel: string
   harnessCommand: string
@@ -101,6 +102,7 @@ export function NodeCard({
   task,
   agent,
   mergeRun,
+  blockingMergeRun,
   activity,
   branchLabel,
   harnessCommand,
@@ -120,6 +122,11 @@ export function NodeCard({
   const mergeRunBlocked = mergeRunStatus === "blocked"
   const rebaseRemediation = getRebaseRemediation(mergeRun, node.branchName)
   const mergeRunBlockedRebase = rebaseRemediation !== null
+  const blockingRebaseRemediation = getRebaseRemediation(
+    blockingMergeRun,
+    node.branchName,
+  )
+  const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -514,6 +521,8 @@ export function NodeCard({
 
   const rebaseAttachCommand = rebaseRemediation?.attachCommand ?? null
   const rebaseRemediationMessage = rebaseRemediation?.message ?? null
+  const blockingAttachCommand = blockingRebaseRemediation?.attachCommand ?? null
+  const blockingRemediationMessage = blockingRebaseRemediation?.message ?? null
 
   const gitAttentionTooltipLines: string[] = []
   if (mergeRunBlocked) {
@@ -797,7 +806,9 @@ export function NodeCard({
           </div>
         ) : null}
       </CardContent>
-      {actionError || shouldShowResumeButton ? (
+      {actionError ||
+      shouldShowResumeButton ||
+      blockingMergeRunBlockedRebase ? (
         <div
           className="nodrag nopan absolute left-0 top-full z-50 mt-2 w-full space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
@@ -930,6 +941,51 @@ export function NodeCard({
                 ) : null}
               </CardContent>
             </Card>
+          ) : null}
+
+          {blockingMergeRunBlockedRebase ? (
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabledReason={
+                  blockingAttachCommand
+                    ? null
+                    : "No task id recorded for this blocked step."
+                }
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (!blockingAttachCommand) {
+                    return
+                  }
+                  void copyToClipboard(blockingAttachCommand)
+                }}
+              >
+                <Terminal />
+                Copy attach
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabledReason={
+                  blockingRemediationMessage
+                    ? null
+                    : "No remediation message available."
+                }
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  if (!blockingRemediationMessage) {
+                    return
+                  }
+                  void copyToClipboard(blockingRemediationMessage)
+                }}
+              >
+                <MessageSquareText />
+                Copy agent note
+              </Button>
+            </div>
           ) : null}
 
           {shouldShowResumeButton ? (
