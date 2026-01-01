@@ -473,6 +473,31 @@ class EventResponse(ApiResponse):
     created_at: datetime
 
 
+class DaemonPresenceResponse(ApiResponse):
+    daemon_id: str
+    host: str | None
+    capabilities: dict[str, Any]
+    attached_repos: list[dict[str, str]]
+    connected: bool
+    last_seen_at: datetime | None
+    connected_at: datetime | None
+    disconnected_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DaemonCommandResponse(ApiResponse):
+    id: int
+    daemon_id: str
+    command_type: str
+    workspace_id: str | None
+    repo_id: str | None
+    payload: dict[str, Any] = Field(validation_alias="data")
+    state: CommandState
+    created_at: datetime
+    updated_at: datetime
+
+
 class BlockStatusResponse(ApiResponse):
     mode: BlockMode
     scope: BlockScopeResponse

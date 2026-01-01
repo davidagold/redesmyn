@@ -19,6 +19,7 @@ class RedesmynSettings(BaseSettings):
     api_port: int = 9234
 
     runner_mode: Literal["local", "remote"] = "local"
+    daemon_auth_token: str = "dev"
 
     linear_client_id: str | None = None
     linear_client_secret: str | None = None

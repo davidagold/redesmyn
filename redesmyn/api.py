@@ -5,18 +5,19 @@ import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal, Protocol, overload
+from typing import Any, Literal, Protocol, overload
 from uuid import uuid4
 
-from fastapi import APIRouter, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import TypeAdapter
-from sqlalchemy import desc, select
+from pydantic import BaseModel, Field, TypeAdapter
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
+from starlette.websockets import WebSocketDisconnect
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
@@ -26,6 +27,8 @@ from redesmyn.db import (
     Agent,
     Block,
     BlockScope,
+    DaemonConnection,
+    DaemonCommand,
     Epic,
     Event,
     HarnessProfile,
@@ -39,7 +42,7 @@ from redesmyn.db import (
     create_sessionmaker,
 )
 from redesmyn.db.models import HostCapabilities, MergeRunPlanData, MergeRunPlanStepData
-from redesmyn.domain.enums import BlockPolicy, MergeRunStatus
+from redesmyn.domain.enums import BlockPolicy, CommandState, MergeRunStatus
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
     exchange_code_for_token,
@@ -76,8 +79,11 @@ from redesmyn.schemas.core import (
     AttachInfoResponse,
     BlockScopeResponse,
     BlockStatusResponse,
+    DaemonCommandResponse,
+    DaemonPresenceResponse,
     EpicGraphResponse,
     EpicResponse,
+    EventResponse,
     HarnessProfileDefinitionResponse,
     HarnessProfileResponse,
     HarnessProfileUpsertRequest,
@@ -121,6 +127,8 @@ from redesmyn.git_mechanics_v0 import (
     build_merge_cascade_plan,
     execute_merge_cascade_plan,
 )
+from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
+from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
 
 
 class AppState(Protocol):
@@ -129,6 +137,8 @@ class AppState(Protocol):
     sessionmaker: async_sessionmaker[AsyncSession]
     runner_backend: RunnerBackend
     linear_oauth_states: dict[str, datetime]
+    event_hub: JsonWebSocketHub
+    daemon_connections: DaemonConnectionRegistry
 
 
 class App(FastAPI):
@@ -158,6 +168,8 @@ async def lifespan(app: App):
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.runner_backend = make_runner_backend(mode=settings.runner_mode, ctx=ctx)
     app.state.linear_oauth_states = {}
+    app.state.event_hub = JsonWebSocketHub()
+    app.state.daemon_connections = DaemonConnectionRegistry()
     maybe_mount_dashboard(app, ctx.worktree_root)
 
     observer_task: asyncio.Task[None] | None = None
@@ -287,6 +299,22 @@ async def _resolve_epic_row(session: AsyncSession, *, epic: str) -> Epic:
     if row is None:
         raise HTTPException(status_code=404, detail="Epic not found")
     return row
+
+
+async def _append_event(
+    session: AsyncSession, *, event_type: str, data: dict[str, Any]
+) -> EventResponse:
+    event = Event(event_type=event_type, data=data)
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return EventResponse.model_validate(event, from_attributes=True)
+
+
+async def _broadcast_event(event: EventResponse) -> None:
+    await app.state.event_hub.publish(
+        {"type": "event", "event": event.model_dump(by_alias=True)}
+    )
 
 
 @v1.get("/epics", response_model=list[EpicResponse])
@@ -423,7 +451,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                     authored_at_raw = info.get("authored_at")
                     if isinstance(authored_at_raw, datetime):
                         authored_at = authored_at_raw
-                    if isinstance(authored_at_raw, str):
+                    elif isinstance(authored_at_raw, str) and authored_at_raw:
                         try:
                             authored_at = datetime.fromisoformat(
                                 authored_at_raw.replace("Z", "+00:00")
@@ -1705,6 +1733,364 @@ async def linear_oauth_callback(
     return HTMLResponse(
         "<h1>Linear connected</h1><p>You can close this tab and return to Redesmyn.</p>"
     )
+
+
+@v1.get("/daemons", response_model=list[DaemonPresenceResponse])
+async def list_daemons() -> list[DaemonPresenceResponse]:
+    stale_after = timedelta(seconds=90)
+    now = datetime.now(UTC)
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        latest = (
+            select(
+                DaemonConnection.daemon_id,
+                func.max(DaemonConnection.id).label("max_id"),
+            )
+            .group_by(DaemonConnection.daemon_id)
+            .subquery()
+        )
+        rows = await session.scalars(
+            select(DaemonConnection)
+            .join(latest, DaemonConnection.id == latest.c.max_id)
+            .order_by(DaemonConnection.daemon_id)
+        )
+        result: list[DaemonPresenceResponse] = []
+        for row in rows:
+            connected = (
+                row.disconnected_at is None and (now - row.last_seen_at) <= stale_after
+            )
+            result.append(
+                DaemonPresenceResponse(
+                    daemon_id=row.daemon_id,
+                    host=row.host,
+                    capabilities=row.capabilities,
+                    attached_repos=row.attached_repos,
+                    connected=connected,
+                    last_seen_at=row.last_seen_at,
+                    connected_at=row.connected_at,
+                    disconnected_at=row.disconnected_at,
+                    created_at=row.created_at,
+                    updated_at=row.updated_at,
+                )
+            )
+        return result
+
+
+class IssueDaemonCommandRequest(BaseModel):
+    command_type: str
+    workspace_id: str | None = None
+    repo_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+@v1.post("/daemons/{daemon_id}/commands", response_model=DaemonCommandResponse)
+async def issue_daemon_command(
+    daemon_id: str, req: IssueDaemonCommandRequest
+) -> DaemonCommandResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        cmd = DaemonCommand(
+            daemon_id=daemon_id,
+            command_type=req.command_type,
+            workspace_id=req.workspace_id,
+            repo_id=req.repo_id,
+            data=req.payload,
+        )
+        session.add(cmd)
+        await session.commit()
+        await session.refresh(cmd)
+
+    command = DaemonCommandResponse.model_validate(cmd, from_attributes=True)
+    ws_command = ServerCommand(
+        command_id=command.id,
+        command_type=command.command_type,
+        workspace_id=command.workspace_id,
+        repo_id=command.repo_id,
+        data=command.payload,
+    )
+    await app.state.daemon_connections.send(
+        daemon_id,
+        {
+            "type": "command",
+            "command": ws_command.model_dump(),
+        },
+    )
+    return command
+
+
+@v1.websocket("/ws")
+async def ui_event_stream(websocket: WebSocket) -> None:
+    send_queue = await app.state.event_hub.connect(websocket)
+    sender_task = asyncio.create_task(
+        app.state.event_hub.sender_loop(websocket, send_queue)
+    )
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            if not isinstance(msg, dict):
+                continue
+            msg_type = msg.get("type")
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "id": msg.get("id")})
+                continue
+            if msg_type == "subscribe":
+                since_id = msg.get("since_id")
+                if not isinstance(since_id, int):
+                    continue
+                sessionmaker = app.state.sessionmaker
+                async with sessionmaker() as session:
+                    rows = await session.scalars(
+                        select(Event).where(Event.id > since_id).order_by(Event.id)
+                    )
+                    for row in rows:
+                        event = EventResponse.model_validate(row, from_attributes=True)
+                        await websocket.send_json(
+                            {"type": "event", "event": event.model_dump(by_alias=True)}
+                        )
+                continue
+    except WebSocketDisconnect:
+        pass
+    finally:
+        sender_task.cancel()
+        await app.state.event_hub.disconnect(websocket)
+
+
+@v1.websocket("/daemon/ws")
+async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
+    settings = load_settings(repo_root=app.state.ctx.repo_root)
+    if token != settings.daemon_auth_token:
+        await websocket.close(code=1008)
+        return
+
+    hello_adapter = TypeAdapter(DaemonInboundMessage)
+    daemon_id: str | None = None
+    connection_id: int | None = None
+
+    await websocket.accept()
+    try:
+        raw = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+    except Exception:
+        await websocket.close(code=1002)
+        return
+
+    try:
+        first_msg = hello_adapter.validate_python(raw)
+    except Exception:
+        await websocket.close(code=1003)
+        return
+
+    if not isinstance(first_msg, DaemonHello):
+        await websocket.close(code=1002)
+        return
+
+    daemon_id = first_msg.daemon_id
+    send_queue = await app.state.daemon_connections.register(daemon_id, websocket)
+    sender_task = asyncio.create_task(
+        app.state.event_hub.sender_loop(websocket, send_queue)
+    )
+
+    now = datetime.now(UTC)
+    sessionmaker = app.state.sessionmaker
+    attached_repos = [
+        {"workspace_id": r.workspace_id, "repo_id": r.repo_id}
+        for r in first_msg.attached_repos
+    ]
+    async with sessionmaker() as session:
+        await session.execute(
+            update(DaemonConnection)
+            .where(
+                DaemonConnection.daemon_id == daemon_id,
+                DaemonConnection.disconnected_at.is_(None),
+            )
+            .values(disconnected_at=now, disconnect_reason="replaced")
+        )
+
+        conn = DaemonConnection(
+            daemon_id=daemon_id,
+            host=first_msg.host,
+            capabilities=first_msg.capabilities,
+            attached_repos=attached_repos,
+            connected_at=now,
+            last_seen_at=now,
+        )
+        session.add(conn)
+        await session.commit()
+        await session.refresh(conn)
+        connection_id = conn.id
+
+        connected_event = await _append_event(
+            session,
+            event_type="daemon.connected",
+            data={
+                "daemon_id": daemon_id,
+                "connection_id": connection_id,
+                "host": first_msg.host,
+                "capabilities": first_msg.capabilities,
+                "attached_repos": attached_repos,
+            },
+        )
+    await _broadcast_event(connected_event)
+
+    await websocket.send_json({"type": "hello_ack", "server_time": now.isoformat()})
+
+    async with sessionmaker() as session:
+        queued = await session.scalars(
+            select(DaemonCommand)
+            .where(
+                DaemonCommand.daemon_id == daemon_id,
+                DaemonCommand.state.in_([CommandState.Queued, CommandState.Running]),
+            )
+            .order_by(DaemonCommand.id)
+        )
+        for cmd in queued:
+            command = DaemonCommandResponse.model_validate(cmd, from_attributes=True)
+            ws_command = ServerCommand(
+                command_id=command.id,
+                command_type=command.command_type,
+                workspace_id=command.workspace_id,
+                repo_id=command.repo_id,
+                data=command.payload,
+            )
+            await app.state.daemon_connections.send(
+                daemon_id,
+                {"type": "command", "command": ws_command.model_dump()},
+            )
+
+    try:
+        while True:
+            msg_raw = await websocket.receive_json()
+            try:
+                msg = hello_adapter.validate_python(msg_raw)
+            except Exception:
+                await websocket.send_json({"type": "error", "error": "invalid_message"})
+                continue
+
+            msg_type = msg.type
+            now = datetime.now(UTC)
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "id": msg.id})
+                async with sessionmaker() as session:
+                    if connection_id is not None:
+                        await session.execute(
+                            update(DaemonConnection)
+                            .where(DaemonConnection.id == connection_id)
+                            .values(last_seen_at=now)
+                        )
+                        await session.commit()
+                continue
+
+            if msg_type == "heartbeat":
+                heartbeat_event: EventResponse | None = None
+                async with sessionmaker() as session:
+                    updated_attached_repos = attached_repos
+                    if msg.attached_repos is not None:
+                        updated_attached_repos = [
+                            {"workspace_id": r.workspace_id, "repo_id": r.repo_id}
+                            for r in msg.attached_repos
+                        ]
+                    if connection_id is not None:
+                        await session.execute(
+                            update(DaemonConnection)
+                            .where(DaemonConnection.id == connection_id)
+                            .values(
+                                last_seen_at=now,
+                                attached_repos=updated_attached_repos,
+                            )
+                        )
+                        await session.commit()
+                        attached_repos = updated_attached_repos
+
+                        heartbeat_event = await _append_event(
+                            session,
+                            event_type="daemon.heartbeat",
+                            data={
+                                "daemon_id": daemon_id,
+                                "connection_id": connection_id,
+                                "attached_repos": updated_attached_repos,
+                            },
+                        )
+                if heartbeat_event is not None:
+                    await _broadcast_event(heartbeat_event)
+                await websocket.send_json({"type": "heartbeat_ack"})
+                continue
+
+            if msg_type == "event":
+                async with sessionmaker() as session:
+                    if connection_id is not None:
+                        await session.execute(
+                            update(DaemonConnection)
+                            .where(DaemonConnection.id == connection_id)
+                            .values(last_seen_at=now)
+                        )
+                        await session.commit()
+
+                    event = await _append_event(
+                        session,
+                        event_type=msg.event_type,
+                        data={
+                            "workspace_id": msg.workspace_id,
+                            "repo_id": msg.repo_id,
+                            "daemon_id": daemon_id,
+                            "connection_id": connection_id,
+                            **msg.data,
+                        },
+                    )
+                await _broadcast_event(event)
+                await websocket.send_json({"type": "event_ack", "event_id": event.id})
+                continue
+
+            if msg_type == "command_ack":
+                async with sessionmaker() as session:
+                    cmd = await session.get(DaemonCommand, msg.command_id)
+                    if cmd is None or cmd.daemon_id != daemon_id:
+                        await websocket.send_json(
+                            {"type": "error", "error": "unknown_command"}
+                        )
+                        continue
+                    cmd.state = msg.state
+                    cmd.data = msg.data
+                    await session.commit()
+
+                    command_event = await _append_event(
+                        session,
+                        event_type="daemon.command_state_changed",
+                        data={
+                            "daemon_id": daemon_id,
+                            "connection_id": connection_id,
+                            "command_id": cmd.id,
+                            "state": cmd.state.value,
+                        },
+                    )
+                await _broadcast_event(command_event)
+                await websocket.send_json({"type": "command_ack_ok"})
+                continue
+    except WebSocketDisconnect:
+        pass
+    finally:
+        sender_task.cancel()
+        if daemon_id is not None:
+            await app.state.daemon_connections.unregister(daemon_id)
+            now = datetime.now(UTC)
+            disconnected_event: EventResponse | None = None
+            async with sessionmaker() as session:
+                if connection_id is not None:
+                    await session.execute(
+                        update(DaemonConnection)
+                        .where(DaemonConnection.id == connection_id)
+                        .values(disconnected_at=now, disconnect_reason="disconnected")
+                    )
+                    await session.commit()
+                    disconnected_event = await _append_event(
+                        session,
+                        event_type="daemon.disconnected",
+                        data={
+                            "daemon_id": daemon_id,
+                            "connection_id": connection_id,
+                        },
+                    )
+            if disconnected_event is not None:
+                await _broadcast_event(disconnected_event)
 
 
 @app.get("/", include_in_schema=False)

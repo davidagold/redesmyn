@@ -346,6 +346,184 @@
         "title": "CommandReleaseResponse",
         "type": "object"
       },
+      "CommandState": {
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "canceled"
+        ],
+        "title": "CommandState",
+        "type": "string"
+      },
+      "DaemonCommandResponse": {
+        "properties": {
+          "commandType": {
+            "title": "Commandtype",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "daemonId": {
+            "title": "Daemonid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "repoId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repoid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "workspaceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspaceid"
+          }
+        },
+        "required": [
+          "id",
+          "daemonId",
+          "commandType",
+          "workspaceId",
+          "repoId",
+          "payload",
+          "state",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "DaemonCommandResponse",
+        "type": "object"
+      },
+      "DaemonPresenceResponse": {
+        "properties": {
+          "attachedRepos": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Attachedrepos",
+            "type": "array"
+          },
+          "capabilities": {
+            "additionalProperties": true,
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "connectedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "daemonId": {
+            "title": "Daemonid",
+            "type": "string"
+          },
+          "disconnectedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disconnectedat"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastseenat"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "daemonId",
+          "host",
+          "capabilities",
+          "attachedRepos",
+          "connected",
+          "lastSeenAt",
+          "connectedAt",
+          "disconnectedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "DaemonPresenceResponse",
+        "type": "object"
+      },
       "EpicGraphResponse": {
         "properties": {
           "agents": {
@@ -690,6 +868,46 @@
           "displayName"
         ],
         "title": "HostUpsertRequest",
+        "type": "object"
+      },
+      "IssueDaemonCommandRequest": {
+        "properties": {
+          "command_type": {
+            "title": "Command Type",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "repo_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "command_type"
+        ],
+        "title": "IssueDaemonCommandRequest",
         "type": "object"
       },
       "LinearStatusResponse": {
@@ -2322,6 +2540,77 @@
           }
         },
         "summary": "Update Orchestration Config"
+      }
+    },
+    "/v1/daemons": {
+      "get": {
+        "operationId": "list_daemons_v1_daemons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DaemonPresenceResponse"
+                  },
+                  "title": "Response List Daemons V1 Daemons Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Daemons"
+      }
+    },
+    "/v1/daemons/{daemon_id}/commands": {
+      "post": {
+        "operationId": "issue_daemon_command_v1_daemons__daemon_id__commands_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "daemon_id",
+            "required": true,
+            "schema": {
+              "title": "Daemon Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssueDaemonCommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Daemon Command"
       }
     },
     "/v1/epics": {

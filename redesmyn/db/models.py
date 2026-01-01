@@ -577,3 +577,69 @@ class MergeRun(Base):
         if value == "merge_then_restack":
             return "merge_then_restack"
         return "strict"
+
+
+class DaemonConnection(Base):
+    __tablename__ = "daemon_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    daemon_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    host: Mapped[str | None] = mapped_column(String, nullable=True)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    attached_repos: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=list,
+    )
+    connected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    disconnected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disconnect_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class DaemonCommand(Base):
+    __tablename__ = "daemon_commands"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    daemon_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    command_type: Mapped[str] = mapped_column(String, nullable=False)
+    workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    repo_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    state: Mapped[CommandState] = mapped_column(
+        _enum_type(CommandState, "daemon_command_state"),
+        default=CommandState.Queued,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
