@@ -4,9 +4,8 @@
 
 ```yaml
 id: T-3
-stacked_on: T-1
 node:
-  branch: rn/git-mechanics-v0/T-3-abort-merge-run
+  branch: rn/git-mechanics-v1/T-3-abort-merge-run
 ```
 
 ## Brief (local)

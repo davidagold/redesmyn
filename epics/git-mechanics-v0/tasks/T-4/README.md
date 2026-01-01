@@ -4,7 +4,6 @@
 
 ```yaml
 id: T-4
-stacked_on: T-1
 node:
   branch: rn/git-mechanics-v0/T-4-skip-done-spine
 ```
