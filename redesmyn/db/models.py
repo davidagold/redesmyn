@@ -493,6 +493,7 @@ class Event(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+
 class GitRefState(Base):
     __tablename__ = "git_ref_states"
 
@@ -538,7 +539,7 @@ class GitTrunkTimeline(Base):
 class GitMergeBase(Base):
     __tablename__ = "git_merge_bases"
 
-    node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id"), primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
     merge_base_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

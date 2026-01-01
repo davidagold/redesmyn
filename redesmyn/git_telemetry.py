@@ -12,8 +12,8 @@ from redesmyn.db import (
     GitMergeBase,
     GitRefState,
     GitTrunkTimeline,
-    Node,
     Repository,
+    Task,
     create_engine,
     create_sessionmaker,
     init_db,
@@ -62,7 +62,7 @@ def compute_trunk_timeline_snapshot(
     *,
     repo_root,
     root_branch: str,
-    root_node_branches: list[str],
+    root_task_branches: list[str],
     limit: int = TRUNK_TIMELINE_LIMIT,
 ) -> dict[str, Any] | None:
     tip_sha = git_rev_parse(repo_root, root_branch)
@@ -70,7 +70,7 @@ def compute_trunk_timeline_snapshot(
         return None
 
     merge_bases: list[str] = []
-    for branch in root_node_branches:
+    for branch in root_task_branches:
         if not branch:
             continue
         mb = git_merge_base(repo_root, root_branch, branch)
@@ -188,26 +188,26 @@ async def update_git_projections(ctx: RepoContext) -> None:
                 await session.commit()
                 return
 
-            nodes = list(
+            tasks = list(
                 await session.scalars(
-                    select(Node).where(Node.epic_id.in_([e.id for e in epics]))
+                    select(Task).where(Task.epic_id.in_([e.id for e in epics]))
                 )
             )
-            nodes_by_epic: dict[int, list[Node]] = {}
-            for node in nodes:
-                nodes_by_epic.setdefault(node.epic_id, []).append(node)
+            tasks_by_epic: dict[int, list[Task]] = {}
+            for task in tasks:
+                tasks_by_epic.setdefault(task.epic_id, []).append(task)
 
             for epic in epics:
-                epic_nodes = nodes_by_epic.get(epic.id, [])
-                root_nodes = [n for n in epic_nodes if n.parent_node_id is None]
-                root_node_branches = [
-                    n.branch_name for n in root_nodes if n.branch_name
+                epic_tasks = tasks_by_epic.get(epic.id, [])
+                root_tasks = [t for t in epic_tasks if t.parent_task_id is None]
+                root_task_branches = [
+                    t.branch_name for t in root_tasks if t.branch_name
                 ]
 
                 trunk = compute_trunk_timeline_snapshot(
                     repo_root=ctx.repo_root,
                     root_branch=epic.root_branch,
-                    root_node_branches=root_node_branches,
+                    root_task_branches=root_task_branches,
                 )
                 if trunk is not None:
                     existing_trunk = await session.get(GitTrunkTimeline, epic.id)
@@ -225,19 +225,19 @@ async def update_git_projections(ctx: RepoContext) -> None:
                         existing_trunk.observed_at = now
                         existing_trunk.updated_at = now
 
-                for node in epic_nodes:
+                for task in epic_tasks:
                     mb = (
                         git_merge_base(
-                            ctx.repo_root, epic.root_branch, node.branch_name
+                            ctx.repo_root, epic.root_branch, task.branch_name
                         )
-                        if node.branch_name
+                        if task.branch_name
                         else None
                     )
-                    existing_mb = await session.get(GitMergeBase, node.id)
+                    existing_mb = await session.get(GitMergeBase, task.id)
                     if existing_mb is None:
                         session.add(
                             GitMergeBase(
-                                node_id=node.id,
+                                task_id=task.id,
                                 merge_base_sha=mb,
                                 observed_at=now,
                                 updated_at=now,
