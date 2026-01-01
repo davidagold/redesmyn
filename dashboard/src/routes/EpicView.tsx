@@ -25,7 +25,11 @@ import {
 import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
-import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
+import {
+  type StreamEvent,
+  type TaskMergeEventData,
+  useEventStream,
+} from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
@@ -146,6 +150,11 @@ export function EpicView() {
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
   const [, setActivityTick] = useState(0)
+  const [mergeStepCue, setMergeStepCue] = useState<{
+    id: string
+    nodeId: number
+    kind: TaskMergeEventData["kind"]
+  } | null>(null)
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
@@ -602,6 +611,22 @@ export function EpicView() {
 
       if (event.eventType === "merge.run") {
         scheduleGraphRefresh()
+        return
+      }
+
+      if (event.eventType === "task.merge") {
+        const data = event.data
+        if (
+          data.type === "task.merge" &&
+          data.phase === "started" &&
+          typeof data.nodeId === "number"
+        ) {
+          setMergeStepCue({
+            id: `${event.id}:${data.runId}:${data.kind}:${data.nodeId}`,
+            nodeId: data.nodeId,
+            kind: data.kind,
+          })
+        }
         return
       }
 
@@ -1786,6 +1811,7 @@ export function EpicView() {
             selectedNodeId={nodeId}
             selectedEdgeId={selectedEdgeId}
             focusMode={focusMode}
+            mergeStepCue={mergeStepCue}
             epicSlug={epicSlug}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}

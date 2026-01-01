@@ -102,6 +102,17 @@ export type MergeRunEventData = {
   blockedBranchName?: string | null
 }
 
+export type TaskMergeEventData = {
+  type: "task.merge"
+  runId: string
+  nodeId?: number | null
+  taskId?: number | null
+  kind: "rebase" | "merge_ff"
+  phase: "started" | "finished" | "failed"
+  branchName: string
+  error?: string | null
+}
+
 export type NodeAgentSetEventData = {
   type: "node.agent_set"
   nodeId: number
@@ -138,7 +149,7 @@ export type UnknownEventData = {
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | MergeRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"
