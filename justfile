@@ -28,7 +28,7 @@ check:
     cd dashboard && npm run test
 
 run:
-    rn daemon run
+    rn server run
 
 # Database (Alembic)
 db-current:

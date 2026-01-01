@@ -112,6 +112,7 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
+server_app = typer.Typer(add_completion=False, help="Control plane server management.")
 config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
 sandbox_app = typer.Typer(add_completion=False, help="Sandbox configuration + health.")
 block_app = typer.Typer(
@@ -1892,16 +1893,72 @@ def dev(
 
 @daemon_app.command("run")
 def daemon_run(
+    control_plane: str | None = typer.Option(
+        None, "--control-plane", help="Control plane origin (http(s)://...)."
+    ),
+    token: str | None = typer.Option(
+        None, "--token", help="Daemon auth token (defaults from settings)."
+    ),
+    workspace_id: str = typer.Option(
+        "default", "--workspace-id", help="Workspace id for telemetry attribution."
+    ),
+    repo_id: str | None = typer.Option(
+        None,
+        "--repo-id",
+        help="Repo id for telemetry attribution (defaults from repo).",
+    ),
+    poll_interval: float = typer.Option(
+        1.0, "--poll-interval", help="Telemetry poll interval (seconds)."
+    ),
+    heartbeat_interval: float = typer.Option(
+        5.0, "--heartbeat-interval", help="Heartbeat interval (seconds)."
+    ),
+) -> None:
+    """Run the daemon in the foreground."""
+    try:
+        _ = get_repo_context()
+    except NotAGitRepositoryError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    from redesmyn.daemon_runtime import DaemonRuntimeConfig, run_daemon
+    from redesmyn.settings import load_settings
+
+    ctx = get_repo_context()
+    settings = load_settings(repo_root=ctx.repo_root)
+
+    inferred_repo_id = slugify(ctx.repo_root.name)
+    cfg = DaemonRuntimeConfig(
+        control_plane_url=(
+            control_plane
+            or os.environ.get("REDESMYN_CONTROL_PLANE_ORIGIN")
+            or f"http://{settings.api_host}:{settings.api_port}"
+        ),
+        token=token or settings.daemon_auth_token,
+        workspace_id=workspace_id,
+        repo_id=repo_id or inferred_repo_id,
+        poll_interval_s=poll_interval,
+        heartbeat_interval_s=heartbeat_interval,
+    )
+
+    try:
+        asyncio.run(run_daemon(ctx, settings, cfg))
+    except KeyboardInterrupt:
+        raise typer.Exit(130) from None
+
+
+@server_app.command("run")
+def server_run(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(9234, help="Bind port."),
     reload: bool = typer.Option(False, help="Auto-reload on code changes."),
     observer: bool = typer.Option(
         True,
         "--observer/--no-observer",
-        help="Run the repo observer in the daemon process.",
+        help="Run the repo observer in the server process (debug only).",
     ),
 ) -> None:
-    """Run the daemon in the foreground."""
+    """Run the control plane server in the foreground."""
     try:
         ctx = get_repo_context()
     except NotAGitRepositoryError as e:
@@ -1962,6 +2019,7 @@ def daemon_status() -> None:
 
 
 app.add_typer(daemon_app, name="daemon")
+app.add_typer(server_app, name="server")
 app.add_typer(config_app, name="config")
 app.add_typer(sandbox_app, name="sandbox")
 
@@ -2550,7 +2608,7 @@ def linear_auth(
                     resp = await client.get(status_url)
                 except httpx.RequestError:
                     raise typer.BadParameter(
-                        f"Daemon not reachable at {base}. Run `rn daemon run`."
+                        f"Control plane not reachable at {base}. Run `rn server run` (or `rn dev`)."
                     ) from None
 
                 if resp.status_code != 200:

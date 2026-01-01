@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +49,13 @@ class RepoObserverState:
         default_factory=dict
     )
     initialized: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RepoObserverEvent:
+    event_type: str
+    data: dict[str, object]
+    created_at: datetime
 
 
 def default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
@@ -185,7 +194,13 @@ def worktree_dirty(worktree_path: Path) -> bool | None:
     return bool(proc.stdout.strip())
 
 
-def observe_worktree(*, task: Task, ctx: RepoContext) -> WorktreeObservation:
+class _TaskLike(Protocol):
+    id: int
+    branch_name: str | None
+    worktree_path: str | None
+
+
+def observe_worktree(*, task: _TaskLike, ctx: RepoContext) -> WorktreeObservation:
     if task.branch_name is None:
         raise RuntimeError("Task has no branch_name")
 
@@ -501,6 +516,95 @@ async def observe_once(
     if not state.initialized:
         state.initialized = True
     return events_added
+
+
+def observe_repo(
+    ctx: RepoContext,
+    tasks: Sequence[_TaskLike],
+    state: RepoObserverState,
+    *,
+    emit_baseline: bool,
+    active_agent_id_by_task_id: dict[int, int],
+    now: datetime | None = None,
+) -> list[RepoObserverEvent]:
+    created_at = now or datetime.now(UTC)
+    heads = read_branch_heads(ctx.repo_root)
+    events: list[RepoObserverEvent] = []
+
+    new_shas: list[str] = []
+    new_commits: list[tuple[_TaskLike, str]] = []
+    for task in tasks:
+        if task.branch_name is None:
+            continue
+        sha = heads.get(task.branch_name)
+        if not sha:
+            continue
+        prev = state.last_head_by_task_id.get(task.id)
+        if prev is None:
+            state.last_head_by_task_id[task.id] = sha
+            if emit_baseline:
+                new_shas.append(sha)
+                new_commits.append((task, sha))
+            continue
+        if prev == sha:
+            continue
+        state.last_head_by_task_id[task.id] = sha
+        new_shas.append(sha)
+        new_commits.append((task, sha))
+
+    summaries = read_commit_summaries(ctx.repo_root, shas=new_shas)
+    for task, sha in new_commits:
+        summary = summaries.get(sha)
+        data = GitCommitEventData(
+            task_id=task.id,
+            branch_name=task.branch_name or "",
+            sha=sha,
+            author_name=summary.author_name if summary else None,
+            author_email=summary.author_email if summary else None,
+            authored_at=summary.authored_at if summary else None,
+            subject=summary.subject if summary else None,
+            agent_id=active_agent_id_by_task_id.get(task.id),
+        )
+        events.append(
+            RepoObserverEvent(
+                event_type="git.commit",
+                data=data.model_dump(mode="python"),
+                created_at=created_at,
+            )
+        )
+
+    for task in tasks:
+        if task.branch_name is None:
+            continue
+        observed = observe_worktree(task=task, ctx=ctx)
+
+        prev = state.last_worktree_by_task_id.get(task.id)
+        if prev is None:
+            state.last_worktree_by_task_id[task.id] = observed
+            if not emit_baseline:
+                continue
+        elif prev == observed:
+            continue
+
+        state.last_worktree_by_task_id[task.id] = observed
+        data = WorktreeHealthEventData(
+            task_id=task.id,
+            branch_name=task.branch_name or "",
+            worktree_path=observed.worktree_path,
+            exists=observed.exists,
+            current_branch=observed.current_branch,
+            dirty=observed.dirty,
+            branch_mismatch=observed.branch_mismatch,
+        )
+        events.append(
+            RepoObserverEvent(
+                event_type="worktree.health",
+                data=data.model_dump(mode="python"),
+                created_at=created_at,
+            )
+        )
+
+    return events
 
 
 async def run_repo_observer(
