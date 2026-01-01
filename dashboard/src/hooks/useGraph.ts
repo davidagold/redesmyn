@@ -84,7 +84,7 @@ export function useGraph(epicId: number | null) {
       map.set(run.requestedTaskId, { ...run, blockedOnSpine } as MergeRun)
     }
     return map
-  }, [graph, nodesById, tasksById])
+  }, [graph, nodesById])
 
   const rootNodes = childrenByParent.get(null) ?? []
 
