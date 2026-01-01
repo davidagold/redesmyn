@@ -837,6 +837,8 @@ export function GraphView({
         id: TRUNK_NODE_ID,
         type: "trunk",
         position: { x: trunkLayout.x, y: trunkLayout.y },
+        width: trunkLayout.width,
+        height: trunkLayout.height,
         data: {
           marks: trunkLayout.marks,
           baseOffset: trunkLayout.baseOffset,
@@ -850,8 +852,6 @@ export function GraphView({
         focusable: false,
         sourcePosition: Position.Right,
         style: {
-          width: trunkLayout.width,
-          height: trunkLayout.height,
           // React Flow disables pointer events on inert nodes; keep these on so trunk tooltips work.
           pointerEvents: "all",
         },
@@ -880,6 +880,8 @@ export function GraphView({
         id: String(graphNode.id),
         type: "branch",
         position: pos,
+        width: GRAPH_NODE_WIDTH,
+        height: GRAPH_NODE_HEIGHT,
         data: {
           node: graphNode,
           task,
@@ -900,10 +902,6 @@ export function GraphView({
         selected: selectedNodeIds.has(graphNode.id),
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
-        style: {
-          width: GRAPH_NODE_WIDTH,
-          height: GRAPH_NODE_HEIGHT,
-        },
       } satisfies FlowBranchNodeType)
     }
     return mapped
