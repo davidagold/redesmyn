@@ -36,6 +36,7 @@ import {
   GitBranch,
   GitMerge,
   Layers,
+  MessageSquareText,
   Play,
   RotateCcw,
   Square,
@@ -94,6 +95,8 @@ export function NodeCard({
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunBlocked = mergeRunStatus === "blocked"
   const mergeRunResumable = mergeRunStatus === "resumable"
+  const mergeRunBlockedRebase =
+    mergeRunBlocked && mergeRun?.blockedStepKind === "rebase"
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -437,6 +440,39 @@ export function NodeCard({
   ]
   const tooltip = tooltipParts.filter(Boolean).join("\n")
 
+  const rebaseRemediationTaskId = mergeRun?.blockedTaskId ?? null
+  const rebaseRemediationWorktree = mergeRun?.blockedWorktreePath ?? null
+  const rebaseRemediationBranch =
+    mergeRun?.blockedBranchName ??
+    (mergeRun?.blockedStepKind === "rebase" ? node.branchName : null)
+
+  const rebaseRemediationMessage =
+    mergeRunBlockedRebase &&
+    rebaseRemediationWorktree &&
+    rebaseRemediationBranch
+      ? [
+          "We hit a rebase conflict while merging the stack.",
+          "",
+          `Branch: ${rebaseRemediationBranch}`,
+          `Worktree: ${rebaseRemediationWorktree}`,
+          "",
+          "Please:",
+          "- Review and resolve the conflict(s).",
+          `- \`cd ${rebaseRemediationWorktree}\``,
+          "- `git status` (to see conflicted files)",
+          "- `git add -A`",
+          "- `git rebase --continue`",
+          "- Repeat until the rebase completes (resolving any further conflicts).",
+          "",
+          "Once the rebase finishes and the worktree is clean, let me know so I can resume the merge run.",
+        ].join("\n")
+      : null
+
+  const rebaseAttachCommand =
+    mergeRunBlockedRebase && rebaseRemediationTaskId !== null
+      ? `rn agent attach --task ${rebaseRemediationTaskId}`
+      : null
+
   const gitAttentionKind: "mergeBlocked" | "mergeResumable" | "outOfSync" | null =
     mergeRunBlocked
       ? "mergeBlocked"
@@ -734,6 +770,51 @@ export function NodeCard({
               >
                 {actionError.summary}
               </div>
+
+              {mergeRunBlockedRebase ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    disabledReason={
+                      rebaseAttachCommand
+                        ? null
+                        : "No task id recorded for this blocked step."
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!rebaseAttachCommand) {
+                        return
+                      }
+                      void copyToClipboard(rebaseAttachCommand)
+                    }}
+                  >
+                    <Terminal className="size-3" />
+                    Copy attach
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    disabledReason={
+                      rebaseRemediationMessage
+                        ? null
+                        : "No remediation message available."
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!rebaseRemediationMessage) {
+                        return
+                      }
+                      void copyToClipboard(rebaseRemediationMessage)
+                    }}
+                  >
+                    <MessageSquareText className="size-3" />
+                    Copy agent note
+                  </Button>
+                </div>
+              ) : null}
 
               <div className="mt-1 flex items-center justify-between gap-2">
                 <Button
