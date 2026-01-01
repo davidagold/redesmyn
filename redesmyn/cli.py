@@ -155,7 +155,6 @@ def sync(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -229,7 +228,6 @@ def checkout(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
         path = asyncio.run(checkout_task_worktree(ctx, task_id=task_id))
     except (NotAGitRepositoryError, NotInitializedError, RuntimeError) as e:
         typer.echo(f"error: {e}", err=True)
@@ -278,7 +276,6 @@ def merge(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -934,6 +931,8 @@ async def _sync_from_local(
                 except DocLoadError as e:
                     raise typer.BadParameter(str(e)) from e
 
+            created_task_ids: set[int] = set()
+            updated_task_ids: set[int] = set()
             task_by_ref: dict[str, Task] = {}
             task_by_path: dict[Path, Task] = {}
 
@@ -977,6 +976,7 @@ async def _sync_from_local(
                     )
                     session.add(task)
                     await session.flush()
+                    created_task_ids.add(task.id)
                     stats.tasks_created += 1
                 else:
                     updated = False
@@ -994,7 +994,7 @@ async def _sync_from_local(
                         task.source = TaskSource.Linear
                         updated = True
                     if updated:
-                        stats.tasks_updated += 1
+                        updated_task_ids.add(task.id)
 
                 if not create_branches:
                     continue
@@ -1025,6 +1025,8 @@ async def _sync_from_local(
                     else:
                         stats.branches_updated += 1
                     task.branch_name = branch
+                    if task.id not in created_task_ids:
+                        updated_task_ids.add(task.id)
 
                 task_by_path[doc.path] = task
 
@@ -1048,6 +1050,8 @@ async def _sync_from_local(
                         if task.parent_task_id is not None:
                             task.parent_task_id = None
                             stats.branches_updated += 1
+                            if task.id not in created_task_ids:
+                                updated_task_ids.add(task.id)
                         continue
                     parent_task = task_by_ref.get(parent_ref)
                     if parent_task is None:
@@ -1057,7 +1061,10 @@ async def _sync_from_local(
                     if task.parent_task_id != parent_task.id:
                         task.parent_task_id = parent_task.id
                         stats.branches_updated += 1
+                        if task.id not in created_task_ids:
+                            updated_task_ids.add(task.id)
 
+            stats.tasks_updated = len(updated_task_ids)
             await session.commit()
             return stats
     finally:
@@ -1494,7 +1501,6 @@ def observer_run(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1532,7 +1538,6 @@ def epic_create(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1578,7 +1583,6 @@ def epic_list() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1619,7 +1623,6 @@ def task_add(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1651,7 +1654,6 @@ def task_list(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1689,7 +1691,6 @@ def agent_register(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1716,7 +1717,6 @@ def agent_list() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1762,7 +1762,6 @@ def agent_start(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
-        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1824,7 +1823,6 @@ def agent_restart(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
-        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1863,7 +1861,6 @@ def agent_attach(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
-        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1896,7 +1893,6 @@ def agent_stop(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
-        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1927,7 +1923,6 @@ def agent_logs(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
-        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1977,7 +1972,6 @@ def linear_status() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1999,7 +1993,6 @@ def linear_auth(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -2071,7 +2064,6 @@ def linear_whoami() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -2117,7 +2109,6 @@ def linear_import(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
