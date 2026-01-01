@@ -490,6 +490,10 @@ export interface components {
     CommandState: "queued" | "running" | "succeeded" | "failed" | "canceled"
     /** DaemonCommandResponse */
     DaemonCommandResponse: {
+      /** Ackdata */
+      ackData?: {
+        [key: string]: unknown
+      }
       /** Commandtype */
       commandType: string
       /**

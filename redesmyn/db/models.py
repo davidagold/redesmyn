@@ -608,6 +608,11 @@ class DaemonCommand(Base):
         nullable=False,
         default=dict,
     )
+    ack_data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
     state: Mapped[CommandState] = mapped_column(
         _enum_type(CommandState, "daemon_command_state"),
         default=CommandState.Queued,

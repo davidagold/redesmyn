@@ -463,6 +463,7 @@ class DaemonCommandResponse(ApiResponse):
     workspace_id: str | None
     repo_id: str | None
     payload: dict[str, Any] = Field(validation_alias="data")
+    ack_data: dict[str, Any] = Field(default_factory=dict)
     state: CommandState
     created_at: datetime
     updated_at: datetime

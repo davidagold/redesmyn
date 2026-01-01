@@ -359,6 +359,11 @@
       },
       "DaemonCommandResponse": {
         "properties": {
+          "ackData": {
+            "additionalProperties": true,
+            "title": "Ackdata",
+            "type": "object"
+          },
           "commandType": {
             "title": "Commandtype",
             "type": "string"

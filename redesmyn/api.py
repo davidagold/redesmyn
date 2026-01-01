@@ -1996,7 +1996,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         )
                         continue
                     cmd.state = msg.state
-                    cmd.data = msg.data
+                    cmd.ack_data = msg.data
                     await session.commit()
 
                     command_event = await _append_event(
