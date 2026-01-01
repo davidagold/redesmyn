@@ -118,7 +118,6 @@ export function NodeCard({
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunBlocked = mergeRunStatus === "blocked"
-  const mergeRunResumable = mergeRunStatus === "resumable"
   const rebaseRemediation = getRebaseRemediation(mergeRun, node.branchName)
   const mergeRunBlockedRebase = rebaseRemediation !== null
 
@@ -529,8 +528,6 @@ export function NodeCard({
     if (mergeRun?.blockedBranchName) {
       gitAttentionTooltipLines.push(`Branch: ${mergeRun.blockedBranchName}`)
     }
-  } else if (mergeRunResumable) {
-    gitAttentionTooltipLines.push("Merge ready to resume.")
   }
   if (outOfSync) {
     gitAttentionTooltipLines.push("Branch is out of sync with its upstream.")
@@ -538,8 +535,6 @@ export function NodeCard({
 
   const mergeAttentionIcon = mergeRunBlocked ? (
     <AlertTriangle className="size-4 text-destructive/80" />
-  ) : mergeRunResumable ? (
-    <Play className="size-4 text-emerald-400/85" />
   ) : null
 
   const syncAttentionIcon = outOfSync ? (
@@ -941,7 +936,8 @@ export function NodeCard({
             <div className="flex justify-end">
               <Button
                 variant="outline"
-                size="xs"
+                size="sm"
+                className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
                 disabledReason={
                   pendingMerge !== null ? "Action in progress" : null
                 }

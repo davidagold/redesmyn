@@ -217,7 +217,8 @@ function MergeRunDetails({
                   {mergeRun.status === "resumable" ? (
                     <Button
                       variant="outline"
-                      size="xs"
+                      size="sm"
+                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
                       disabledReason={
                         resumePending
                           ? "Action in progress"
