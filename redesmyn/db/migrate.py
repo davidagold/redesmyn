@@ -14,6 +14,9 @@ def _repo_root_from_db_path(db_path: Path) -> Path:
 def alembic_config_for_db(db_path: Path) -> Config:
     repo_root = _repo_root_from_db_path(db_path)
     cfg = Config(str(repo_root / "alembic.ini"))
+    # When called programmatically (e.g., via `rn`), we don't want Alembic's
+    # default logging config to spam INFO lines on every invocation.
+    cfg.attributes["configure_logger"] = False
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     return cfg
 
