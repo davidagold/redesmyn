@@ -9,6 +9,11 @@ import {
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import {
   fetchTaskAgentLogs,
@@ -25,6 +30,8 @@ import { cn } from "@/lib/utils"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { FloatingActions } from "@/components/ui/floating-actions"
 import {
+  ChevronDown,
+  ChevronUp,
   AlertTriangle,
   MessageSquareText,
   Play,
@@ -47,8 +54,10 @@ type EdgeSelection = {
 
 function stripAnsi(text: string) {
   // CSI sequences (colors, cursor moves, etc.)
+  // eslint-disable-next-line no-control-regex
   const withoutCsi = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
   // OSC sequences (titles, hyperlinks, etc.)
+  // eslint-disable-next-line no-control-regex
   return withoutCsi.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
 }
 
@@ -69,6 +78,7 @@ function MergeRunDetails({
   mergeRun: MergeRun
   node: GraphNode | null | undefined
 }) {
+  const [calloutExpanded, setCalloutExpanded] = useState(false)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
 
@@ -87,14 +97,14 @@ function MergeRunDetails({
     mergeRun.status === "blocked" || mergeRun.status === "failed"
       ? "destructive"
       : mergeRun.status === "resumable"
-        ? "amber"
+        ? "emerald"
         : "default"
 
   const calloutClasses =
     calloutTone === "destructive"
       ? "border border-destructive/25 bg-destructive/10 ring-destructive/10"
-      : calloutTone === "amber"
-        ? "border border-amber-200/25 bg-amber-200/10 ring-amber-200/10"
+      : calloutTone === "emerald"
+        ? "border border-emerald-400/25 bg-emerald-400/10 ring-emerald-400/10"
         : "border border-border/60 bg-background/30 ring-border/10"
 
   const calloutTitle =
@@ -113,7 +123,7 @@ function MergeRunDetails({
 
   const calloutIcon =
     mergeRun.status === "resumable" ? (
-      <Play className="size-3.5 text-amber-200" />
+      <Play className="size-3.5 text-emerald-400" />
     ) : (
       <AlertTriangle className="size-3.5 text-destructive" />
     )
@@ -121,125 +131,167 @@ function MergeRunDetails({
   const attachCommand = remediation?.attachCommand ?? null
   const agentNote = remediation?.message ?? null
 
+  const statusBadgeClasses =
+    mergeRun.status === "blocked" || mergeRun.status === "failed"
+      ? "border-destructive/25 bg-destructive/10 text-destructive"
+      : mergeRun.status === "resumable"
+        ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
+        : "border-border/60 bg-background/30 text-muted-foreground"
+
   return (
     <div className="grid gap-3">
-      <div className="grid gap-1">
-        <div className="text-xs text-muted-foreground">Status</div>
-        <div className="text-sm">{statusLabel}</div>
-      </div>
-
-      <div className="grid gap-1">
-        <div className="text-xs text-muted-foreground">Scope</div>
-        <div className="text-sm capitalize">{mergeRun.scope}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
+            statusBadgeClasses,
+          )}
+        >
+          {statusLabel}
+        </span>
+        <span className="bg-background/30 text-muted-foreground inline-flex items-center rounded-full border border-border/60 px-2 py-0.5 text-xs capitalize">
+          {mergeRun.scope}
+        </span>
       </div>
 
       {showCallout && calloutTitle ? (
-        <Card
-          size="sm"
-          className={cn("gap-2 py-2 shadow-sm backdrop-blur", calloutClasses)}
+        <Collapsible
+          open={calloutExpanded}
+          onOpenChange={setCalloutExpanded}
+          className="w-full"
         >
-          <CardContent className="px-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-2">
-                {calloutIcon}
-                <div className="truncate text-xs font-medium text-foreground">
-                  {calloutTitle}
+          <Card
+            size="sm"
+            className={cn(
+              "w-full gap-2 py-2 shadow-sm backdrop-blur",
+              calloutClasses,
+            )}
+          >
+            <CardContent className="px-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  {calloutIcon}
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {calloutTitle}
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            {blockedStepKind ? (
-              <div className="mt-1 text-xs text-muted-foreground">
-                Step: <span className="font-mono">{blockedStepKind}</span>
-              </div>
-            ) : null}
-
-            {blockedBranch ? (
-              <div className="mt-1 text-xs text-muted-foreground">
-                Branch:{" "}
-                <span className="break-words font-mono text-foreground/80">
-                  {blockedBranch}
-                </span>
-              </div>
-            ) : null}
-
-            {blockedWorktree ? (
-              <div className="mt-1 text-xs text-muted-foreground">
-                Worktree:{" "}
-                <span className="break-words font-mono text-foreground/80">
-                  {blockedWorktree}
-                </span>
-              </div>
-            ) : null}
-
-            {mergeRun.status === "blocked" && remediation ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabledReason={
-                    attachCommand
-                      ? null
-                      : "No task id recorded for this blocked step."
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={
+                        calloutExpanded ? "Collapse callout" : "Expand callout"
+                      }
+                      title={
+                        calloutExpanded ? "Collapse callout" : "Expand callout"
+                      }
+                    >
+                      {calloutExpanded ? (
+                        <ChevronUp className="size-3" />
+                      ) : (
+                        <ChevronDown className="size-3" />
+                      )}
+                    </Button>
                   }
-                  onClick={() => {
-                    if (!attachCommand) {
-                      return
-                    }
-                    void copyToClipboard(attachCommand)
-                  }}
-                >
-                  <Terminal className="size-3" />
-                  Copy attach
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabledReason={
-                    agentNote ? null : "No remediation message available."
-                  }
-                  onClick={() => {
-                    if (!agentNote) {
-                      return
-                    }
-                    void copyToClipboard(agentNote)
-                  }}
-                >
-                  <MessageSquareText className="size-3" />
-                  Copy agent note
-                </Button>
+                />
               </div>
-            ) : null}
 
-            {blockedError ? (
-              <div className="mt-2">
-                <div className="flex items-center justify-between gap-2">
+              {mergeRun.status === "blocked" && remediation ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Button
                     variant="ghost"
                     size="xs"
-                    onClick={() => setDetailsExpanded((open) => !open)}
+                    disabledReason={
+                      attachCommand
+                        ? null
+                        : "No task id recorded for this blocked step."
+                    }
+                    onClick={() => {
+                      if (!attachCommand) {
+                        return
+                      }
+                      void copyToClipboard(attachCommand)
+                    }}
                   >
-                    {detailsExpanded ? "Hide" : "Show"} details
+                    <Terminal className="size-3" />
+                    Copy attach
                   </Button>
                   <Button
                     variant="ghost"
                     size="xs"
-                    onClick={() => void copyToClipboard(blockedError)}
+                    disabledReason={
+                      agentNote ? null : "No remediation message available."
+                    }
+                    onClick={() => {
+                      if (!agentNote) {
+                        return
+                      }
+                      void copyToClipboard(agentNote)
+                    }}
                   >
-                    Copy
+                    <MessageSquareText className="size-3" />
+                    Copy agent note
                   </Button>
                 </div>
-                {detailsExpanded ? (
-                  <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                    <div className="whitespace-pre-wrap break-words">
-                      {blockedError}
-                    </div>
+              ) : null}
+
+              <CollapsibleContent className="mt-2 w-full min-w-0">
+                {blockedStepKind ? (
+                  <div className="text-xs text-muted-foreground">
+                    Step: <span className="font-mono">{blockedStepKind}</span>
                   </div>
                 ) : null}
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+
+                {blockedBranch ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Branch:{" "}
+                    <span className="break-words font-mono text-foreground/80">
+                      {blockedBranch}
+                    </span>
+                  </div>
+                ) : null}
+
+                {blockedWorktree ? (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Worktree:{" "}
+                    <span className="break-words font-mono text-foreground/80">
+                      {blockedWorktree}
+                    </span>
+                  </div>
+                ) : null}
+
+                {blockedError ? (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setDetailsExpanded((open) => !open)}
+                      >
+                        {detailsExpanded ? "Hide" : "Show"} details
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => void copyToClipboard(blockedError)}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                    {detailsExpanded ? (
+                      <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                        <div className="whitespace-pre-wrap break-words">
+                          {blockedError}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </CollapsibleContent>
+            </CardContent>
+          </Card>
+        </Collapsible>
       ) : null}
     </div>
   )
@@ -288,7 +340,6 @@ function AgentActions({
     setOneTimePreludeOpen(false)
     setOneTimePrelude("")
     setMergeReadyPending(false)
-    setMergeReady(Boolean(task.mergeReadyAt))
   }, [task.id])
 
   useEffect(() => {
