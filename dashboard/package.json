@@ -8,7 +8,7 @@
   },
   "scripts": {
     "api:spec": "uv run --directory .. python scripts/export_openapi.py",
-    "api:gen": "openapi-typescript ../openapi/openapi.json -o src/api/v1.ts",
+    "api:gen": "openapi-typescript ../openapi/openapi.json -o src/api/v1.ts && oxfmt src/api/v1.ts",
     "api:update": "npm run api:spec && npm run api:gen",
     "dev": "vite",
     "build": "tsc -b && vite build",
