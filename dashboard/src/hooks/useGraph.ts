@@ -8,18 +8,18 @@ import {
 } from "@/lib/graph-utils"
 
 function isNodeOnSpine(
-  nodesById: Map<number, { parentNodeId?: number | null }>,
-  leafNodeId: number,
-  nodeId: number,
+  nodesById: Map<number, { parentTaskId?: number | null }>,
+  leafTaskId: number,
+  taskId: number,
 ): boolean {
   const seen = new Set<number>()
-  let cursor: number | null = leafNodeId
+  let cursor: number | null = leafTaskId
   while (cursor !== null && !seen.has(cursor)) {
-    if (cursor === nodeId) {
+    if (cursor === taskId) {
       return true
     }
     seen.add(cursor)
-    cursor = nodesById.get(cursor)?.parentNodeId ?? null
+    cursor = nodesById.get(cursor)?.parentTaskId ?? null
   }
   return false
 }
@@ -71,14 +71,14 @@ export function useGraph(epicId: number | null) {
         continue
       }
 
-      const blockedNodeId = run.blockedNodeId ?? null
+      const blockedTaskId = run.blockedTaskId ?? null
       let blockedOnSpine: boolean | null = null
-      if (blockedNodeId !== null) {
-        const requestedTask = tasksById.get(run.requestedTaskId) ?? null
-        const leafNodeId = requestedTask?.nodeId ?? null
-        if (leafNodeId !== null && nodesById.size > 0) {
-          blockedOnSpine = isNodeOnSpine(nodesById, leafNodeId, blockedNodeId)
-        }
+      if (blockedTaskId !== null && nodesById.size > 0) {
+        blockedOnSpine = isNodeOnSpine(
+          nodesById,
+          run.requestedTaskId,
+          blockedTaskId,
+        )
       }
 
       map.set(run.requestedTaskId, { ...run, blockedOnSpine } as MergeRun)
