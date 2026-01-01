@@ -246,6 +246,25 @@ class Epic(Base):
     )
 
 
+class LinearEpicDefaults(Base):
+    __tablename__ = "linear_epic_defaults"
+
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), primary_key=True, index=True
+    )
+    team_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    label_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class Task(Base):
     __tablename__ = "tasks"
 

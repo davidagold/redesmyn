@@ -21,7 +21,6 @@ from redesmyn.db.migrations.sqlite.agent_status_stopped import (
 def _sqlite_url(db_path: Path) -> str:
     return f"sqlite+aiosqlite:///{db_path}"
 
-
 def create_engine(db_path: Path) -> AsyncEngine:
     return create_async_engine(_sqlite_url(db_path), future=True)
 
