@@ -575,7 +575,7 @@ export function NodeCard({
         "cursor-pointer transition-[background-color,box-shadow] duration-200 hover:bg-accent/40",
         actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done"
-          ? "ring-emerald-500/35"
+          ? "ring-green-950/80"
           : mergeReady
             ? "ring-emerald-400/50"
             : null,
