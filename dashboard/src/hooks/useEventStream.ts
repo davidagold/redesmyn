@@ -44,7 +44,7 @@ export type StreamEvent = {
 
 export type GitCommitEventData = {
   type: "git.commit"
-  nodeId: number
+  taskId: number
   branchName: string
   sha: string
   authorName?: string | null
@@ -56,7 +56,7 @@ export type GitCommitEventData = {
 
 export type WorktreeHealthEventData = {
   type: "worktree.health"
-  nodeId: number
+  taskId: number
   branchName: string
   worktreePath: string
   exists: boolean
@@ -68,7 +68,6 @@ export type WorktreeHealthEventData = {
 export type TaskAgentRunEventData = {
   type: "task.agent_run"
   runId: string
-  nodeId: number
   taskId: number
   action: "start" | "restart"
   phase: "requested" | "started" | "failed"
@@ -80,7 +79,6 @@ export type TaskAgentRunEventData = {
 export type TaskAgentActionEventData = {
   type: "task.agent_action"
   runId: string
-  nodeId: number
   taskId: number
   action: "start" | "restart" | "stop"
   phase: "requested" | "started" | "stopped" | "failed"
@@ -93,7 +91,7 @@ export type TaskAgentActionEventData = {
 export type MergeRunEventData = {
   type: "merge.run"
   runId: string
-  nodeId: number
+  taskId: number
   epicId: number
   requestedTaskId: number
   status: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled"
@@ -105,7 +103,6 @@ export type MergeRunEventData = {
 export type TaskMergeEventData = {
   type: "task.merge"
   runId: string
-  nodeId?: number | null
   taskId?: number | null
   kind: "rebase" | "merge_ff"
   phase: "started" | "finished" | "failed"
@@ -113,9 +110,9 @@ export type TaskMergeEventData = {
   error?: string | null
 }
 
-export type NodeAgentSetEventData = {
-  type: "node.agent_set"
-  nodeId: number
+export type TaskAgentSetEventData = {
+  type: "task.agent_set"
+  taskId: number
   agentId: number | null
   previousAgentId: number | null
 }
@@ -149,7 +146,7 @@ export type UnknownEventData = {
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | NodeAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | TaskAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"

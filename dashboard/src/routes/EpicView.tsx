@@ -567,7 +567,10 @@ export function EpicView() {
 
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      const taskId = typeof event.data.taskId === "number" ? event.data.taskId : null
+      const taskId =
+        "taskId" in event.data && typeof event.data.taskId === "number"
+          ? event.data.taskId
+          : null
 
       const observedAt = Date.parse(event.createdAt) || Date.now()
       if (taskId !== null) {

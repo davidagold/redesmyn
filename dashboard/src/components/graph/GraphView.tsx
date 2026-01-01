@@ -394,9 +394,9 @@ export function GraphView({
     }
 
     const edgeId =
-      node.parentNodeId === null
+      node.parentTaskId === null
         ? `trunk:${node.id}`
-        : makeEdgeId(node.parentNodeId, node.id)
+        : makeEdgeId(node.parentTaskId, node.id)
 
     triggerEdgePulse(
       edgeId,
@@ -1266,13 +1266,9 @@ export function GraphView({
                 </div>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="relative h-full overflow-auto p-6 text-sm text-muted-foreground">
-          No tasks.
-        </div>
-      )}
+          </div>
+        ) : null}
+      </div>
     </main>
   )
 }
