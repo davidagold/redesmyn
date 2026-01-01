@@ -86,7 +86,7 @@
 
 .dark {
   /* Rose Pine (dark). */
-  --background: #191724;
+  --background: #161420;
   --foreground: #e0def4;
   --card: #1f1d2e;
   --card-foreground: #e0def4;
@@ -109,7 +109,7 @@
   --chart-3: #9ccfd8;
   --chart-4: #ebbcba;
   --chart-5: #eb6f92;
-  --sidebar: #191724;
+  --sidebar: #100e17;
   --sidebar-foreground: #e0def4;
   --sidebar-primary: #c4a7e7;
   --sidebar-primary-foreground: #191724;
@@ -117,7 +117,7 @@
   --sidebar-accent-foreground: #e0def4;
   --sidebar-border: #403d52;
   --sidebar-ring: #c4a7e7;
-  --surface: #13111b;
+  --surface: #100e17;
 }
 
 @layer base {
