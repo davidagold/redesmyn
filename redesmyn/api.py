@@ -22,7 +22,7 @@ from starlette.websockets import WebSocketDisconnect
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_row
-from redesmyn.context import RepoContext, get_repo_context
+from redesmyn.context import RepoContext, build_repo_context
 from redesmyn.db import (
     Agent,
     Block,
@@ -31,6 +31,7 @@ from redesmyn.db import (
     DaemonCommand,
     Epic,
     Event,
+    GitTrunkTimeline,
     HarnessProfile,
     Host,
     LinearAuth,
@@ -39,6 +40,7 @@ from redesmyn.db import (
     Task,
     create_engine,
     create_sessionmaker,
+    init_db,
 )
 from redesmyn.db.models import HostCapabilities, MergeRunPlanData, MergeRunPlanStepData
 from redesmyn.domain.enums import BlockPolicy, CommandState, MergeRunStatus
@@ -57,14 +59,7 @@ from redesmyn.orchestration_config import (
     set_config_value,
     write_config,
 )
-from redesmyn.repo import (
-    GitCommandError,
-    branch_exists,
-    git_commit_info,
-    git_is_ancestor,
-    git_merge_base,
-    git_rev_list,
-)
+from redesmyn.repo import GitCommandError
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.runner_backend import (
     RunnerBackend,
@@ -114,7 +109,6 @@ from redesmyn.schemas.core import (
     TaskMergeRequest,
     TaskMergeResponse,
     TaskMergePlanStepResponse,
-    TrunkCommitResponse,
     TrunkTimelineResponse,
 )
 from redesmyn.settings import load_settings
@@ -157,12 +151,28 @@ class DashboardStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def lifespan(app: App):
-    ctx = get_repo_context()
-    await init_repo(ctx)
-    settings = load_settings(repo_root=ctx.repo_root)
+    env_repo_root_raw = os.environ.get("REDESMYN_REPO_ROOT")
+    env_repo_root = Path(env_repo_root_raw) if env_repo_root_raw else None
+    settings = load_settings(repo_root=env_repo_root)
+
+    repo_root = settings.repo_root or env_repo_root or Path.cwd()
+    worktree_root = settings.worktree_root or repo_root
+
+    ctx = build_repo_context(
+        repo_root=repo_root,
+        worktree_root=worktree_root,
+        state_dir_name=settings.state_dir_name,
+        db_filename=settings.db_filename,
+        db_path=settings.db_path,
+    )
+    ctx.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if settings.runner_mode == "local":
+        await init_repo(ctx)
 
     app.state.ctx = ctx
     app.state.engine = create_engine(ctx.db_path)
+    await init_db(app.state.engine)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.runner_backend = make_runner_backend(mode=settings.runner_mode, ctx=ctx)
     app.state.linear_oauth_states = {}
@@ -172,7 +182,10 @@ async def lifespan(app: App):
 
     observer_task: asyncio.Task[None] | None = None
     agent_monitor_task: asyncio.Task[None] | None = None
-    if os.environ.get("REDESMYN_NO_OBSERVER") not in {"1", "true", "TRUE"}:
+    if (
+        settings.runner_mode == "local"
+        and os.environ.get("REDESMYN_NO_OBSERVER") not in {"1", "true", "TRUE"}
+    ):
         observer_task = asyncio.create_task(
             run_repo_observer(
                 ctx,
@@ -182,7 +195,10 @@ async def lifespan(app: App):
             )
         )
 
-    if os.environ.get("REDESMYN_NO_AGENT_MONITOR") not in {"1", "true", "TRUE"}:
+    if (
+        settings.runner_mode == "local"
+        and os.environ.get("REDESMYN_NO_AGENT_MONITOR") not in {"1", "true", "TRUE"}
+    ):
         agent_monitor_task = asyncio.create_task(
             run_agent_monitor(
                 ctx,
@@ -375,107 +391,16 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                 .order_by(desc(MergeRun.id))
             )
         )
+        trunk_row = await session.get(GitTrunkTimeline, epic_row.id)
 
     stack_in_sync_by_task_id: dict[int, bool | None] = {}
-    try:
-        repo_root = app.state.ctx.repo_root
-        tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
-        for task in tasks:
-            if task.branch_name is None or not branch_exists(
-                repo_root, task.branch_name
-            ):
-                stack_in_sync_by_task_id[task.id] = None
-                continue
-            if task.parent_task_id is None:
-                upstream = epic_row.root_branch
-            else:
-                parent = tasks_by_id.get(task.parent_task_id)
-                upstream = (
-                    parent.branch_name
-                    if parent is not None and parent.branch_name is not None
-                    else None
-                )
-            if upstream is None or not branch_exists(repo_root, upstream):
-                stack_in_sync_by_task_id[task.id] = None
-                continue
-            stack_in_sync_by_task_id[task.id] = git_is_ancestor(
-                repo_root, upstream, task.branch_name
-            )
-    except Exception:
-        stack_in_sync_by_task_id = {}
 
     trunk: TrunkTimelineResponse | None = None
-    try:
-        repo_root = app.state.ctx.repo_root
-        root_branch = epic_row.root_branch
-        commits = git_rev_list(repo_root, root_branch, first_parent=True)
-        base_sha = commits[0] if commits else None
-        if commits:
-            root_tasks = [
-                t for t in tasks if t.branch_name and t.parent_task_id is None
-            ]
-            merge_bases = {
-                mb
-                for mb in (
-                    git_merge_base(repo_root, root_branch, n.branch_name)
-                    for n in root_tasks
-                )
-                if mb
-            }
-            if merge_bases:
-                for sha in commits:
-                    if sha in merge_bases:
-                        base_sha = sha
-                        break
-
-            if base_sha:
-                try:
-                    base_index = commits.index(base_sha)
-                except ValueError:
-                    base_index = 0
-                    base_sha = commits[0]
-
-                limit = 4
-                newer = commits[:base_index]
-                older = commits[base_index + 1 :]
-
-                commits_before = older[:limit]
-                commits_after = list(reversed(newer))[:limit]
-
-                commit_info = git_commit_info(
-                    repo_root, [base_sha, *commits_before, *commits_after]
-                )
-
-                def build_commit(sha: str) -> TrunkCommitResponse:
-                    info = commit_info.get(sha, {})
-                    authored_at: datetime | None = None
-                    authored_at_raw = info.get("authored_at")
-                    if isinstance(authored_at_raw, datetime):
-                        authored_at = authored_at_raw
-                    elif isinstance(authored_at_raw, str) and authored_at_raw:
-                        try:
-                            authored_at = datetime.fromisoformat(
-                                authored_at_raw.replace("Z", "+00:00")
-                            )
-                        except ValueError:
-                            authored_at = None
-                    return TrunkCommitResponse(
-                        sha=sha,
-                        author_name=info.get("author_name"),
-                        author_email=info.get("author_email"),
-                        authored_at=authored_at,
-                    )
-
-                trunk = TrunkTimelineResponse(
-                    base_sha=base_sha,
-                    base_commit=build_commit(base_sha),
-                    commits_before=[build_commit(sha) for sha in commits_before],
-                    commits_after=[build_commit(sha) for sha in commits_after],
-                    has_more_before=len(older) > limit,
-                    has_more_after=len(newer) > limit,
-                )
-    except Exception:
-        trunk = None
+    if trunk_row is not None and trunk_row.data:
+        try:
+            trunk = TrunkTimelineResponse.model_validate(trunk_row.data)
+        except Exception:
+            trunk = None
 
     task_responses: list[TaskResponse] = []
     for task in tasks:

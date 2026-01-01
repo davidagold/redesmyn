@@ -51,7 +51,7 @@ class GitBlockDecision:
     reason: str | None = None
 
 
-def _detect_subcommand(args: list[str]) -> str | None:
+def detect_git_subcommand(args: list[str]) -> str | None:
     i = 0
     while i < len(args):
         arg = args[i]
@@ -77,7 +77,7 @@ def does_block_git(args: list[str], *, mode: str | BlockMode) -> GitBlockDecisio
     - lax: allow limited local progress; block push + rewrites/cross-branch ops.
     - strict: block all mutating ops (fetch is allowed).
     """
-    subcommand = _detect_subcommand(args)
+    subcommand = detect_git_subcommand(args)
     if subcommand is None:
         return GitBlockDecision(allowed=True)
 

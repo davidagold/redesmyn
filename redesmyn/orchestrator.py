@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from redesmyn.context import RepoContext
 from redesmyn.db import Repository, create_engine, create_sessionmaker, init_db
+from redesmyn.git_telemetry import update_git_projections
 from redesmyn.repo import default_branch
 
 
@@ -31,3 +32,5 @@ async def init_repo(ctx: RepoContext) -> None:
                 await session.commit()
     finally:
         await engine.dispose()
+
+    await update_git_projections(ctx)

@@ -493,6 +493,63 @@ class Event(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+class GitRefState(Base):
+    __tablename__ = "git_ref_states"
+
+    repository_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id"), primary_key=True
+    )
+    refs: Mapped[dict[str, str]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GitTrunkTimeline(Base):
+    __tablename__ = "git_trunk_timelines"
+
+    epic_id: Mapped[int] = mapped_column(ForeignKey("epics.id"), primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GitMergeBase(Base):
+    __tablename__ = "git_merge_bases"
+
+    node_id: Mapped[int] = mapped_column(ForeignKey("nodes.id"), primary_key=True)
+    merge_base_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
 
 class MergeRun(Base):
     __tablename__ = "merge_runs"

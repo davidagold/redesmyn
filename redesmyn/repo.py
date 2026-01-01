@@ -118,6 +118,72 @@ def git_rev_list(
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
+def git_rev_parse(repo_root: Path, ref: str) -> str | None:
+    proc = _run_git(["rev-parse", "--verify", ref], cwd=repo_root)
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def git_rev_list_range(
+    repo_root: Path,
+    rev_range: str,
+    *,
+    first_parent: bool = True,
+    max_count: int | None = None,
+    reverse: bool = False,
+) -> list[str]:
+    args = ["rev-list"]
+    if first_parent:
+        args.append("--first-parent")
+    if reverse:
+        args.append("--reverse")
+    if max_count is not None:
+        args.extend(["-n", str(max_count)])
+    args.append(rev_range)
+    proc = _run_git(args, cwd=repo_root)
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def git_rev_list_count(
+    repo_root: Path, rev_range: str, *, first_parent: bool = True
+) -> int:
+    args = ["rev-list"]
+    if first_parent:
+        args.append("--first-parent")
+    args.extend(["--count", rev_range])
+    proc = _run_git(args, cwd=repo_root)
+    if proc.returncode != 0:
+        return 0
+    try:
+        return int(proc.stdout.strip() or "0")
+    except ValueError:
+        return 0
+
+
+def git_for_each_ref(repo_root: Path, *, prefix: str = "refs/heads") -> dict[str, str]:
+    proc = _run_git(
+        ["for-each-ref", prefix, "--format=%(refname) %(objectname)"], cwd=repo_root
+    )
+    if proc.returncode != 0:
+        return {}
+
+    refs: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            refname, sha = line.split(" ", 1)
+        except ValueError:
+            continue
+        refs[refname.strip()] = sha.strip()
+    return refs
+
+
 def git_commit_info(repo_root: Path, shas: list[str]) -> dict[str, CommitInfo]:
     """
     Return basic commit metadata keyed by sha.

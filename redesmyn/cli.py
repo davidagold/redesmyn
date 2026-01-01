@@ -59,7 +59,12 @@ from redesmyn.integrations.linear import (
     fetch_project_issue_relations,
     fetch_project_issues,
 )
-from redesmyn.git_proxy import does_block_git
+from redesmyn.git_proxy import (
+    READ_ONLY_SUBCOMMANDS,
+    detect_git_subcommand,
+    does_block_git,
+)
+from redesmyn.git_telemetry import update_git_projections
 from redesmyn.orchestration_config import (
     global_config_path,
     load_orchestration_defaults,
@@ -1368,6 +1373,9 @@ def dev(
     ]
 
     backend_env = _with_prepend_pythonpath(os.environ.copy(), ctx.worktree_root)
+    backend_env.setdefault("REDESMYN_REPO_ROOT", str(ctx.repo_root))
+    backend_env.setdefault("REDESMYN_WORKTREE_ROOT", str(ctx.worktree_root))
+    backend_env.setdefault("REDESMYN_DB_PATH", str(ctx.db_path))
     dashboard_env = os.environ.copy()
     dashboard_env.setdefault("REDESMYN_DAEMON_ORIGIN", f"http://{host}:{api_port}")
     daemon_origin = dashboard_env["REDESMYN_DAEMON_ORIGIN"]
@@ -1435,7 +1443,7 @@ def daemon_run(
 ) -> None:
     """Run the daemon in the foreground."""
     try:
-        _ = get_repo_context()
+        ctx = get_repo_context()
     except NotAGitRepositoryError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1445,6 +1453,10 @@ def daemon_run(
     except Exception as e:  # pragma: no cover
         typer.echo(f"error: uvicorn not available ({e})", err=True)
         raise typer.Exit(2)
+
+    os.environ.setdefault("REDESMYN_REPO_ROOT", str(ctx.repo_root))
+    os.environ.setdefault("REDESMYN_WORKTREE_ROOT", str(ctx.worktree_root))
+    os.environ.setdefault("REDESMYN_DB_PATH", str(ctx.db_path))
 
     if observer:
         os.environ.pop("REDESMYN_NO_OBSERVER", None)
@@ -2435,6 +2447,12 @@ def git_proxy(ctx: typer.Context) -> None:
             raise typer.Exit(3)
 
     proc = subprocess.run(["git", *git_args])
+    subcommand = detect_git_subcommand(git_args)
+    if proc.returncode == 0 and subcommand and subcommand not in READ_ONLY_SUBCOMMANDS:
+        try:
+            asyncio.run(update_git_projections(repo_ctx))
+        except Exception:
+            pass
     raise typer.Exit(proc.returncode)
 
 

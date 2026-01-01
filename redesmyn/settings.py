@@ -12,6 +12,8 @@ class RedesmynSettings(BaseSettings):
     )
 
     repo_root: Path | None = None
+    worktree_root: Path | None = None
+    db_path: Path | None = None
     state_dir_name: str = ".redesmyn"
     db_filename: str = "redesmyn.sqlite3"
 

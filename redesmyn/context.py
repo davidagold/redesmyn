@@ -14,14 +14,26 @@ class RepoContext:
     db_path: Path
 
 
-def get_repo_context(cwd: Path | None = None) -> RepoContext:
-    worktree = worktree_root(cwd=cwd)
-    repo_root = canonical_repo_root(cwd=cwd)
-    state_dir = repo_root / ".redesmyn"
-    db_path = state_dir / "redesmyn.sqlite3"
+def build_repo_context(
+    *,
+    repo_root: Path,
+    worktree_root: Path | None = None,
+    state_dir_name: str = ".redesmyn",
+    db_filename: str = "redesmyn.sqlite3",
+    db_path: Path | None = None,
+) -> RepoContext:
+    worktree = worktree_root or repo_root
+    state_dir = repo_root / state_dir_name
+    resolved_db_path = db_path or (state_dir / db_filename)
     return RepoContext(
         repo_root=repo_root,
         worktree_root=worktree,
         state_dir=state_dir,
-        db_path=db_path,
+        db_path=resolved_db_path,
     )
+
+
+def get_repo_context(cwd: Path | None = None) -> RepoContext:
+    worktree = worktree_root(cwd=cwd)
+    repo_root = canonical_repo_root(cwd=cwd)
+    return build_repo_context(repo_root=repo_root, worktree_root=worktree)
