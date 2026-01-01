@@ -598,6 +598,11 @@ export function EpicView() {
         return
       }
 
+      if (event.eventType === "node.stack_in_sync") {
+        scheduleStreamGraphRefresh()
+        return
+      }
+
       if (event.eventType === "task.merge") {
         const data = event.data
         if (
