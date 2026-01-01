@@ -18,8 +18,8 @@ class DaemonHello(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["hello"] = "hello"
-    daemon_id: str
-    host: str | None = None
+    host_key: str
+    display_name: str | None = None
     capabilities: dict[str, Any] = Field(default_factory=dict)
     attached_repos: list[RepoKey] = Field(default_factory=list)
 

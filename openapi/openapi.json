@@ -368,8 +368,8 @@
             "title": "Createdat",
             "type": "string"
           },
-          "daemonId": {
-            "title": "Daemonid",
+          "hostKey": {
+            "title": "Hostkey",
             "type": "string"
           },
           "id": {
@@ -414,7 +414,7 @@
         },
         "required": [
           "id",
-          "daemonId",
+          "hostKey",
           "commandType",
           "workspaceId",
           "repoId",
@@ -430,10 +430,7 @@
         "properties": {
           "attachedRepos": {
             "items": {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
+              "$ref": "#/components/schemas/RepoKeyResponse"
             },
             "title": "Attachedrepos",
             "type": "array"
@@ -464,10 +461,6 @@
             "title": "Createdat",
             "type": "string"
           },
-          "daemonId": {
-            "title": "Daemonid",
-            "type": "string"
-          },
           "disconnectedAt": {
             "anyOf": [
               {
@@ -480,7 +473,7 @@
             ],
             "title": "Disconnectedat"
           },
-          "host": {
+          "displayName": {
             "anyOf": [
               {
                 "type": "string"
@@ -489,7 +482,11 @@
                 "type": "null"
               }
             ],
-            "title": "Host"
+            "title": "Displayname"
+          },
+          "hostKey": {
+            "title": "Hostkey",
+            "type": "string"
           },
           "lastSeenAt": {
             "anyOf": [
@@ -510,8 +507,8 @@
           }
         },
         "required": [
-          "daemonId",
-          "host",
+          "hostKey",
+          "displayName",
           "capabilities",
           "attachedRepos",
           "connected",
@@ -1438,6 +1435,24 @@
           }
         },
         "title": "OrchestrationSandboxDefaultsUpdateRequest",
+        "type": "object"
+      },
+      "RepoKeyResponse": {
+        "properties": {
+          "repoId": {
+            "title": "Repoid",
+            "type": "string"
+          },
+          "workspaceId": {
+            "title": "Workspaceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspaceId",
+          "repoId"
+        ],
+        "title": "RepoKeyResponse",
         "type": "object"
       },
       "SandboxCapabilitiesResponse": {
@@ -2437,16 +2452,16 @@
         "summary": "List Daemons"
       }
     },
-    "/v1/daemons/{daemon_id}/commands": {
+    "/v1/daemons/{host_key}/commands": {
       "post": {
-        "operationId": "issue_daemon_command_v1_daemons__daemon_id__commands_post",
+        "operationId": "issue_daemon_command_v1_daemons__host_key__commands_post",
         "parameters": [
           {
             "in": "path",
-            "name": "daemon_id",
+            "name": "host_key",
             "required": true,
             "schema": {
-              "title": "Daemon Id",
+              "title": "Host Key",
               "type": "string"
             }
           }

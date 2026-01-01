@@ -97,6 +97,7 @@ from redesmyn.schemas.core import (
     OrchestrationHarnessDefaultsResponse,
     OrchestrationSandboxDefaultsResponse,
     OrchestrationDefaultsUpdateRequest,
+    RepoKeyResponse,
     ReleaseConditionResponse,
     SandboxCapabilitiesResponse,
     TaskResponse,
@@ -1649,38 +1650,42 @@ async def linear_oauth_callback(
 
 @v1.get("/daemons", response_model=list[DaemonPresenceResponse])
 async def list_daemons() -> list[DaemonPresenceResponse]:
-    stale_after = timedelta(seconds=90)
-    now = datetime.now(UTC)
+    # NOTE: "connected" is derived from the in-process WS registry, not a DB time window.
+    #
+    # Multi-instance note: this only reports connections attached to *this* server
+    # process. When the control plane runs with multiple instances, we will need
+    # to route presence queries to the owning instance or move presence into a
+    # shared distributed store.
+    connected = await app.state.daemon_connections.snapshot()
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        latest = (
-            select(
-                DaemonConnection.daemon_id,
-                func.max(DaemonConnection.id).label("max_id"),
-            )
-            .group_by(DaemonConnection.daemon_id)
-            .subquery()
-        )
-        rows = await session.scalars(
-            select(DaemonConnection)
-            .join(latest, DaemonConnection.id == latest.c.max_id)
-            .order_by(DaemonConnection.daemon_id)
-        )
+        rows = await session.scalars(select(Host).order_by(Host.host_key))
         result: list[DaemonPresenceResponse] = []
         for row in rows:
-            connected = (
-                row.disconnected_at is None and (now - row.last_seen_at) <= stale_after
-            )
+            runtime = connected.get(row.host_key)
             result.append(
                 DaemonPresenceResponse(
-                    daemon_id=row.daemon_id,
-                    host=row.host,
-                    capabilities=row.capabilities,
-                    attached_repos=row.attached_repos,
-                    connected=connected,
+                    host_key=row.host_key,
+                    display_name=(
+                        runtime.display_name
+                        if runtime is not None
+                        else row.display_name
+                    ),
+                    capabilities=(
+                        runtime.capabilities
+                        if runtime is not None
+                        else row.capabilities
+                    ),
+                    attached_repos=[
+                        RepoKeyResponse.model_validate(r)
+                        for r in runtime.attached_repos
+                    ]
+                    if runtime is not None
+                    else [],
+                    connected=runtime is not None and runtime.connected,
                     last_seen_at=row.last_seen_at,
-                    connected_at=row.connected_at,
-                    disconnected_at=row.disconnected_at,
+                    connected_at=runtime.connected_at if runtime is not None else None,
+                    disconnected_at=None,
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                 )
@@ -1695,14 +1700,14 @@ class IssueDaemonCommandRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
-@v1.post("/daemons/{daemon_id}/commands", response_model=DaemonCommandResponse)
+@v1.post("/daemons/{host_key}/commands", response_model=DaemonCommandResponse)
 async def issue_daemon_command(
-    daemon_id: str, req: IssueDaemonCommandRequest
+    host_key: str, req: IssueDaemonCommandRequest
 ) -> DaemonCommandResponse:
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         cmd = DaemonCommand(
-            daemon_id=daemon_id,
+            host_key=host_key,
             command_type=req.command_type,
             workspace_id=req.workspace_id,
             repo_id=req.repo_id,
@@ -1721,7 +1726,7 @@ async def issue_daemon_command(
         data=command.payload,
     )
     await app.state.daemon_connections.send(
-        daemon_id,
+        host_key,
         {
             "type": "command",
             "command": ws_command.model_dump(),
@@ -1775,7 +1780,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
         return
 
     hello_adapter = TypeAdapter(DaemonInboundMessage)
-    daemon_id: str | None = None
+    host_key: str | None = None
     connection_id: int | None = None
 
     await websocket.accept()
@@ -1795,31 +1800,51 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
         await websocket.close(code=1002)
         return
 
-    daemon_id = first_msg.daemon_id
-    send_queue = await app.state.daemon_connections.register(daemon_id, websocket)
+    host_key = first_msg.host_key
+    attached_repos = [
+        {"workspace_id": r.workspace_id, "repo_id": r.repo_id}
+        for r in first_msg.attached_repos
+    ]
+    send_queue = await app.state.daemon_connections.register(
+        host_key,
+        websocket,
+        attached_repos=attached_repos,
+        capabilities=first_msg.capabilities,
+        display_name=first_msg.display_name,
+    )
     sender_task = asyncio.create_task(
         app.state.event_hub.sender_loop(websocket, send_queue)
     )
 
     now = datetime.now(UTC)
     sessionmaker = app.state.sessionmaker
-    attached_repos = [
-        {"workspace_id": r.workspace_id, "repo_id": r.repo_id}
-        for r in first_msg.attached_repos
-    ]
     async with sessionmaker() as session:
+        host = await session.scalar(select(Host).where(Host.host_key == host_key))
+        if host is None:
+            host = Host(
+                host_key=host_key,
+                display_name=first_msg.display_name or host_key,
+                capabilities=first_msg.capabilities,
+                last_seen_at=now,
+            )
+            session.add(host)
+        else:
+            host.display_name = first_msg.display_name or host.display_name
+            host.capabilities = first_msg.capabilities
+            host.last_seen_at = now
+
         await session.execute(
             update(DaemonConnection)
             .where(
-                DaemonConnection.daemon_id == daemon_id,
+                DaemonConnection.host_key == host_key,
                 DaemonConnection.disconnected_at.is_(None),
             )
             .values(disconnected_at=now, disconnect_reason="replaced")
         )
 
         conn = DaemonConnection(
-            daemon_id=daemon_id,
-            host=first_msg.host,
+            host_key=host_key,
+            display_name=first_msg.display_name,
             capabilities=first_msg.capabilities,
             attached_repos=attached_repos,
             connected_at=now,
@@ -1834,9 +1859,9 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
             session,
             event_type="daemon.connected",
             data={
-                "daemon_id": daemon_id,
+                "host_key": host_key,
                 "connection_id": connection_id,
-                "host": first_msg.host,
+                "display_name": first_msg.display_name,
                 "capabilities": first_msg.capabilities,
                 "attached_repos": attached_repos,
             },
@@ -1849,7 +1874,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
         queued = await session.scalars(
             select(DaemonCommand)
             .where(
-                DaemonCommand.daemon_id == daemon_id,
+                DaemonCommand.host_key == host_key,
                 DaemonCommand.state.in_([CommandState.Queued, CommandState.Running]),
             )
             .order_by(DaemonCommand.id)
@@ -1864,7 +1889,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                 data=command.payload,
             )
             await app.state.daemon_connections.send(
-                daemon_id,
+                host_key,
                 {"type": "command", "command": ws_command.model_dump()},
             )
 
@@ -1879,21 +1904,25 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
 
             msg_type = msg.type
             now = datetime.now(UTC)
+            if host_key is not None:
+                await app.state.daemon_connections.note_heartbeat(host_key)
 
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "id": msg.id})
-                async with sessionmaker() as session:
-                    if connection_id is not None:
-                        await session.execute(
-                            update(DaemonConnection)
-                            .where(DaemonConnection.id == connection_id)
-                            .values(last_seen_at=now)
+                if host_key is not None:
+                    async with sessionmaker() as session:
+                        host = await session.scalar(
+                            select(Host).where(Host.host_key == host_key)
                         )
-                        await session.commit()
+                        if host is not None and (
+                            host.last_seen_at is None
+                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        ):
+                            host.last_seen_at = now
+                            await session.commit()
                 continue
 
             if msg_type == "heartbeat":
-                heartbeat_event: EventResponse | None = None
                 async with sessionmaker() as session:
                     updated_attached_repos = attached_repos
                     if msg.attached_repos is not None:
@@ -1901,41 +1930,47 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                             {"workspace_id": r.workspace_id, "repo_id": r.repo_id}
                             for r in msg.attached_repos
                         ]
-                    if connection_id is not None:
+                    if host_key is not None:
+                        host = await session.scalar(
+                            select(Host).where(Host.host_key == host_key)
+                        )
+                        if host is not None and (
+                            host.last_seen_at is None
+                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        ):
+                            host.last_seen_at = now
+
+                    if (
+                        connection_id is not None
+                        and updated_attached_repos != attached_repos
+                    ):
                         await session.execute(
                             update(DaemonConnection)
                             .where(DaemonConnection.id == connection_id)
-                            .values(
-                                last_seen_at=now,
-                                attached_repos=updated_attached_repos,
-                            )
+                            .values(attached_repos=updated_attached_repos)
                         )
-                        await session.commit()
-                        attached_repos = updated_attached_repos
+                    await session.commit()
 
-                        heartbeat_event = await _append_event(
-                            session,
-                            event_type="daemon.heartbeat",
-                            data={
-                                "daemon_id": daemon_id,
-                                "connection_id": connection_id,
-                                "attached_repos": updated_attached_repos,
-                            },
-                        )
-                if heartbeat_event is not None:
-                    await _broadcast_event(heartbeat_event)
+                if host_key is not None:
+                    await app.state.daemon_connections.note_heartbeat(
+                        host_key, attached_repos=updated_attached_repos
+                    )
+                attached_repos = updated_attached_repos
                 await websocket.send_json({"type": "heartbeat_ack"})
                 continue
 
             if msg_type == "event":
                 async with sessionmaker() as session:
-                    if connection_id is not None:
-                        await session.execute(
-                            update(DaemonConnection)
-                            .where(DaemonConnection.id == connection_id)
-                            .values(last_seen_at=now)
+                    if host_key is not None:
+                        host = await session.scalar(
+                            select(Host).where(Host.host_key == host_key)
                         )
-                        await session.commit()
+                        if host is not None and (
+                            host.last_seen_at is None
+                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        ):
+                            host.last_seen_at = now
+                            await session.commit()
 
                     event = await _append_event(
                         session,
@@ -1943,7 +1978,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         data={
                             "workspace_id": msg.workspace_id,
                             "repo_id": msg.repo_id,
-                            "daemon_id": daemon_id,
+                            "host_key": host_key,
                             "connection_id": connection_id,
                             **msg.data,
                         },
@@ -1955,7 +1990,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
             if msg_type == "command_ack":
                 async with sessionmaker() as session:
                     cmd = await session.get(DaemonCommand, msg.command_id)
-                    if cmd is None or cmd.daemon_id != daemon_id:
+                    if cmd is None or cmd.host_key != host_key:
                         await websocket.send_json(
                             {"type": "error", "error": "unknown_command"}
                         )
@@ -1968,7 +2003,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         session,
                         event_type="daemon.command_state_changed",
                         data={
-                            "daemon_id": daemon_id,
+                            "host_key": host_key,
                             "connection_id": connection_id,
                             "command_id": cmd.id,
                             "state": cmd.state.value,
@@ -1981,8 +2016,8 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
         pass
     finally:
         sender_task.cancel()
-        if daemon_id is not None:
-            await app.state.daemon_connections.unregister(daemon_id)
+        if host_key is not None:
+            await app.state.daemon_connections.unregister(host_key)
             now = datetime.now(UTC)
             disconnected_event: EventResponse | None = None
             async with sessionmaker() as session:
@@ -1997,7 +2032,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         session,
                         event_type="daemon.disconnected",
                         data={
-                            "daemon_id": daemon_id,
+                            "host_key": host_key,
                             "connection_id": connection_id,
                         },
                     )

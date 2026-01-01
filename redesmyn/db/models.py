@@ -562,8 +562,8 @@ class DaemonConnection(Base):
     __tablename__ = "daemon_connections"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    daemon_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    host: Mapped[str | None] = mapped_column(String, nullable=True)
+    host_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     capabilities: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
         nullable=False,
@@ -599,7 +599,7 @@ class DaemonCommand(Base):
     __tablename__ = "daemon_commands"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    daemon_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    host_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
     command_type: Mapped[str] = mapped_column(String, nullable=False)
     workspace_id: Mapped[str | None] = mapped_column(String, nullable=True)
     repo_id: Mapped[str | None] = mapped_column(String, nullable=True)

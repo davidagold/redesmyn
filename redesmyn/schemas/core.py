@@ -438,11 +438,16 @@ class EventResponse(ApiResponse):
     created_at: datetime
 
 
+class RepoKeyResponse(ApiResponse):
+    workspace_id: str
+    repo_id: str
+
+
 class DaemonPresenceResponse(ApiResponse):
-    daemon_id: str
-    host: str | None
+    host_key: str
+    display_name: str | None
     capabilities: dict[str, Any]
-    attached_repos: list[dict[str, str]]
+    attached_repos: list[RepoKeyResponse]
     connected: bool
     last_seen_at: datetime | None
     connected_at: datetime | None
@@ -453,7 +458,7 @@ class DaemonPresenceResponse(ApiResponse):
 
 class DaemonCommandResponse(ApiResponse):
     id: int
-    daemon_id: str
+    host_key: str
     command_type: str
     workspace_id: str | None
     repo_id: str | None

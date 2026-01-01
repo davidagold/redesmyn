@@ -39,7 +39,7 @@ export interface paths {
     patch?: never
     trace?: never
   }
-  "/v1/daemons/{daemon_id}/commands": {
+  "/v1/daemons/{host_key}/commands": {
     parameters: {
       query?: never
       header?: never
@@ -49,7 +49,7 @@ export interface paths {
     get?: never
     put?: never
     /** Issue Daemon Command */
-    post: operations["issue_daemon_command_v1_daemons__daemon_id__commands_post"]
+    post: operations["issue_daemon_command_v1_daemons__host_key__commands_post"]
     delete?: never
     options?: never
     head?: never
@@ -497,8 +497,8 @@ export interface components {
        * Format: date-time
        */
       createdAt: string
-      /** Daemonid */
-      daemonId: string
+      /** Hostkey */
+      hostKey: string
       /** Id */
       id: number
       /** Payload */
@@ -519,9 +519,7 @@ export interface components {
     /** DaemonPresenceResponse */
     DaemonPresenceResponse: {
       /** Attachedrepos */
-      attachedRepos: {
-        [key: string]: string
-      }[]
+      attachedRepos: components["schemas"]["RepoKeyResponse"][]
       /** Capabilities */
       capabilities: {
         [key: string]: unknown
@@ -535,12 +533,12 @@ export interface components {
        * Format: date-time
        */
       createdAt: string
-      /** Daemonid */
-      daemonId: string
       /** Disconnectedat */
       disconnectedAt: string | null
-      /** Host */
-      host: string | null
+      /** Displayname */
+      displayName: string | null
+      /** Hostkey */
+      hostKey: string
       /** Lastseenat */
       lastSeenAt: string | null
       /**
@@ -869,6 +867,13 @@ export interface components {
       network?: "allow" | "deny" | null
       /** Type */
       type?: "none" | "worktree" | null
+    }
+    /** RepoKeyResponse */
+    RepoKeyResponse: {
+      /** Repoid */
+      repoId: string
+      /** Workspaceid */
+      workspaceId: string
     }
     /** SandboxCapabilitiesResponse */
     SandboxCapabilitiesResponse: {
@@ -1253,12 +1258,12 @@ export interface operations {
       }
     }
   }
-  issue_daemon_command_v1_daemons__daemon_id__commands_post: {
+  issue_daemon_command_v1_daemons__host_key__commands_post: {
     parameters: {
       query?: never
       header?: never
       path: {
-        daemon_id: string
+        host_key: string
       }
       cookie?: never
     }
