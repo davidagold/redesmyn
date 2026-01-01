@@ -12,7 +12,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, TypeAdapter
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
