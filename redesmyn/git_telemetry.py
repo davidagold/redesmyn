@@ -19,6 +19,7 @@ from redesmyn.db import (
     init_db,
 )
 from redesmyn.repo import (
+    CommitInfo,
     git_commit_info,
     git_for_each_ref,
     git_is_ancestor,
@@ -44,19 +45,15 @@ def _choose_newest_sha(repo_root, shas: list[str]) -> str | None:
 
 
 def _build_commit_payload(
-    sha: str, commit_info: dict[str, dict[str, object]]
+    sha: str, commit_info: dict[str, CommitInfo]
 ) -> dict[str, Any]:
-    info = commit_info.get(sha, {})
-    authored_at_raw = info.get("authored_at")
-    authored_at: str | None
-    if isinstance(authored_at_raw, datetime):
-        authored_at = authored_at_raw.isoformat()
-    else:
-        authored_at = None
+    info = commit_info.get(sha)
+    authored_at_raw = info.get("authored_at") if info is not None else None
+    authored_at = authored_at_raw.isoformat() if authored_at_raw is not None else None
     return {
         "sha": sha,
-        "author_name": info.get("author_name"),
-        "author_email": info.get("author_email"),
+        "author_name": info.get("author_name") if info is not None else None,
+        "author_email": info.get("author_email") if info is not None else None,
         "authored_at": authored_at,
     }
 
