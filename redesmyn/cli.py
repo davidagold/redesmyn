@@ -155,6 +155,7 @@ def sync(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -228,6 +229,7 @@ def checkout(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
         path = asyncio.run(checkout_task_worktree(ctx, task_id=task_id))
     except (NotAGitRepositoryError, NotInitializedError, RuntimeError) as e:
         typer.echo(f"error: {e}", err=True)
@@ -276,6 +278,7 @@ def merge(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -541,6 +544,7 @@ def run(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1490,6 +1494,7 @@ def observer_run(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1527,6 +1532,7 @@ def epic_create(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1572,6 +1578,7 @@ def epic_list() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1612,6 +1619,7 @@ def task_add(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1643,6 +1651,7 @@ def task_list(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1680,6 +1689,7 @@ def agent_register(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1706,6 +1716,7 @@ def agent_list() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1751,6 +1762,7 @@ def agent_start(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
+        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1812,6 +1824,7 @@ def agent_restart(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
+        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1850,6 +1863,7 @@ def agent_attach(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
+        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1882,6 +1896,7 @@ def agent_stop(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
+        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1912,6 +1927,7 @@ def agent_logs(
     try:
         repo_ctx = get_repo_context()
         _ensure_initialized(repo_ctx)
+        asyncio.run(init_repo(repo_ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1961,6 +1977,7 @@ def linear_status() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -1980,14 +1997,16 @@ def linear_auth(
     timeout_seconds: int = typer.Option(180, help="Max time to wait for auth."),
 ) -> None:
     try:
-        _ensure_initialized(get_repo_context())
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
     from redesmyn.settings import load_settings
 
-    settings = load_settings(repo_root=get_repo_context().repo_root)
+    settings = load_settings(repo_root=ctx.repo_root)
     if not settings.linear_client_id or not settings.linear_client_secret:
         redirect_uri = (
             f"http://{settings.api_host}:{settings.api_port}/v1/linear/oauth/callback"
@@ -2052,6 +2071,7 @@ def linear_whoami() -> None:
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -2097,6 +2117,7 @@ def linear_import(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
+        asyncio.run(init_repo(ctx))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)

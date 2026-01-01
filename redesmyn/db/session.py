@@ -53,30 +53,25 @@ async def init_db(engine: AsyncEngine) -> None:
     should_stamp_baseline = False
     dialect_name: str | None = None
     has_alembic_version = False
+
     async with engine.begin() as conn:
         dialect_name = conn.dialect.name
         if dialect_name != "sqlite":
+            # For now, Redesmyn's Alembic config is file-path based (SQLite).
+            # If/when we add other dialects, we'll need a different config path.
             return
 
         has_alembic_version = await _sqlite_has_table(conn, name="alembic_version")
-        if has_alembic_version:
-            return
-
-        has_nodes = await _sqlite_has_table(conn, name="nodes")
-        if has_nodes:
+        if not has_alembic_version and await _sqlite_has_table(conn, name="nodes"):
             # Pre-Alembic local DB: apply legacy SQLite migrations so the schema
             # matches the Alembic baseline before stamping.
             await _migrate_sqlite(conn)
             should_stamp_baseline = True
 
-    if dialect_name != "sqlite":
-        upgrade_to_head(db_path=db_path)
-        return
-    if has_alembic_version:
-        upgrade_to_head(db_path=db_path)
-        return
     if should_stamp_baseline:
         stamp_revision(db_path=db_path, revision="0001_baseline")
+
+    # Always attempt to upgrade to the latest revision.
     upgrade_to_head(db_path=db_path)
 
 
