@@ -13,15 +13,15 @@ local formatters = new Mapping<String, Step> {
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
+            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
-            "dashboard/**/*.json",
         )
         stage = List(
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
+            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
-            "dashboard/**/*.json",
         )
         check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
         fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
@@ -59,15 +59,15 @@ local precommit_steps = new Mapping<String, Step> {
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
+            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
-            "dashboard/**/*.json",
         )
         stage = List(
             "dashboard/**/*.ts",
             "dashboard/**/*.tsx",
             "dashboard/**/*.js",
+            "dashboard/**/*.mjs",
             "dashboard/**/*.jsx",
-            "dashboard/**/*.json",
         )
         check = "dashboard/node_modules/.bin/oxfmt --check {{files}}"
         fix = "dashboard/node_modules/.bin/oxfmt {{files}}"
