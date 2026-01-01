@@ -209,6 +209,7 @@ class TaskMergeRequest(ApiRequest):
     run_id: str | None = None
     cascade: bool = False
     scope: Literal["descendants", "spine"] = "descendants"
+    restack_mode: Literal["strict", "merge_then_restack"] = "strict"
     dry_run: bool = False
     allow_running: bool = False
     force: bool = False
@@ -220,6 +221,7 @@ class MergeRunSummaryResponse(ApiResponse):
     requested_task_id: int
     status: MergeRunStatus
     scope: Literal["descendants", "spine"]
+    restack_mode: Literal["strict", "merge_then_restack"] = "strict"
     allow_running: bool
     force: bool
     current_step_index: int | None = None

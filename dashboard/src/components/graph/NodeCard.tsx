@@ -73,6 +73,7 @@ interface NodeCardProps {
 interface MergeAllowRunningPrompt {
   kind: "merge"
   cascade: boolean
+  restackMode: "strict" | "merge_then_restack"
 }
 
 interface ResumeAllowRunningPrompt {
@@ -302,15 +303,42 @@ export function NodeCard({
     setRefreshPendingAfterMenuClose(false)
     setPendingMerge(cascade ? "mergeStack" : "merge")
     clearActionError()
+
+    const restackMode: "strict" | "merge_then_restack" = "strict"
+    const actionLabel = cascade ? "Merge and Restack" : "Merge"
     try {
-      await mergeTask(taskId, { cascade })
+      await mergeTask(taskId, { cascade, restackMode })
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({ kind: "merge", cascade })
+        setAllowRunningPrompt({ kind: "merge", cascade, restackMode })
         return
       }
-      setActionErrorFromException(cascade ? "Merge and Restack" : "Merge", e)
+      setActionErrorFromException(actionLabel, e)
+      return
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
+  async function handleMergeThenRestack() {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setRefreshPendingAfterMenuClose(false)
+    setPendingMerge("mergeStack")
+    clearActionError()
+    const actionLabel = "Merge then Restack"
+    const restackMode: "strict" | "merge_then_restack" = "merge_then_restack"
+    try {
+      await mergeTask(taskId, { cascade: true, restackMode })
+      onRequestRefresh()
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409) {
+        setAllowRunningPrompt({ kind: "merge", cascade: true, restackMode })
+        return
+      }
+      setActionErrorFromException(actionLabel, e)
       return
     } finally {
       setPendingMerge(null)
@@ -349,7 +377,9 @@ export function NodeCard({
     const actionLabel =
       allowRunningPrompt.kind === "merge"
         ? allowRunningPrompt.cascade
-          ? "Merge and Restack"
+          ? allowRunningPrompt.restackMode === "merge_then_restack"
+            ? "Merge then Restack"
+            : "Merge and Restack"
           : "Merge"
         : "Resume merge"
 
@@ -361,6 +391,7 @@ export function NodeCard({
         setPendingMerge(allowRunningPrompt.cascade ? "mergeStack" : "merge")
         await mergeTask(taskId, {
           cascade: allowRunningPrompt.cascade,
+          restackMode: allowRunningPrompt.restackMode,
           allowRunning: true,
         })
       } else {
@@ -512,7 +543,14 @@ export function NodeCard({
 
   const gitAttentionTooltipLines: string[] = []
   if (mergeRunBlocked) {
-    gitAttentionTooltipLines.push("Merge blocked (conflicts).")
+    const blockedOnSpine =
+      (mergeRun as { blockedOnSpine?: boolean | null } | null | undefined)
+        ?.blockedOnSpine ?? null
+    gitAttentionTooltipLines.push(
+      blockedOnSpine === false
+        ? "Restack blocked (conflicts)."
+        : "Merge blocked (conflicts).",
+    )
     if (mergeRun?.blockedBranchName) {
       gitAttentionTooltipLines.push(`Branch: ${mergeRun.blockedBranchName}`)
     }
@@ -526,7 +564,9 @@ export function NodeCard({
   const allowRunningActionLabel =
     allowRunningPrompt?.kind === "merge"
       ? allowRunningPrompt.cascade
-        ? "Merge and Restack"
+        ? allowRunningPrompt.restackMode === "merge_then_restack"
+          ? "Merge then Restack"
+          : "Merge and Restack"
         : "Merge"
       : allowRunningPrompt?.kind === "resume"
         ? "Resume merge"
@@ -681,7 +721,34 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Fast-forward the task and ancestors as in [Merge], plus rebase
+                  Rebase downstream branches to keep the stack intact, then
+                  fast-forward the task and ancestors into the epic base branch.
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMergeThenRestack()
+                      }}
+                    >
+                      <Layers className="size-3.5" />
+                      Merge then Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Fast-forward the task and ancestors as in [Merge], then rebase
                   downstream branches to keep the stack intact.
                 </TooltipContent>
               </Tooltip>

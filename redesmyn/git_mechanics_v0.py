@@ -21,6 +21,7 @@ from redesmyn.repo import (
 )
 
 MergeCascadeScope = Literal["descendants", "spine"]
+MergeRestackMode = Literal["strict", "merge_then_restack"]
 
 
 class MergePlanError(RuntimeError):
@@ -74,6 +75,7 @@ class MergeCascadePlan:
     base_branch: str
     base_worktree: Path
     scope: MergeCascadeScope
+    restack_mode: MergeRestackMode
     spine_node_ids: tuple[int, ...]
     affected_node_ids: tuple[int, ...]
     nodes: dict[int, MergeNodeInfo]
@@ -170,6 +172,7 @@ async def build_merge_cascade_plan(
     task_id: int,
     run_id: str,
     scope: MergeCascadeScope,
+    restack_mode: MergeRestackMode,
     force: bool,
 ) -> MergeCascadePlan:
     async with sessionmaker() as session:
@@ -403,20 +406,39 @@ async def build_merge_cascade_plan(
         raise MergePlanError(str(e)) from e
 
     steps: list[MergePlanStep] = []
-    for node_id in ordered_node_ids:
-        info = node_infos.get(node_id)
-        if info is None:
-            continue
-        steps.append(
-            MergePlanStep(
-                kind="rebase",
-                node_id=info.node_id,
-                task_id=info.primary_task_id,
-                branch_name=info.branch_name,
-                worktree_path=info.worktree_path,
-                upstream_ref=info.upstream_ref,
+
+    if scope == "descendants" and restack_mode == "merge_then_restack":
+        for node_id in ordered_node_ids:
+            if node_id not in spine_set:
+                continue
+            info = node_infos.get(node_id)
+            if info is None:
+                continue
+            steps.append(
+                MergePlanStep(
+                    kind="rebase",
+                    node_id=info.node_id,
+                    task_id=info.primary_task_id,
+                    branch_name=info.branch_name,
+                    worktree_path=info.worktree_path,
+                    upstream_ref=info.upstream_ref,
+                )
             )
-        )
+    else:
+        for node_id in ordered_node_ids:
+            info = node_infos.get(node_id)
+            if info is None:
+                continue
+            steps.append(
+                MergePlanStep(
+                    kind="rebase",
+                    node_id=info.node_id,
+                    task_id=info.primary_task_id,
+                    branch_name=info.branch_name,
+                    worktree_path=info.worktree_path,
+                    upstream_ref=info.upstream_ref,
+                )
+            )
     for node_id in spine_node_ids:
         info = node_infos.get(node_id)
         if info is None:
@@ -432,12 +454,31 @@ async def build_merge_cascade_plan(
             )
         )
 
+    if scope == "descendants" and restack_mode == "merge_then_restack":
+        for node_id in ordered_node_ids:
+            if node_id in spine_set:
+                continue
+            info = node_infos.get(node_id)
+            if info is None:
+                continue
+            steps.append(
+                MergePlanStep(
+                    kind="rebase",
+                    node_id=info.node_id,
+                    task_id=info.primary_task_id,
+                    branch_name=info.branch_name,
+                    worktree_path=info.worktree_path,
+                    upstream_ref=info.upstream_ref,
+                )
+            )
+
     return MergeCascadePlan(
         run_id=run_id,
         epic_id=epic.id,
         base_branch=base_branch,
         base_worktree=base_worktree,
         scope=scope,
+        restack_mode=restack_mode,
         spine_node_ids=tuple(spine_node_ids),
         affected_node_ids=tuple([nid for nid in ordered_node_ids if nid in node_infos]),
         nodes=node_infos,
@@ -550,6 +591,7 @@ def format_merge_plan(plan: MergeCascadePlan) -> str:
     lines: list[str] = []
     lines.append(f"Epic base: {plan.base_branch} ({plan.base_worktree})")
     lines.append(f"Scope: {plan.scope}")
+    lines.append(f"Restack mode: {plan.restack_mode}")
     lines.append(f"Spine: {len(plan.spine_node_ids)} node(s)")
     lines.append(f"Affected: {len(plan.affected_node_ids)} node(s)")
     lines.append("")

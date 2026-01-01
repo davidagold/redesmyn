@@ -29,6 +29,7 @@ export type TaskMergeRequest = {
   runId?: string | null
   cascade?: boolean
   scope?: "descendants" | "spine"
+  restackMode?: "strict" | "merge_then_restack"
   dryRun?: boolean
   allowRunning?: boolean
   force?: boolean

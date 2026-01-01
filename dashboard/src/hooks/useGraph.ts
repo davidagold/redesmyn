@@ -3,10 +3,28 @@ import { fetchEpicGraph, type EpicGraph } from "@/api"
 import {
   buildAgentsMap,
   buildChildrenMap,
-  buildMergeRunsByTaskId,
   buildNodesMap,
   buildTasksMap,
 } from "@/lib/graph-utils"
+
+function isNodeOnSpine(
+  nodesById: Map<number, { parentNodeId?: number | null }>,
+  leafNodeId: number,
+  nodeId: number,
+): boolean {
+  const seen = new Set<number>()
+  let cursor: number | null = leafNodeId
+  while (cursor !== null && !seen.has(cursor)) {
+    if (cursor === nodeId) {
+      return true
+    }
+    seen.add(cursor)
+    cursor = nodesById.get(cursor)?.parentNodeId ?? null
+  }
+  return false
+}
+
+type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 
 export function useGraph(epicId: number | null) {
   const [graph, setGraph] = useState<EpicGraph | null>(null)
@@ -38,17 +56,35 @@ export function useGraph(epicId: number | null) {
 
   const agentsById = useMemo(() => buildAgentsMap(graph?.agents ?? []), [graph])
 
-  const mergeRunsByTaskId = useMemo(
-    () => buildMergeRunsByTaskId(graph?.mergeRuns ?? []),
-    [graph],
-  )
-
   const childrenByParent = useMemo(
     () => buildChildrenMap(graph?.nodes ?? []),
     [graph],
   )
 
   const nodesById = useMemo(() => buildNodesMap(graph?.nodes ?? []), [graph])
+
+  const mergeRunsByTaskId = useMemo(() => {
+    const runs = graph?.mergeRuns ?? []
+    const map = new Map<number, MergeRun>()
+    for (const run of runs) {
+      if (map.has(run.requestedTaskId)) {
+        continue
+      }
+
+      const blockedNodeId = run.blockedNodeId ?? null
+      let blockedOnSpine: boolean | null = null
+      if (blockedNodeId !== null) {
+        const requestedTask = tasksById.get(run.requestedTaskId) ?? null
+        const leafNodeId = requestedTask?.nodeId ?? null
+        if (leafNodeId !== null && nodesById.size > 0) {
+          blockedOnSpine = isNodeOnSpine(nodesById, leafNodeId, blockedNodeId)
+        }
+      }
+
+      map.set(run.requestedTaskId, { ...run, blockedOnSpine } as MergeRun)
+    }
+    return map
+  }, [graph, nodesById, tasksById])
 
   const rootNodes = childrenByParent.get(null) ?? []
 

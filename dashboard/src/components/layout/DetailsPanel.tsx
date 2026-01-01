@@ -98,8 +98,13 @@ function MergeRunDetails({
         : "border border-border/60 bg-background/30 ring-border/10"
 
   const calloutTitle =
+    // When a descendant rebase conflicts, the merge run is blocked in the restack portion.
+    // (The spine merge may or may not have completed depending on the merge mode.)
     mergeRun.status === "blocked"
-      ? "Merge blocked (conflicts)"
+      ? (mergeRun as { blockedOnSpine?: boolean | null }).blockedOnSpine ===
+        false
+        ? "Restack blocked (conflicts)"
+        : "Merge blocked (conflicts)"
       : mergeRun.status === "resumable"
         ? "Merge ready to resume"
         : mergeRun.status === "failed"

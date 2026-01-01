@@ -742,6 +742,7 @@ def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
         base_branch=plan.base_branch,
         base_worktree=str(plan.base_worktree),
         scope=plan.scope,
+        restack_mode=plan.restack_mode,
         spine_node_ids=list(plan.spine_node_ids),
         affected_node_ids=list(plan.affected_node_ids),
         steps=steps,
@@ -1294,6 +1295,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
     scope: Literal["descendants", "spine"] = (
         request.scope if request.cascade else "spine"
     )
+    restack_mode: Literal["strict", "merge_then_restack"] = request.restack_mode
     try:
         plan = await build_merge_cascade_plan(
             ctx=app.state.ctx,
@@ -1301,6 +1303,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
             task_id=task_id,
             run_id=run_id,
             scope=scope,
+            restack_mode=restack_mode,
             force=request.force,
         )
     except MergePlanError as e:
@@ -1433,6 +1436,7 @@ async def resume_merge_run(
         scope_value = run.scope
         force = run.force
         allow_running = run.allow_running or request.allow_running
+        restack_mode: Literal["strict", "merge_then_restack"] = run.restack_mode
 
         blocked_step_index = run.blocked_step_index
         blocked_step_kind = run.blocked_step_kind
@@ -1451,6 +1455,7 @@ async def resume_merge_run(
             task_id=task_id,
             run_id=run_id,
             scope=normalized_scope,  # type: ignore[arg-type]
+            restack_mode=restack_mode,
             force=force,
         )
     except MergePlanError as e:

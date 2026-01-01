@@ -252,6 +252,12 @@ def merge(
         help="Cascade scope (descendants|spine). Ignored unless --cascade is set.",
         show_choices=True,
     ),
+    restack_mode: str = typer.Option(
+        "strict",
+        "--restack-mode",
+        help="Restack ordering (strict|merge_then_restack). Ignored unless --cascade is set.",
+        show_choices=True,
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -281,7 +287,16 @@ def merge(
         typer.echo("error: --scope must be one of: descendants, spine", err=True)
         raise typer.Exit(2)
 
+    normalized_restack_mode = restack_mode.strip().lower()
+    if normalized_restack_mode not in {"strict", "merge_then_restack"}:
+        typer.echo(
+            "error: --restack-mode must be one of: strict, merge_then_restack",
+            err=True,
+        )
+        raise typer.Exit(2)
+
     selected_scope = normalized_scope if cascade else "spine"
+    selected_restack_mode = normalized_restack_mode if cascade else "strict"
 
     engine = create_engine(ctx.db_path)
     sessionmaker = create_sessionmaker(engine)
@@ -293,6 +308,7 @@ def merge(
                 task_id=task_id,
                 run_id=f"cli-{int(time.time())}",
                 scope=selected_scope,  # type: ignore[arg-type]
+                restack_mode=selected_restack_mode,  # type: ignore[arg-type]
                 force=force,
             )
         )

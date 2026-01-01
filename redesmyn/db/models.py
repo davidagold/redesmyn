@@ -97,6 +97,7 @@ class MergeRunPlanData(BaseModel):
     base_branch: str
     base_worktree: str
     scope: Literal["descendants", "spine"]
+    restack_mode: Literal["strict", "merge_then_restack"] = "strict"
     spine_node_ids: list[int] = Field(default_factory=list)
     affected_node_ids: list[int] = Field(default_factory=list)
     steps: list[MergeRunPlanStepData] = Field(default_factory=list)
@@ -565,3 +566,14 @@ class MergeRun(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    @property
+    def restack_mode(self) -> Literal["strict", "merge_then_restack"]:
+        """Merge run ordering mode (stored inside the plan snapshot)."""
+        try:
+            value = self.plan.get("restack_mode")
+        except Exception:
+            value = None
+        if value == "merge_then_restack":
+            return "merge_then_restack"
+        return "strict"

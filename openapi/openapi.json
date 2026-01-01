@@ -888,6 +888,15 @@
             "title": "Requestedtaskid",
             "type": "integer"
           },
+          "restackMode": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "merge_then_restack"
+            ],
+            "title": "Restackmode",
+            "type": "string"
+          },
           "runId": {
             "title": "Runid",
             "type": "string"
@@ -1909,6 +1918,15 @@
             "default": false,
             "title": "Force",
             "type": "boolean"
+          },
+          "restackMode": {
+            "default": "strict",
+            "enum": [
+              "strict",
+              "merge_then_restack"
+            ],
+            "title": "Restackmode",
+            "type": "string"
           },
           "runId": {
             "anyOf": [

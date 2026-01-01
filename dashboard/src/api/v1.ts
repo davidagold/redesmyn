@@ -666,6 +666,12 @@ export interface components {
       force: boolean
       /** Requestedtaskid */
       requestedTaskId: number
+      /**
+       * Restackmode
+       * @default strict
+       * @enum {string}
+       */
+      restackMode: "strict" | "merge_then_restack"
       /** Runid */
       runId: string
       /**
@@ -1000,6 +1006,12 @@ export interface components {
        * @default false
        */
       force: boolean
+      /**
+       * Restackmode
+       * @default strict
+       * @enum {string}
+       */
+      restackMode: "strict" | "merge_then_restack"
       /** Runid */
       runId?: string | null
       /**
