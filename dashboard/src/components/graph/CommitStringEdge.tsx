@@ -89,7 +89,7 @@ export function CommitStringEdge({
           d={edgePath}
           fill="none"
           stroke="currentColor"
-          strokeWidth={2.5}
+          strokeWidth={2.75}
           strokeLinecap="round"
           strokeDasharray="14 1000"
           className={cn(
