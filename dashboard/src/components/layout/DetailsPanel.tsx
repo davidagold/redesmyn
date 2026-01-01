@@ -14,10 +14,21 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import {
+  ApiHttpError,
   fetchTaskAgentLogs,
   restartTaskAgent,
+  resumeMergeRun,
   setTaskMergeReady,
   startTaskAgent,
   stopTaskAgent,
@@ -33,6 +44,7 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Loader2,
   MessageSquareText,
   Play,
   RotateCcw,
@@ -74,12 +86,17 @@ interface DetailsPanelProps {
 function MergeRunDetails({
   mergeRun,
   node,
+  onRequestRefresh,
 }: {
   mergeRun: MergeRun
   node: GraphNode | null | undefined
+  onRequestRefresh?: () => void
 }) {
   const [calloutExpanded, setCalloutExpanded] = useState(false)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
+  const [resumeError, setResumeError] = useState<string | null>(null)
+  const [resumePending, setResumePending] = useState(false)
+  const [resumePromptOpen, setResumePromptOpen] = useState(false)
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
 
   const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
@@ -138,8 +155,29 @@ function MergeRunDetails({
         ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
         : "border-border/60 bg-background/30 text-muted-foreground"
 
+  async function handleResumeMerge(allowRunning: boolean) {
+    if (!onRequestRefresh) {
+      return
+    }
+
+    setResumePending(true)
+    setResumeError(null)
+    try {
+      await resumeMergeRun(mergeRun.runId, { allowRunning })
+      onRequestRefresh()
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409 && !allowRunning) {
+        setResumePromptOpen(true)
+        return
+      }
+      setResumeError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setResumePending(false)
+    }
+  }
+
   return (
-    <div className="grid gap-3">
+    <div className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <span
           className={cn(
@@ -158,16 +196,16 @@ function MergeRunDetails({
         <Collapsible
           open={calloutExpanded}
           onOpenChange={setCalloutExpanded}
-          className="w-full"
+          className="w-full min-w-0"
         >
           <Card
             size="sm"
             className={cn(
-              "w-full gap-2 py-2 shadow-sm backdrop-blur",
+              "w-full min-w-0 gap-2 py-2 shadow-sm backdrop-blur",
               calloutClasses,
             )}
           >
-            <CardContent className="px-3">
+            <CardContent className="min-w-0 px-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   {calloutIcon}
@@ -175,26 +213,54 @@ function MergeRunDetails({
                     {calloutTitle}
                   </div>
                 </div>
-                <CollapsibleTrigger
-                  render={
+                <div className="flex items-center gap-2">
+                  {mergeRun.status === "resumable" ? (
                     <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label={
-                        calloutExpanded ? "Collapse callout" : "Expand callout"
+                      variant="outline"
+                      size="xs"
+                      disabledReason={
+                        resumePending
+                          ? "Action in progress"
+                          : !onRequestRefresh
+                            ? "Refresh handler unavailable"
+                            : null
                       }
-                      title={
-                        calloutExpanded ? "Collapse callout" : "Expand callout"
-                      }
+                      onClick={() => void handleResumeMerge(false)}
                     >
-                      {calloutExpanded ? (
-                        <ChevronUp className="size-3" />
+                      {resumePending ? (
+                        <Loader2 className="size-3 animate-spin" />
                       ) : (
-                        <ChevronDown className="size-3" />
+                        <Play className="size-3" />
                       )}
+                      Resume merge
                     </Button>
-                  }
-                />
+                  ) : null}
+
+                  <CollapsibleTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={
+                          calloutExpanded
+                            ? "Collapse callout"
+                            : "Expand callout"
+                        }
+                        title={
+                          calloutExpanded
+                            ? "Collapse callout"
+                            : "Expand callout"
+                        }
+                      >
+                        {calloutExpanded ? (
+                          <ChevronUp className="size-3" />
+                        ) : (
+                          <ChevronDown className="size-3" />
+                        )}
+                      </Button>
+                    }
+                  />
+                </div>
               </div>
 
               {mergeRun.status === "blocked" && remediation ? (
@@ -244,18 +310,18 @@ function MergeRunDetails({
                 ) : null}
 
                 {blockedBranch ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
+                  <div className="mt-1 min-w-0 text-xs text-muted-foreground">
                     Branch:{" "}
-                    <span className="break-words font-mono text-foreground/80">
+                    <span className="break-all font-mono text-foreground/80">
                       {blockedBranch}
                     </span>
                   </div>
                 ) : null}
 
                 {blockedWorktree ? (
-                  <div className="mt-1 text-xs text-muted-foreground">
+                  <div className="mt-1 min-w-0 text-xs text-muted-foreground">
                     Worktree:{" "}
-                    <span className="break-words font-mono text-foreground/80">
+                    <span className="break-all font-mono text-foreground/80">
                       {blockedWorktree}
                     </span>
                   </div>
@@ -281,7 +347,7 @@ function MergeRunDetails({
                     </div>
                     {detailsExpanded ? (
                       <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                        <div className="whitespace-pre-wrap break-words">
+                        <div className="whitespace-pre-wrap break-all">
                           {blockedError}
                         </div>
                       </div>
@@ -293,6 +359,60 @@ function MergeRunDetails({
           </Card>
         </Collapsible>
       ) : null}
+
+      {resumeError ? (
+        <pre className="whitespace-pre-wrap text-xs text-destructive">
+          {resumeError}
+        </pre>
+      ) : null}
+
+      <AlertDialog
+        open={resumePromptOpen}
+        onOpenChange={(open) => {
+          if (resumePending && !open) {
+            return
+          }
+          setResumePromptOpen(open)
+        }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Proceed anyway?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This resume affects running tasks/agents.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              disabledReason={resumePending ? "Action in progress" : null}
+              onClick={(e) => {
+                e.preventDefault()
+                setResumePromptOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <AlertDialogAction
+              disabledReason={resumePending ? "Action in progress" : null}
+              onClick={(e) => {
+                e.preventDefault()
+                setResumePromptOpen(false)
+                void handleResumeMerge(true)
+              }}
+            >
+              {resumePending ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Proceeding…
+                </>
+              ) : (
+                "Proceed"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -931,7 +1051,11 @@ export function DetailsPanel({
                 <AccordionItem value="merge-run">
                   <AccordionTrigger>Merge Run</AccordionTrigger>
                   <AccordionContent className="pt-3">
-                    <MergeRunDetails mergeRun={mergeRun} node={node} />
+                    <MergeRunDetails
+                      mergeRun={mergeRun}
+                      node={node}
+                      onRequestRefresh={onRequestRefresh}
+                    />
                   </AccordionContent>
                 </AccordionItem>
               ) : null}

@@ -516,31 +516,6 @@ export function NodeCard({
   const rebaseAttachCommand = rebaseRemediation?.attachCommand ?? null
   const rebaseRemediationMessage = rebaseRemediation?.message ?? null
 
-  const gitAttentionKind: "mergeBlocked" | "mergeResumable" | "outOfSync" | null =
-    mergeRunBlocked
-      ? "mergeBlocked"
-      : mergeRunResumable
-        ? "mergeResumable"
-        : outOfSync
-          ? "outOfSync"
-          : null
-
-  const gitAttentionIcon =
-    gitAttentionKind === "mergeBlocked" ? (
-      <AlertTriangle className="size-4" />
-    ) : gitAttentionKind === "mergeResumable" ? (
-      <Play className="size-4" />
-    ) : gitAttentionKind === "outOfSync" ? (
-      <GitBranch className="size-4" />
-    ) : null
-
-  const gitAttentionTextClass =
-    gitAttentionKind === "mergeBlocked"
-      ? "text-destructive/80"
-      : gitAttentionKind === "mergeResumable"
-        ? "text-amber-200/80"
-        : "text-amber-300/70"
-
   const gitAttentionTooltipLines: string[] = []
   if (mergeRunBlocked) {
     const blockedOnSpine =
@@ -560,6 +535,20 @@ export function NodeCard({
   if (outOfSync) {
     gitAttentionTooltipLines.push("Branch is out of sync with its upstream.")
   }
+
+  const mergeAttentionIcon = mergeRunBlocked ? (
+    <AlertTriangle className="size-4 text-destructive/80" />
+  ) : mergeRunResumable ? (
+    <Play className="size-4 text-emerald-400/85" />
+  ) : null
+
+  const syncAttentionIcon = outOfSync ? (
+    <GitBranch className="size-4 text-amber-300/70" />
+  ) : null
+
+  const gitAttentionIcon = mergeAttentionIcon || syncAttentionIcon
+
+  const shouldShowResumeButton = canResumeMerge && !!onRequestRefresh
 
   const allowRunningActionLabel =
     allowRunningPrompt?.kind === "merge"
@@ -813,152 +802,180 @@ export function NodeCard({
           </div>
         ) : null}
       </CardContent>
-      {actionError ? (
+      {actionError || shouldShowResumeButton ? (
         <div
-          className="nodrag nopan absolute left-0 top-full z-50 mt-2 w-full"
+          className="nodrag nopan absolute left-0 top-full z-50 mt-2 w-full space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <Card
-            size="sm"
-            className="gap-2 border border-destructive/25 bg-destructive/10 py-2 shadow-lg ring-destructive/10 backdrop-blur"
-          >
-            <CardContent className="px-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <AlertTriangle className="size-3.5 text-destructive" />
-                  <div
-                    className="truncate text-xs font-medium text-foreground"
-                    title={actionError.title}
-                  >
-                    {actionError.title}
+          {actionError ? (
+            <Card
+              size="sm"
+              className="gap-2 border border-destructive/25 bg-destructive/10 py-2 shadow-lg ring-destructive/10 backdrop-blur"
+            >
+              <CardContent className="px-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <AlertTriangle className="size-3.5 text-destructive" />
+                    <div
+                      className="truncate text-xs font-medium text-foreground"
+                      title={actionError.title}
+                    >
+                      {actionError.title}
+                    </div>
                   </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Dismiss error"
-                  title="Dismiss error"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    clearActionError()
-                  }}
-                >
-                  <X className="size-3" />
-                </Button>
-              </div>
-
-              <div
-                className={cn(
-                  "break-words text-xs text-foreground/80",
-                  actionErrorExpanded ? "whitespace-pre-wrap" : "line-clamp-2",
-                )}
-                title={actionError.summary}
-              >
-                {actionError.summary}
-              </div>
-
-              {mergeRunBlockedRebase ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Button
                     variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      rebaseAttachCommand
-                        ? null
-                        : "No task id recorded for this blocked step."
-                    }
+                    size="icon-xs"
+                    aria-label="Dismiss error"
+                    title="Dismiss error"
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      if (!rebaseAttachCommand) {
-                        return
-                      }
-                      void copyToClipboard(rebaseAttachCommand)
+                      clearActionError()
                     }}
                   >
-                    <Terminal className="size-3" />
-                    Copy attach
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      rebaseRemediationMessage
-                        ? null
-                        : "No remediation message available."
-                    }
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!rebaseRemediationMessage) {
-                        return
-                      }
-                      void copyToClipboard(rebaseRemediationMessage)
-                    }}
-                  >
-                    <MessageSquareText className="size-3" />
-                    Copy agent note
+                    <X className="size-3" />
                   </Button>
                 </div>
-              ) : null}
 
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setActionErrorExpanded((current) => !current)
-                  }}
-                >
-                  {actionErrorExpanded ? (
-                    <ChevronUp className="size-3" />
-                  ) : (
-                    <ChevronDown className="size-3" />
+                <div
+                  className={cn(
+                    "break-words text-xs text-foreground/80",
+                    actionErrorExpanded
+                      ? "whitespace-pre-wrap"
+                      : "line-clamp-2",
                   )}
-                  {actionErrorExpanded ? "Hide" : "Show"} details
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void copyToClipboard(actionError.raw)
-                  }}
+                  title={actionError.summary}
                 >
-                  Copy
-                </Button>
-              </div>
-
-              {actionErrorExpanded ? (
-                <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                  <div className="whitespace-pre-wrap break-words">
-                    {actionError.raw}
-                  </div>
+                  {actionError.summary}
                 </div>
-              ) : null}
-            </CardContent>
-          </Card>
+
+                {mergeRunBlockedRebase ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabledReason={
+                        rebaseAttachCommand
+                          ? null
+                          : "No task id recorded for this blocked step."
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (!rebaseAttachCommand) {
+                          return
+                        }
+                        void copyToClipboard(rebaseAttachCommand)
+                      }}
+                    >
+                      <Terminal className="size-3" />
+                      Copy attach
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabledReason={
+                        rebaseRemediationMessage
+                          ? null
+                          : "No remediation message available."
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (!rebaseRemediationMessage) {
+                          return
+                        }
+                        void copyToClipboard(rebaseRemediationMessage)
+                      }}
+                    >
+                      <MessageSquareText className="size-3" />
+                      Copy agent note
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setActionErrorExpanded((current) => !current)
+                    }}
+                  >
+                    {actionErrorExpanded ? (
+                      <ChevronUp className="size-3" />
+                    ) : (
+                      <ChevronDown className="size-3" />
+                    )}
+                    {actionErrorExpanded ? "Hide" : "Show"} details
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      void copyToClipboard(actionError.raw)
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </div>
+
+                {actionErrorExpanded ? (
+                  <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                    <div className="whitespace-pre-wrap break-words">
+                      {actionError.raw}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {shouldShowResumeButton ? (
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="xs"
+                disabledReason={
+                  pendingMerge !== null ? "Action in progress" : null
+                }
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void handleResumeMerge()
+                }}
+              >
+                {pendingMerge === "resume" ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <Play className="size-3" />
+                )}
+                Resume merge
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
-      {gitAttentionKind && gitAttentionIcon ? (
+      {gitAttentionIcon ? (
         <Tooltip>
           <TooltipTrigger
             render={(triggerProps) => (
               <span
                 {...triggerProps}
                 className={cn(
-                  "nodrag nopan absolute bottom-3 right-3",
-                  gitAttentionTextClass,
+                  "nodrag nopan absolute bottom-3 right-3 inline-flex items-center gap-1",
                   triggerProps.className,
                 )}
                 aria-label="Git status attention"
               >
-                {gitAttentionIcon}
+                {syncAttentionIcon}
+                {mergeAttentionIcon}
               </span>
             )}
           />
