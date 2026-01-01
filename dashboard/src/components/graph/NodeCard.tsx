@@ -727,7 +727,7 @@ export function NodeCard({
 
               <div
                 className={cn(
-                  "text-xs text-foreground/80",
+                  "break-words text-xs text-foreground/80",
                   actionErrorExpanded ? "whitespace-pre-wrap" : "line-clamp-2",
                 )}
                 title={actionError.summary}
