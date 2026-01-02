@@ -590,7 +590,7 @@ export function NodeCard({
             ? "ring-emerald-400/50"
             : null,
         isSelected
-          ? "ring-2 ring-ring"
+          ? "ring-[3px] ring-ring"
           : isHighlighted
             ? "ring-1 ring-ring/60"
             : null,
