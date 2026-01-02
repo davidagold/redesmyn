@@ -299,7 +299,7 @@ export function GraphView({
       type: "roundedSmoothStep",
       style: {
         stroke: "var(--border)",
-        strokeWidth: 1.75,
+        strokeWidth: 2,
       },
     }),
     [],
@@ -939,7 +939,7 @@ export function GraphView({
           style: {
             stroke: "var(--border)",
             strokeOpacity: 0.35,
-            strokeWidth: 1.75,
+            strokeWidth: 2,
             transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
           },
         })
@@ -978,7 +978,7 @@ export function GraphView({
         data: pulse ? { pulse } : undefined,
         style: {
           stroke: isSelected || isHovered ? "var(--ring)" : "var(--border)",
-          strokeWidth: isSelected ? 3 : isHovered ? 2.5 : 1.75,
+          strokeWidth: isSelected ? 3.25 : isHovered ? 2.75 : 2,
           strokeOpacity: isSelected ? 1 : isHovered ? 0.75 : 0.45,
           transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-width ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
         },

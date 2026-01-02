@@ -37,7 +37,7 @@ export function RoundedSmoothStepEdge({
           d={edgePath}
           fill="none"
           stroke="currentColor"
-          strokeWidth={2.75}
+          strokeWidth={3}
           strokeLinecap="round"
           strokeDasharray="14 1000"
           className={cn(
