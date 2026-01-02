@@ -671,7 +671,6 @@ async def ensure_current_agent_session(
             agent_id=agent.id,
             agent_config_id=None,
             task_id=task.id,
-            node_id=task.id,
             status=AgentStatus.Running,
             started_at=now,
             ended_at=None,
@@ -681,8 +680,6 @@ async def ensure_current_agent_session(
 
     if current.task_id is None:
         current.task_id = task.id
-    if current.node_id is None:
-        current.node_id = task.id
     if current.started_at is None:
         current.started_at = now
     current.ended_at = None
@@ -1018,7 +1015,6 @@ async def start_task_agent(
                 agent_id=agent.id,
                 agent_config_id=agent_config.id,
                 task_id=task.id,
-                node_id=task.id,
                 status=AgentStatus.Running,
                 host_id=host.id,
                 harness_profile_id=profile.id,

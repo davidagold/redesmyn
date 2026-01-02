@@ -70,7 +70,6 @@ class AgentSessionResponse(ApiResponse):
     agent_id: int
     agent_name: str
     task_id: int | None
-    node_id: int | None
     status: AgentStatus
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None

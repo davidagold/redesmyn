@@ -60,17 +60,6 @@
             "title": "Id",
             "type": "integer"
           },
-          "nodeId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nodeid"
-          },
           "resolvedProfile": {
             "anyOf": [
               {
@@ -113,7 +102,6 @@
           "agentId",
           "agentName",
           "taskId",
-          "nodeId",
           "status"
         ],
         "title": "AgentSessionResponse",

@@ -389,8 +389,6 @@ export interface components {
       harnessProfileId?: string | null
       /** Id */
       id: number
-      /** Nodeid */
-      nodeId: number | null
       resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
       /** Startedat */
       startedAt?: string | null

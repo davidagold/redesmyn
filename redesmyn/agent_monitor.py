@@ -105,7 +105,6 @@ async def observe_agents_once(
                     agent_id=agent.id,
                     agent_config_id=None,
                     task_id=task_id,
-                    node_id=task_id,
                     status=AgentStatus.Running,
                     started_at=now,
                     ended_at=None,

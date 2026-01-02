@@ -36,10 +36,10 @@ export function buildAgentSessionsByNodeId(
 ): Map<number, AgentSession> {
   const map = new Map<number, AgentSession>()
   for (const session of agentSessions) {
-    if (session.nodeId === null) {
+    if (session.taskId === null) {
       continue
     }
-    map.set(session.nodeId, session)
+    map.set(session.taskId, session)
   }
   return map
 }

@@ -341,9 +341,6 @@ class AgentSession(Base):
     task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True, index=True
     )
-    node_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nodes.id"), nullable=True, index=True
-    )
 
     status: Mapped[AgentStatus] = mapped_column(
         _enum_type(AgentStatus, "agent_session_status"),

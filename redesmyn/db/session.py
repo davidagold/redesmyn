@@ -228,7 +228,6 @@ async def _backfill_agent_sessions_from_legacy_agents(conn) -> None:
                 (agent_id,),
             )
         ).fetchone()
-        node_id = node_row[0] if node_row else None
         task_id = node_row[1] if node_row else None
 
         agent_config_id = None
@@ -252,13 +251,12 @@ async def _backfill_agent_sessions_from_legacy_agents(conn) -> None:
 
         await conn.exec_driver_sql(
             "INSERT INTO agent_sessions "
-            "(agent_id, agent_config_id, task_id, node_id, status, host_id, harness_profile_id, cwd_path, pid, attach, resolved_profile, exit_code, started_at, ended_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(agent_id, agent_config_id, task_id, status, host_id, harness_profile_id, cwd_path, pid, attach, resolved_profile, exit_code, started_at, ended_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 agent_id,
                 agent_config_id,
                 task_id,
-                node_id,
                 status,
                 host_id,
                 harness_profile_id,

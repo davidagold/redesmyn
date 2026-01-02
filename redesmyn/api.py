@@ -385,7 +385,6 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                         agent_id=agent_row.id,
                         agent_name=agent_row.display_name,
                         task_id=session_row.task_id,
-                        node_id=session_row.node_id,
                         status=session_row.status,
                         harness_profile_id=session_row.harness_profile_id,
                         resolved_profile=TypeAdapter(
