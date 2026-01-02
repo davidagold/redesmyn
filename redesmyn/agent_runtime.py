@@ -882,7 +882,9 @@ async def start_task_agent(
                 )
 
             warnings: list[str] = []
-            worktree_path = await ensure_task_worktree(session, ctx, task=task, epic=epic)
+            worktree_path = await ensure_task_worktree(
+                session, ctx, task=task, epic=epic
+            )
 
             definition = HarnessProfileDefinition(argv=argv)
             profile_id = harness_profile_id_for_definition(argv[0], definition)
@@ -1097,7 +1099,6 @@ async def start_task_agent(
                 if send_prelude:
                     prelude_lines = _agent_prelude_lines(
                         task=task,
-                        node=node,
                         epic=epic,
                         worktree_path=worktree_path,
                         template=prelude,
@@ -1137,9 +1138,7 @@ async def stop_task_agent(
             agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return False
-            agent_session = await load_latest_task_agent_session_row(
-                session, task=task, node=node
-            )
+            agent_session = await load_latest_task_agent_session_row(session, task=task)
 
             tmux_name = tmux_session_name_for_task(task_id=task.id)
             was_running = has_tmux() and _tmux_has_session(name=tmux_name)
@@ -1162,7 +1161,10 @@ async def stop_task_agent(
 
             now = datetime.now(UTC)
             agent_session = await ensure_current_agent_session(
-                session, agent=agent, task=task, node=node, now=now
+                session,
+                agent=agent,
+                task=task,
+                now=now,
             )
             agent_session.status = AgentStatus.Stopped
             agent_session.ended_at = now
@@ -1202,7 +1204,7 @@ async def restart_task_agent(
                 )
                 if resolved_profile is None:
                     latest = await load_latest_task_agent_session_row(
-                        session, task=task, node=node
+                        session, task=task
                     )
                     if latest is not None:
                         resolved_profile = latest.resolved_profile
@@ -1247,16 +1249,17 @@ async def load_task_agent_session(
             agent = await load_task_agent_row(session, task=task)
             if agent is None:
                 return None
-            agent_session = await load_latest_task_agent_session_row(
-                session, task=task, node=node
-            )
+            agent_session = await load_latest_task_agent_session_row(session, task=task)
             if active_only:
                 tmux_name = tmux_session_name_for_task(task_id=task.id)
                 if has_tmux() and _tmux_has_session(name=tmux_name):
                     if agent_session is None:
                         now = datetime.now(UTC)
                         agent_session = await ensure_current_agent_session(
-                            session, agent=agent, task=task, node=node, now=now
+                            session,
+                            agent=agent,
+                            task=task,
+                            now=now,
                         )
                         await session.commit()
                         await session.refresh(agent_session)
