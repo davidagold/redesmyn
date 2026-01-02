@@ -550,7 +550,14 @@ export function NodeCard({
   ) : null
 
   const syncAttentionIcon = outOfSync ? (
-    <GitBranch className="size-4 text-amber-300/70" />
+    <GitBranch
+      className={cn(
+        "size-4",
+        task?.state === "done"
+          ? "text-muted-foreground/60"
+          : "text-amber-300/70",
+      )}
+    />
   ) : null
 
   const gitAttentionIcon = mergeAttentionIcon || syncAttentionIcon
@@ -805,18 +812,46 @@ export function NodeCard({
           </div>
         ) : null}
 
-        {agentSession ? (
-          <div className="mt-auto flex flex-wrap items-end justify-start gap-2">
-            <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
-              {agentSession.agentName}
-            </span>
-            {harnessKind ? (
-              <span className="rounded-sm bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors group-hover:bg-muted/75 group-focus-within:bg-muted/75">
-                {harnessKind}
+        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+          {agentSession ? (
+            <div className="flex flex-wrap items-end justify-start gap-2">
+              <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
+                {agentSession.agentName}
               </span>
-            ) : null}
-          </div>
-        ) : null}
+              {harnessKind ? (
+                <span className="rounded-sm bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors group-hover:bg-muted/75 group-focus-within:bg-muted/75">
+                  {harnessKind}
+                </span>
+              ) : null}
+            </div>
+          ) : (
+            <div />
+          )}
+          {gitAttentionIcon ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={(triggerProps) => (
+                  <span
+                    {...triggerProps}
+                    className={cn(
+                      "inline-flex items-center gap-1",
+                      triggerProps.className,
+                    )}
+                    aria-label="Git status attention"
+                  >
+                    {syncAttentionIcon}
+                    {mergeAttentionIcon}
+                  </span>
+                )}
+              />
+              <TooltipContent side="left" sideOffset={12} align="center">
+                <div className="whitespace-pre-line">
+                  {gitAttentionTooltipLines.join("\n")}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+        </div>
       </CardContent>
       {actionError ||
       shouldShowResumeButton ||
@@ -1025,30 +1060,6 @@ export function NodeCard({
             </div>
           ) : null}
         </div>
-      ) : null}
-      {gitAttentionIcon ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={(triggerProps) => (
-              <span
-                {...triggerProps}
-                className={cn(
-                  "nodrag nopan absolute bottom-3 right-3 inline-flex items-center gap-1",
-                  triggerProps.className,
-                )}
-                aria-label="Git status attention"
-              >
-                {syncAttentionIcon}
-                {mergeAttentionIcon}
-              </span>
-            )}
-          />
-          <TooltipContent side="left" sideOffset={12} align="center">
-            <div className="whitespace-pre-line">
-              {gitAttentionTooltipLines.join("\n")}
-            </div>
-          </TooltipContent>
-        </Tooltip>
       ) : null}
       <AlertDialog
         open={allowRunningPrompt !== null}
