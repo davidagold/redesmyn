@@ -53,16 +53,16 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
 
   function renderMarker(emphasis: boolean) {
     const wrapperClass = "flex h-3 w-3 items-center justify-center"
-    if (!emphasis) {
-      return (
-        <span className={wrapperClass}>
-          <span className="h-2.5 w-2.5 rounded-full border border-foreground/60" />
-        </span>
-      )
-    }
     return (
       <span className={wrapperClass}>
-        <span className="h-2.5 w-2.5 rotate-45 border border-foreground/70" />
+        <span
+          className={cn(
+            "h-2.5 w-2.5 rounded-full border",
+            emphasis
+              ? "border-foreground/75 bg-foreground/5"
+              : "border-foreground/60",
+          )}
+        />
       </span>
     )
   }
@@ -99,7 +99,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
           top: baseOffset,
           left: lineWidth / 2,
           right: "auto",
-          transform: "translateX(-50%)",
+          transform: "translate(-50%, -50%)",
         }}
       />
       {marks.length ? (

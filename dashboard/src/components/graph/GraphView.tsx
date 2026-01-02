@@ -852,7 +852,7 @@ export function GraphView({
             type: "source",
             position: Position.Right,
             x: trunkHandleX,
-            y: trunkLayout.baseOffset,
+            y: trunkLayout.baseOffset - HANDLE_SIZE_PX / 2,
             width: HANDLE_SIZE_PX,
             height: HANDLE_SIZE_PX,
           },
