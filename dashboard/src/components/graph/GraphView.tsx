@@ -91,6 +91,7 @@ type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
 const POSITION_EPSILON_PX = 0.25
 const VIEWPORT_EPSILON_PX = 0.5
 const VIEWPORT_EPSILON_ZOOM = 0.001
+const HANDLE_SIZE_PX = 8
 
 type TrunkMark = {
   type: "commit" | "base" | "ellipsis"
@@ -832,12 +833,24 @@ export function GraphView({
     const mapped: GraphFlowNode[] = []
     const includeTrunk = !focusPositions && positions.size > 0 && trunkLayout
     if (includeTrunk && trunkLayout) {
+      const trunkHandleX = TRUNK_THICKNESS / 2 - HANDLE_SIZE_PX / 2
       mapped.push({
         id: TRUNK_NODE_ID,
         type: "trunk",
         position: { x: trunkLayout.x, y: trunkLayout.y },
         width: trunkLayout.width,
         height: trunkLayout.height,
+        handles: [
+          {
+            id: "base",
+            type: "source",
+            position: Position.Right,
+            x: trunkHandleX,
+            y: trunkLayout.baseOffset,
+            width: HANDLE_SIZE_PX,
+            height: HANDLE_SIZE_PX,
+          },
+        ],
         data: {
           marks: trunkLayout.marks,
           baseOffset: trunkLayout.baseOffset,
@@ -878,6 +891,24 @@ export function GraphView({
         position: pos,
         width: GRAPH_NODE_WIDTH,
         height: GRAPH_NODE_HEIGHT,
+        handles: [
+          {
+            type: "target",
+            position: Position.Left,
+            x: 0,
+            y: (GRAPH_NODE_HEIGHT - HANDLE_SIZE_PX) / 2,
+            width: HANDLE_SIZE_PX,
+            height: HANDLE_SIZE_PX,
+          },
+          {
+            type: "source",
+            position: Position.Right,
+            x: GRAPH_NODE_WIDTH - HANDLE_SIZE_PX,
+            y: (GRAPH_NODE_HEIGHT - HANDLE_SIZE_PX) / 2,
+            width: HANDLE_SIZE_PX,
+            height: HANDLE_SIZE_PX,
+          },
+        ],
         data: {
           node: graphNode,
           task,
