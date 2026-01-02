@@ -24,6 +24,8 @@ from redesmyn.db.models import (
     Task,
 )
 from redesmyn.db.session import (
+    DatabaseMigrationRequiredError,
+    DatabaseNotInitializedError,
     async_session,
     create_engine,
     create_sessionmaker,
@@ -52,6 +54,8 @@ __all__ = [
     "MergeRun",
     "Repository",
     "Task",
+    "DatabaseMigrationRequiredError",
+    "DatabaseNotInitializedError",
     "async_session",
     "create_engine",
     "create_sessionmaker",

@@ -10,12 +10,12 @@ from redesmyn.git_telemetry import update_git_projections
 from redesmyn.repo import default_branch
 
 
-async def init_repo(ctx: RepoContext) -> None:
+async def init_repo(ctx: RepoContext, *, migrate: bool) -> None:
     ctx.state_dir.mkdir(parents=True, exist_ok=True)
 
     engine = create_engine(ctx.db_path)
     try:
-        await init_db(engine)
+        await init_db(engine, migrate=migrate)
         sessionmaker = create_sessionmaker(engine)
 
         async with sessionmaker() as session:

@@ -169,11 +169,11 @@ async def lifespan(app: App):
     ctx.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     if settings.runner_mode == "local":
-        await init_repo(ctx)
+        await init_repo(ctx, migrate=False)
 
     app.state.ctx = ctx
     app.state.engine = create_engine(ctx.db_path)
-    await init_db(app.state.engine)
+    await init_db(app.state.engine, migrate=False)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.runner_backend = make_runner_backend(mode=settings.runner_mode, ctx=ctx)
     app.state.linear_oauth_states = {}
@@ -183,10 +183,9 @@ async def lifespan(app: App):
 
     observer_task: asyncio.Task[None] | None = None
     agent_monitor_task: asyncio.Task[None] | None = None
-    if (
-        settings.runner_mode == "local"
-        and os.environ.get("REDESMYN_NO_OBSERVER") not in {"1", "true", "TRUE"}
-    ):
+    if settings.runner_mode == "local" and os.environ.get(
+        "REDESMYN_NO_OBSERVER"
+    ) not in {"1", "true", "TRUE"}:
         observer_task = asyncio.create_task(
             run_repo_observer(
                 ctx,
@@ -196,10 +195,9 @@ async def lifespan(app: App):
             )
         )
 
-    if (
-        settings.runner_mode == "local"
-        and os.environ.get("REDESMYN_NO_AGENT_MONITOR") not in {"1", "true", "TRUE"}
-    ):
+    if settings.runner_mode == "local" and os.environ.get(
+        "REDESMYN_NO_AGENT_MONITOR"
+    ) not in {"1", "true", "TRUE"}:
         agent_monitor_task = asyncio.create_task(
             run_agent_monitor(
                 ctx,

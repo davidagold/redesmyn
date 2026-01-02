@@ -138,7 +138,7 @@ async def update_git_projections(ctx: RepoContext) -> None:
 
     engine = create_engine(ctx.db_path)
     try:
-        await init_db(engine)
+        await init_db(engine, migrate=False)
         sessionmaker = create_sessionmaker(engine)
 
         async with sessionmaker() as session:

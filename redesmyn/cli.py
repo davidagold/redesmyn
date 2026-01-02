@@ -37,12 +37,15 @@ from redesmyn.blocks import (
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     Agent,
+    DatabaseMigrationRequiredError,
+    DatabaseNotInitializedError,
     Epic,
     LinearAuth,
     Repository,
     Task,
     create_engine,
     create_sessionmaker,
+    init_db,
 )
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
@@ -220,7 +223,8 @@ def init(
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
 
-    asyncio.run(init_repo(ctx))
+    migrate = not ctx.db_path.exists()
+    asyncio.run(init_repo(ctx, migrate=migrate))
     typer.echo(f"Initialized: {ctx.state_dir}")
     typer.echo(f"DB: {ctx.db_path}")
 
@@ -546,7 +550,7 @@ def run(
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
-        asyncio.run(init_repo(ctx))
+        asyncio.run(init_repo(ctx, migrate=False))
     except (NotAGitRepositoryError, NotInitializedError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(2)
@@ -744,6 +748,18 @@ def _ensure_initialized(ctx: RepoContext) -> None:
         raise NotInitializedError(
             "Redesmyn is not initialized in this repo. Run `rn init`."
         )
+
+    async def _validate() -> None:
+        engine = create_engine(ctx.db_path)
+        try:
+            await init_db(engine, migrate=False)
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_validate())
+    except (DatabaseNotInitializedError, DatabaseMigrationRequiredError) as e:
+        raise NotInitializedError(str(e)) from e
 
 
 async def _load_repository_row(ctx: RepoContext) -> Repository | None:
@@ -1341,6 +1357,13 @@ def dev(
         typer.echo("error: --port and --api-port must be different", err=True)
         raise typer.Exit(2)
 
+    # Migrate the local DB before starting the daemon, since `redesmyn.api` does not auto-upgrade.
+    try:
+        asyncio.run(init_repo(ctx, migrate=True))
+    except Exception as e:
+        typer.echo(f"error: failed to migrate DB ({e})", err=True)
+        raise typer.Exit(2)
+
     backend_cmd = [
         sys.executable,
         "-m",
@@ -1452,6 +1475,13 @@ def daemon_run(
         import uvicorn
     except Exception as e:  # pragma: no cover
         typer.echo(f"error: uvicorn not available ({e})", err=True)
+        raise typer.Exit(2)
+
+    # Migrate the local DB before starting the daemon, since `redesmyn.api` does not auto-upgrade.
+    try:
+        asyncio.run(init_repo(ctx, migrate=True))
+    except Exception as e:
+        typer.echo(f"error: failed to migrate DB ({e})", err=True)
         raise typer.Exit(2)
 
     os.environ.setdefault("REDESMYN_REPO_ROOT", str(ctx.repo_root))

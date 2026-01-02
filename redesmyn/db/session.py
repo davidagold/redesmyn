@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from redesmyn.db.migrate import stamp_revision, upgrade_to_head
+from redesmyn.db.migrate import head_revision, stamp_revision, upgrade_to_head
 from redesmyn.db.migrations.sqlite.agent_status_stopped import (
     migrate_agent_status_to_stopped,
 )
@@ -39,7 +39,25 @@ async def _sqlite_has_table(conn, *, name: str) -> bool:
     return row is not None
 
 
-async def init_db(engine: AsyncEngine) -> None:
+class DatabaseNotInitializedError(RuntimeError):
+    pass
+
+
+class DatabaseMigrationRequiredError(RuntimeError):
+    pass
+
+
+async def _sqlite_alembic_version(conn) -> str | None:
+    row = (
+        await conn.exec_driver_sql("SELECT version_num FROM alembic_version")
+    ).fetchone()
+    if not row:
+        return None
+    value = row[0]
+    return str(value) if value is not None else None
+
+
+async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
     db_path_raw = engine.url.database
     if not db_path_raw:
         raise RuntimeError("Database URL is missing a path")
@@ -48,12 +66,17 @@ async def init_db(engine: AsyncEngine) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not db_path.exists():
+        if not migrate:
+            raise DatabaseNotInitializedError(
+                f"Database not initialized at {db_path}. Run `rn init`."
+            )
         upgrade_to_head(db_path=db_path)
         return
 
     should_stamp_baseline = False
     dialect_name: str | None = None
     has_alembic_version = False
+    alembic_version: str | None = None
 
     async with engine.begin() as conn:
         dialect_name = conn.dialect.name
@@ -64,15 +87,36 @@ async def init_db(engine: AsyncEngine) -> None:
 
         has_alembic_version = await _sqlite_has_table(conn, name="alembic_version")
         if not has_alembic_version and await _sqlite_has_table(conn, name="nodes"):
+            if not migrate:
+                raise DatabaseMigrationRequiredError(
+                    "Database is from a pre-Alembic Redesmyn version. Run `rn daemon run` "
+                    "(or `rn dev`) to migrate it."
+                )
             # Pre-Alembic local DB: apply legacy SQLite migrations so the schema
             # matches the Alembic baseline before stamping.
             await _migrate_sqlite(conn)
             should_stamp_baseline = True
 
+        if has_alembic_version:
+            alembic_version = await _sqlite_alembic_version(conn)
+
     if should_stamp_baseline:
         stamp_revision(db_path=db_path, revision="0001_baseline")
 
-    # Always attempt to upgrade to the latest revision.
+    if not migrate:
+        if not has_alembic_version:
+            raise DatabaseMigrationRequiredError(
+                "Database is missing Alembic metadata. Run `rn daemon run` (or `rn dev`) to migrate it."
+            )
+        head = head_revision(db_path=db_path)
+        if alembic_version != head:
+            raise DatabaseMigrationRequiredError(
+                f"Database schema is out of date (current={alembic_version or 'unknown'}, head={head}). "
+                "Run `rn daemon run` (or `rn dev`) to migrate it."
+            )
+        return
+
+    # Only upgrade when explicitly requested (typically on `rn daemon run` / `rn dev`).
     upgrade_to_head(db_path=db_path)
 
 
