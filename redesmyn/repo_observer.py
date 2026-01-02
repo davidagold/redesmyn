@@ -10,10 +10,14 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import AgentSession, Event, MergeRun, Task
+from redesmyn.db import AgentSession, Epic, Event, MergeRun, Task
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus
-from redesmyn.repo import current_branch, git_has_in_progress_operation
+from redesmyn.repo import (
+    current_branch,
+    git_has_in_progress_operation,
+    git_is_ancestor,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -289,6 +293,54 @@ async def observe_once(
             )
         )
         events_added += 1
+
+    # Compute stack_in_sync for each task
+    epic_ids = {t.epic_id for t in tasks}
+    epics_by_id: dict[int, Epic] = {}
+    if epic_ids:
+        epic_rows = list(
+            await session.scalars(select(Epic).where(Epic.id.in_(epic_ids)))
+        )
+        epics_by_id = {e.id: e for e in epic_rows}
+
+    tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+    for task in tasks:
+        if task.branch_name is None:
+            if task.stack_in_sync is not None:
+                task.stack_in_sync = None
+                tasks_updated += 1
+            continue
+
+        if task.branch_name not in heads:
+            # Branch doesn't exist
+            if task.stack_in_sync is not None:
+                task.stack_in_sync = None
+                tasks_updated += 1
+            continue
+
+        # Determine upstream branch
+        if task.parent_task_id is None:
+            epic = epics_by_id.get(task.epic_id)
+            upstream = epic.root_branch if epic else None
+        else:
+            parent = tasks_by_id.get(task.parent_task_id)
+            upstream = parent.branch_name if parent else None
+
+        if upstream is None or upstream not in heads:
+            if task.stack_in_sync is not None:
+                task.stack_in_sync = None
+                tasks_updated += 1
+            continue
+
+        # Check if upstream is ancestor of task's branch
+        try:
+            in_sync = git_is_ancestor(ctx.repo_root, upstream, task.branch_name)
+        except Exception:
+            in_sync = None
+
+        if task.stack_in_sync != in_sync:
+            task.stack_in_sync = in_sync
+            tasks_updated += 1
 
     for task in tasks:
         observed = observe_worktree(task=task, ctx=ctx)

@@ -251,6 +251,7 @@ class Task(Base):
     )
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
     github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    stack_in_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[TaskSource] = mapped_column(

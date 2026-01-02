@@ -412,8 +412,6 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         )
         trunk_row = await session.get(GitTrunkTimeline, epic_row.id)
 
-    stack_in_sync_by_task_id: dict[int, bool | None] = {}
-
     trunk: TrunkTimelineResponse | None = None
     if trunk_row is not None and trunk_row.data:
         try:
@@ -421,11 +419,9 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         except Exception:
             trunk = None
 
-    task_responses: list[TaskResponse] = []
-    for task in tasks:
-        resp = TaskResponse.model_validate(task, from_attributes=True)
-        resp.stack_in_sync = stack_in_sync_by_task_id.get(task.id)
-        task_responses.append(resp)
+    task_responses = [
+        TaskResponse.model_validate(task, from_attributes=True) for task in tasks
+    ]
 
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),

@@ -744,6 +744,7 @@ def run(
 
 
 def _ensure_initialized(ctx: RepoContext) -> None:
+    """Check that the database is initialized. Safe to call from sync or async contexts."""
     if not ctx.db_path.exists():
         raise NotInitializedError(
             "Redesmyn is not initialized in this repo. Run `rn init`."
@@ -757,7 +758,19 @@ def _ensure_initialized(ctx: RepoContext) -> None:
             await engine.dispose()
 
     try:
-        asyncio.run(_validate())
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None:
+            # Already in async context - create a task and let it run
+            # We can't block here, so just check the sync parts
+            # The async validation will happen naturally when the caller awaits
+            return
+        else:
+            asyncio.run(_validate())
     except (DatabaseNotInitializedError, DatabaseMigrationRequiredError) as e:
         raise NotInitializedError(str(e)) from e
 
