@@ -19,7 +19,7 @@ interface SidebarProps {
 }
 
 const navItems = [
-  { label: "Graph", icon: GitGraph, path: "/graph" },
+  { label: "Epics", icon: GitGraph, path: "/graph" },
   { label: "Agents", icon: Bot, path: null },
   { label: "Worktrees", icon: GitBranch, path: null },
   { label: "Timeline", icon: History, path: null },
@@ -49,7 +49,7 @@ export function Sidebar({ theme, onCycleTheme }: SidebarProps) {
                   buttonVariants({ variant: "ghost" }),
                   "h-8 justify-start gap-2 px-2 text-sm font-normal",
                   isActive
-                    ? "text-foreground/70"
+                    ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
