@@ -1258,6 +1258,17 @@ export function EpicView() {
               </div>
             ) : null}
             <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6"
+                onClick={() => setConfigOpen((open) => !open)}
+                title="Configure harness and agent prelude"
+              >
+                <Settings2 />
+                Configure
+              </Button>
+
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
                   variant="outline"
@@ -1369,17 +1380,6 @@ export function EpicView() {
                   </Button>
                 </div>
               </div>
-
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6"
-                onClick={() => setConfigOpen((open) => !open)}
-                title="Configure harness and agent prelude"
-              >
-                <Settings2 />
-                Configure
-              </Button>
             </div>
             {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
             {bulkAction ? (
@@ -1797,7 +1797,9 @@ export function EpicView() {
             node={selectedTask}
             task={selectedTask}
             agentSession={
-              selectedTask ? (agentSessionsByNodeId.get(selectedTask.id) ?? null) : null
+              selectedTask
+                ? (agentSessionsByNodeId.get(selectedTask.id) ?? null)
+                : null
             }
             mergeRun={selectedMergeRun}
             onRequestRefresh={scheduleGraphRefresh}
