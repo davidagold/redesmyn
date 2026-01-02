@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, Epic, Task
+from redesmyn.db import Agent, AgentSession, Epic, Task
 from redesmyn.domain.enums import AgentStatus, TaskState
 from redesmyn.repo import (
     GitCommandError,
@@ -332,36 +332,40 @@ async def build_merge_cascade_plan(
 
         # Running-agent detection for affected set.
         running_agents: list[RunningAgentInfo] = []
-        agent_ids = [
-            tasks_by_id[tid].agent_id
-            for tid in task_infos
-            if tid in tasks_by_id and tasks_by_id[tid].agent_id is not None
-        ]
-        agents_by_id: dict[int, Agent] = {}
-        if agent_ids:
+        plan_task_ids = [task_id for task_id in task_infos if task_id in tasks_by_id]
+        if plan_task_ids:
             rows = list(
-                await session.scalars(select(Agent).where(Agent.id.in_(agent_ids)))
-            )
-            agents_by_id = {a.id: a for a in rows}
-
-        for plan_task_id in task_infos:
-            task_row = tasks_by_id.get(plan_task_id)
-            if task_row is None or task_row.agent_id is None:
-                continue
-            agent = agents_by_id.get(task_row.agent_id)
-            if agent is None:
-                continue
-            if agent.status not in {AgentStatus.Running, AgentStatus.Blocked}:
-                continue
-            running_agents.append(
-                RunningAgentInfo(
-                    task_id=plan_task_id,
-                    branch_name=task_row.branch_name or "unknown",
-                    agent_id=agent.id,
-                    agent_name=agent.display_name,
-                    agent_status=agent.status,
+                await session.execute(
+                    select(AgentSession, Agent)
+                    .join(Agent, AgentSession.agent_id == Agent.id)
+                    .where(AgentSession.task_id.in_(plan_task_ids))
+                    .order_by(desc(AgentSession.id))
                 )
             )
+            seen_task_ids: set[int] = set()
+            for agent_session, agent in rows:
+                task_id = agent_session.task_id
+                if task_id is None:
+                    continue
+                if task_id in seen_task_ids:
+                    continue
+                seen_task_ids.add(task_id)
+                if agent_session.status not in {
+                    AgentStatus.Running,
+                    AgentStatus.Blocked,
+                }:
+                    continue
+                task_row = tasks_by_id.get(task_id)
+                running_agents.append(
+                    RunningAgentInfo(
+                        task_id=task_id,
+                        branch_name=(task_row.branch_name if task_row else "unknown")
+                        or "unknown",
+                        agent_id=agent.id,
+                        agent_name=agent.display_name,
+                        agent_status=agent_session.status,
+                    )
+                )
 
     # Hard checks (git) outside the DB session.
     try:
