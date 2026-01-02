@@ -91,7 +91,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
           </span>
         )}
       />
-      <TooltipContent side="bottom" align="center">
+      <TooltipContent side="bottom" align="center" showArrow={false}>
         {disabledReason}
       </TooltipContent>
     </Tooltip>

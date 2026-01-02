@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -418,96 +418,114 @@ export function NodeCard({
     }
   }
 
+  function renderQuickActionButton({
+    tooltip,
+    disabledReason,
+    ...props
+  }: { tooltip: string } & ComponentProps<typeof Button>) {
+    if (disabledReason) {
+      return <Button {...props} disabledReason={disabledReason} />
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={(triggerProps) => (
+            <Button
+              {...triggerProps}
+              {...props}
+              className={cn(props.className, triggerProps.className)}
+            />
+          )}
+        />
+        <TooltipContent side="bottom" sideOffset={10} showArrow={false}>
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
   const quickActions =
     quickActionsEnabled && taskId !== null ? (
       isRunning ? (
         <>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Copy attach command"
-            title="Copy attach command"
-            disabledReason={
-              pendingAction !== null ? "Action in progress" : null
-            }
-            onClick={(e) => {
+          {renderQuickActionButton({
+            tooltip: "Copy attach command",
+            variant: "ghost",
+            size: "icon-xs",
+            "aria-label": "Copy attach command",
+            disabledReason:
+              pendingAction !== null ? "Action in progress" : null,
+            onClick: (e) => {
               e.preventDefault()
               e.stopPropagation()
               void handleAttach()
-            }}
-          >
-            <Terminal className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Restart agent"
-            title="Restart agent"
-            disabledReason={
-              pendingAction !== null ? "Action in progress" : null
-            }
-            onClick={(e) => {
+            },
+            children: <Terminal className="size-3" />,
+          })}
+          {renderQuickActionButton({
+            tooltip: "Restart agent",
+            variant: "ghost",
+            size: "icon-xs",
+            "aria-label": "Restart agent",
+            disabledReason:
+              pendingAction !== null ? "Action in progress" : null,
+            onClick: (e) => {
               e.preventDefault()
               e.stopPropagation()
               void handleRestart()
-            }}
-          >
-            <RotateCcw className="size-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="text-destructive hover:bg-destructive/10"
-            aria-label="Stop agent"
-            title="Stop agent"
-            disabledReason={
-              pendingAction !== null ? "Action in progress" : null
-            }
-            onClick={(e) => {
+            },
+            children: <RotateCcw className="size-3" />,
+          })}
+          {renderQuickActionButton({
+            tooltip: "Stop agent",
+            variant: "ghost",
+            size: "icon-xs",
+            className: "text-destructive hover:bg-destructive/10",
+            "aria-label": "Stop agent",
+            disabledReason:
+              pendingAction !== null ? "Action in progress" : null,
+            onClick: (e) => {
               e.preventDefault()
               e.stopPropagation()
               void handleStop()
-            }}
-          >
-            <Square className="size-3" />
-          </Button>
+            },
+            children: <Square className="size-3" />,
+          })}
         </>
       ) : canRestart ? (
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Restart agent"
-          title="Restart agent"
-          disabledReason={pendingAction !== null ? "Action in progress" : null}
-          onClick={(e) => {
+        renderQuickActionButton({
+          tooltip: "Restart agent",
+          variant: "ghost",
+          size: "icon-xs",
+          "aria-label": "Restart agent",
+          disabledReason: pendingAction !== null ? "Action in progress" : null,
+          onClick: (e) => {
             e.preventDefault()
             e.stopPropagation()
             void handleRestart()
-          }}
-        >
-          <RotateCcw className="size-3" />
-        </Button>
+          },
+          children: <RotateCcw className="size-3" />,
+        })
       ) : canStart ? (
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Start agent"
-          title="Start agent"
-          disabledReason={
+        renderQuickActionButton({
+          tooltip: "Start agent",
+          variant: "ghost",
+          size: "icon-xs",
+          "aria-label": "Start agent",
+          disabledReason:
             pendingAction !== null
               ? "Action in progress"
               : !harnessCommand.trim()
                 ? "Set a harness command in Configure"
-                : null
-          }
-          onClick={(e) => {
+                : null,
+          onClick: (e) => {
             e.preventDefault()
             e.stopPropagation()
             void handleStart()
-          }}
-        >
-          <Play className="size-3" />
-        </Button>
+          },
+          children: <Play className="size-3" />,
+        })
       ) : null
     ) : null
 
