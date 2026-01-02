@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/alert-dialog"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   ApiHttpError,
   fetchTaskAgentLogs,
   restartTaskAgent,
@@ -238,28 +243,40 @@ function MergeRunDetails({
                   ) : null}
 
                   <CollapsibleTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={
-                          calloutExpanded
+                    render={(triggerProps) => (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={(tooltipTriggerProps) => (
+                            <Button
+                              {...tooltipTriggerProps}
+                              {...triggerProps}
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={
+                                calloutExpanded
+                                  ? "Collapse callout"
+                                  : "Expand callout"
+                              }
+                              className={cn(
+                                triggerProps.className,
+                                tooltipTriggerProps.className,
+                              )}
+                            >
+                              {calloutExpanded ? (
+                                <ChevronUp className="size-3" />
+                              ) : (
+                                <ChevronDown className="size-3" />
+                              )}
+                            </Button>
+                          )}
+                        />
+                        <TooltipContent side="bottom" sideOffset={10}>
+                          {calloutExpanded
                             ? "Collapse callout"
-                            : "Expand callout"
-                        }
-                        title={
-                          calloutExpanded
-                            ? "Collapse callout"
-                            : "Expand callout"
-                        }
-                      >
-                        {calloutExpanded ? (
-                          <ChevronUp className="size-3" />
-                        ) : (
-                          <ChevronDown className="size-3" />
-                        )}
-                      </Button>
-                    }
+                            : "Expand callout"}
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                   />
                 </div>
               </div>
@@ -655,17 +672,45 @@ function AgentActions({
 
   const floatingActions = isRunning ? (
     <FloatingActions>
-      <Button
-        variant="ghost"
-        size="xs"
-        className="h-full rounded-none border-0"
-        title="Copy attach command"
-        onClick={() => void handleCopy(attachCommand, "Attach command copied")}
-        disabledReason={pending !== null ? "Action in progress" : null}
-      >
-        <Terminal />
-        Attach
-      </Button>
+      {pending !== null ? (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="h-full rounded-none border-0"
+          onClick={() =>
+            void handleCopy(attachCommand, "Attach command copied")
+          }
+          disabledReason="Action in progress"
+        >
+          <Terminal />
+          Attach
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={(triggerProps) => (
+              <Button
+                {...triggerProps}
+                variant="ghost"
+                size="xs"
+                className={cn(
+                  "h-full rounded-none border-0",
+                  triggerProps.className,
+                )}
+                onClick={() =>
+                  void handleCopy(attachCommand, "Attach command copied")
+                }
+              >
+                <Terminal />
+                Attach
+              </Button>
+            )}
+          />
+          <TooltipContent side="bottom" sideOffset={10}>
+            Copy attach command
+          </TooltipContent>
+        </Tooltip>
+      )}
       <Button
         variant="ghost"
         size="xs"

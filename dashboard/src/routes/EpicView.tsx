@@ -1258,41 +1258,75 @@ export function EpicView() {
               </div>
             ) : null}
             <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6"
-                onClick={() => setConfigOpen((open) => !open)}
-                title="Configure harness and agent prelude"
-              >
-                <Settings2 />
-                Configure
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <Button
+                      {...triggerProps}
+                      variant="ghost"
+                      size="sm"
+                      className={cn("h-6", triggerProps.className)}
+                      onClick={() => setConfigOpen((open) => !open)}
+                    >
+                      <Settings2 />
+                      Configure
+                    </Button>
+                  )}
+                />
+                <TooltipContent side="bottom" align="center" sideOffset={10}>
+                  Configure harness and agent prelude
+                </TooltipContent>
+              </Tooltip>
 
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-full rounded-none border-0 leading-none"
-                  title="Start or restart all eligible tasks"
-                  disabledReason={
-                    canRunAll
-                      ? null
-                      : runAction !== null || bulkAction !== null
+                {canRunAll ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "h-full rounded-none border-0 leading-none",
+                            triggerProps.className,
+                          )}
+                          onClick={() => void handleRunAll()}
+                        >
+                          <Play className="text-emerald-400" />
+                          Run all
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent
+                      side="bottom"
+                      align="center"
+                      sideOffset={10}
+                    >
+                      Start or restart all eligible tasks
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-full rounded-none border-0 leading-none"
+                    disabledReason={
+                      runAction !== null || bulkAction !== null
                         ? "Action in progress"
                         : needsHarnessForAll && !configuredHarnessCommand
                           ? "Set a harness command in Configure"
                           : "Nothing to start"
-                  }
-                  onClick={() => void handleRunAll()}
-                >
-                  {bulkAction?.kind === "run" ? (
-                    <Loader2 className="animate-spin text-emerald-400" />
-                  ) : (
-                    <Play className="text-emerald-400" />
-                  )}
-                  Run all
-                </Button>
+                    }
+                  >
+                    {bulkAction?.kind === "run" ? (
+                      <Loader2 className="animate-spin text-emerald-400" />
+                    ) : (
+                      <Play className="text-emerald-400" />
+                    )}
+                    Run all
+                  </Button>
+                )}
                 <div
                   className={
                     "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
@@ -1301,54 +1335,103 @@ export function EpicView() {
                       : "pointer-events-none max-w-0 opacity-0")
                   }
                 >
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-full rounded-none border-0 border-l leading-none"
-                    title="Start or restart selected tasks"
-                    disabledReason={
-                      canRunSelected
-                        ? null
-                        : runAction !== null || bulkAction !== null
+                  {canRunSelected ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "h-full rounded-none border-0 border-l leading-none",
+                              triggerProps.className,
+                            )}
+                            onClick={() => void handleRunSelected()}
+                          >
+                            Selected
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        align="center"
+                        sideOffset={10}
+                      >
+                        Start or restart selected tasks
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-full rounded-none border-0 border-l leading-none"
+                      disabledReason={
+                        runAction !== null || bulkAction !== null
                           ? "Action in progress"
                           : needsHarnessForSelected && !configuredHarnessCommand
                             ? "Set a harness command in Configure"
                             : !showSelectedActions
                               ? "Select 2+ tasks"
                               : "Nothing to start in selection"
-                    }
-                    onClick={() => void handleRunSelected()}
-                  >
-                    {bulkAction?.kind === "run" ? (
-                      <Loader2 className="animate-spin text-emerald-400" />
-                    ) : null}
-                    Selected
-                  </Button>
+                      }
+                    >
+                      {bulkAction?.kind === "run" ? (
+                        <Loader2 className="animate-spin text-emerald-400" />
+                      ) : null}
+                      Selected
+                    </Button>
+                  )}
                 </div>
               </div>
 
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-full rounded-none border-0 leading-none"
-                  title="Stop all running tasks"
-                  disabledReason={
-                    canStopAll
-                      ? null
-                      : runAction !== null || bulkAction !== null
+                {canStopAll ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "h-full rounded-none border-0 leading-none",
+                            triggerProps.className,
+                          )}
+                          onClick={() => void handleStopAll()}
+                        >
+                          <Square className="text-destructive" />
+                          Stop all
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent
+                      side="bottom"
+                      align="center"
+                      sideOffset={10}
+                    >
+                      Stop all running tasks
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-full rounded-none border-0 leading-none"
+                    disabledReason={
+                      runAction !== null || bulkAction !== null
                         ? "Action in progress"
                         : "Nothing to stop"
-                  }
-                  onClick={() => void handleStopAll()}
-                >
-                  {bulkAction?.kind === "stop" ? (
-                    <Loader2 className="animate-spin text-destructive" />
-                  ) : (
-                    <Square className="text-destructive" />
-                  )}
-                  Stop all
-                </Button>
+                    }
+                  >
+                    {bulkAction?.kind === "stop" ? (
+                      <Loader2 className="animate-spin text-destructive" />
+                    ) : (
+                      <Square className="text-destructive" />
+                    )}
+                    Stop all
+                  </Button>
+                )}
                 <div
                   className={
                     "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
@@ -1357,27 +1440,51 @@ export function EpicView() {
                       : "pointer-events-none max-w-0 opacity-0")
                   }
                 >
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-full rounded-none border-0 border-l leading-none"
-                    title="Stop selected running tasks"
-                    disabledReason={
-                      canStopSelected
-                        ? null
-                        : runAction !== null || bulkAction !== null
+                  {canStopSelected ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "h-full rounded-none border-0 border-l leading-none",
+                              triggerProps.className,
+                            )}
+                            onClick={() => void handleStopSelected()}
+                          >
+                            Selected
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        align="center"
+                        sideOffset={10}
+                      >
+                        Stop selected running tasks
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-full rounded-none border-0 border-l leading-none"
+                      disabledReason={
+                        runAction !== null || bulkAction !== null
                           ? "Action in progress"
                           : !showSelectedActions
                             ? "Select 2+ tasks"
                             : "Nothing to stop in selection"
-                    }
-                    onClick={() => void handleStopSelected()}
-                  >
-                    {bulkAction?.kind === "stop" ? (
-                      <Loader2 className="animate-spin text-destructive" />
-                    ) : null}
-                    Selected
-                  </Button>
+                      }
+                    >
+                      {bulkAction?.kind === "stop" ? (
+                        <Loader2 className="animate-spin text-destructive" />
+                      ) : null}
+                      Selected
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1404,12 +1511,29 @@ export function EpicView() {
           </div>
 
           {runCommand ? (
-            <div
-              className="mt-1.5 truncate font-mono text-xs text-muted-foreground"
-              title={runCommand}
-            >
-              {runCommand}
-            </div>
+            <Tooltip>
+              <TooltipTrigger
+                render={(triggerProps) => (
+                  <div
+                    {...triggerProps}
+                    className={cn(
+                      "mt-1.5 truncate font-mono text-xs text-muted-foreground",
+                      triggerProps.className,
+                    )}
+                  >
+                    {runCommand}
+                  </div>
+                )}
+              />
+              <TooltipContent
+                side="bottom"
+                align="center"
+                sideOffset={10}
+                className="max-w-[42rem] font-mono"
+              >
+                {runCommand}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
       ) : null}

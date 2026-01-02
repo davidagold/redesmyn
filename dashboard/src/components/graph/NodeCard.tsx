@@ -637,19 +637,29 @@ export function NodeCard({
           <DropdownMenu onOpenChange={(open) => setActionsMenuOpen(open)}>
             <DropdownMenuTrigger
               render={(triggerProps) => (
-                <Button
-                  {...triggerProps}
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Task actions"
-                  title="Task actions"
-                  className={cn(
-                    "rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60",
-                    triggerProps.className,
-                  )}
-                >
-                  <EllipsisVertical className="size-4" />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={(tooltipTriggerProps) => (
+                      <Button
+                        {...tooltipTriggerProps}
+                        {...triggerProps}
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Task actions"
+                        className={cn(
+                          "rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60",
+                          triggerProps.className,
+                          tooltipTriggerProps.className,
+                        )}
+                      >
+                        <EllipsisVertical className="size-4" />
+                      </Button>
+                    )}
+                  />
+                  <TooltipContent side="bottom" sideOffset={10}>
+                    Task actions
+                  </TooltipContent>
+                </Tooltip>
               )}
             />
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
@@ -779,12 +789,24 @@ export function NodeCard({
       ) : null}
       <CardContent className="flex h-full flex-col gap-2 p-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <div
-            className="min-w-0 truncate font-mono text-xs leading-none text-muted-foreground"
-            title={node.branchName ?? undefined}
-          >
-            {branchLabel}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={(triggerProps) => (
+                <div
+                  {...triggerProps}
+                  className={cn(
+                    "min-w-0 truncate font-mono text-xs leading-none text-muted-foreground",
+                    triggerProps.className,
+                  )}
+                >
+                  {branchLabel}
+                </div>
+              )}
+            />
+            <TooltipContent side="bottom" sideOffset={10}>
+              {node.branchName ?? branchLabel}
+            </TooltipContent>
+          </Tooltip>
           <div className="flex items-center gap-1">
             {quickActions ? (
               <div
@@ -798,21 +820,33 @@ export function NodeCard({
                 {quickActions}
               </div>
             ) : null}
-            <div
-              className="relative inline-flex size-5 items-center justify-center"
-              title={tooltip}
-            >
+            <div className="relative inline-flex size-5 items-center justify-center">
               {commitHot ? (
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-sky-400/60 opacity-75" />
               ) : worktreeHot ? (
                 <span className="absolute inset-0 m-auto inline-flex size-3 animate-ping rounded-full bg-amber-400/60 opacity-75" />
               ) : null}
-              <AgentStatusIcon
-                status={agentSession?.status ?? null}
-                taskState={task?.state}
-                className="size-3"
-                title={tooltip}
-              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <span
+                      {...triggerProps}
+                      className={cn("inline-flex", triggerProps.className)}
+                      aria-label={tooltip}
+                    >
+                      <AgentStatusIcon
+                        status={agentSession?.status ?? null}
+                        taskState={task?.state}
+                        className="size-3"
+                        label={tooltip}
+                      />
+                    </span>
+                  )}
+                />
+                <TooltipContent side="bottom" sideOffset={10}>
+                  {tooltip}
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -822,12 +856,24 @@ export function NodeCard({
         </div>
 
         {actionError ? (
-          <div
-            className="truncate text-xs text-destructive"
-            title={actionError.summary}
-          >
-            {actionError.summary}
-          </div>
+          <Tooltip>
+            <TooltipTrigger
+              render={(triggerProps) => (
+                <div
+                  {...triggerProps}
+                  className={cn(
+                    "truncate text-xs text-destructive",
+                    triggerProps.className,
+                  )}
+                >
+                  {actionError.summary}
+                </div>
+              )}
+            />
+            <TooltipContent side="bottom" sideOffset={10}>
+              {actionError.summary}
+            </TooltipContent>
+          </Tooltip>
         ) : null}
 
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
@@ -888,39 +934,71 @@ export function NodeCard({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <AlertTriangle className="size-3.5 text-destructive" />
-                    <div
-                      className="truncate text-xs font-medium text-foreground"
-                      title={actionError.title}
-                    >
-                      {actionError.title}
-                    </div>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <div
+                            {...triggerProps}
+                            className={cn(
+                              "truncate text-xs font-medium text-foreground",
+                              triggerProps.className,
+                            )}
+                          >
+                            {actionError.title}
+                          </div>
+                        )}
+                      />
+                      <TooltipContent side="top" sideOffset={8}>
+                        {actionError.title}
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="Dismiss error"
-                    title="Dismiss error"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      clearActionError()
-                    }}
-                  >
-                    <X className="size-3" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label="Dismiss error"
+                          className={cn(triggerProps.className)}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            clearActionError()
+                          }}
+                        >
+                          <X className="size-3" />
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent side="bottom" sideOffset={10}>
+                      Dismiss error
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
 
-                <div
-                  className={cn(
-                    "break-words text-xs text-foreground/80",
-                    actionErrorExpanded
-                      ? "whitespace-pre-wrap"
-                      : "line-clamp-2",
-                  )}
-                  title={actionError.summary}
-                >
-                  {actionError.summary}
-                </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={(triggerProps) => (
+                      <div
+                        {...triggerProps}
+                        className={cn(
+                          "break-words text-xs text-foreground/80",
+                          actionErrorExpanded
+                            ? "whitespace-pre-wrap"
+                            : "line-clamp-2",
+                          triggerProps.className,
+                        )}
+                      >
+                        {actionError.summary}
+                      </div>
+                    )}
+                  />
+                  <TooltipContent side="top" sideOffset={8}>
+                    {actionError.summary}
+                  </TooltipContent>
+                </Tooltip>
 
                 {mergeRunBlockedRebase ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">

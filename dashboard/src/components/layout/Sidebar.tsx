@@ -1,5 +1,10 @@
 import { Link, useLocation } from "@tanstack/react-router"
 import { Button, buttonVariants } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { WorkspaceButton } from "./WorkspaceButton"
 import type { ThemePreference } from "@/lib/theme"
 import {
@@ -74,15 +79,24 @@ export function Sidebar({ theme, onCycleTheme }: SidebarProps) {
       </nav>
 
       <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          title={`Theme: ${theme}`}
-          aria-label={`Theme: ${theme}`}
-          onClick={onCycleTheme}
-        >
-          {themeIcon}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={(triggerProps) => (
+              <Button
+                {...triggerProps}
+                variant="ghost"
+                size="icon"
+                aria-label={`Theme: ${theme}`}
+                onClick={onCycleTheme}
+              >
+                {themeIcon}
+              </Button>
+            )}
+          />
+          <TooltipContent side="bottom" sideOffset={10}>
+            Theme: {theme}
+          </TooltipContent>
+        </Tooltip>
       </div>
     </aside>
   )

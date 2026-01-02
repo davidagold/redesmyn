@@ -29,14 +29,14 @@ export type AgentStatusIconProps = {
   status: Status
   taskState?: Task["state"]
   className?: string
-  title?: string
+  label?: string
 }
 
 export function AgentStatusIcon({
   status,
   taskState,
   className,
-  title,
+  label,
 }: AgentStatusIconProps) {
   return (
     <span
@@ -45,8 +45,7 @@ export function AgentStatusIcon({
         statusClasses(taskState, status),
         className,
       )}
-      title={title}
-      aria-label={title}
+      aria-label={label}
     />
   )
 }

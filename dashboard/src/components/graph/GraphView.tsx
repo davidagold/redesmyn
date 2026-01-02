@@ -1,6 +1,12 @@
 import { DotGrid } from "@/components/ui/dot-grid"
 import { Button } from "@/components/ui/button"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
+import {
   Position,
   ReactFlow,
   type DefaultEdgeOptions,
@@ -1251,50 +1257,81 @@ export function GraphView({
                 {selectedNodeIds.size} selected
               </div>
               <div className="flex overflow-hidden rounded-md border border-border/60">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-none border-0"
-                  disabledReason={
-                    selectedRunningTaskIds.length === 0
-                      ? "No running selected agents"
-                      : null
-                  }
-                  title={
-                    selectedRunningTaskIds.length
-                      ? "Copy a tmux command to attach (sequentially) to running selected agents"
-                      : "No running selected agents"
-                  }
-                  onClick={() => {
-                    const sessions = selectedRunningTaskIds.map(
-                      (taskId) => `rn-a-${taskId}`,
-                    )
-                    const cmd =
-                      `for s in ${sessions.map((s) => `'${s}'`).join(" ")}; do ` +
-                      `tmux has-session -t "$s" 2>/dev/null && tmux attach -t "$s"; ` +
-                      "done"
-                    void copyToClipboard(cmd)
-                      .then(() => setSelectionNotice("Attach command copied"))
-                      .catch((e: unknown) =>
-                        setSelectionNotice(
-                          e instanceof Error ? e.message : String(e),
-                        ),
-                      )
-                  }}
-                >
-                  Copy attach
-                </Button>
+                {selectedRunningTaskIds.length === 0 ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0"
+                    disabledReason="No running selected agents"
+                  >
+                    Copy attach
+                  </Button>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "rounded-none border-0",
+                            triggerProps.className,
+                          )}
+                          onClick={() => {
+                            const sessions = selectedRunningTaskIds.map(
+                              (taskId) => `rn-a-${taskId}`,
+                            )
+                            const cmd =
+                              `for s in ${sessions
+                                .map((s) => `'${s}'`)
+                                .join(" ")}; do ` +
+                              `tmux has-session -t "$s" 2>/dev/null && tmux attach -t "$s"; ` +
+                              "done"
+                            void copyToClipboard(cmd)
+                              .then(() =>
+                                setSelectionNotice("Attach command copied"),
+                              )
+                              .catch((e: unknown) =>
+                                setSelectionNotice(
+                                  e instanceof Error ? e.message : String(e),
+                                ),
+                              )
+                          }}
+                        >
+                          Copy attach
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent side="bottom" sideOffset={10}>
+                      Copy a tmux command to attach (sequentially) to running
+                      selected agents
+                    </TooltipContent>
+                  </Tooltip>
+                )}
               </div>
               <Button variant="ghost" size="sm" onClick={onClearSelection}>
                 Clear
               </Button>
               {selectionNotice ? (
-                <div
-                  className="max-w-[24rem] truncate text-xs text-destructive"
-                  title={selectionNotice}
-                >
-                  {selectionNotice}
-                </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={(triggerProps) => (
+                      <div
+                        {...triggerProps}
+                        className={cn(
+                          "max-w-[24rem] truncate text-xs text-destructive",
+                          triggerProps.className,
+                        )}
+                      >
+                        {selectionNotice}
+                      </div>
+                    )}
+                  />
+                  <TooltipContent side="bottom" sideOffset={10}>
+                    {selectionNotice}
+                  </TooltipContent>
+                </Tooltip>
               ) : null}
             </div>
           </div>
