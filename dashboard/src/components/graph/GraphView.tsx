@@ -49,7 +49,6 @@ import {
   TRUNK_COMMIT_PADDING,
   TRUNK_COMMIT_ROW_HEIGHT,
   TRUNK_COMMIT_SPACING,
-  TRUNK_EDGE_NUDGE_PX,
   TRUNK_LABEL_COLUMN,
   TRUNK_THICKNESS,
 } from "./graphConfig"
@@ -94,7 +93,7 @@ const VIEWPORT_EPSILON_ZOOM = 0.001
 const HANDLE_SIZE_PX = 8
 
 type TrunkMark = {
-  type: "commit" | "base" | "ellipsis"
+  type: "commit" | "base" | "connector" | "ellipsis"
   sha?: string
   authorName?: string | null
   authorEmail?: string | null
@@ -468,10 +467,20 @@ export function GraphView({
     if (trunk.hasMoreBefore) {
       marks.push({ type: "ellipsis" })
     }
-    const baseIndex = marks.findIndex((mark) => mark.type === "base")
+    let baseIndex = marks.findIndex((mark) => mark.type === "base")
+    if (baseIndex < 0) {
+      baseIndex = Math.floor(marks.length / 2)
+    }
+
+    // Insert a spacer row for the trunk→graph connector so edges have a full `commitSpacing`
+    // of breathing room from the nearest commit marks (instead of half-spacing).
+    const connectorIndex = Math.max(0, baseIndex)
+    marks.splice(connectorIndex, 0, { type: "connector" })
+    baseIndex += 1
     return {
       marks,
-      baseIndex: baseIndex >= 0 ? baseIndex : Math.floor(marks.length / 2),
+      baseIndex,
+      connectorIndex,
     }
   }, [trunk])
 
@@ -492,14 +501,11 @@ export function GraphView({
         ? commitPadding * 2 + (markCount - 1) * commitSpacing + rowHeight
         : commitPadding * 2 + rowHeight
     const baseIndex = trunkMarks?.baseIndex ?? 0
-    const edgeOffset = baseIndex > 0 ? commitSpacing / 2 : 0
+    const connectorIndex =
+      trunkMarks?.connectorIndex ?? Math.max(0, baseIndex - 1)
     const baseOffset =
       markCount > 0
-        ? commitPadding +
-          baseIndex * commitSpacing +
-          rowCenterOffset -
-          edgeOffset -
-          TRUNK_EDGE_NUDGE_PX
+        ? commitPadding + connectorIndex * commitSpacing + rowCenterOffset
         : commitPadding + rowCenterOffset
 
     return {

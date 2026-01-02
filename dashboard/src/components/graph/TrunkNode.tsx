@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { TRUNK_COMMIT_ROW_HEIGHT } from "./graphConfig"
 
 type TrunkMark = {
-  type: "commit" | "base" | "ellipsis"
+  type: "commit" | "base" | "connector" | "ellipsis"
   sha?: string
   authorName?: string | null
   authorEmail?: string | null
@@ -106,6 +106,9 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
         <div className="absolute top-0 h-full" style={{ left: labelOffset }}>
           {marks.map((mark, index) => {
             const y = commitPadding + index * commitSpacing
+            if (mark.type === "connector") {
+              return null
+            }
             if (mark.type === "ellipsis") {
               return (
                 <div
