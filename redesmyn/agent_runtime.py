@@ -39,7 +39,7 @@ from redesmyn.db.models import (
     HostCapabilities,
 )
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
-from redesmyn.domain.enums import AgentStatus, HarnessProfileSource
+from redesmyn.domain.enums import AgentStatus, HarnessProfileSource, TaskState
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
     GitCommandError,
@@ -528,11 +528,25 @@ async def ensure_task_worktree(
     if task.parent_task_id is not None:
         parent_task = await session.get(Task, task.parent_task_id)
 
-    base_ref = (
-        parent_task.branch_name
-        if parent_task is not None and parent_task.branch_name is not None
-        else epic.root_branch
-    )
+    base_ref = epic.root_branch
+    base_task = parent_task
+    while base_task is not None and base_task.branch_name is not None:
+        if git_is_ancestor(ctx.repo_root, base_task.branch_name, epic.root_branch):
+            base_task = (
+                await session.get(Task, base_task.parent_task_id)
+                if base_task.parent_task_id is not None
+                else None
+            )
+            continue
+
+        if base_task.state == TaskState.Done:
+            raise RuntimeError(
+                f"Parent task {base_task.id} is marked done but {epic.root_branch!r} "
+                f"does not contain {base_task.branch_name!r}. Fast-forward the base branch."
+            )
+
+        base_ref = base_task.branch_name
+        break
 
     existing_path = find_existing_worktree_path_for_branch(
         ctx.repo_root, branch=task.branch_name
@@ -904,20 +918,43 @@ async def start_task_agent(
                 if task.parent_task_id is not None
                 else None
             )
-            base_ref = (
-                parent_task.branch_name
-                if parent_task is not None and parent_task.branch_name is not None
-                else epic.root_branch
-            )
-            if not git_is_ancestor(ctx.repo_root, base_ref, task.branch_name or ""):
-                if parent_task is not None:
+            base_ref = epic.root_branch
+            base_task = parent_task
+            while base_task is not None and base_task.branch_name is not None:
+                if git_is_ancestor(
+                    ctx.repo_root, base_task.branch_name, epic.root_branch
+                ):
+                    base_task = (
+                        await session.get(Task, base_task.parent_task_id)
+                        if base_task.parent_task_id is not None
+                        else None
+                    )
+                    continue
+
+                if base_task.state == TaskState.Done:
                     warnings.append(
-                        f"Branch {task.branch_name!r} does not include the latest parent tip "
+                        f"Parent task {base_task.id} is marked done but {epic.root_branch!r} "
+                        f"does not contain {base_task.branch_name!r}; fast-forward the base branch."
+                    )
+                    base_task = (
+                        await session.get(Task, base_task.parent_task_id)
+                        if base_task.parent_task_id is not None
+                        else None
+                    )
+                    continue
+
+                base_ref = base_task.branch_name
+                break
+
+            if not git_is_ancestor(ctx.repo_root, base_ref, task.branch_name or ""):
+                if base_ref == epic.root_branch:
+                    warnings.append(
+                        f"Branch {task.branch_name!r} does not include the latest base tip "
                         f"{base_ref!r}; consider rebasing before starting new work."
                     )
                 else:
                     warnings.append(
-                        f"Branch {task.branch_name!r} does not include the latest base tip "
+                        f"Branch {task.branch_name!r} does not include the latest parent tip "
                         f"{base_ref!r}; consider rebasing before starting new work."
                     )
             shim_path = shutil.which("rn")
