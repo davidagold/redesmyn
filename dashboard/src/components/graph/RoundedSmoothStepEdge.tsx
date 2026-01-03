@@ -43,8 +43,8 @@ export function RoundedSmoothStepEdge({
           className={cn(
             "pointer-events-none",
             pulse.kind === "merge"
-              ? "rn-edge-pulse-merge text-emerald-300/70"
-              : "rn-edge-pulse-rebase text-sky-300/70",
+              ? "rn-edge-pulse-merge text-emerald-300/80"
+              : "rn-edge-pulse-rebase text-sky-300/80",
           )}
         />
       ) : null}

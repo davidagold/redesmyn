@@ -135,10 +135,10 @@
     opacity: 0;
   }
   15% {
-    opacity: 0.95;
+    opacity: 1;
   }
   85% {
-    opacity: 0.9;
+    opacity: 0.95;
   }
   100% {
     stroke-dashoffset: -1000;
@@ -152,10 +152,10 @@
     opacity: 0;
   }
   15% {
-    opacity: 0.95;
+    opacity: 1;
   }
   85% {
-    opacity: 0.9;
+    opacity: 0.95;
   }
   100% {
     stroke-dashoffset: 1000;
@@ -165,10 +165,10 @@
 
 .rn-edge-pulse-merge {
   animation: rn-edge-pulse-reverse 560ms ease-out;
-  filter: drop-shadow(0 0 6px currentColor);
+  filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 16px currentColor);
 }
 
 .rn-edge-pulse-rebase {
   animation: rn-edge-pulse-forward 680ms ease-in-out;
-  filter: drop-shadow(0 0 6px currentColor);
+  filter: drop-shadow(0 0 8px currentColor) drop-shadow(0 0 16px currentColor);
 }
