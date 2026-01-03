@@ -350,6 +350,11 @@ def shell(
         "--print",
         help="Print the worktree path and exit.",
     ),
+    nested: bool = typer.Option(
+        False,
+        "--nested",
+        help="Allow opening an `rn shell` subshell from within another one.",
+    ),
 ) -> None:
     """Open a subshell rooted at a task's worktree."""
     if task_id is not None and (epic is not None or task is not None):
@@ -407,6 +412,14 @@ def shell(
     if print_only:
         typer.echo(str(path))
         return
+
+    parent_cwd = os.environ.get("RN_PARENT_CWD")
+    if parent_cwd and not nested:
+        typer.echo(
+            "error: already in an `rn shell` subshell; run `exit` first (or pass --nested)",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     safe_title = (resolved_task.title or "").replace("\n", " ").strip()
     label = task_label or _infer_task_label_from_local_path(resolved_task.local_path)
