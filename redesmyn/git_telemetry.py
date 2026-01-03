@@ -9,15 +9,16 @@ from redesmyn.context import RepoContext
 from redesmyn.db import (
     Epic,
     Event,
-    GitMergeBase,
-    GitRefState,
-    GitTrunkTimeline,
+    GitMergeBaseByInstance,
+    GitRefStateByInstance,
+    GitTrunkTimelineByInstance,
     Repository,
     Task,
     create_engine,
     create_sessionmaker,
     init_db,
 )
+from redesmyn.host_identity import load_or_create_host_identity
 from redesmyn.repo import (
     CommitInfo,
     git_commit_info,
@@ -156,6 +157,7 @@ async def update_git_projections(ctx: RepoContext) -> None:
             )
             if repo is None:
                 return
+            host_key = load_or_create_host_identity(ctx).host_key
 
             now = datetime.now(UTC)
 
@@ -164,11 +166,14 @@ async def update_git_projections(ctx: RepoContext) -> None:
             if head_sha:
                 refs["HEAD"] = head_sha
 
-            existing_state = await session.get(GitRefState, repo.id)
+            existing_state = await session.get(
+                GitRefStateByInstance, (repo.id, host_key)
+            )
             if existing_state is None:
                 session.add(
-                    GitRefState(
+                    GitRefStateByInstance(
                         repository_id=repo.id,
+                        host_key=host_key,
                         refs=refs,
                         observed_at=now,
                         updated_at=now,
@@ -180,7 +185,12 @@ async def update_git_projections(ctx: RepoContext) -> None:
                     session.add(
                         Event(
                             event_type="git.ref_moved",
-                            data=change,
+                            data={
+                                **change,
+                                "workspace_id": repo.workspace_id,
+                                "repo_id": repo.repo_id,
+                                "host_key": host_key,
+                            },
                             created_at=now,
                         )
                     )
@@ -219,11 +229,14 @@ async def update_git_projections(ctx: RepoContext) -> None:
                     root_task_branches=root_task_branches,
                 )
                 if trunk is not None:
-                    existing_trunk = await session.get(GitTrunkTimeline, epic.id)
+                    existing_trunk = await session.get(
+                        GitTrunkTimelineByInstance, (epic.id, host_key)
+                    )
                     if existing_trunk is None:
                         session.add(
-                            GitTrunkTimeline(
+                            GitTrunkTimelineByInstance(
                                 epic_id=epic.id,
+                                host_key=host_key,
                                 data=trunk,
                                 observed_at=now,
                                 updated_at=now,
@@ -242,11 +255,14 @@ async def update_git_projections(ctx: RepoContext) -> None:
                         if task.branch_name
                         else None
                     )
-                    existing_mb = await session.get(GitMergeBase, task.id)
+                    existing_mb = await session.get(
+                        GitMergeBaseByInstance, (task.id, host_key)
+                    )
                     if existing_mb is None:
                         session.add(
-                            GitMergeBase(
+                            GitMergeBaseByInstance(
                                 task_id=task.id,
+                                host_key=host_key,
                                 merge_base_sha=mb,
                                 observed_at=now,
                                 updated_at=now,

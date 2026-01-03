@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, overload
+from typing import Any, Literal, Protocol, cast, overload
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
@@ -36,7 +36,7 @@ from redesmyn.db import (
     DaemonCommand,
     Epic,
     Event,
-    GitTrunkTimeline,
+    GitTrunkTimelineByInstance,
     HarnessProfile,
     Host,
     LinearAuth,
@@ -97,6 +97,7 @@ from redesmyn.schemas.core import (
     OrchestrationHarnessDefaultsResponse,
     OrchestrationSandboxDefaultsResponse,
     OrchestrationDefaultsUpdateRequest,
+    RepoExecutorStatusResponse,
     RepoKeyResponse,
     ReleaseConditionResponse,
     SandboxCapabilitiesResponse,
@@ -121,14 +122,23 @@ from redesmyn.schemas.core import (
 from redesmyn.settings import load_settings
 from redesmyn.git_mechanics_v0 import (
     MergeBlockedByRunningAgents,
+    MergeCascadePlan,
     MergePlanError,
     MergeRunStepUpdate,
     build_merge_cascade_plan,
     build_restack_plan,
     execute_merge_cascade_plan,
     execute_restack_plan,
+    RestackPlan,
 )
 from redesmyn.logging_config import configure_logging
+from redesmyn.host_identity import load_or_create_host_identity
+from redesmyn.repo_executor_leases import (
+    acquire_or_refresh_primary,
+    expire_primary_if_owner,
+    get_primary_host_key,
+)
+from redesmyn.repo_identity import RepoKey
 from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
 
@@ -140,6 +150,8 @@ class AppState(Protocol):
     engine: AsyncEngine
     sessionmaker: async_sessionmaker[AsyncSession]
     runner_backend: RunnerBackend
+    runner_mode: str
+    local_host_key: str | None
     linear_oauth_states: dict[str, datetime]
     event_hub: JsonWebSocketHub
     daemon_connections: DaemonConnectionRegistry
@@ -188,10 +200,65 @@ async def lifespan(app: App):
     await init_db(app.state.engine, migrate=False)
     app.state.sessionmaker = create_sessionmaker(app.state.engine)
     app.state.runner_backend = make_runner_backend(mode=settings.runner_mode, ctx=ctx)
+    app.state.runner_mode = settings.runner_mode
+    app.state.local_host_key = None
     app.state.linear_oauth_states = {}
     app.state.event_hub = JsonWebSocketHub()
     app.state.daemon_connections = DaemonConnectionRegistry()
     maybe_mount_dashboard(app, ctx.worktree_root)
+
+    lease_refresh_task: asyncio.Task[None] | None = None
+    if settings.runner_mode == "local":
+        identity = load_or_create_host_identity(ctx)
+        app.state.local_host_key = identity.host_key
+        async with app.state.sessionmaker() as session:
+            host = await session.scalar(
+                select(Host).where(Host.host_key == identity.host_key)
+            )
+            if host is None:
+                host = Host(
+                    host_key=identity.host_key,
+                    display_name=identity.display_name,
+                    capabilities=HostCapabilities().model_dump(mode="python"),
+                    last_seen_at=datetime.now(UTC),
+                )
+                session.add(host)
+            else:
+                host.display_name = identity.display_name
+                host.last_seen_at = datetime.now(UTC)
+
+            repo = await session.scalar(
+                select(Repository).where(Repository.repo_root == str(ctx.repo_root))
+            )
+            if repo is not None:
+                repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
+                await acquire_or_refresh_primary(
+                    session, repo_key, host_key=identity.host_key
+                )
+            await session.commit()
+
+        async def _refresh_local_lease() -> None:
+            while True:
+                await asyncio.sleep(20)
+                async with app.state.sessionmaker() as session:
+                    repo = await session.scalar(
+                        select(Repository).where(
+                            Repository.repo_root == str(ctx.repo_root)
+                        )
+                    )
+                    if repo is None:
+                        continue
+                    await acquire_or_refresh_primary(
+                        session,
+                        RepoKey(
+                            workspace_id=repo.workspace_id,
+                            repo_id=repo.repo_id,
+                        ),
+                        host_key=identity.host_key,
+                    )
+                    await session.commit()
+
+        lease_refresh_task = asyncio.create_task(_refresh_local_lease())
 
     observer_task: asyncio.Task[None] | None = None
     agent_monitor_task: asyncio.Task[None] | None = None
@@ -232,6 +299,13 @@ async def lifespan(app: App):
         agent_monitor_task.cancel()
         try:
             await agent_monitor_task
+        except asyncio.CancelledError:
+            pass
+
+    if lease_refresh_task is not None:
+        lease_refresh_task.cancel()
+        try:
+            await lease_refresh_task
         except asyncio.CancelledError:
             pass
 
@@ -398,8 +472,23 @@ async def get_epic(epic: str) -> EpicResponse:
 @v1.get("/epics/{epic}/graph", response_model=EpicGraphResponse)
 async def epic_graph(epic: str) -> EpicGraphResponse:
     sessionmaker = app.state.sessionmaker
+    now = datetime.now(UTC)
+    attached_host_keys: list[str] = []
+    if app.state.runner_mode == "local" and app.state.local_host_key is not None:
+        attached_host_keys.append(app.state.local_host_key)
+    connected_daemons = await app.state.daemon_connections.snapshot()
     async with sessionmaker() as session:
         epic_row = await _resolve_epic_row(session, epic=epic)
+        repo_row = await session.get(Repository, epic_row.repository_id)
+        repo_key: RepoKey | None = None
+        primary_host_key: str | None = None
+        if repo_row is not None:
+            repo_key = RepoKey(
+                workspace_id=repo_row.workspace_id,
+                repo_id=repo_row.repo_id,
+            )
+            primary_host_key = await get_primary_host_key(session, repo_key, now=now)
+
         tasks = list(
             await session.scalars(
                 select(Task).where(Task.epic_id == epic_row.id).order_by(Task.id)
@@ -442,6 +531,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             await session.scalars(
                 select(MergeRun)
                 .where(MergeRun.epic_id == epic_row.id)
+                .where(MergeRun.canonical.is_(True))
                 .where(
                     MergeRun.status.in_(
                         [
@@ -454,7 +544,14 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
                 .order_by(desc(MergeRun.id))
             )
         )
-        trunk_row = await session.get(GitTrunkTimeline, epic_row.id)
+        trunk_row = (
+            await session.get(
+                GitTrunkTimelineByInstance,
+                (epic_row.id, primary_host_key),
+            )
+            if primary_host_key is not None
+            else None
+        )
 
     trunk: TrunkTimelineResponse | None = None
     if trunk_row is not None and trunk_row.data:
@@ -467,6 +564,26 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
         TaskResponse.model_validate(task, from_attributes=True) for task in tasks
     ]
 
+    if repo_row is not None:
+        for host_key, presence in connected_daemons.items():
+            if any(
+                r.get("workspace_id") == repo_row.workspace_id
+                and r.get("repo_id") == repo_row.repo_id
+                for r in presence.attached_repos
+            ):
+                attached_host_keys.append(host_key)
+
+    repo_executor = (
+        RepoExecutorStatusResponse(
+            workspace_id=repo_row.workspace_id,
+            repo_id=repo_row.repo_id,
+            primary_host_key=primary_host_key,
+            attached_host_keys=sorted(set(attached_host_keys)),
+        )
+        if repo_row is not None
+        else None
+    )
+
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=task_responses,
@@ -476,6 +593,7 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
             for r in merge_runs
         ],
         trunk=trunk,
+        repo_executor=repo_executor,
     )
 
 
@@ -561,6 +679,29 @@ async def _require_task(session: AsyncSession, *, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+async def _require_current_repo(session: AsyncSession) -> Repository:
+    repo = await session.scalar(
+        select(Repository).where(Repository.repo_root == str(app.state.ctx.repo_root))
+    )
+    if repo is None:
+        raise HTTPException(status_code=500, detail="Repository not initialized")
+    return repo
+
+
+async def _resolve_repo_executor_target(
+    session: AsyncSession,
+    *,
+    requested_host_key: str | None,
+) -> tuple[Repository, RepoKey, str | None, str | None, bool]:
+    repo = await _require_current_repo(session)
+    repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
+    primary = await get_primary_host_key(session, repo_key)
+    target = requested_host_key or primary
+    if target is None:
+        return repo, repo_key, None, None, False
+    return repo, repo_key, target, primary, target == primary
 
 
 @v1.post("/tasks/{task_id}/agent/start", response_model=TaskAgentStartResponse)
@@ -681,7 +822,10 @@ async def _emit_task_merge_event(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     payload: dict[str, object],
+    host_key: str | None = None,
 ) -> None:
+    if host_key is not None:
+        payload = {**payload, "host_key": host_key}
     async with sessionmaker() as session:
         session.add(
             Event(
@@ -701,6 +845,7 @@ async def _emit_merge_run_event(
     epic_id: int,
     requested_task_id: int,
     status: MergeRunStatus,
+    host_key: str | None = None,
     operation: Literal["merge", "restack"] = "merge",
     blocked_step_index: int | None = None,
     blocked_step_kind: str | None = None,
@@ -714,6 +859,8 @@ async def _emit_merge_run_event(
         "status": status,
         "operation": operation,
     }
+    if host_key is not None:
+        data["host_key"] = host_key
     if blocked_step_index is not None:
         data["blocked_step_index"] = blocked_step_index
     if blocked_step_kind is not None:
@@ -777,6 +924,8 @@ async def _upsert_merge_run(
     run_id: str,
     epic_id: int,
     task_id: int,
+    host_key: str | None,
+    canonical: bool,
     scope: str,
     allow_running: bool,
     force: bool,
@@ -790,6 +939,8 @@ async def _upsert_merge_run(
                     run_id=run_id,
                     epic_id=epic_id,
                     requested_task_id=task_id,
+                    host_key=host_key,
+                    canonical=canonical,
                     status=MergeRunStatus.Running,
                     scope=scope,
                     allow_running=allow_running,
@@ -800,6 +951,8 @@ async def _upsert_merge_run(
         else:
             row.epic_id = epic_id
             row.requested_task_id = task_id
+            row.host_key = host_key
+            row.canonical = canonical
             row.status = MergeRunStatus.Running
             row.scope = scope
             row.allow_running = allow_running
@@ -847,6 +1000,7 @@ async def _record_merge_run_step_update(
                         "requested_task_id": row.requested_task_id,
                         "status": row.status,
                         "operation": row.operation,
+                        "host_key": row.host_key,
                         "blocked_step_index": row.blocked_step_index,
                         "blocked_step_kind": row.blocked_step_kind,
                         "blocked_branch_name": row.blocked_branch_name,
@@ -905,6 +1059,8 @@ async def _set_merge_run_status(
                 "status": status,
                 "operation": row.operation,
             }
+            if row.host_key is not None:
+                data["host_key"] = row.host_key
             if blocked_step_index is not None:
                 data["blocked_step_index"] = blocked_step_index
             if blocked_step_kind is not None:
@@ -1305,6 +1461,110 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
         request.scope if request.cascade else "spine"
     )
     restack_mode: Literal["strict", "merge_then_restack"] = request.restack_mode
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        (
+            repo,
+            _,
+            target_host_key,
+            primary_host_key,
+            is_primary_target,
+        ) = await _resolve_repo_executor_target(
+            session,
+            requested_host_key=request.host_key,
+        )
+        if request.host_key is None and target_host_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No primary repo executor available. Start a daemon and attach this repo.",
+            )
+        if target_host_key is None:
+            raise HTTPException(status_code=503, detail="No repo executor available.")
+
+        canonical = is_primary_target
+        local_host_key = (
+            app.state.local_host_key if app.state.runner_mode == "local" else None
+        )
+        is_local_executor = (
+            local_host_key is not None and target_host_key == local_host_key
+        )
+        repo_workspace_id = repo.workspace_id
+        repo_repo_id = repo.repo_id
+        epic_id_for_remote: int | None = None
+        if not is_local_executor:
+            task_row = await _require_task(session, task_id=task_id)
+            epic_id_for_remote = task_row.epic_id
+
+        if request.host_key is None and not canonical:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Primary executor is {primary_host_key or 'unknown'}; "
+                    "repo-scoped merge requests cannot target a non-primary executor."
+                ),
+            )
+
+    if not is_local_executor:
+        if request.dry_run:
+            raise HTTPException(
+                status_code=501,
+                detail="dryRun is not supported when routing to a remote repo executor.",
+            )
+        if epic_id_for_remote is None:
+            raise HTTPException(status_code=500, detail="Missing epic id for merge.")
+
+        plan_snapshot = MergeRunPlanData(
+            operation="merge",
+            base_branch="",
+            base_worktree="",
+            scope=scope,
+            restack_mode=restack_mode,
+            spine_task_ids=[],
+            affected_task_ids=[],
+            steps=[],
+        ).model_dump(mode="python")
+
+        await _upsert_merge_run(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            epic_id=epic_id_for_remote,
+            task_id=task_id,
+            host_key=target_host_key,
+            canonical=canonical,
+            scope=scope,
+            allow_running=request.allow_running,
+            force=request.force,
+            plan_snapshot=plan_snapshot,
+        )
+        await _emit_merge_run_event(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            epic_id=epic_id_for_remote,
+            requested_task_id=task_id,
+            status=MergeRunStatus.Running,
+            host_key=target_host_key,
+            operation="merge",
+        )
+        await _enqueue_daemon_command(
+            host_key=target_host_key,
+            command_type="repo.merge_run.start",
+            workspace_id=repo_workspace_id,
+            repo_id=repo_repo_id,
+            payload={
+                "run_id": run_id,
+                "task_id": task_id,
+                "operation": "merge",
+                "scope": scope,
+                "restack_mode": restack_mode,
+                "allow_running": request.allow_running,
+                "force": request.force,
+                "canonical": canonical,
+            },
+        )
+        return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=None)
+
     try:
         plan = await build_merge_cascade_plan(
             ctx=app.state.ctx,
@@ -1349,6 +1609,8 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
         run_id=run_id,
         epic_id=plan.epic_id,
         task_id=task_id,
+        host_key=target_host_key,
+        canonical=canonical,
         scope=scope,
         allow_running=request.allow_running,
         force=request.force,
@@ -1362,6 +1624,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
         epic_id=plan.epic_id,
         requested_task_id=task_id,
         status=MergeRunStatus.Running,
+        host_key=target_host_key,
     )
 
     async def _run() -> None:
@@ -1374,6 +1637,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                 emit_event=lambda payload: _emit_task_merge_event(
                     sessionmaker=app.state.sessionmaker,
                     payload={**payload, "operation": "merge"},
+                    host_key=target_host_key,
                 ),
                 update_run=lambda update: _record_merge_run_step_update(
                     sessionmaker=app.state.sessionmaker,
@@ -1409,6 +1673,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                     "branch_name": plan.base_branch,
                     "error": str(e),
                 },
+                host_key=target_host_key,
             )
 
     asyncio.create_task(_run())
@@ -1422,6 +1687,108 @@ async def restack_task(
 ) -> TaskRestackResponse:
     run_id = request.run_id or uuid4().hex
     scope: Literal["descendants", "spine"] = request.scope
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        (
+            repo,
+            _,
+            target_host_key,
+            primary_host_key,
+            is_primary_target,
+        ) = await _resolve_repo_executor_target(
+            session,
+            requested_host_key=request.host_key,
+        )
+        if request.host_key is None and target_host_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No primary repo executor available. Start a daemon and attach this repo.",
+            )
+        if target_host_key is None:
+            raise HTTPException(status_code=503, detail="No repo executor available.")
+
+        canonical = is_primary_target
+        local_host_key = (
+            app.state.local_host_key if app.state.runner_mode == "local" else None
+        )
+        is_local_executor = (
+            local_host_key is not None and target_host_key == local_host_key
+        )
+        repo_workspace_id = repo.workspace_id
+        repo_repo_id = repo.repo_id
+        epic_id_for_remote: int | None = None
+        if not is_local_executor:
+            task_row = await _require_task(session, task_id=task_id)
+            epic_id_for_remote = task_row.epic_id
+
+        if request.host_key is None and not canonical:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Primary executor is {primary_host_key or 'unknown'}; "
+                    "repo-scoped restack requests cannot target a non-primary executor."
+                ),
+            )
+
+    if not is_local_executor:
+        if request.dry_run:
+            raise HTTPException(
+                status_code=501,
+                detail="dryRun is not supported when routing to a remote repo executor.",
+            )
+        if epic_id_for_remote is None:
+            raise HTTPException(status_code=500, detail="Missing epic id for restack.")
+
+        plan_snapshot = MergeRunPlanData(
+            operation="restack",
+            base_branch="",
+            base_worktree="",
+            scope=scope,
+            restack_mode="strict",
+            spine_task_ids=[],
+            affected_task_ids=[],
+            steps=[],
+        ).model_dump(mode="python")
+
+        await _upsert_merge_run(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            epic_id=epic_id_for_remote,
+            task_id=task_id,
+            host_key=target_host_key,
+            canonical=canonical,
+            scope=scope,
+            allow_running=request.allow_running,
+            force=False,
+            plan_snapshot=plan_snapshot,
+        )
+        await _emit_merge_run_event(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            epic_id=epic_id_for_remote,
+            requested_task_id=task_id,
+            status=MergeRunStatus.Running,
+            host_key=target_host_key,
+            operation="restack",
+        )
+        await _enqueue_daemon_command(
+            host_key=target_host_key,
+            command_type="repo.merge_run.start",
+            workspace_id=repo_workspace_id,
+            repo_id=repo_repo_id,
+            payload={
+                "run_id": run_id,
+                "task_id": task_id,
+                "operation": "restack",
+                "scope": scope,
+                "allow_running": request.allow_running,
+                "canonical": canonical,
+            },
+        )
+        return TaskRestackResponse(run_id=run_id, dry_run=False, base_branch=None)
+
     try:
         plan = await build_restack_plan(
             ctx=app.state.ctx,
@@ -1464,6 +1831,8 @@ async def restack_task(
         run_id=run_id,
         epic_id=plan.epic_id,
         task_id=task_id,
+        host_key=target_host_key,
+        canonical=canonical,
         scope=scope,
         allow_running=request.allow_running,
         force=False,
@@ -1477,6 +1846,7 @@ async def restack_task(
         requested_task_id=task_id,
         status=MergeRunStatus.Running,
         operation="restack",
+        host_key=target_host_key,
     )
 
     async def _run() -> None:
@@ -1489,6 +1859,7 @@ async def restack_task(
                 emit_event=lambda payload: _emit_task_merge_event(
                     sessionmaker=app.state.sessionmaker,
                     payload={**payload, "operation": "restack"},
+                    host_key=target_host_key,
                 ),
                 update_run=lambda update: _record_merge_run_step_update(
                     sessionmaker=app.state.sessionmaker,
@@ -1522,6 +1893,7 @@ async def restack_task(
                     "branch_name": plan.base_branch,
                     "error": str(e),
                 },
+                host_key=target_host_key,
             )
 
     asyncio.create_task(_run())
@@ -1538,6 +1910,26 @@ async def resume_merge_run(
     run_id: str, request: MergeRunResumeRequest
 ) -> MergeRunResumeResponse:
     sessionmaker = app.state.sessionmaker
+    target_host_key: str | None = None
+    local_host_key = (
+        app.state.local_host_key if app.state.runner_mode == "local" else None
+    )
+    is_local_executor = False
+    repo_workspace_id: str | None = None
+    repo_repo_id: str | None = None
+    run_canonical = True
+    run_plan_snapshot: dict[str, object] | None = None
+    epic_id_for_remote: int | None = None
+    operation: Literal["merge", "restack"]
+    task_id: int
+    scope_value: str
+    force: bool
+    allow_running: bool
+    restack_mode: Literal["strict", "merge_then_restack"]
+    blocked_step_index: int | None
+    blocked_step_kind: str | None
+    blocked_branch_name: str | None
+
     async with sessionmaker() as session:
         run = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
         if run is None:
@@ -1553,16 +1945,98 @@ async def resume_merge_run(
         if run.status != MergeRunStatus.Resumable:
             raise HTTPException(status_code=400, detail="Merge run is not resumable")
 
+        repo = await _require_current_repo(session)
+        repo_workspace_id = repo.workspace_id
+        repo_repo_id = repo.repo_id
+
+        primary_host_key = await get_primary_host_key(
+            session,
+            RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id),
+        )
+
+        target_host_key = request.host_key or run.host_key or primary_host_key
+        if target_host_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No repo executor available to resume this merge run.",
+            )
+
+        run_canonical = run.canonical
+        if run.canonical and target_host_key != primary_host_key:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Primary executor is {primary_host_key or 'none'}; "
+                    f"cannot resume canonical merge run on {target_host_key}."
+                ),
+            )
+
+        is_local_executor = (
+            local_host_key is not None and target_host_key == local_host_key
+        )
+        run_plan_snapshot = dict(run.plan) if isinstance(run.plan, dict) else None
+        epic_id_for_remote = run.epic_id
+
         task_id = run.requested_task_id
         scope_value = run.scope
         force = run.force
         allow_running = run.allow_running or request.allow_running
-        operation: Literal["merge", "restack"] = run.operation
-        restack_mode: Literal["strict", "merge_then_restack"] = run.restack_mode
+        operation = run.operation
+        restack_mode = run.restack_mode
 
         blocked_step_index = run.blocked_step_index
         blocked_step_kind = run.blocked_step_kind
         blocked_branch_name = run.blocked_branch_name
+
+    if not is_local_executor:
+        if repo_workspace_id is None or repo_repo_id is None:
+            raise HTTPException(status_code=500, detail="Missing repo identity.")
+        if epic_id_for_remote is None:
+            raise HTTPException(
+                status_code=500, detail="Missing epic id for merge run."
+            )
+        if run_plan_snapshot is None:
+            run_plan_snapshot = MergeRunPlanData(
+                operation=operation,
+                base_branch="",
+                base_worktree="",
+                scope="spine",
+            ).model_dump(mode="python")
+
+        await _upsert_merge_run(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            epic_id=epic_id_for_remote,
+            task_id=task_id,
+            host_key=target_host_key,
+            canonical=run_canonical,
+            scope=scope_value,
+            allow_running=allow_running,
+            force=force,
+            plan_snapshot=run_plan_snapshot,
+        )
+        await _emit_merge_run_event(
+            sessionmaker=app.state.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            epic_id=epic_id_for_remote,
+            requested_task_id=task_id,
+            status=MergeRunStatus.Running,
+            host_key=target_host_key,
+            operation=operation,
+        )
+        await _enqueue_daemon_command(
+            host_key=target_host_key,
+            command_type="repo.merge_run.resume",
+            workspace_id=repo_workspace_id,
+            repo_id=repo_repo_id,
+            payload={
+                "run_id": run_id,
+                "allow_running": allow_running,
+                "canonical": run_canonical,
+            },
+        )
+        return MergeRunResumeResponse(run_id=run_id, base_branch=None)
 
     normalized_scope = scope_value.strip().lower()
     if normalized_scope not in {"descendants", "spine"}:
@@ -1612,6 +2086,8 @@ async def resume_merge_run(
         run_id=run_id,
         epic_id=plan.epic_id,
         task_id=task_id,
+        host_key=target_host_key,
+        canonical=run_canonical,
         scope=normalized_scope,
         allow_running=allow_running,
         force=force,
@@ -1630,6 +2106,7 @@ async def resume_merge_run(
         requested_task_id=task_id,
         status=MergeRunStatus.Running,
         operation=operation,
+        host_key=target_host_key,
     )
 
     async def _run() -> None:
@@ -1638,11 +2115,12 @@ async def resume_merge_run(
                 await execute_restack_plan(
                     ctx=app.state.ctx,
                     sessionmaker=app.state.sessionmaker,
-                    plan=plan,
+                    plan=cast(RestackPlan, plan),
                     allow_running=allow_running,
                     emit_event=lambda payload: _emit_task_merge_event(
                         sessionmaker=app.state.sessionmaker,
                         payload={**payload, "operation": "restack"},
+                        host_key=target_host_key,
                     ),
                     update_run=lambda update: _record_merge_run_step_update(
                         sessionmaker=app.state.sessionmaker,
@@ -1655,11 +2133,12 @@ async def resume_merge_run(
                 await execute_merge_cascade_plan(
                     ctx=app.state.ctx,
                     sessionmaker=app.state.sessionmaker,
-                    plan=plan,
+                    plan=cast(MergeCascadePlan, plan),
                     allow_running=allow_running,
                     emit_event=lambda payload: _emit_task_merge_event(
                         sessionmaker=app.state.sessionmaker,
                         payload={**payload, "operation": "merge"},
+                        host_key=target_host_key,
                     ),
                     update_run=lambda update: _record_merge_run_step_update(
                         sessionmaker=app.state.sessionmaker,
@@ -1694,6 +2173,7 @@ async def resume_merge_run(
                     "branch_name": plan.base_branch,
                     "error": str(e),
                 },
+                host_key=target_host_key,
             )
 
     asyncio.create_task(_run())
@@ -1915,6 +2395,45 @@ async def issue_daemon_command(
     return command
 
 
+async def _enqueue_daemon_command(
+    *,
+    host_key: str,
+    command_type: str,
+    workspace_id: str | None,
+    repo_id: str | None,
+    payload: dict[str, Any],
+) -> DaemonCommandResponse:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        cmd = DaemonCommand(
+            host_key=host_key,
+            command_type=command_type,
+            workspace_id=workspace_id,
+            repo_id=repo_id,
+            data=payload,
+        )
+        session.add(cmd)
+        await session.commit()
+        await session.refresh(cmd)
+
+    command = DaemonCommandResponse.model_validate(cmd, from_attributes=True)
+    ws_command = ServerCommand(
+        command_id=command.id,
+        command_type=command.command_type,
+        workspace_id=command.workspace_id,
+        repo_id=command.repo_id,
+        data=command.payload,
+    )
+    await app.state.daemon_connections.send(
+        host_key,
+        {
+            "type": "command",
+            "command": ws_command.model_dump(),
+        },
+    )
+    return command
+
+
 @v1.websocket("/ws")
 async def ui_event_stream(websocket: WebSocket) -> None:
     send_queue = await app.state.event_hub.connect(websocket)
@@ -2031,6 +2550,24 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
             last_seen_at=now,
         )
         session.add(conn)
+
+        repo = await session.scalar(
+            select(Repository).where(
+                Repository.repo_root == str(app.state.ctx.repo_root)
+            )
+        )
+        if repo is not None and any(
+            r.get("workspace_id") == repo.workspace_id
+            and r.get("repo_id") == repo.repo_id
+            for r in attached_repos
+        ):
+            await acquire_or_refresh_primary(
+                session,
+                RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id),
+                host_key=host_key,
+                now=now,
+            )
+
         await session.commit()
         await session.refresh(conn)
         connection_id = conn.id
@@ -2129,6 +2666,29 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                             .where(DaemonConnection.id == connection_id)
                             .values(attached_repos=updated_attached_repos)
                         )
+
+                    repo = await session.scalar(
+                        select(Repository).where(
+                            Repository.repo_root == str(app.state.ctx.repo_root)
+                        )
+                    )
+                    if (
+                        repo is not None
+                        and host_key is not None
+                        and any(
+                            r.get("workspace_id") == repo.workspace_id
+                            and r.get("repo_id") == repo.repo_id
+                            for r in updated_attached_repos
+                        )
+                    ):
+                        await acquire_or_refresh_primary(
+                            session,
+                            RepoKey(
+                                workspace_id=repo.workspace_id, repo_id=repo.repo_id
+                            ),
+                            host_key=host_key,
+                            now=now,
+                        )
                     await session.commit()
 
                 if host_key is not None:
@@ -2201,6 +2761,18 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
             now = datetime.now(UTC)
             disconnected_event: EventResponse | None = None
             async with sessionmaker() as session:
+                repo = await session.scalar(
+                    select(Repository).where(
+                        Repository.repo_root == str(app.state.ctx.repo_root)
+                    )
+                )
+                if repo is not None:
+                    await expire_primary_if_owner(
+                        session,
+                        RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id),
+                        host_key=host_key,
+                        now=now,
+                    )
                 if connection_id is not None:
                     await session.execute(
                         update(DaemonConnection)

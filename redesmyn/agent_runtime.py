@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -13,13 +12,13 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
+from redesmyn.host_identity import HostIdentity, load_or_create_host_identity
 from redesmyn.db import (
     Agent,
     AgentConfig,
@@ -53,25 +52,6 @@ from redesmyn.sandbox import (
     make_sandbox_provider,
 )
 from redesmyn.strings import slugify
-
-
-class RunnerHostConfig(BaseModel):
-    host_key: str
-    display_name: str
-
-
-def runner_host_config_path(ctx: RepoContext) -> Path:
-    return ctx.state_dir / "runner-host.json"
-
-
-def load_or_create_runner_host_config(ctx: RepoContext) -> RunnerHostConfig:
-    path = runner_host_config_path(ctx)
-    if path.exists():
-        return RunnerHostConfig.model_validate_json(path.read_text(encoding="utf-8"))
-
-    config = RunnerHostConfig(host_key=str(uuid4()), display_name=platform.node())
-    path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
-    return config
 
 
 def has_tmux() -> bool:
@@ -380,7 +360,7 @@ async def _wait_for_agent_input_ready(*, name: str, timeout_s: float) -> None:
 
 
 async def ensure_host_row(session: AsyncSession, ctx: RepoContext) -> Host:
-    config = load_or_create_runner_host_config(ctx)
+    config: HostIdentity = load_or_create_host_identity(ctx)
     capabilities = HostCapabilities(
         tmux_available=has_tmux(),
         supports_path_shim=shutil.which("rn") is not None,

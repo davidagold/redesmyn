@@ -209,10 +209,20 @@ class Repository(Base):
     __tablename__ = "repositories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String, nullable=False, default="default")
+    repo_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     repo_root: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     default_branch: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "repo_id",
+            name="uq_repositories_workspace_repo_id",
+        ),
     )
 
 
@@ -632,6 +642,8 @@ class MergeRun(Base):
     requested_task_id: Mapped[int] = mapped_column(
         ForeignKey("tasks.id"), nullable=False, index=True
     )
+    host_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    canonical: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     status: Mapped[MergeRunStatus] = mapped_column(
         _enum_type(MergeRunStatus, "merge_run_status"),
@@ -694,6 +706,104 @@ class MergeRun(Base):
         if value == "restack":
             return "restack"
         return "merge"
+
+
+class RepoExecutorLease(Base):
+    __tablename__ = "repo_executor_leases"
+
+    workspace_id: Mapped[str] = mapped_column(String, primary_key=True)
+    repo_id: Mapped[str] = mapped_column(String, primary_key=True)
+    host_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    lease_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GitRefStateByInstance(Base):
+    __tablename__ = "git_ref_states_by_instance"
+
+    repository_id: Mapped[int] = mapped_column(
+        ForeignKey("repositories.id"), primary_key=True
+    )
+    host_key: Mapped[str] = mapped_column(String, primary_key=True)
+    refs: Mapped[dict[str, str]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GitTrunkTimelineByInstance(Base):
+    __tablename__ = "git_trunk_timelines_by_instance"
+
+    epic_id: Mapped[int] = mapped_column(ForeignKey("epics.id"), primary_key=True)
+    host_key: Mapped[str] = mapped_column(String, primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class GitMergeBaseByInstance(Base):
+    __tablename__ = "git_merge_bases_by_instance"
+
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    host_key: Mapped[str] = mapped_column(String, primary_key=True)
+    merge_base_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TaskStackInSyncState(Base):
+    __tablename__ = "task_stack_in_sync_states"
+
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    host_key: Mapped[str] = mapped_column(String, primary_key=True)
+    stack_in_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
 
 class DaemonConnection(Base):

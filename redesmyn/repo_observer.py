@@ -10,14 +10,25 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
-from redesmyn.db import AgentSession, Epic, Event, MergeRun, Task
+from redesmyn.db import (
+    AgentSession,
+    Epic,
+    Event,
+    MergeRun,
+    Repository,
+    Task,
+    TaskStackInSyncState,
+)
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus
+from redesmyn.host_identity import load_or_create_host_identity
 from redesmyn.repo import (
     current_branch,
     git_has_in_progress_operation,
     git_is_ancestor,
 )
+from redesmyn.repo_executor_leases import get_primary_host_key
+from redesmyn.repo_identity import RepoKey
 
 
 @dataclass(slots=True, frozen=True)
@@ -247,6 +258,15 @@ async def observe_once(
     heads = read_branch_heads(ctx.repo_root)
 
     now = datetime.now(UTC)
+    host_key = load_or_create_host_identity(ctx).host_key
+    repo = await session.scalar(
+        select(Repository).where(Repository.repo_root == str(ctx.repo_root))
+    )
+    if repo is None:
+        return 0
+    repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
+    primary_host_key = await get_primary_host_key(session, repo_key, now=now)
+    is_primary = primary_host_key == host_key
     events_added = 0
     merge_runs_updated = 0
     tasks_updated = 0
@@ -285,10 +305,16 @@ async def observe_once(
             subject=summary.subject if summary else None,
             agent_id=active_agent_id_by_task_id.get(task.id),
         )
+        payload = {
+            **data.model_dump(mode="python"),
+            "workspace_id": repo.workspace_id,
+            "repo_id": repo.repo_id,
+            "host_key": host_key,
+        }
         session.add(
             Event(
                 event_type="git.commit",
-                data=data.model_dump(mode="python"),
+                data=payload,
                 created_at=now,
             )
         )
@@ -304,40 +330,57 @@ async def observe_once(
         epics_by_id = {e.id: e for e in epic_rows}
 
     tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+    sync_rows = list(
+        await session.scalars(
+            select(TaskStackInSyncState).where(
+                TaskStackInSyncState.host_key == host_key,
+                TaskStackInSyncState.task_id.in_(task_ids),
+            )
+        )
+    )
+    sync_by_task_id = {r.task_id: r for r in sync_rows}
+
     for task in tasks:
-        if task.branch_name is None:
-            if task.stack_in_sync is not None:
-                task.stack_in_sync = None
-                tasks_updated += 1
-            continue
+        in_sync: bool | None
 
-        if task.branch_name not in heads:
-            # Branch doesn't exist
-            if task.stack_in_sync is not None:
-                task.stack_in_sync = None
-                tasks_updated += 1
-            continue
-
-        # Determine upstream branch
-        if task.parent_task_id is None:
-            epic = epics_by_id.get(task.epic_id)
-            upstream = epic.root_branch if epic else None
-        else:
-            parent = tasks_by_id.get(task.parent_task_id)
-            upstream = parent.branch_name if parent else None
-
-        if upstream is None or upstream not in heads:
-            if task.stack_in_sync is not None:
-                task.stack_in_sync = None
-                tasks_updated += 1
-            continue
-
-        # Check if upstream is ancestor of task's branch
-        try:
-            in_sync = git_is_ancestor(ctx.repo_root, upstream, task.branch_name)
-        except Exception:
+        if task.branch_name is None or task.branch_name not in heads:
             in_sync = None
+        else:
+            # Determine upstream branch
+            if task.parent_task_id is None:
+                epic = epics_by_id.get(task.epic_id)
+                upstream = epic.root_branch if epic else None
+            else:
+                parent = tasks_by_id.get(task.parent_task_id)
+                upstream = parent.branch_name if parent else None
 
+            if upstream is None or upstream not in heads:
+                in_sync = None
+            else:
+                # Check if upstream is ancestor of task's branch
+                try:
+                    in_sync = git_is_ancestor(ctx.repo_root, upstream, task.branch_name)
+                except Exception:
+                    in_sync = None
+
+        sync_state = sync_by_task_id.get(task.id)
+        if sync_state is None:
+            sync_state = TaskStackInSyncState(
+                task_id=task.id,
+                host_key=host_key,
+                stack_in_sync=in_sync,
+                observed_at=now,
+                updated_at=now,
+            )
+            session.add(sync_state)
+            sync_by_task_id[task.id] = sync_state
+        else:
+            sync_state.stack_in_sync = in_sync
+            sync_state.observed_at = now
+            sync_state.updated_at = now
+
+        if not is_primary:
+            continue
         if task.stack_in_sync != in_sync:
             task.stack_in_sync = in_sync
             tasks_updated += 1
@@ -370,10 +413,16 @@ async def observe_once(
             dirty=observed.dirty,
             branch_mismatch=observed.branch_mismatch,
         )
+        payload = {
+            **data.model_dump(mode="python"),
+            "workspace_id": repo.workspace_id,
+            "repo_id": repo.repo_id,
+            "host_key": host_key,
+        }
         session.add(
             Event(
                 event_type="worktree.health",
-                data=data.model_dump(mode="python"),
+                data=payload,
                 created_at=now,
             )
         )
@@ -404,6 +453,9 @@ async def observe_once(
                     "requested_task_id": run.requested_task_id,
                     "status": run.status,
                     "operation": run.operation,
+                    "workspace_id": repo.workspace_id,
+                    "repo_id": repo.repo_id,
+                    "host_key": host_key,
                 },
                 created_at=now,
             )

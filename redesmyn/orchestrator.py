@@ -7,6 +7,7 @@ from sqlalchemy import select
 from redesmyn.context import RepoContext
 from redesmyn.db import Repository, create_engine, create_sessionmaker, init_db
 from redesmyn.git_telemetry import update_git_projections
+from redesmyn.repo_identity import DEFAULT_WORKSPACE_ID, compute_repo_id
 from redesmyn.repo import default_branch
 
 
@@ -22,14 +23,27 @@ async def init_repo(ctx: RepoContext, *, migrate: bool) -> None:
             repo = await session.scalar(
                 select(Repository).where(Repository.repo_root == str(ctx.repo_root))
             )
+            repo_id = compute_repo_id(ctx.repo_root)
             if repo is None:
                 repo = Repository(
+                    workspace_id=DEFAULT_WORKSPACE_ID,
+                    repo_id=repo_id,
                     repo_root=str(ctx.repo_root),
                     default_branch=default_branch(ctx.repo_root),
                     created_at=datetime.now(UTC),
                 )
                 session.add(repo)
                 await session.commit()
+            else:
+                updated = False
+                if not repo.workspace_id:
+                    repo.workspace_id = DEFAULT_WORKSPACE_ID
+                    updated = True
+                if not repo.repo_id:
+                    repo.repo_id = repo_id
+                    updated = True
+                if updated:
+                    await session.commit()
     finally:
         await engine.dispose()
 

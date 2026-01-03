@@ -567,6 +567,16 @@
             "title": "Mergeruns",
             "type": "array"
           },
+          "repoExecutor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepoExecutorStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "tasks": {
             "items": {
               "$ref": "#/components/schemas/TaskResponse"
@@ -970,6 +980,17 @@
             "default": false,
             "title": "Allowrunning",
             "type": "boolean"
+          },
+          "hostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostkey"
           }
         },
         "title": "MergeRunResumeRequest",
@@ -1083,6 +1104,11 @@
             ],
             "title": "Blockedworktreepath"
           },
+          "canonical": {
+            "default": true,
+            "title": "Canonical",
+            "type": "boolean"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -1106,6 +1132,17 @@
           "force": {
             "title": "Force",
             "type": "boolean"
+          },
+          "hostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostkey"
           },
           "operation": {
             "default": "merge",
@@ -1471,6 +1508,42 @@
           }
         },
         "title": "OrchestrationSandboxDefaultsUpdateRequest",
+        "type": "object"
+      },
+      "RepoExecutorStatusResponse": {
+        "properties": {
+          "attachedHostKeys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachedhostkeys",
+            "type": "array"
+          },
+          "primaryHostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primaryhostkey"
+          },
+          "repoId": {
+            "title": "Repoid",
+            "type": "string"
+          },
+          "workspaceId": {
+            "title": "Workspaceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspaceId",
+          "repoId"
+        ],
+        "title": "RepoExecutorStatusResponse",
         "type": "object"
       },
       "RepoKeyResponse": {
@@ -2007,6 +2080,17 @@
             "title": "Force",
             "type": "boolean"
           },
+          "hostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostkey"
+          },
           "restackMode": {
             "default": "strict",
             "enum": [
@@ -2265,6 +2349,17 @@
             "default": false,
             "title": "Dryrun",
             "type": "boolean"
+          },
+          "hostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostkey"
           },
           "runId": {
             "anyOf": [

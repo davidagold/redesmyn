@@ -205,6 +205,7 @@ class TaskMergeReadyRequest(ApiRequest):
 
 class TaskMergeRequest(ApiRequest):
     run_id: str | None = None
+    host_key: str | None = None
     cascade: bool = False
     scope: Literal["descendants", "spine"] = "descendants"
     restack_mode: Literal["strict", "merge_then_restack"] = "strict"
@@ -215,6 +216,7 @@ class TaskMergeRequest(ApiRequest):
 
 class TaskRestackRequest(ApiRequest):
     run_id: str | None = None
+    host_key: str | None = None
     scope: Literal["descendants", "spine"] = "descendants"
     dry_run: bool = False
     allow_running: bool = False
@@ -224,6 +226,8 @@ class MergeRunSummaryResponse(ApiResponse):
     run_id: str
     epic_id: int
     requested_task_id: int
+    host_key: str | None = None
+    canonical: bool = True
     status: MergeRunStatus
     scope: Literal["descendants", "spine"]
     operation: Literal["merge", "restack"] = "merge"
@@ -266,6 +270,7 @@ class TaskRestackResponse(ApiResponse):
 
 class MergeRunResumeRequest(ApiRequest):
     allow_running: bool = False
+    host_key: str | None = None
 
 
 class MergeRunResumeResponse(ApiResponse):
@@ -470,6 +475,13 @@ class RepoKeyResponse(ApiResponse):
     repo_id: str
 
 
+class RepoExecutorStatusResponse(ApiResponse):
+    workspace_id: str
+    repo_id: str
+    primary_host_key: str | None = None
+    attached_host_keys: list[str] = Field(default_factory=list)
+
+
 class DaemonPresenceResponse(ApiResponse):
     host_key: str
     display_name: str | None
@@ -602,3 +614,4 @@ class EpicGraphResponse(ApiResponse):
     agent_sessions: list[AgentSessionResponse]
     merge_runs: list[MergeRunSummaryResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None
+    repo_executor: RepoExecutorStatusResponse | None = None

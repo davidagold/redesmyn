@@ -576,6 +576,7 @@ export interface components {
       epic: components["schemas"]["EpicResponse"]
       /** Mergeruns */
       mergeRuns?: components["schemas"]["MergeRunSummaryResponse"][]
+      repoExecutor?: components["schemas"]["RepoExecutorStatusResponse"] | null
       /** Tasks */
       tasks: components["schemas"]["TaskResponse"][]
       trunk?: components["schemas"]["TrunkTimelineResponse"] | null
@@ -736,6 +737,8 @@ export interface components {
        * @default false
        */
       allowRunning: boolean
+      /** Hostkey */
+      hostKey?: string | null
     }
     /** MergeRunResumeResponse */
     MergeRunResumeResponse: {
@@ -766,6 +769,11 @@ export interface components {
       /** Blockedworktreepath */
       blockedWorktreePath?: string | null
       /**
+       * Canonical
+       * @default true
+       */
+      canonical: boolean
+      /**
        * Createdat
        * Format: date-time
        */
@@ -776,6 +784,8 @@ export interface components {
       epicId: number
       /** Force */
       force: boolean
+      /** Hostkey */
+      hostKey?: string | null
       /**
        * Operation
        * @default merge
@@ -895,6 +905,17 @@ export interface components {
       network?: "allow" | "deny" | null
       /** Type */
       type?: "none" | "worktree" | null
+    }
+    /** RepoExecutorStatusResponse */
+    RepoExecutorStatusResponse: {
+      /** Attachedhostkeys */
+      attachedHostKeys?: string[]
+      /** Primaryhostkey */
+      primaryHostKey?: string | null
+      /** Repoid */
+      repoId: string
+      /** Workspaceid */
+      workspaceId: string
     }
     /** RepoKeyResponse */
     RepoKeyResponse: {
@@ -1089,6 +1110,8 @@ export interface components {
        * @default false
        */
       force: boolean
+      /** Hostkey */
+      hostKey?: string | null
       /**
        * Restackmode
        * @default strict
@@ -1174,6 +1197,8 @@ export interface components {
        * @default false
        */
       dryRun: boolean
+      /** Hostkey */
+      hostKey?: string | null
       /** Runid */
       runId?: string | null
       /**
