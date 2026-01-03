@@ -1,7 +1,7 @@
 """Add linear_epic_defaults table.
 
-Revision ID: 0009_linear_epic_defaults
-Revises: 0008_add_task_stack_in_sync
+Revision ID: 0010_linear_epic_defaults
+Revises: 0009_repo_instances_canonical_executor
 Create Date: 2026-01-03
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0009_linear_epic_defaults"
-down_revision = "0008_add_task_stack_in_sync"
+revision = "0010_linear_epic_defaults"
+down_revision = "0009_repo_instances_canonical_executor"
 branch_labels = None
 depends_on = None
 
