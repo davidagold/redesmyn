@@ -824,8 +824,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Fast-forward merge the task + its ancestors into the epic base
-                  branch.
+                  Fast-forward merge the task + its unmerged ancestors into the
+                  epic base branch.
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
@@ -852,7 +852,8 @@ export function NodeCard({
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
                   Rebase downstream branches to keep the stack intact, then
-                  fast-forward the task and ancestors into the epic base branch.
+                  fast-forward the task and unmerged ancestors into the epic
+                  base branch.
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
@@ -878,8 +879,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Fast-forward the task and ancestors as in [Merge], then rebase
-                  downstream branches to keep the stack intact.
+                  Fast-forward the task and unmerged ancestors as in [Merge],
+                  then rebase downstream branches to keep the stack intact.
                 </TooltipContent>
               </Tooltip>
             </DropdownMenuContent>
