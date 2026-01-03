@@ -892,6 +892,22 @@ async def fetch_issue_label_ids(client: LinearClient, *, issue_id: str) -> list[
     return out
 
 
+async def fetch_issue_team_id(client: LinearClient, *, issue_id: str) -> str:
+    data = await client.graphql(ISSUE_QUERY, variables={"id": issue_id})
+    issue = data.get("issue")
+    if not isinstance(issue, dict):
+        raise ValueError("Linear: issue not found or invalid response")
+    issue_dict = cast(dict[str, Any], issue)
+    team = issue_dict.get("team")
+    if not isinstance(team, dict):
+        raise ValueError("Linear: missing issue.team")
+    team_dict = cast(dict[str, Any], team)
+    team_id = team_dict.get("id")
+    if not isinstance(team_id, str) or not team_id:
+        raise ValueError("Linear: missing issue.team.id")
+    return team_id
+
+
 async def ensure_issue_has_label(
     client: LinearClient, *, issue_id: str, label_id: str
 ) -> list[str]:

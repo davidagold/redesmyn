@@ -13,7 +13,7 @@ import webbrowser
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 import click
@@ -58,12 +58,8 @@ from redesmyn.docs.markdown import (
     extract_fenced_block_after_heading,
     parse_yaml_block,
 )
-from redesmyn.docs.markdown import (
-    MarkdownSectionError,
-    extract_fenced_block_after_heading,
-    parse_yaml_block,
-)
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
+from redesmyn.docs.metadata import TaskMetadata
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
     BlockPolicy,
@@ -76,7 +72,11 @@ from redesmyn.integrations.linear import (
     LinearClient,
     LinearIssue,
     LinearIssueRelation,
+    create_issue,
+    ensure_issue_has_label,
     exchange_code_for_token,
+    fetch_issue,
+    fetch_issue_team_id,
     fetch_project_issue_relations,
     fetch_project_issues,
     fetch_project_issues_by_label,
@@ -86,12 +86,16 @@ from redesmyn.integrations.linear import (
     new_pkce_verifier,
     pkce_code_challenge,
     refresh_access_token,
+    resolve_team_state_id,
+    set_issue_blockers,
+    update_issue,
 )
 from redesmyn.integrations.linear_credentials import (
     LinearCredentials,
     default_linear_credential_store,
     is_expiring_soon,
 )
+from redesmyn.integrations.linear_write_defaults import ensure_linear_write_defaults
 from redesmyn.git_proxy import (
     READ_ONLY_SUBCOMMANDS,
     detect_git_subcommand,
@@ -141,8 +145,10 @@ from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.settings import RedesmynSettings
 from redesmyn.strings import slugify
 
-_DEBUG = False
+if TYPE_CHECKING:
+    from redesmyn.docs.loader import TaskDoc
 
+_DEBUG = False
 
 app = typer.Typer(
     add_completion=False,
@@ -186,6 +192,15 @@ class SyncStats:
     tasks_updated: int = 0
     branches_created: int = 0
     branches_updated: int = 0
+
+
+@dataclass(slots=True)
+class LinearPushStats:
+    issues_created: int = 0
+    issues_updated: int = 0
+    docs_updated: int = 0
+    blockers_updated: int = 0
+    blockers_skipped: int = 0
 
 
 @app.command()
@@ -268,8 +283,21 @@ def sync(
 
     dst = (to or "").lower()
     if dst == "linear":
-        typer.echo("error: sync --to linear is not implemented yet", err=True)
-        raise typer.Exit(2)
+        stats = asyncio.run(
+            _sync_to_linear(
+                ctx,
+                epic=epic,
+                project=project,
+                create_nodes=create_nodes,
+            )
+        )
+        typer.echo(
+            "Synced to Linear: "
+            f"issues +{stats.issues_created}/~{stats.issues_updated}, "
+            f"docs ~{stats.docs_updated}, "
+            f"blockers ~{stats.blockers_updated} (skipped {stats.blockers_skipped})"
+        )
+        return
     typer.echo("error: --to must be one of: linear", err=True)
     raise typer.Exit(2)
 
@@ -2012,6 +2040,393 @@ async def _sync_from_linear(
     return await _sync_from_local(
         ctx, epic=epic_row.slug, create_branches=create_branches
     )
+
+
+def _extract_markdown_section(markdown: str, *, heading: str) -> str | None:
+    lines = markdown.splitlines()
+    target = heading.strip().lower()
+
+    heading_index: int | None = None
+    heading_level: int | None = None
+    for idx, line in enumerate(lines):
+        if not line.startswith("#"):
+            continue
+        hashes, sep, title = line.partition(" ")
+        if not sep or not hashes or not set(hashes) <= {"#"}:
+            continue
+        if title.strip().lower() != target:
+            continue
+        heading_index = idx
+        heading_level = len(hashes)
+        break
+
+    if heading_index is None or heading_level is None:
+        return None
+
+    body: list[str] = []
+    for line in lines[heading_index + 1 :]:
+        if line.startswith("#"):
+            hashes, sep, _ = line.partition(" ")
+            if sep and hashes and set(hashes) <= {"#"} and len(hashes) <= heading_level:
+                break
+        body.append(line)
+
+    content = "\n".join(body).strip()
+    return content or None
+
+
+def _linear_state_type_from_task_state(state: TaskState) -> str:
+    match state:
+        case TaskState.Todo:
+            return "unstarted"
+        case TaskState.InProgress:
+            return "started"
+        case TaskState.Blocked:
+            return "blocked"
+        case TaskState.Done:
+            return "completed"
+    return "unstarted"
+
+
+def _looks_like_uuid(value: str) -> bool:
+    # Linear issue ids are UUIDs. We accept UUID-shaped values for best-effort
+    # external blocker refs.
+    parts = value.split("-")
+    if len(parts) != 5:
+        return False
+    expected_lens = [8, 4, 4, 4, 12]
+    for part, expected_len in zip(parts, expected_lens, strict=True):
+        if len(part) != expected_len:
+            return False
+        try:
+            int(part, 16)
+        except ValueError:
+            return False
+    return True
+
+
+def _task_ref_from_doc(doc_path: Path, meta: TaskMetadata) -> str | None:
+    if meta.id:
+        return meta.id
+    name = doc_path.parent.name
+    if name.startswith("T-") and name[2:].isdigit():
+        return name
+    return None
+
+
+def _linear_title_from_doc(
+    title: str, *, identifier: str | None, local_id: str | None
+) -> str:
+    t = title.strip()
+    if identifier and t.startswith(f"{identifier} "):
+        t = t.removeprefix(f"{identifier} ").strip()
+    if local_id and t.startswith(f"{local_id} "):
+        t = t.removeprefix(f"{local_id} ").strip()
+    return t or title.strip()
+
+
+async def _sync_to_linear(
+    ctx: RepoContext,
+    *,
+    epic: str | None,
+    project: str | None,
+    create_nodes: bool,
+) -> LinearPushStats:
+    # Make sure local docs/DB are in sync before we push, and so we have Task rows
+    # (including state) for every task doc.
+    requested_epic = epic or _infer_single_epic_slug_from_fs(ctx.worktree_root)
+    await _sync_from_local(ctx, epic=requested_epic, create_nodes=create_nodes)
+
+    epic_row = await _resolve_epic(ctx, epic=requested_epic)
+    creds = await _require_fresh_linear_credentials(ctx=ctx)
+
+    project_id = project or epic_row.linear_project_id
+    if not project_id:
+        epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
+        if epic_readme.exists():
+            try:
+                epic_doc = load_epic_doc(epic_readme)
+                project_id = epic_doc.metadata.linear_project_id
+            except DocLoadError:
+                project_id = None
+
+    if not project_id:
+        raise typer.BadParameter(
+            "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
+        )
+
+    stats = LinearPushStats()
+    client = LinearClient(access_token=creds.access_token)
+
+    epic_dir = ctx.worktree_root / "epics" / epic_row.slug
+    tasks_dir = epic_dir / "tasks"
+    task_readmes = sorted(tasks_dir.glob("*/README.md")) if tasks_dir.exists() else []
+    if not task_readmes:
+        return stats
+
+    task_docs: list[tuple[Path, "TaskDoc"]] = []
+    for readme in task_readmes:
+        try:
+            task_docs.append((readme, load_task_doc(readme)))
+        except DocLoadError as e:
+            raise typer.BadParameter(str(e)) from e
+
+    def _load_metadata_dict(markdown: str) -> dict[str, Any]:
+        try:
+            block = extract_fenced_block_after_heading(
+                markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
+            )
+        except MarkdownSectionError:
+            return {}
+        return parse_yaml_block(block.content)
+
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            epic_db = await session.get(Epic, epic_row.id)
+            if epic_db is None:
+                raise typer.BadParameter("Epic not found")
+            if epic_db.linear_project_id is None:
+                epic_db.linear_project_id = project_id
+            elif epic_db.linear_project_id != project_id:
+                raise typer.BadParameter(
+                    f"Epic is linked to a different Linear project ({epic_db.linear_project_id})"
+                )
+
+            defaults = await ensure_linear_write_defaults(
+                session,
+                epic_id=epic_db.id,
+                epic_slug=epic_db.slug,
+                project_id=project_id,
+                client=client,
+            )
+
+            tasks = list(
+                await session.scalars(
+                    select(Task).where(Task.epic_id == epic_db.id).order_by(Task.id)
+                )
+            )
+            tasks_by_local_path = {
+                t.local_path: t for t in tasks if t.local_path is not None
+            }
+
+            nodes_by_id: dict[int, Node] = {}
+            if create_nodes:
+                nodes = list(
+                    await session.scalars(
+                        select(Node).where(Node.epic_id == epic_db.id)
+                    )
+                )
+                nodes_by_id = {n.id: n for n in nodes}
+
+            state_id_cache: dict[tuple[str, str], str] = {}
+
+            async def _state_id(*, team_id: str, state_type: str) -> str:
+                key = (team_id, state_type)
+                cached = state_id_cache.get(key)
+                if cached is not None:
+                    return cached
+                resolved = await resolve_team_state_id(
+                    client, team_id=team_id, state_type=state_type
+                )
+                state_id_cache[key] = resolved
+                return resolved
+
+            for readme, doc in task_docs:
+                if doc.title is None:
+                    raise typer.BadParameter(f"Task doc missing title (H1): {readme}")
+
+                rel_path = str(readme.relative_to(ctx.worktree_root))
+                task_row = tasks_by_local_path.get(rel_path)
+                if task_row is None:
+                    raise typer.BadParameter(f"Task not found in DB for {rel_path}")
+
+                meta = doc.metadata
+                doc_issue_id = meta.linear.issue_id if meta.linear else None
+                db_issue_id = task_row.linear_issue_id
+                if doc_issue_id and db_issue_id and doc_issue_id != db_issue_id:
+                    raise typer.BadParameter(
+                        f"Task {rel_path} has conflicting Linear issue ids (doc={doc_issue_id}, db={db_issue_id})"
+                    )
+                issue_id = doc_issue_id or db_issue_id
+
+                local_ref = _task_ref_from_doc(readme, meta)
+                desired_title = _linear_title_from_doc(
+                    doc.title or "",
+                    identifier=meta.linear.identifier if meta.linear else None,
+                    local_id=local_ref,
+                )
+                brief = _extract_markdown_section(doc.markdown, heading="Brief (local)")
+
+                task_state = task_row.state if task_row.state else TaskState.Todo
+                state_type = _linear_state_type_from_task_state(task_state)
+
+                if issue_id:
+                    team_id = await fetch_issue_team_id(client, issue_id=issue_id)
+                    existing = await fetch_issue(client, issue_id=issue_id)
+                    description = brief if brief is not None else existing.description
+                    updated = await update_issue(
+                        client,
+                        issue_id=issue_id,
+                        title=desired_title,
+                        description=description,
+                        state_id=await _state_id(
+                            team_id=team_id, state_type=state_type
+                        ),
+                    )
+                    await ensure_issue_has_label(
+                        client, issue_id=issue_id, label_id=defaults.label_id
+                    )
+                    issue = updated
+                    stats.issues_updated += 1
+                else:
+                    issue = await create_issue(
+                        client,
+                        team_id=defaults.team_id,
+                        project_id=project_id,
+                        title=desired_title,
+                        description=brief,
+                        label_ids=[defaults.label_id],
+                        state_id=await _state_id(
+                            team_id=defaults.team_id, state_type=state_type
+                        ),
+                    )
+                    stats.issues_created += 1
+
+                if task_row.linear_issue_id != issue.id:
+                    task_row.linear_issue_id = issue.id
+
+                if create_nodes and task_row.node_id is not None:
+                    node = nodes_by_id.get(task_row.node_id)
+                    if node is not None and node.linear_issue_id != issue.id:
+                        node.linear_issue_id = issue.id
+
+                markdown = readme.read_text(encoding="utf-8")
+                existing_meta = _load_metadata_dict(markdown)
+
+                linear_meta = existing_meta.get("linear")
+                if not isinstance(linear_meta, dict):
+                    linear_meta = {}
+                    existing_meta["linear"] = linear_meta
+                linear_meta["issue_id"] = issue.id
+                linear_meta["identifier"] = issue.identifier
+
+                if create_nodes and task_row.node_id is not None:
+                    node = nodes_by_id.get(task_row.node_id)
+                    if node is not None:
+                        node_meta = existing_meta.get("node")
+                        if not isinstance(node_meta, dict):
+                            node_meta = {}
+                            existing_meta["node"] = node_meta
+                        branch = node_meta.get("branch")
+                        if not isinstance(branch, str) or not branch.strip():
+                            node_meta["branch"] = node.branch_name
+
+                next_markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
+                if next_markdown != markdown:
+                    readme.write_text(next_markdown, encoding="utf-8")
+                    stats.docs_updated += 1
+
+            await session.commit()
+
+    finally:
+        await engine.dispose()
+
+    # Ensure the epic project id is persisted in the epic doc for deterministic
+    # bootstrap on a new machine.
+    epic_readme = epic_dir / "README.md"
+    if epic_readme.exists():
+        markdown = epic_readme.read_text(encoding="utf-8")
+        yaml_data = {
+            "slug": epic_row.slug,
+            "name": epic_row.name,
+            "root_branch": epic_row.root_branch,
+            "linear": {"project_id": project_id},
+        }
+        epic_readme.write_text(
+            upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
+        )
+
+    # Second pass: after all issues exist, push dependency edges.
+    ref_to_issue_id: dict[str, str] = {}
+    issue_id_by_path: dict[Path, str] = {}
+    for readme, doc in task_docs:
+        meta = doc.metadata
+        local_ref = _task_ref_from_doc(readme, meta)
+        markdown = readme.read_text(encoding="utf-8")
+        meta_dict = _load_metadata_dict(markdown)
+        linear_meta = meta_dict.get("linear")
+        if not isinstance(linear_meta, dict):
+            continue
+        issue_id = linear_meta.get("issue_id")
+        identifier = linear_meta.get("identifier")
+        if not isinstance(issue_id, str) or not issue_id:
+            continue
+        issue_id_by_path[readme] = issue_id
+        for ref in [local_ref, identifier, issue_id]:
+            if not isinstance(ref, str) or not ref:
+                continue
+            existing = ref_to_issue_id.get(ref)
+            if existing is not None and existing != issue_id:
+                raise typer.BadParameter(
+                    f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
+                )
+            ref_to_issue_id[ref] = issue_id
+
+    for readme, doc in task_docs:
+        markdown = readme.read_text(encoding="utf-8")
+        meta_dict = _load_metadata_dict(markdown)
+        try:
+            meta_parsed = TaskMetadata.model_validate(meta_dict)
+        except Exception as e:
+            raise typer.BadParameter(
+                f"Invalid task doc metadata in {readme}: {e}"
+            ) from e
+        issue_id = issue_id_by_path.get(readme)
+        if issue_id is None:
+            continue
+
+        refs: list[str] = []
+        if meta_parsed.stacked_on:
+            refs.append(meta_parsed.stacked_on)
+        refs.extend(meta_parsed.must_land_after)
+
+        deduped: list[str] = []
+        seen = set()
+        for ref in refs:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            deduped.append(ref)
+
+        blocker_ids: list[str] = []
+        unresolved: list[str] = []
+        for ref in deduped:
+            resolved = ref_to_issue_id.get(ref)
+            if resolved is not None:
+                blocker_ids.append(resolved)
+                continue
+            if _looks_like_uuid(ref):
+                blocker_ids.append(ref)
+                continue
+            unresolved.append(ref)
+
+        if unresolved:
+            stats.blockers_skipped += 1
+            typer.echo(
+                f"warning: skipping dependency push for {readme.parent.name}; "
+                f"unresolved refs: {', '.join(unresolved)}",
+                err=True,
+            )
+            continue
+
+        await set_issue_blockers(
+            client, issue_id=issue_id, blocker_issue_ids=blocker_ids
+        )
+        stats.blockers_updated += 1
+
+    return stats
 
 
 def _default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
