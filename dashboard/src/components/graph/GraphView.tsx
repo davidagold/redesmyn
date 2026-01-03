@@ -85,6 +85,7 @@ interface GraphViewProps {
     kind: "rebase" | "merge_ff"
   } | null
   epicSlug?: string | null
+  routeEpicSlug?: string | null
   onSelectNode: (nodeId: number, options: { additive: boolean }) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
@@ -254,6 +255,7 @@ export function GraphView({
   focusMode,
   mergeStepCue = null,
   epicSlug,
+  routeEpicSlug = null,
   onSelectNode,
   onSelectEdge,
   onClearSelection,
@@ -1076,6 +1078,10 @@ export function GraphView({
       return
     }
 
+    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
+      return
+    }
+
     if (wasSelected && !hasSelection) {
       const rect = containerRef.current?.getBoundingClientRect()
       if (!rect || rect.width <= 0 || rect.height <= 0) {
@@ -1093,10 +1099,12 @@ export function GraphView({
       queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
     }
   }, [
+    epicSlug,
     flow,
     hasSelection,
     nodes.length,
     queueViewportAnimation,
+    routeEpicSlug,
     targetPositions,
     trunkLayout,
   ])
@@ -1195,6 +1203,10 @@ export function GraphView({
       return
     }
 
+    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
+      return
+    }
+
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       return
@@ -1216,6 +1228,7 @@ export function GraphView({
     layoutVersion,
     nodes.length,
     queueViewportAnimation,
+    routeEpicSlug,
     targetPositions,
     trunkLayout,
   ])
