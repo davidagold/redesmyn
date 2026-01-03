@@ -14,6 +14,18 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """
+    Normalize datetimes for lease comparisons.
+
+    SQLite frequently returns tz-naive datetimes even when SQLAlchemy models use
+    `DateTime(timezone=True)`. We treat tz-naive values as UTC.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 async def get_primary_host_key(
     session: AsyncSession,
     repo: RepoKey,
@@ -23,8 +35,8 @@ async def get_primary_host_key(
     row = await session.get(RepoExecutorLease, (repo.workspace_id, repo.repo_id))
     if row is None:
         return None
-    current = now or _now()
-    if row.lease_expires_at <= current:
+    current = _as_utc(now or _now())
+    if _as_utc(row.lease_expires_at) <= current:
         return None
     return row.host_key
 
@@ -42,7 +54,7 @@ async def acquire_or_refresh_primary(
 
     Returns True if this host holds the lease after the call.
     """
-    current = now or _now()
+    current = _as_utc(now or _now())
     expires_at = current + ttl
     row = await session.get(RepoExecutorLease, (repo.workspace_id, repo.repo_id))
     if row is None:
@@ -56,7 +68,7 @@ async def acquire_or_refresh_primary(
         )
         return True
 
-    if row.lease_expires_at <= current or row.host_key == host_key:
+    if _as_utc(row.lease_expires_at) <= current or row.host_key == host_key:
         row.host_key = host_key
         row.lease_expires_at = expires_at
         return True
@@ -71,7 +83,7 @@ async def expire_primary_if_owner(
     host_key: str,
     now: datetime | None = None,
 ) -> None:
-    current = now or _now()
+    current = _as_utc(now or _now())
     row = await session.get(RepoExecutorLease, (repo.workspace_id, repo.repo_id))
     if row is None or row.host_key != host_key:
         return
