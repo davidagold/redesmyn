@@ -58,6 +58,11 @@ from redesmyn.docs.markdown import (
     extract_fenced_block_after_heading,
     parse_yaml_block,
 )
+from redesmyn.docs.markdown import (
+    MarkdownSectionError,
+    extract_fenced_block_after_heading,
+    parse_yaml_block,
+)
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
