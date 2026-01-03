@@ -45,3 +45,6 @@ db-downgrade rev="-1":
 
 db-revision msg:
     uv run alembic -c alembic.ini revision -m "{{msg}}" --autogenerate
+
+db-check:
+    uv run python scripts/check_migrations.py
