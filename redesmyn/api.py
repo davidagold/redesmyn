@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +11,8 @@ from typing import Any, Literal, Protocol, overload
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, TypeAdapter
@@ -124,8 +128,11 @@ from redesmyn.git_mechanics_v0 import (
     execute_merge_cascade_plan,
     execute_restack_plan,
 )
+from redesmyn.logging_config import configure_logging
 from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
+
+logger = logging.getLogger("redesmyn")
 
 
 class AppState(Protocol):
@@ -171,6 +178,7 @@ async def lifespan(app: App):
         db_path=settings.db_path,
     )
     ctx.db_path.parent.mkdir(parents=True, exist_ok=True)
+    configure_logging(state_dir=ctx.state_dir)
 
     if settings.runner_mode == "local":
         await init_repo(ctx, migrate=False)
@@ -239,6 +247,38 @@ def maybe_mount_dashboard(app_: FastAPI, worktree_root: Path) -> None:
 
 app = App(title="Redesmyn", lifespan=lifespan)
 v1 = APIRouter(prefix="/v1")
+
+
+@app.middleware("http")
+async def log_unhandled_errors(request: Request, call_next):
+    request_id = uuid4().hex
+    start = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Unhandled request error request_id=%s method=%s path=%s",
+            request_id,
+            request.method,
+            request.url.path,
+        )
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error (request_id={request_id})"},
+        )
+
+    response.headers["x-request-id"] = request_id
+    duration_ms = int((time.monotonic() - start) * 1000)
+    if response.status_code >= 500:
+        logger.error(
+            "HTTP %s request_id=%s method=%s path=%s duration_ms=%s",
+            response.status_code,
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+    return response
 
 
 def _tail_text(path: Path, *, max_bytes: int = 65536) -> tuple[str, bool]:
