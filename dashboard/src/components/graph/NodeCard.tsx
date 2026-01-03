@@ -1210,50 +1210,93 @@ export function NodeCard({
                 <div className="flex min-w-0 items-center gap-2">
                   <Pause className="size-3.5 text-amber-300/80" />
                   <div className="truncate text-xs font-medium text-foreground">
-                    Rebase blocked (conflicts)
+                    Rebase blocked
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabledReason={
-                      blockingAttachCommand
-                        ? null
-                        : "No task id recorded for this blocked step."
-                    }
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!blockingAttachCommand) {
-                        return
-                      }
-                      void copyToClipboard(blockingAttachCommand)
-                    }}
-                  >
-                    <Terminal />
-                    Copy attach
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabledReason={
-                      blockingRemediationMessage
-                        ? null
-                        : "No remediation message available."
-                    }
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!blockingRemediationMessage) {
-                        return
-                      }
-                      void copyToClipboard(blockingRemediationMessage)
-                    }}
-                  >
-                    <MessageSquareText />
-                    Copy agent note
-                  </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {blockingAttachCommand ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Copy attach command"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void copyToClipboard(blockingAttachCommand)
+                            }}
+                          >
+                            <Terminal />
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={10}
+                        showArrow={false}
+                      >
+                        Copy attach
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabledReason="No task id recorded for this blocked step."
+                      aria-label="Copy attach command"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                    >
+                      <Terminal />
+                    </Button>
+                  )}
+
+                  {blockingRemediationMessage ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Copy agent note"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void copyToClipboard(blockingRemediationMessage)
+                            }}
+                          >
+                            <MessageSquareText />
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={10}
+                        showArrow={false}
+                      >
+                        Copy agent note
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabledReason="No remediation message available."
+                      aria-label="Copy agent note"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                    >
+                      <MessageSquareText />
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
