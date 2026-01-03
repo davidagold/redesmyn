@@ -69,10 +69,12 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
     child: ReactNode,
     options?: { fullWidth?: boolean },
   ) {
-    const title = mark.title ?? ""
-    const message = mark.message ?? ""
-    const fullMessage =
-      title && message ? `${title}\n\n${message}` : title || message
+    const title = (mark.title ?? "").trim()
+    const message = (mark.message ?? "").trim()
+    const body =
+      message && title && message.toLowerCase().startsWith(title.toLowerCase())
+        ? message.slice(title.length).trimStart()
+        : message
     const committerName = mark.committerName ?? mark.authorName ?? null
     const committerEmail = mark.committerEmail ?? mark.authorEmail ?? null
     const committer =
@@ -108,9 +110,9 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
               <div className="text-[11px] text-background/75">{timestamp}</div>
             ) : null}
             {title ? <div className="text-xs font-medium">{title}</div> : null}
-            {fullMessage ? (
+            {body ? (
               <div className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-background/85">
-                {fullMessage}
+                {body}
               </div>
             ) : null}
           </div>
