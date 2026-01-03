@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, overload
+from typing import Any, Literal, Protocol, cast, overload
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
@@ -1389,6 +1389,7 @@ async def task_agent_logs(
         "text": text,
         "truncated": truncated,
     }
+
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)
 async def linear_status() -> LinearStatusResponse:
