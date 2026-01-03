@@ -115,17 +115,21 @@ function agentStatusTooltip(
     return "Agent not started"
   }
 
+  if (agentSession.status === "running") {
+    return "Agent running"
+  }
+  if (agentSession.status === "blocked") {
+    return "Agent blocked"
+  }
+  if (agentSession.status === "error") {
+    return "Agent error"
+  }
+  if (agentSession.status === "stopped") {
+    return "Agent stopped"
+  }
+
   const summary = statusSummary(task, agentSession)
-  if (summary === "done") {
-    return "Done"
-  }
-  if (summary === "blocked") {
-    return "Blocked"
-  }
-  if (summary === "not started") {
-    return "Agent not started"
-  }
-  return `Agent ${agentSession.agentName} ${summary}`
+  return summary === "not started" ? "Agent not started" : `Agent ${summary}`
 }
 
 export function NodeCard({
@@ -603,15 +607,7 @@ export function NodeCard({
       ) : null
     ) : null
 
-  const tooltipParts = [
-    agentStatusTooltip(task, agentSession),
-    stackInSync === true
-      ? "Stack in sync"
-      : stackInSync === false
-        ? "Stack out of sync"
-        : null,
-  ]
-  const tooltip = tooltipParts.filter(Boolean).join("\n")
+  const tooltip = agentStatusTooltip(task, agentSession)
 
   const rebaseAttachCommand = rebaseRemediation?.attachCommand ?? null
   const rebaseRemediationMessage = rebaseRemediation?.message ?? null
