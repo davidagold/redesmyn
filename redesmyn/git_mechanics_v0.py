@@ -680,6 +680,13 @@ async def build_restack_plan(
                 )
             except GitCommandError as e:
                 raise MergePlanError(str(e)) from e
+
+            if not merged_cache[task_row.id]:
+                raise MergePlanError(
+                    "Task is marked done, but its branch tip is not merged into "
+                    f"{base_branch}: T-{task_row.id} {task_row.branch_name}. "
+                    "Update your local base branch and retry, or mark the task not done."
+                )
             return merged_cache[task_row.id]
 
         def resolve_worktree_path(task_row: Task) -> Path | None:
