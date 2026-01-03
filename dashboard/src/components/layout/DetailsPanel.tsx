@@ -524,10 +524,7 @@ function AgentActions({
   const statusLabel = agentSession?.status ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
-  const canRestart =
-    statusLabel === "running" ||
-    statusLabel === "blocked" ||
-    statusLabel === "error"
+  const canRestart = hasAgent
 
   const configuredHarnessCommand =
     orchestrationDefaults?.harness.command?.trim() ?? ""
@@ -536,6 +533,18 @@ function AgentActions({
     agentArgv && agentArgv.length > 0
       ? agentArgv.join(" ")
       : configuredHarnessCommand
+
+  const harnessEditable =
+    !isRunning && (statusLabel === "stopped" || statusLabel === "error")
+  const [harnessDraft, setHarnessDraft] = useState("")
+  useEffect(() => {
+    setHarnessDraft(harnessCommand)
+  }, [harnessCommand, task.id, agentSession?.id])
+  const harnessDraftTrimmed = harnessDraft.trim()
+  const harnessDirty =
+    harnessEditable &&
+    harnessDraftTrimmed !== harnessCommand.trim() &&
+    harnessDraftTrimmed.length > 0
 
   const oneTimePreludeValue = oneTimePrelude.trim()
 
@@ -584,7 +593,7 @@ function AgentActions({
     setError(null)
     try {
       const response = await restartTaskAgent(taskId, {
-        harness: null,
+        harness: harnessDirty ? harnessDraftTrimmed : null,
         detach: orchestrationDefaults?.harness.detach ?? true,
         prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
       })
@@ -785,7 +794,11 @@ function AgentActions({
                   className="h-full rounded-none border-0"
                   onClick={() => void handleRestart()}
                   disabledReason={
-                    pending !== null ? "Action in progress" : null
+                    pending !== null
+                      ? "Action in progress"
+                      : harnessEditable && !harnessDraftTrimmed
+                        ? "Harness command is empty"
+                        : null
                   }
                 >
                   <RotateCcw />
@@ -822,13 +835,24 @@ function AgentActions({
               : "Foreground"}
           </span>
         </div>
-        <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
-          {harnessCommand || "—"}
-        </div>
+        {harnessEditable ? (
+          <input
+            className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            value={harnessDraft}
+            onChange={(e) => setHarnessDraft(e.target.value)}
+            disabled={pending !== null}
+          />
+        ) : (
+          <div className="rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm">
+            {harnessCommand || "—"}
+          </div>
+        )}
         <div className="text-xs text-muted-foreground">
-          {agentArgv
-            ? "Command used for the most recent run."
-            : "Command used when starting this agent."}
+          {harnessEditable && harnessDirty
+            ? "Edited command will be used when restarting this agent."
+            : agentArgv
+              ? "Command used for the most recent run."
+              : "Command used when starting this agent."}
         </div>
       </div>
 
