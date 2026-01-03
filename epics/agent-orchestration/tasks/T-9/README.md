@@ -1,4 +1,4 @@
-# T-9 Worktrees UX: `rn checkout` + worktree status surfaces
+# T-9 Worktrees UX: `rn shell` + worktree status surfaces
 
 ## Metadata
 
@@ -14,8 +14,8 @@ node:
 ## Brief (local)
 
 - Provide ergonomic worktree-aware navigation:
-  - `rn checkout <node|task|branch>` prints/opens the correct worktree and ensures it exists
-  - optional “subshell” helper for fast switching (within constraints of terminal UX)
+  - `rn shell -e <epic> -t <T-…>` opens a subshell at the task worktree (ensures it exists)
+  - `rn shell --print ...` prints the worktree path for manual `cd` workflows
 - Expose worktree health to the UI (host-local path, clean/dirty, branch):
   - show from the graph selection state (Details panel) without devolving into inert property enumerations
 
@@ -27,7 +27,7 @@ node:
 ## Updates
 
 - Worktree UI surfaces should stay “health-first”: missing/dirty/mismatch signals + a small set of actions, with full paths behind copy/expand (avoid inert enumerations).
-- Align the Details panel Worktree section with `rn checkout` ergonomics (copy checkout command, open path, etc.) rather than expecting users to manually navigate long filesystem paths.
+- Align the Details panel Worktree section with `rn shell` ergonomics (copy command, open path, etc.) rather than expecting users to manually navigate long filesystem paths.
 
 ### Final designs
 
@@ -44,7 +44,7 @@ Avoid showing raw filesystem paths by default.
 
 Primary action:
 
-- `Copy rn checkout --task <task_id>` (this is the canonical “take me there / create it” workflow)
+- `Copy rn shell --task-id <task_id>` (this is the canonical “take me there / create it” workflow)
 
 Secondary actions (copy-first):
 

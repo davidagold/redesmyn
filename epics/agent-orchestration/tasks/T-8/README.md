@@ -14,7 +14,7 @@ node:
 - Add task-level actions in the graph/Details panel:
   - start/stop/restart agent
   - attach instructions (e.g. tmux attach command) when applicable
-  - quick access to worktree ergonomics where helpful (handoff to `rn checkout`), without clutter
+  - quick access to worktree ergonomics where helpful (handoff to `rn shell`), without clutter
 - Add epic-level “Run” settings so multi-agent startup does not require per-task clicking.
 
 ## Acceptance Criteria
@@ -26,7 +26,7 @@ node:
 
 - Add graph Details panel actions:
   - start/stop/restart agent (tmux detached when available)
-  - copy attach/logs commands + `rn checkout --task …` handoff
+  - copy attach/logs commands + `rn shell --task-id …` handoff
 - Keep the Details panel “Agent” section status-first and action-first; avoid inert property enumerations (e.g., full `cwd`/worktree paths) unless tucked behind a copy/expand affordance.
 - Reduce visual busyness: prefer spacing + subtle separators over nested bordered panels.
 - Add graph-first quick actions (hover/context) for the common loop (Start/Attach/Stop/Restart) without forcing a Details panel drilldown.
@@ -47,7 +47,7 @@ The Agent section should read like a control surface, not a properties table:
 - **Copy actions** (always available when meaningful):
   - `Copy attach command` (tmux only)
   - `Copy logs command`
-  - `Copy rn checkout command`
+  - `Copy rn shell command`
 
 No default display of long filesystem paths; paths exist behind copy affordances.
 

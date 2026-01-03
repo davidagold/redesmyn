@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -20,6 +21,7 @@ from redesmyn.agent_runtime import (
     attach_agent_session,
     agent_log_path_for_session_row,
     checkout_task_worktree,
+    find_existing_worktree_path_for_branch,
     has_tmux,
     load_task_agent_session,
     restart_task_agent,
@@ -243,6 +245,209 @@ def checkout(
         raise typer.Exit(2)
 
     typer.echo(str(path))
+
+
+def _parse_epic_task_num(raw: str) -> tuple[int, str]:
+    trimmed = raw.strip()
+    match = re.match(r"^(?:[Tt]-?)?(\\d+)$", trimmed)
+    if not match:
+        raise ValueError(f"Invalid task number: {raw!r} (expected 4 or T-4)")
+    num = int(match.group(1))
+    if num <= 0:
+        raise ValueError(f"Invalid task number: {raw!r} (must be > 0)")
+    return num, f"T-{num}"
+
+
+def _infer_task_label_from_local_path(local_path: str | None) -> str | None:
+    if not local_path:
+        return None
+    match = re.search(r"/tasks/(T-\\d+)/README\\.md$", local_path)
+    return match.group(1) if match else None
+
+
+async def _resolve_task_for_shell(
+    ctx: RepoContext,
+    *,
+    epic: str | None,
+    task: str | None,
+    task_id: int | None,
+) -> tuple[Task, Epic, str | None]:
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            if task_id is not None:
+                row = await session.get(Task, task_id)
+                if row is None:
+                    raise RuntimeError(f"Unknown task id: {task_id}")
+                epic_row = await session.get(Epic, row.epic_id)
+                if epic_row is None:
+                    raise RuntimeError("Epic not found for task")
+                return row, epic_row, _infer_task_label_from_local_path(row.local_path)
+
+            if not task:
+                raise RuntimeError("Pass either --task-id or -t/--task.")
+
+            epic_row = await _resolve_epic(ctx, epic=epic)
+            _, task_label = _parse_epic_task_num(task)
+            expected_rel_path = f"epics/{epic_row.slug}/tasks/{task_label}/README.md"
+
+            row = await session.scalar(
+                select(Task).where(
+                    Task.epic_id == epic_row.id,
+                    Task.local_path == expected_rel_path,
+                )
+            )
+            if row is not None:
+                return row, epic_row, task_label
+
+            # Fallback: locate by reading docs metadata, in case the task folder isn't `T-<n>`.
+            matches: list[Task] = []
+            tasks = list(
+                await session.scalars(select(Task).where(Task.epic_id == epic_row.id))
+            )
+            for candidate in tasks:
+                if not candidate.local_path:
+                    continue
+                path = ctx.worktree_root / candidate.local_path
+                if not path.exists():
+                    continue
+                try:
+                    doc = load_task_doc(path)
+                except DocLoadError:
+                    continue
+                if doc.metadata.id == task_label:
+                    matches.append(candidate)
+
+            if not matches:
+                raise RuntimeError(
+                    f"Unknown task {task_label} in epic {epic_row.slug!r}. "
+                    "Run `rn sync --from local` to import docs."
+                )
+            if len(matches) > 1:
+                raise RuntimeError(
+                    f"Ambiguous task ref {task_label!r}; matches multiple tasks."
+                )
+            return matches[0], epic_row, task_label
+    finally:
+        await engine.dispose()
+
+
+@app.command()
+def shell(
+    epic: str | None = typer.Option(
+        None,
+        "--epic",
+        "-e",
+        help="Epic slug or id (defaults if only one epic).",
+    ),
+    task: str | None = typer.Option(
+        None,
+        "--task",
+        "-t",
+        help="Epic-scoped task number (e.g. 4 or T-4).",
+    ),
+    task_id: int | None = typer.Option(
+        None,
+        "--task-id",
+        help="Developer: task id (DB primary key).",
+    ),
+    no_create: bool = typer.Option(
+        False,
+        "--no-create",
+        help="Do not create a worktree; error if it doesn't exist.",
+    ),
+    print_only: bool = typer.Option(
+        False,
+        "--print",
+        help="Print the worktree path and exit.",
+    ),
+) -> None:
+    """Open a subshell rooted at a task's worktree."""
+    if task_id is not None and (epic is not None or task is not None):
+        typer.echo("error: pass only one of --task-id or --epic/--task", err=True)
+        raise typer.Exit(2)
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    try:
+        resolved_task, resolved_epic, task_label = asyncio.run(
+            _resolve_task_for_shell(ctx, epic=epic, task=task, task_id=task_id)
+        )
+    except RuntimeError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if resolved_task.branch_name is None:
+        typer.echo(
+            "error: task has no branch backing; run `rn sync --from local` to create branches",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    path: Path | None = None
+    if resolved_task.worktree_path:
+        candidate = Path(resolved_task.worktree_path)
+        if candidate.exists():
+            path = candidate
+
+    if path is None:
+        existing = find_existing_worktree_path_for_branch(
+            ctx.repo_root, branch=resolved_task.branch_name
+        )
+        if existing is not None and existing.exists():
+            path = existing
+
+    if path is None and no_create:
+        typer.echo(
+            "error: worktree does not exist (pass without --no-create)", err=True
+        )
+        raise typer.Exit(2)
+
+    if path is None:
+        try:
+            path = asyncio.run(checkout_task_worktree(ctx, task_id=resolved_task.id))
+        except RuntimeError as e:
+            typer.echo(f"error: {e}", err=True)
+            raise typer.Exit(2)
+
+    if print_only:
+        typer.echo(str(path))
+        return
+
+    safe_title = (resolved_task.title or "").replace("\n", " ").strip()
+    label = task_label or _infer_task_label_from_local_path(resolved_task.local_path)
+    num = None
+    if label:
+        parsed = re.match(r"^T-(\\d+)$", label)
+        if parsed:
+            num = parsed.group(1)
+    suffix = f" {label}" if label else ""
+    typer.echo(f'Worktree: {resolved_epic.slug}{suffix} "{safe_title}" → {path}')
+
+    env = os.environ.copy()
+    env["RN_EPIC_SLUG"] = resolved_epic.slug
+    env["RN_TASK_ID"] = str(resolved_task.id)
+    env["RN_TASK_TITLE"] = safe_title
+    env["RN_BRANCH_NAME"] = resolved_task.branch_name
+    env["RN_WORKTREE_PATH"] = str(path)
+    env["RN_PARENT_CWD"] = os.getcwd()
+    if label:
+        env["RN_TASK_LABEL"] = label
+    if num:
+        env["RN_TASK_NUM"] = num
+
+    shell_path = env.get("SHELL") or "/bin/zsh"
+    try:
+        subprocess.run([shell_path], cwd=str(path), env=env, check=False)
+    except OSError as e:
+        typer.echo(f"error: failed to start shell {shell_path!r}: {e}", err=True)
+        raise typer.Exit(2)
 
 
 @app.command()
@@ -732,7 +937,7 @@ def run(
             typer.echo(f"{verb}: {task.id} ({task.title})")
             typer.echo(f"  rn agent attach --task {task.id}")
             typer.echo(f"  rn agent logs --task {task.id}")
-            typer.echo(f"  rn checkout --task {task.id}")
+            typer.echo(f"  rn shell --task-id {task.id}")
         except RuntimeError as e:
             failures.append((task.id, str(e)))
 
@@ -1853,7 +2058,7 @@ def agent_start(
 
     typer.echo(f"Attach:  rn agent attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
-    typer.echo(f"Checkout: rn checkout --task {task_id}")
+    typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
 
 @agent_app.command("restart")
@@ -1906,7 +2111,7 @@ def agent_restart(
         typer.echo(f"warning: {warning}", err=True)
     typer.echo(f"Attach:  rn agent attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
-    typer.echo(f"Checkout: rn checkout --task {task_id}")
+    typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
 
 @agent_app.command("attach")

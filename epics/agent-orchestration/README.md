@@ -126,4 +126,4 @@ From the dashboard graph:
 
 1. Start a small fleet (`rn run`, or the dashboard “Run” panel) so multiple task agents are running without per-task clicking.
 2. Attach into a task agent, make commits, and see the graph update live (presence + activity pulse).
-3. Switch between task worktrees ergonomically (`rn checkout --task …`) without breaking invariants.
+3. Switch between task worktrees ergonomically (`rn shell -e <epic> -t <T-…>`) without breaking invariants.

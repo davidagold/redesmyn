@@ -97,7 +97,7 @@ Output:
 - Then prints a compact table of started agents with copy-paste commands:
   - `rn agent attach --task <task_id>`
   - `rn agent logs --task <task_id>`
-  - `rn checkout --task <task_id>`
+  - `rn shell --task-id <task_id>`
 
 #### C) Task-keyed lifecycle surfaces (avoid node-keyed APIs)
 

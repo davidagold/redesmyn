@@ -449,7 +449,7 @@ def default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
     return ctx.state_dir / "worktrees" / safe_rel
 
 
-def _find_existing_worktree_path_for_branch(
+def find_existing_worktree_path_for_branch(
     repo_root: Path, *, branch: str
 ) -> Path | None:
     proc = subprocess.run(
@@ -534,7 +534,7 @@ async def ensure_task_worktree(
         else epic.root_branch
     )
 
-    existing_path = _find_existing_worktree_path_for_branch(
+    existing_path = find_existing_worktree_path_for_branch(
         ctx.repo_root, branch=task.branch_name
     )
     if existing_path is not None:

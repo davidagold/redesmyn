@@ -613,10 +613,7 @@ function AgentActions({
 
   const logsCommand = useMemo(() => `rn agent logs --task ${taskId}`, [taskId])
 
-  const checkoutCommand = useMemo(
-    () => `rn checkout --task ${taskId}`,
-    [taskId],
-  )
+  const shellCommand = useMemo(() => `rn shell --task-id ${taskId}`, [taskId])
 
   async function refreshLogs() {
     if (!hasAgent) {
@@ -903,10 +900,12 @@ function AgentActions({
         <Button
           variant="ghost"
           size="xs"
-          onClick={() => void handleCopy(checkoutCommand, "Checkout copied")}
+          onClick={() =>
+            void handleCopy(shellCommand, "Worktree command copied")
+          }
           disabledReason={pending !== null ? "Action in progress" : null}
         >
-          Copy rn checkout
+          Copy rn shell
         </Button>
       </div>
 
