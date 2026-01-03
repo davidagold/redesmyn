@@ -16,7 +16,7 @@ from redesmyn.db.models import HostCapabilities
 from redesmyn.domain.enums import AgentStatus, CommandState
 from redesmyn.repo import branch_exists, git_is_ancestor
 from redesmyn.repo_observer import RepoObserverState, observe_repo
-from redesmyn.schemas.core import EpicGraphResponse, EpicResponse, NodeResponse
+from redesmyn.schemas.core import EpicGraphResponse, EpicResponse, TaskResponse
 from redesmyn.settings import RedesmynSettings
 from redesmyn.ws_protocol import (
     DaemonCommandAck,
@@ -141,7 +141,7 @@ class DaemonRuntime:
         self._capabilities = capabilities.model_dump(mode="python")
 
         self._observer_state = RepoObserverState()
-        self._last_stack_in_sync_by_node_id: dict[int, bool | None] = {}
+        self._last_stack_in_sync_by_task_id: dict[int, bool | None] = {}
 
     async def run_forever(self) -> None:
         backoff = Backoff()
@@ -169,11 +169,11 @@ class DaemonRuntime:
                 # Treat each websocket session as a fresh "epoch" so we can resync
                 # derived projections on reconnect by emitting a baseline.
                 self._observer_state = RepoObserverState()
-                self._last_stack_in_sync_by_node_id = {}
+                self._last_stack_in_sync_by_task_id = {}
 
                 hello = DaemonHello(
-                    daemon_id=self._daemon_id,
-                    host=self._host,
+                    host_key=self._daemon_id,
+                    display_name=self._host,
                     capabilities=self._capabilities,
                     attached_repos=self._attached_repos,
                 )
@@ -274,41 +274,42 @@ class DaemonRuntime:
         except Exception:
             epics = []
 
-        nodes: list[NodeResponse] = []
-        active_agent_id_by_node_id: dict[int, int] = {}
-        upstream_by_node_id: dict[int, str | None] = {}
+        tasks: list[TaskResponse] = []
+        active_agent_id_by_task_id: dict[int, int] = {}
+        upstream_by_task_id: dict[int, str | None] = {}
 
         for epic in epics:
             graph = await api.epic_graph(epic.slug)
-            nodes.extend(graph.nodes)
-            agents_by_id = {a.id: a for a in graph.agents}
-            nodes_by_id = {n.id: n for n in graph.nodes}
-            for node in graph.nodes:
-                if node.agent_id is not None:
-                    agent = agents_by_id.get(node.agent_id)
-                    if agent is not None and agent.status in {
-                        AgentStatus.Running,
-                        AgentStatus.Blocked,
-                    }:
-                        active_agent_id_by_node_id[node.id] = node.agent_id
+            tasks.extend(graph.tasks)
+            tasks_by_id = {t.id: t for t in graph.tasks}
 
-                if node.parent_node_id is None:
-                    upstream_by_node_id[node.id] = epic.root_branch
+            for session in graph.agent_sessions:
+                if session.task_id is None:
+                    continue
+                if (
+                    session.status in {AgentStatus.Running, AgentStatus.Blocked}
+                    and session.ended_at is None
+                ):
+                    active_agent_id_by_task_id[session.task_id] = session.agent_id
+
+            for task in graph.tasks:
+                if task.parent_task_id is None:
+                    upstream_by_task_id[task.id] = epic.root_branch
                 else:
-                    parent = nodes_by_id.get(node.parent_node_id)
-                    upstream_by_node_id[node.id] = (
+                    parent = tasks_by_id.get(task.parent_task_id)
+                    upstream_by_task_id[task.id] = (
                         parent.branch_name if parent is not None else None
                     )
 
-        if not nodes:
+        if not tasks:
             return
 
         events = observe_repo(
             self._ctx,
-            nodes,
+            tasks,
             self._observer_state,
             emit_baseline=emit_baseline,
-            active_agent_id_by_node_id=active_agent_id_by_node_id,
+            active_agent_id_by_task_id=active_agent_id_by_task_id,
         )
         for event in events:
             await self._send_event(
@@ -318,30 +319,32 @@ class DaemonRuntime:
             )
 
         missing: object = object()
-        for node in nodes:
-            upstream = upstream_by_node_id.get(node.id)
+        for task in tasks:
+            upstream = upstream_by_task_id.get(task.id)
             value: bool | None
             if upstream is None:
                 value = None
-            elif not branch_exists(self._ctx.repo_root, node.branch_name):
+            elif task.branch_name is None:
+                value = None
+            elif not branch_exists(self._ctx.repo_root, task.branch_name):
                 value = None
             elif not branch_exists(self._ctx.repo_root, upstream):
                 value = None
             else:
-                value = git_is_ancestor(self._ctx.repo_root, upstream, node.branch_name)
+                value = git_is_ancestor(self._ctx.repo_root, upstream, task.branch_name)
 
-            prev = self._last_stack_in_sync_by_node_id.get(node.id, missing)
+            prev = self._last_stack_in_sync_by_task_id.get(task.id, missing)
             if prev is not missing and prev == value:
                 continue
-            self._last_stack_in_sync_by_node_id[node.id] = value
+            self._last_stack_in_sync_by_task_id[task.id] = value
             if prev is missing and value is None and not emit_baseline:
                 continue
             await self._send_event(
                 send_queue,
                 event_type="node.stack_in_sync",
                 data={
-                    "node_id": node.id,
-                    "branch_name": node.branch_name,
+                    "task_id": task.id,
+                    "branch_name": task.branch_name,
                     "upstream_ref": upstream,
                     "stack_in_sync": value,
                 },
