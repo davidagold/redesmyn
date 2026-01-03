@@ -340,24 +340,58 @@ async def observe_once(
     )
     sync_by_task_id = {r.task_id: r for r in sync_rows}
 
+    merged_into_base_by_task_id: dict[int, bool | None] = {}
+
+    def effective_upstream_branch_for_task(task: Task) -> str | None:
+        epic = epics_by_id.get(task.epic_id)
+        base_branch = epic.root_branch if epic else None
+        if base_branch is None:
+            return None
+
+        if task.parent_task_id is None:
+            return base_branch
+
+        if base_branch not in heads:
+            return None
+
+        seen: set[int] = set()
+        current_parent_id = task.parent_task_id
+        while current_parent_id is not None and current_parent_id not in seen:
+            seen.add(current_parent_id)
+            parent = tasks_by_id.get(current_parent_id)
+            if parent is None or parent.branch_name is None:
+                return base_branch
+            if parent.branch_name not in heads:
+                return None
+
+            merged = merged_into_base_by_task_id.get(current_parent_id)
+            if merged is None and current_parent_id not in merged_into_base_by_task_id:
+                try:
+                    merged = git_is_ancestor(
+                        ctx.repo_root, parent.branch_name, base_branch
+                    )
+                except Exception:
+                    merged = None
+                merged_into_base_by_task_id[current_parent_id] = merged
+
+            if merged is True:
+                current_parent_id = parent.parent_task_id
+                continue
+
+            return parent.branch_name
+
+        return base_branch
+
     for task in tasks:
         in_sync: bool | None
 
         if task.branch_name is None or task.branch_name not in heads:
             in_sync = None
         else:
-            # Determine upstream branch
-            if task.parent_task_id is None:
-                epic = epics_by_id.get(task.epic_id)
-                upstream = epic.root_branch if epic else None
-            else:
-                parent = tasks_by_id.get(task.parent_task_id)
-                upstream = parent.branch_name if parent else None
-
-            if upstream is None or upstream not in heads:
+            upstream = effective_upstream_branch_for_task(task)
+            if upstream is None:
                 in_sync = None
             else:
-                # Check if upstream is ancestor of task's branch
                 try:
                     in_sync = git_is_ancestor(ctx.repo_root, upstream, task.branch_name)
                 except Exception:

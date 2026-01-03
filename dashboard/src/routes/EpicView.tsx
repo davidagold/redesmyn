@@ -1247,7 +1247,8 @@ export function EpicView() {
                       )}
                     />
                     <TooltipContent side="bottom" align="center">
-                      Tasks whose branch is out of sync with its upstream.
+                      Tasks whose branch is out of sync with its effective
+                      upstream (ignores merged ancestors).
                     </TooltipContent>
                   </Tooltip>
                 ) : (

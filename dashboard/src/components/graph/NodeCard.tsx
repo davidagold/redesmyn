@@ -632,7 +632,9 @@ export function NodeCard({
     }
   }
   if (outOfSync) {
-    gitAttentionTooltipLines.push("Branch is out of sync with its upstream.")
+    gitAttentionTooltipLines.push(
+      "Branch is out of sync with its effective upstream (ignores merged ancestors).",
+    )
   }
 
   const mergeAttentionIcon = mergeRunBlocked ? (
