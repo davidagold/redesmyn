@@ -213,12 +213,20 @@ class TaskMergeRequest(ApiRequest):
     force: bool = False
 
 
+class TaskRestackRequest(ApiRequest):
+    run_id: str | None = None
+    scope: Literal["descendants", "spine"] = "descendants"
+    dry_run: bool = False
+    allow_running: bool = False
+
+
 class MergeRunSummaryResponse(ApiResponse):
     run_id: str
     epic_id: int
     requested_task_id: int
     status: MergeRunStatus
     scope: Literal["descendants", "spine"]
+    operation: Literal["merge", "restack"] = "merge"
     restack_mode: Literal["strict", "merge_then_restack"] = "strict"
     allow_running: bool
     force: bool
@@ -243,6 +251,13 @@ class TaskMergePlanStepResponse(ApiResponse):
 
 
 class TaskMergeResponse(ApiResponse):
+    run_id: str
+    dry_run: bool = False
+    base_branch: str | None = None
+    steps: list[TaskMergePlanStepResponse] = Field(default_factory=list)
+
+
+class TaskRestackResponse(ApiResponse):
     run_id: str
     dry_run: bool = False
     base_branch: str | None = None
@@ -400,6 +415,7 @@ class TaskAgentActionEventDataResponse(ApiResponse):
 class TaskMergeEventDataResponse(ApiResponse):
     type: Literal["task.merge"] = "task.merge"
     run_id: str
+    operation: Literal["merge", "restack"] = "merge"
     task_id: int | None = None
     kind: Literal["rebase", "merge_ff"]
     phase: Literal["started", "finished", "failed"]
@@ -414,6 +430,7 @@ class MergeRunEventDataResponse(ApiResponse):
     epic_id: int
     requested_task_id: int
     status: MergeRunStatus
+    operation: Literal["merge", "restack"] = "merge"
     blocked_step_index: int | None = None
     blocked_step_kind: str | None = None
     blocked_branch_name: str | None = None

@@ -403,6 +403,7 @@ async def observe_once(
                     "epic_id": run.epic_id,
                     "requested_task_id": run.requested_task_id,
                     "status": run.status,
+                    "operation": run.operation,
                 },
                 created_at=now,
             )

@@ -363,6 +363,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/restack": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Restack Task */
+    post: operations["restack_task_v1_tasks__task_id__restack_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
@@ -759,6 +776,12 @@ export interface components {
       epicId: number
       /** Force */
       force: boolean
+      /**
+       * Operation
+       * @default merge
+       * @enum {string}
+       */
+      operation: "merge" | "restack"
       /** Requestedtaskid */
       requestedTaskId: number
       /**
@@ -1138,6 +1161,41 @@ export interface components {
       updatedAt: string
       /** Worktreepath */
       worktreePath: string | null
+    }
+    /** TaskRestackRequest */
+    TaskRestackRequest: {
+      /**
+       * Allowrunning
+       * @default false
+       */
+      allowRunning: boolean
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /** Runid */
+      runId?: string | null
+      /**
+       * Scope
+       * @default descendants
+       * @enum {string}
+       */
+      scope: "descendants" | "spine"
+    }
+    /** TaskRestackResponse */
+    TaskRestackResponse: {
+      /** Basebranch */
+      baseBranch?: string | null
+      /**
+       * Dryrun
+       * @default false
+       */
+      dryRun: boolean
+      /** Runid */
+      runId: string
+      /** Steps */
+      steps?: components["schemas"]["TaskMergePlanStepResponse"][]
     }
     /**
      * TaskSource
@@ -1839,6 +1897,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  restack_task_v1_tasks__task_id__restack_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskRestackRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskRestackResponse"]
         }
       }
       /** @description Validation Error */

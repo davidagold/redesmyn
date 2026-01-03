@@ -96,6 +96,7 @@ class MergeRunPlanStepData(BaseModel):
 
 
 class MergeRunPlanData(BaseModel):
+    operation: Literal["merge", "restack"] = "merge"
     base_branch: str
     base_worktree: str
     scope: Literal["descendants", "spine"]
@@ -663,6 +664,17 @@ class MergeRun(Base):
         if value == "merge_then_restack":
             return "merge_then_restack"
         return "strict"
+
+    @property
+    def operation(self) -> Literal["merge", "restack"]:
+        """Git operation kind (stored inside the plan snapshot)."""
+        try:
+            value = self.plan.get("operation")
+        except Exception:
+            value = None
+        if value == "restack":
+            return "restack"
+        return "merge"
 
 
 class DaemonConnection(Base):

@@ -89,7 +89,9 @@ from redesmyn.repo import (
 from redesmyn.git_mechanics_v0 import (
     MergeBlockedByRunningAgents,
     MergePlanError,
+    build_restack_plan,
     build_merge_cascade_plan,
+    execute_restack_plan,
     execute_merge_cascade_plan,
     format_merge_plan,
     format_running_agents_confirmation,
@@ -541,6 +543,98 @@ def merge(
     except MergeBlockedByRunningAgents:
         typer.echo(
             "error: merge affects running tasks; pass --yes to proceed", err=True
+        )
+        raise typer.Exit(2)
+    except GitCommandError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    finally:
+        asyncio.run(engine.dispose())
+
+
+@app.command()
+def restack(
+    task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
+    scope: str = typer.Option(
+        "descendants",
+        "--scope",
+        help="Restack scope (descendants|spine).",
+        show_choices=True,
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the restack plan without performing any git operations.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Proceed without prompting (including when running agents are detected).",
+    ),
+) -> None:
+    """Rebase a task stack to preserve parent-child branch relationships."""
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in {"descendants", "spine"}:
+        typer.echo("error: --scope must be one of: descendants, spine", err=True)
+        raise typer.Exit(2)
+
+    engine = create_engine(ctx.db_path)
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        plan = asyncio.run(
+            build_restack_plan(
+                ctx=ctx,
+                sessionmaker=sessionmaker,
+                task_id=task_id,
+                run_id=f"cli-{int(time.time())}",
+                scope=normalized_scope,  # type: ignore[arg-type]
+            )
+        )
+
+        confirmed_running = False
+        if plan.running_agents and not yes:
+            confirmed_running = typer.confirm(
+                format_running_agents_confirmation(plan.running_agents),
+                default=False,
+            )
+            if not confirmed_running:
+                raise typer.Exit(1)
+
+        if dry_run:
+            typer.echo(f"Epic base: {plan.base_branch}")
+            typer.echo(f"Scope: {plan.scope}")
+            typer.echo(f"Affected: {len(plan.affected_task_ids)} task(s)")
+            typer.echo("")
+            for step in plan.steps:
+                typer.echo(
+                    f"rebase {step.branch_name} on {step.upstream_ref} ({step.worktree_path})"
+                )
+            return
+
+        asyncio.run(
+            execute_restack_plan(
+                ctx=ctx,
+                sessionmaker=sessionmaker,
+                plan=plan,
+                allow_running=yes or confirmed_running,
+                emit_event=None,
+            )
+        )
+
+        typer.echo("Restacked.")
+    except MergePlanError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    except MergeBlockedByRunningAgents:
+        typer.echo(
+            "error: restack affects running tasks; pass --yes to proceed", err=True
         )
         raise typer.Exit(2)
     except GitCommandError as e:

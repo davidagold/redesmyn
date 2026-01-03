@@ -1107,6 +1107,15 @@
             "title": "Force",
             "type": "boolean"
           },
+          "operation": {
+            "default": "merge",
+            "enum": [
+              "merge",
+              "restack"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
           "requestedTaskId": {
             "title": "Requestedtaskid",
             "type": "integer"
@@ -2245,6 +2254,78 @@
         "title": "TaskResponse",
         "type": "object"
       },
+      "TaskRestackRequest": {
+        "properties": {
+          "allowRunning": {
+            "default": false,
+            "title": "Allowrunning",
+            "type": "boolean"
+          },
+          "dryRun": {
+            "default": false,
+            "title": "Dryrun",
+            "type": "boolean"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runid"
+          },
+          "scope": {
+            "default": "descendants",
+            "enum": [
+              "descendants",
+              "spine"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "title": "TaskRestackRequest",
+        "type": "object"
+      },
+      "TaskRestackResponse": {
+        "properties": {
+          "baseBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basebranch"
+          },
+          "dryRun": {
+            "default": false,
+            "title": "Dryrun",
+            "type": "boolean"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TaskMergePlanStepResponse"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "title": "TaskRestackResponse",
+        "type": "object"
+      },
       "TaskSource": {
         "enum": [
           "local",
@@ -3241,6 +3322,55 @@
           }
         },
         "summary": "Set Task Merge Ready"
+      }
+    },
+    "/v1/tasks/{task_id}/restack": {
+      "post": {
+        "operationId": "restack_task_v1_tasks__task_id__restack_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskRestackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRestackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restack Task"
       }
     }
   }

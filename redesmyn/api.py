@@ -110,6 +110,8 @@ from redesmyn.schemas.core import (
     TaskMergeRequest,
     TaskMergeResponse,
     TaskMergePlanStepResponse,
+    TaskRestackRequest,
+    TaskRestackResponse,
     TrunkTimelineResponse,
 )
 from redesmyn.settings import load_settings
@@ -118,7 +120,9 @@ from redesmyn.git_mechanics_v0 import (
     MergePlanError,
     MergeRunStepUpdate,
     build_merge_cascade_plan,
+    build_restack_plan,
     execute_merge_cascade_plan,
+    execute_restack_plan,
 )
 from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
@@ -657,6 +661,7 @@ async def _emit_merge_run_event(
     epic_id: int,
     requested_task_id: int,
     status: MergeRunStatus,
+    operation: Literal["merge", "restack"] = "merge",
     blocked_step_index: int | None = None,
     blocked_step_kind: str | None = None,
     blocked_branch_name: str | None = None,
@@ -667,6 +672,7 @@ async def _emit_merge_run_event(
         "epic_id": epic_id,
         "requested_task_id": requested_task_id,
         "status": status,
+        "operation": operation,
     }
     if blocked_step_index is not None:
         data["blocked_step_index"] = blocked_step_index
@@ -686,7 +692,11 @@ async def _emit_merge_run_event(
         await session.commit()
 
 
-def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
+def _merge_run_plan_snapshot(
+    *,
+    plan,
+    operation: Literal["merge", "restack"],
+) -> dict[str, object]:
     steps = [
         MergeRunPlanStepData(
             index=index,
@@ -699,12 +709,22 @@ def _merge_run_plan_snapshot(*, plan) -> dict[str, object]:
         )
         for index, step in enumerate(plan.steps)
     ]
+
+    base_worktree_value = ""
+    try:
+        base_worktree = getattr(plan, "base_worktree", None)
+        if base_worktree is not None:
+            base_worktree_value = str(base_worktree)
+    except Exception:
+        base_worktree_value = ""
+
     payload = MergeRunPlanData(
+        operation=operation,
         base_branch=plan.base_branch,
-        base_worktree=str(plan.base_worktree),
+        base_worktree=base_worktree_value,
         scope=plan.scope,
-        restack_mode=plan.restack_mode,
-        spine_task_ids=list(plan.spine_task_ids),
+        restack_mode=getattr(plan, "restack_mode", "strict"),
+        spine_task_ids=list(getattr(plan, "spine_task_ids", [])),
         affected_task_ids=list(plan.affected_task_ids),
         steps=steps,
     )
@@ -786,6 +806,7 @@ async def _record_merge_run_step_update(
                         "epic_id": row.epic_id,
                         "requested_task_id": row.requested_task_id,
                         "status": row.status,
+                        "operation": row.operation,
                         "blocked_step_index": row.blocked_step_index,
                         "blocked_step_kind": row.blocked_step_kind,
                         "blocked_branch_name": row.blocked_branch_name,
@@ -842,6 +863,7 @@ async def _set_merge_run_status(
                 "epic_id": row.epic_id,
                 "requested_task_id": row.requested_task_id,
                 "status": status,
+                "operation": row.operation,
             }
             if blocked_step_index is not None:
                 data["blocked_step_index"] = blocked_step_index
@@ -1281,7 +1303,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
             steps=steps,
         )
 
-    plan_snapshot = _merge_run_plan_snapshot(plan=plan)
+    plan_snapshot = _merge_run_plan_snapshot(plan=plan, operation="merge")
     await _upsert_merge_run(
         sessionmaker=app.state.sessionmaker,
         run_id=run_id,
@@ -1310,7 +1332,8 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                 plan=plan,
                 allow_running=request.allow_running,
                 emit_event=lambda payload: _emit_task_merge_event(
-                    sessionmaker=app.state.sessionmaker, payload=payload
+                    sessionmaker=app.state.sessionmaker,
+                    payload={**payload, "operation": "merge"},
                 ),
                 update_run=lambda update: _record_merge_run_step_update(
                     sessionmaker=app.state.sessionmaker,
@@ -1339,6 +1362,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
                 sessionmaker=app.state.sessionmaker,
                 payload={
                     "run_id": run_id,
+                    "operation": "merge",
                     "task_id": task_id,
                     "kind": "merge_ff",
                     "phase": "failed",
@@ -1350,6 +1374,123 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
     asyncio.create_task(_run())
 
     return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=plan.base_branch)
+
+
+@v1.post("/tasks/{task_id}/restack", response_model=TaskRestackResponse)
+async def restack_task(
+    task_id: int, request: TaskRestackRequest
+) -> TaskRestackResponse:
+    run_id = request.run_id or uuid4().hex
+    scope: Literal["descendants", "spine"] = request.scope
+    try:
+        plan = await build_restack_plan(
+            ctx=app.state.ctx,
+            sessionmaker=app.state.sessionmaker,
+            task_id=task_id,
+            run_id=run_id,
+            scope=scope,
+        )
+    except MergePlanError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if plan.running_agents and not request.allow_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Restack affects running tasks; retry with allowRunning=true once you confirm.",
+        )
+
+    if request.dry_run:
+        steps = [
+            TaskMergePlanStepResponse(
+                kind=step.kind,
+                task_id=step.task_id,
+                branch_name=step.branch_name,
+                worktree_path=str(step.worktree_path),
+                upstream_ref=step.upstream_ref,
+                base_branch=step.base_branch,
+            )
+            for step in plan.steps
+        ]
+        return TaskRestackResponse(
+            run_id=run_id,
+            dry_run=True,
+            base_branch=plan.base_branch,
+            steps=steps,
+        )
+
+    plan_snapshot = _merge_run_plan_snapshot(plan=plan, operation="restack")
+    await _upsert_merge_run(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        epic_id=plan.epic_id,
+        task_id=task_id,
+        scope=scope,
+        allow_running=request.allow_running,
+        force=False,
+        plan_snapshot=plan_snapshot,
+    )
+    await _emit_merge_run_event(
+        sessionmaker=app.state.sessionmaker,
+        run_id=run_id,
+        task_id=task_id,
+        epic_id=plan.epic_id,
+        requested_task_id=task_id,
+        status=MergeRunStatus.Running,
+        operation="restack",
+    )
+
+    async def _run() -> None:
+        try:
+            await execute_restack_plan(
+                ctx=app.state.ctx,
+                sessionmaker=app.state.sessionmaker,
+                plan=plan,
+                allow_running=request.allow_running,
+                emit_event=lambda payload: _emit_task_merge_event(
+                    sessionmaker=app.state.sessionmaker,
+                    payload={**payload, "operation": "restack"},
+                ),
+                update_run=lambda update: _record_merge_run_step_update(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    update=update,
+                ),
+            )
+            await _set_merge_run_status(
+                sessionmaker=app.state.sessionmaker,
+                run_id=run_id,
+                status=MergeRunStatus.Succeeded,
+            )
+        except MergeBlockedByRunningAgents:
+            return
+        except Exception as e:
+            if not isinstance(e, GitCommandError):
+                await _set_merge_run_status(
+                    sessionmaker=app.state.sessionmaker,
+                    run_id=run_id,
+                    status=MergeRunStatus.Failed,
+                    error=str(e),
+                )
+            await _emit_task_merge_event(
+                sessionmaker=app.state.sessionmaker,
+                payload={
+                    "run_id": run_id,
+                    "operation": "restack",
+                    "task_id": task_id,
+                    "kind": "rebase",
+                    "phase": "failed",
+                    "branch_name": plan.base_branch,
+                    "error": str(e),
+                },
+            )
+
+    asyncio.create_task(_run())
+
+    return TaskRestackResponse(
+        run_id=run_id,
+        dry_run=False,
+        base_branch=plan.base_branch,
+    )
 
 
 @v1.post("/merge-runs/{run_id}/resume", response_model=MergeRunResumeResponse)
@@ -1376,6 +1517,7 @@ async def resume_merge_run(
         scope_value = run.scope
         force = run.force
         allow_running = run.allow_running or request.allow_running
+        operation: Literal["merge", "restack"] = run.operation
         restack_mode: Literal["strict", "merge_then_restack"] = run.restack_mode
 
         blocked_step_index = run.blocked_step_index
@@ -1389,15 +1531,24 @@ async def resume_merge_run(
         )
 
     try:
-        plan = await build_merge_cascade_plan(
-            ctx=app.state.ctx,
-            sessionmaker=app.state.sessionmaker,
-            task_id=task_id,
-            run_id=run_id,
-            scope=normalized_scope,  # type: ignore[arg-type]
-            restack_mode=restack_mode,
-            force=force,
-        )
+        if operation == "restack":
+            plan = await build_restack_plan(
+                ctx=app.state.ctx,
+                sessionmaker=app.state.sessionmaker,
+                task_id=task_id,
+                run_id=run_id,
+                scope=normalized_scope,  # type: ignore[arg-type]
+            )
+        else:
+            plan = await build_merge_cascade_plan(
+                ctx=app.state.ctx,
+                sessionmaker=app.state.sessionmaker,
+                task_id=task_id,
+                run_id=run_id,
+                scope=normalized_scope,  # type: ignore[arg-type]
+                restack_mode=restack_mode,
+                force=force,
+            )
     except MergePlanError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -1415,7 +1566,7 @@ async def resume_merge_run(
         if step.kind != blocked_step_kind or step.branch_name != blocked_branch_name:
             start_at_step_index = 0
 
-    plan_snapshot = _merge_run_plan_snapshot(plan=plan)
+    plan_snapshot = _merge_run_plan_snapshot(plan=plan, operation=operation)
     await _upsert_merge_run(
         sessionmaker=app.state.sessionmaker,
         run_id=run_id,
@@ -1426,7 +1577,11 @@ async def resume_merge_run(
         force=force,
         plan_snapshot=plan_snapshot,
     )
-    merge_task_id = plan.spine_task_ids[-1] if plan.spine_task_ids else task_id
+    merge_task_id = (
+        plan.spine_task_ids[-1]  # type: ignore[attr-defined]
+        if operation == "merge" and getattr(plan, "spine_task_ids", None)
+        else task_id
+    )
     await _emit_merge_run_event(
         sessionmaker=app.state.sessionmaker,
         run_id=run_id,
@@ -1434,25 +1589,45 @@ async def resume_merge_run(
         epic_id=plan.epic_id,
         requested_task_id=task_id,
         status=MergeRunStatus.Running,
+        operation=operation,
     )
 
     async def _run() -> None:
         try:
-            await execute_merge_cascade_plan(
-                ctx=app.state.ctx,
-                sessionmaker=app.state.sessionmaker,
-                plan=plan,
-                allow_running=allow_running,
-                emit_event=lambda payload: _emit_task_merge_event(
-                    sessionmaker=app.state.sessionmaker, payload=payload
-                ),
-                update_run=lambda update: _record_merge_run_step_update(
+            if operation == "restack":
+                await execute_restack_plan(
+                    ctx=app.state.ctx,
                     sessionmaker=app.state.sessionmaker,
-                    run_id=run_id,
-                    update=update,
-                ),
-                start_at_step_index=start_at_step_index,
-            )
+                    plan=plan,
+                    allow_running=allow_running,
+                    emit_event=lambda payload: _emit_task_merge_event(
+                        sessionmaker=app.state.sessionmaker,
+                        payload={**payload, "operation": "restack"},
+                    ),
+                    update_run=lambda update: _record_merge_run_step_update(
+                        sessionmaker=app.state.sessionmaker,
+                        run_id=run_id,
+                        update=update,
+                    ),
+                    start_at_step_index=start_at_step_index,
+                )
+            else:
+                await execute_merge_cascade_plan(
+                    ctx=app.state.ctx,
+                    sessionmaker=app.state.sessionmaker,
+                    plan=plan,
+                    allow_running=allow_running,
+                    emit_event=lambda payload: _emit_task_merge_event(
+                        sessionmaker=app.state.sessionmaker,
+                        payload={**payload, "operation": "merge"},
+                    ),
+                    update_run=lambda update: _record_merge_run_step_update(
+                        sessionmaker=app.state.sessionmaker,
+                        run_id=run_id,
+                        update=update,
+                    ),
+                    start_at_step_index=start_at_step_index,
+                )
             await _set_merge_run_status(
                 sessionmaker=app.state.sessionmaker,
                 run_id=run_id,
@@ -1473,8 +1648,9 @@ async def resume_merge_run(
                 payload={
                     "run_id": run_id,
                     "task_id": task_id,
-                    "kind": "merge_ff",
+                    "kind": "merge_ff" if operation == "merge" else "rebase",
                     "phase": "failed",
+                    "operation": operation,
                     "branch_name": plan.base_branch,
                     "error": str(e),
                 },
