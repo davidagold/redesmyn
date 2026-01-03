@@ -21,9 +21,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -742,164 +740,151 @@ export function NodeCard({
               )}
             />
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Git</DropdownMenuLabel>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <DropdownMenuItem
-                        {...triggerProps}
-                        disabled={pendingMerge !== null || canResumeMerge}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleRestack({ scope: "descendants" })
-                        }}
-                      >
-                        <GitBranch className="size-3.5" />
-                        Restack
-                      </DropdownMenuItem>
-                    )}
-                  />
-                  <TooltipContent side="right" sideOffset={12} align="center">
-                    Rebase downstream branches to keep the stack intact.
-                  </TooltipContent>
-                </Tooltip>
-              </DropdownMenuGroup>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={pendingMerge !== null || canResumeMerge}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleRestack({ scope: "descendants" })
+                      }}
+                    >
+                      <GitBranch className="size-3.5" />
+                      Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Rebase downstream branches to keep the stack intact.
+                </TooltipContent>
+              </Tooltip>
               <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Merge</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem
-                  checked={mergeReady}
-                  disabled={
-                    !canMerge || pendingMerge !== null || canResumeMerge
-                  }
-                  closeOnClick={false}
-                  onClick={(e) => e.stopPropagation()}
-                  onCheckedChange={(checked) =>
-                    void handleToggleMergeReady(checked)
-                  }
-                >
-                  Ready to merge
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                {canResumeMerge ? (
-                  <>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <DropdownMenuItem
-                            {...triggerProps}
-                            disabled={pendingMerge !== null}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              void handleResumeMerge()
-                            }}
-                          >
-                            <Play className="size-3.5" />
-                            {mergeRunOperation === "restack"
-                              ? "Resume restack"
-                              : "Resume merge"}
-                          </DropdownMenuItem>
-                        )}
-                      />
-                      <TooltipContent
-                        side="right"
-                        sideOffset={12}
-                        align="center"
-                      >
-                        Continue a previously-blocked{" "}
-                        {mergeRunOperation === "restack" ? "restack" : "merge"}{" "}
-                        run after resolving conflicts.
-                      </TooltipContent>
-                    </Tooltip>
-                    <DropdownMenuSeparator />
-                  </>
-                ) : null}
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <DropdownMenuItem
-                        {...triggerProps}
-                        disabled={
-                          !canMerge ||
-                          !mergeReady ||
-                          pendingMerge !== null ||
-                          canResumeMerge
-                        }
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleMerge({ cascade: false })
-                        }}
-                      >
-                        <GitMerge className="size-3.5" />
-                        Merge
-                      </DropdownMenuItem>
-                    )}
-                  />
-                  <TooltipContent side="right" sideOffset={12} align="center">
-                    Fast-forward merge the task + its ancestors into the epic
-                    base branch.
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <DropdownMenuItem
-                        {...triggerProps}
-                        disabled={
-                          !canMerge ||
-                          !mergeReady ||
-                          pendingMerge !== null ||
-                          canResumeMerge
-                        }
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleMerge({ cascade: true })
-                        }}
-                      >
-                        <Layers className="size-3.5" />
-                        Merge and Restack
-                      </DropdownMenuItem>
-                    )}
-                  />
-                  <TooltipContent side="right" sideOffset={12} align="center">
-                    Rebase downstream branches to keep the stack intact, then
-                    fast-forward the task and ancestors into the epic base
-                    branch.
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <DropdownMenuItem
-                        {...triggerProps}
-                        disabled={
-                          !canMerge ||
-                          !mergeReady ||
-                          pendingMerge !== null ||
-                          canResumeMerge
-                        }
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleMergeThenRestack()
-                        }}
-                      >
-                        <Layers className="size-3.5" />
-                        Merge then Restack
-                      </DropdownMenuItem>
-                    )}
-                  />
-                  <TooltipContent side="right" sideOffset={12} align="center">
-                    Fast-forward the task and ancestors as in [Merge], then
-                    rebase downstream branches to keep the stack intact.
-                  </TooltipContent>
-                </Tooltip>
-              </DropdownMenuGroup>
+              <DropdownMenuCheckboxItem
+                checked={mergeReady}
+                disabled={!canMerge || pendingMerge !== null || canResumeMerge}
+                closeOnClick={false}
+                onClick={(e) => e.stopPropagation()}
+                onCheckedChange={(checked) =>
+                  void handleToggleMergeReady(checked)
+                }
+              >
+                Ready to merge
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              {canResumeMerge ? (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <DropdownMenuItem
+                          {...triggerProps}
+                          disabled={pendingMerge !== null}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            void handleResumeMerge()
+                          }}
+                        >
+                          <Play className="size-3.5" />
+                          {mergeRunOperation === "restack"
+                            ? "Resume restack"
+                            : "Resume merge"}
+                        </DropdownMenuItem>
+                      )}
+                    />
+                    <TooltipContent side="right" sideOffset={12} align="center">
+                      Continue a previously-blocked{" "}
+                      {mergeRunOperation === "restack" ? "restack" : "merge"}{" "}
+                      run after resolving conflicts.
+                    </TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMerge({ cascade: false })
+                      }}
+                    >
+                      <GitMerge className="size-3.5" />
+                      Merge
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Fast-forward merge the task + its ancestors into the epic base
+                  branch.
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMerge({ cascade: true })
+                      }}
+                    >
+                      <Layers className="size-3.5" />
+                      Merge and Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Rebase downstream branches to keep the stack intact, then
+                  fast-forward the task and ancestors into the epic base branch.
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={
+                        !canMerge ||
+                        !mergeReady ||
+                        pendingMerge !== null ||
+                        canResumeMerge
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleMergeThenRestack()
+                      }}
+                    >
+                      <Layers className="size-3.5" />
+                      Merge then Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Fast-forward the task and ancestors as in [Merge], then rebase
+                  downstream branches to keep the stack intact.
+                </TooltipContent>
+              </Tooltip>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
