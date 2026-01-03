@@ -758,7 +758,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Rebase downstream branches to keep the stack intact.
+                  Rebase this branch and downstream branches to keep the stack
+                  intact.
                 </TooltipContent>
               </Tooltip>
               <DropdownMenuSeparator />

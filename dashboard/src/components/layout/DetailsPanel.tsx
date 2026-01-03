@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Markdown } from "@/components/markdown"
 import {
@@ -91,10 +91,12 @@ interface DetailsPanelProps {
 function MergeRunDetails({
   mergeRun,
   node,
+  panelOpen,
   onRequestRefresh,
 }: {
   mergeRun: MergeRun
   node: GraphNode | null | undefined
+  panelOpen: boolean
   onRequestRefresh?: () => void
 }) {
   const [calloutExpanded, setCalloutExpanded] = useState(false)
@@ -115,6 +117,23 @@ function MergeRunDetails({
     mergeRun.status === "blocked" ||
     mergeRun.status === "resumable" ||
     mergeRun.status === "failed"
+
+  const panelOpenPrevRef = useRef(panelOpen)
+  useEffect(() => {
+    const wasOpen = panelOpenPrevRef.current
+    panelOpenPrevRef.current = panelOpen
+
+    if (!panelOpen || wasOpen) {
+      return
+    }
+
+    if (!showCallout) {
+      return
+    }
+
+    // Auto-expand alert callouts when the drawer opens, but don't fight manual collapse after.
+    setCalloutExpanded(true)
+  }, [panelOpen, showCallout])
 
   const calloutTone =
     mergeRun.status === "blocked" || mergeRun.status === "failed"
@@ -1010,14 +1029,19 @@ export function DetailsPanel({
         ? `task:${task.id}`
         : "none"
 
+  const mergeRunActive =
+    mergeRun &&
+    (mergeRun.status === "blocked" ||
+      mergeRun.status === "resumable" ||
+      mergeRun.status === "running" ||
+      mergeRun.status === "failed")
+      ? mergeRun
+      : null
+
   const defaultSections = edge
     ? ["contract"]
-    : mergeRun &&
-        (mergeRun.status === "blocked" ||
-          mergeRun.status === "resumable" ||
-          mergeRun.status === "running" ||
-          mergeRun.status === "failed")
-      ? ["agent", "merge-run", "readme"]
+    : mergeRunActive
+      ? ["merge-run", "agent", "readme"]
       : ["agent", "readme"]
   const floatingActionsPortalId = "details-panel-floating-actions"
 
@@ -1082,6 +1106,20 @@ export function DetailsPanel({
             </>
           ) : (
             <>
+              {mergeRunActive ? (
+                <AccordionItem value="merge-run">
+                  <AccordionTrigger>Merge Run</AccordionTrigger>
+                  <AccordionContent className="pt-3">
+                    <MergeRunDetails
+                      mergeRun={mergeRunActive}
+                      node={node}
+                      panelOpen={open}
+                      onRequestRefresh={onRequestRefresh}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              ) : null}
+
               <AccordionItem value="agent">
                 <AccordionTrigger>Agent</AccordionTrigger>
                 <AccordionContent className="pt-3">
@@ -1095,19 +1133,6 @@ export function DetailsPanel({
                   ) : null}
                 </AccordionContent>
               </AccordionItem>
-
-              {mergeRun ? (
-                <AccordionItem value="merge-run">
-                  <AccordionTrigger>Merge Run</AccordionTrigger>
-                  <AccordionContent className="pt-3">
-                    <MergeRunDetails
-                      mergeRun={mergeRun}
-                      node={node}
-                      onRequestRefresh={onRequestRefresh}
-                    />
-                  </AccordionContent>
-                </AccordionItem>
-              ) : null}
 
               <AccordionItem value="readme">
                 <AccordionTrigger>README</AccordionTrigger>
