@@ -49,6 +49,7 @@ import {
   Layers,
   Loader2,
   MessageSquareText,
+  Pause,
   Play,
   RotateCcw,
   Square,
@@ -1201,48 +1202,61 @@ export function NodeCard({
           ) : null}
 
           {blockingMergeRunBlockedRebase ? (
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                disabledReason={
-                  blockingAttachCommand
-                    ? null
-                    : "No task id recorded for this blocked step."
-                }
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  if (!blockingAttachCommand) {
-                    return
-                  }
-                  void copyToClipboard(blockingAttachCommand)
-                }}
-              >
-                <Terminal />
-                Copy attach
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabledReason={
-                  blockingRemediationMessage
-                    ? null
-                    : "No remediation message available."
-                }
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  if (!blockingRemediationMessage) {
-                    return
-                  }
-                  void copyToClipboard(blockingRemediationMessage)
-                }}
-              >
-                <MessageSquareText />
-                Copy agent note
-              </Button>
-            </div>
+            <Card
+              size="sm"
+              className="gap-2 border border-amber-400/25 bg-amber-400/10 py-2 shadow-lg ring-amber-400/10 backdrop-blur"
+            >
+              <CardContent className="flex items-center justify-between gap-2 px-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Pause className="size-3.5 text-amber-300/80" />
+                  <div className="truncate text-xs font-medium text-foreground">
+                    Rebase blocked (conflicts)
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabledReason={
+                      blockingAttachCommand
+                        ? null
+                        : "No task id recorded for this blocked step."
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!blockingAttachCommand) {
+                        return
+                      }
+                      void copyToClipboard(blockingAttachCommand)
+                    }}
+                  >
+                    <Terminal />
+                    Copy attach
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabledReason={
+                      blockingRemediationMessage
+                        ? null
+                        : "No remediation message available."
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!blockingRemediationMessage) {
+                        return
+                      }
+                      void copyToClipboard(blockingRemediationMessage)
+                    }}
+                  >
+                    <MessageSquareText />
+                    Copy agent note
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ) : null}
 
           {shouldShowResumeButton ? (
