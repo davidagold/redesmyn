@@ -64,7 +64,11 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const arrowSize = 12
   const labelGapPx = 10
 
-  function renderCommitTooltip(mark: TrunkMark, child: ReactNode) {
+  function renderCommitTooltip(
+    mark: TrunkMark,
+    child: ReactNode,
+    options?: { fullWidth?: boolean },
+  ) {
     const title = mark.title ?? ""
     const message = mark.message ?? ""
     const committerName = mark.committerName ?? mark.authorName ?? null
@@ -81,7 +85,10 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
           render={(triggerProps) => (
             <span
               {...triggerProps}
-              className={cn("inline-flex w-full", triggerProps.className)}
+              className={cn(
+                options?.fullWidth ? "flex w-full" : "inline-flex",
+                triggerProps.className,
+              )}
             >
               {child}
             </span>
@@ -208,6 +215,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                     >
                       {titleText}
                     </span>,
+                    { fullWidth: true },
                   )}
                 </div>
 
@@ -234,6 +242,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                     >
                       {sha}
                     </span>,
+                    { fullWidth: true },
                   )}
                 </div>
               </div>
