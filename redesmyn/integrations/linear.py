@@ -421,6 +421,22 @@ class LinearClient:
         return data
 
 
+PROJECT_URL_QUERY = """
+query ProjectUrl($projectId: String!) {
+  project(id: $projectId) {
+    url
+  }
+}
+"""
+
+ISSUE_URL_QUERY = """
+query IssueUrl($issueId: String!) {
+  issue(id: $issueId) {
+    url
+  }
+}
+"""
+
 PROJECT_ISSUES_QUERY = """
 query ProjectIssues($projectId: String!, $after: String) {
   project(id: $projectId) {
@@ -439,6 +455,29 @@ query ProjectIssues($projectId: String!, $after: String) {
   }
 }
 """
+
+
+async def fetch_project_url(client: LinearClient, *, project_id: str) -> str:
+    data = await client.graphql(PROJECT_URL_QUERY, variables={"projectId": project_id})
+    project = data.get("project")
+    if not isinstance(project, dict):
+        raise ValueError("Linear project not found")
+    url = project.get("url")
+    if not isinstance(url, str) or not url:
+        raise ValueError("Linear project URL missing")
+    return url
+
+
+async def fetch_issue_url(client: LinearClient, *, issue_id: str) -> str:
+    data = await client.graphql(ISSUE_URL_QUERY, variables={"issueId": issue_id})
+    issue = data.get("issue")
+    if not isinstance(issue, dict):
+        raise ValueError("Linear issue not found")
+    url = issue.get("url")
+    if not isinstance(url, str) or not url:
+        raise ValueError("Linear issue URL missing")
+    return url
+
 
 PROJECT_ISSUES_BY_LABEL_QUERY = """
 query ProjectIssuesByLabel($projectId: String!, $labelName: String!, $after: String) {

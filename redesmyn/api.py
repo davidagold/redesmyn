@@ -26,6 +26,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
 from starlette.websockets import WebSocketDisconnect
+import typer
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_monitor import run_agent_monitor
@@ -52,10 +53,14 @@ from redesmyn.db import (
     init_db,
 )
 from redesmyn.db.models import HostCapabilities
+from redesmyn.docs.loader import DocLoadError, load_epic_doc
 from redesmyn.domain.enums import BlockPolicy, CommandState, MergeRunStatus
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
+    LinearClient,
     exchange_code_for_token,
+    fetch_issue_url,
+    fetch_project_url,
     linear_authorize_url,
     linear_redirect_uri,
     new_oauth_state,
@@ -117,6 +122,7 @@ from redesmyn.schemas.core import (
     RepoKeyResponse,
     ReleaseConditionResponse,
     SandboxCapabilitiesResponse,
+    SyncStatsResponse,
     TaskResponse,
     TaskAgentRestartRequest,
     TaskAgentStartRequest,
@@ -1542,6 +1548,105 @@ async def linear_status(request: Request) -> LinearStatusResponse:
     return LinearStatusResponse(
         connected=creds is not None,
         connected_at=creds.connected_at if creds is not None else None,
+    )
+
+
+@v1.post("/linear/logout", response_model=LinearStatusResponse)
+async def linear_logout() -> LinearStatusResponse:
+    store = default_linear_credential_store()
+    store.clear()
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        await session.execute(delete(LinearAuth))
+        await session.commit()
+
+    return LinearStatusResponse(connected=False, connected_at=None)
+
+
+def _resolve_linear_project_id(epic_row: Epic) -> str | None:
+    if epic_row.linear_project_id:
+        return epic_row.linear_project_id
+
+    epic_readme = app.state.ctx.worktree_root / "epics" / epic_row.slug / "README.md"
+    if not epic_readme.exists():
+        return None
+
+    try:
+        epic_doc = load_epic_doc(epic_readme)
+    except DocLoadError:
+        return None
+
+    return epic_doc.metadata.linear_project_id
+
+
+@v1.get("/epics/{epic}/linear/open", include_in_schema=False)
+async def open_epic_in_linear(epic: str) -> Response:
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, epic=epic)
+
+    project_id = _resolve_linear_project_id(epic_row)
+    if not project_id:
+        raise HTTPException(status_code=400, detail="Linear project id is not set")
+
+    store = default_linear_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Linear is not connected")
+
+    client = LinearClient(access_token=creds.access_token)
+    try:
+        url = await fetch_project_url(client, project_id=project_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return RedirectResponse(url=url, status_code=302)
+
+
+@v1.get("/linear/issues/{issue_id}/open", include_in_schema=False)
+async def open_linear_issue(issue_id: str) -> Response:
+    store = default_linear_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Linear is not connected")
+
+    client = LinearClient(access_token=creds.access_token)
+    try:
+        url = await fetch_issue_url(client, issue_id=issue_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return RedirectResponse(url=url, status_code=302)
+
+
+@v1.post("/epics/{epic}/sync/from/linear", response_model=SyncStatsResponse)
+async def sync_from_linear(epic: str) -> SyncStatsResponse:
+    ctx = app.state.ctx
+    from redesmyn.cli import _sync_from_linear
+
+    try:
+        stats = await _sync_from_linear(
+            ctx, epic=epic, project=None, create_branches=True
+        )
+    except typer.BadParameter as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SyncStatsResponse(
+        epics_created=stats.epics_created,
+        epics_updated=stats.epics_updated,
+        tasks_created=stats.tasks_created,
+        tasks_updated=stats.tasks_updated,
+        branches_created=stats.branches_created,
+        branches_updated=stats.branches_updated,
+    )
+
+
+@v1.post("/epics/{epic}/sync/to/linear", response_model=SyncStatsResponse)
+async def sync_to_linear(epic: str) -> SyncStatsResponse:
+    raise HTTPException(
+        status_code=501,
+        detail="Sync to Linear is not implemented yet. Run `rn sync --to linear` (T-4).",
     )
 
 

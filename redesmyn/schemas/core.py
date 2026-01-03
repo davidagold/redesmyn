@@ -587,6 +587,15 @@ class LinearStatusResponse(ApiResponse):
     connected_at: datetime | None
 
 
+class SyncStatsResponse(ApiResponse):
+    epics_created: int
+    epics_updated: int
+    tasks_created: int
+    tasks_updated: int
+    branches_created: int
+    branches_updated: int
+
+
 class TrunkCommitResponse(ApiResponse):
     sha: str
     author_name: str | None = None

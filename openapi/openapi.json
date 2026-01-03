@@ -1603,6 +1603,44 @@
         "title": "SandboxCapabilitiesResponse",
         "type": "object"
       },
+      "SyncStatsResponse": {
+        "properties": {
+          "branchesCreated": {
+            "title": "Branchescreated",
+            "type": "integer"
+          },
+          "branchesUpdated": {
+            "title": "Branchesupdated",
+            "type": "integer"
+          },
+          "epicsCreated": {
+            "title": "Epicscreated",
+            "type": "integer"
+          },
+          "epicsUpdated": {
+            "title": "Epicsupdated",
+            "type": "integer"
+          },
+          "tasksCreated": {
+            "title": "Taskscreated",
+            "type": "integer"
+          },
+          "tasksUpdated": {
+            "title": "Tasksupdated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "epicsCreated",
+          "epicsUpdated",
+          "tasksCreated",
+          "tasksUpdated",
+          "branchesCreated",
+          "branchesUpdated"
+        ],
+        "title": "SyncStatsResponse",
+        "type": "object"
+      },
       "TaskAgentBulkActionItemRequest": {
         "properties": {
           "action": {
@@ -2865,6 +2903,84 @@
         "summary": "Epic Graph"
       }
     },
+    "/v1/epics/{epic}/sync/from/linear": {
+      "post": {
+        "operationId": "sync_from_linear_v1_epics__epic__sync_from_linear_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync From Linear"
+      }
+    },
+    "/v1/epics/{epic}/sync/to/linear": {
+      "post": {
+        "operationId": "sync_to_linear_v1_epics__epic__sync_to_linear_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync To Linear"
+      }
+    },
     "/v1/harness-profiles": {
       "get": {
         "operationId": "list_harness_profiles_v1_harness_profiles_get",
@@ -3003,6 +3119,24 @@
           }
         },
         "summary": "Upsert Host"
+      }
+    },
+    "/v1/linear/logout": {
+      "post": {
+        "operationId": "linear_logout_v1_linear_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinearStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Linear Logout"
       }
     },
     "/v1/linear/status": {
