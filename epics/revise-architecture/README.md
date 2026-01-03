@@ -388,6 +388,7 @@ Migration note: **current local DB-writing observer → daemon emitting events +
 - `epics/revise-architecture/tasks/T-6/README.md`: Merge `Node` into `Task` (single graph primitive).
 - `epics/revise-architecture/tasks/T-7/README.md`: Remove server git execution and keep git proxying local.
 - `epics/revise-architecture/tasks/T-8/README.md`: Split agent “identity/config” from “session/run” (`AgentConfig` + `AgentSession`).
+- `epics/revise-architecture/tasks/T-9/README.md`: Repo instances + canonical executor routing (migration).
 
 ## Updates
 
@@ -397,3 +398,17 @@ Migration note: **current local DB-writing observer → daemon emitting events +
   Today this is computed in the control plane via direct git calls, which conflicts with §§2.2/2.5.
   This must be migrated to a repo-executor-sourced projection in **T-7 + T-3 + T-2**.
 - The current `stackInSync` field is on `NodeResponse`; it must move during **T-6 (Node → Task)** so the public API/UI does not retain a separate node concept.
+
+### 2026-01-03
+
+- Clarified that the system needs to support multiple repo executors for the same logical repo:
+  - local-first (co-located server + daemon, single checkout),
+  - cloud UI with a server-managed repo instance (canonical executor), and/or
+  - remote compute resources (daemon host is neither the UI nor the control plane host).
+- Introduced an explicit repo instance identity: `(workspace_id, repo_id, host_key)`.
+  - The logical repo (`workspace_id + repo_id`) remains the unit of desired state, events, and UI navigation.
+  - Repo instances represent concrete checkouts/executors and are the unit of git/worktree execution.
+- Split executor commands into two targeting modes:
+  - Instance-scoped commands explicitly target a `host_key`.
+  - Repo-scoped “canonical” commands route to a single writer (a “primary” executor) to prevent concurrent canonical mutations.
+- Added **T-9** to migrate existing T-2/T-5/T-7 implementations to this refined model and to ensure T-3 (daemon execution) implements the same semantics.
