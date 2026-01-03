@@ -295,10 +295,29 @@ class Agent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     display_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    # NOTE: The `agents` table predates AgentSession and still contains legacy
+    # "latest run" fields (status/attach/etc). These remain in the SQLite schema
+    # (and Alembic baseline) for now, so we must provide defaults when creating
+    # new agents or inserts will fail under NOT NULL constraints.
+    status: Mapped[AgentStatus] = mapped_column(
+        _enum_type(AgentStatus, "agent_status"),
+        default=AgentStatus.Stopped,
+        nullable=False,
+    )
+    attach: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        default=lambda: {"type": "none"},
+        nullable=False,  # Pydantic: AttachInfo
+    )
+
     # Best-effort pointer to the currently running session (if any). Intentionally
     # not a foreign key to avoid circular FK constraints (SQLite).
     current_session_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, index=True
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -590,7 +590,11 @@ async def get_or_create_task_agent(session: AsyncSession, *, task: Task) -> Agen
     expected = f"a-{task.id}"
     agent = await session.scalar(select(Agent).where(Agent.display_name == expected))
     if agent is None:
-        agent = Agent(display_name=expected)
+        agent = Agent(
+            display_name=expected,
+            status=AgentStatus.Stopped,
+            attach={"type": "none"},
+        )
         session.add(agent)
         await session.flush()
     else:
