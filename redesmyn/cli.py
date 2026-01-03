@@ -233,9 +233,11 @@ def init(
 
 def _parse_epic_task_num(raw: str) -> tuple[int, str]:
     trimmed = raw.strip()
-    match = re.match(r"^(?:[Tt]-?)?(\\d+)$", trimmed)
+    match = re.match(r"^(?:[Tt]-?)?(\d+)$", trimmed)
     if not match:
-        raise ValueError(f"Invalid task number: {raw!r} (expected 4 or T-4)")
+        raise ValueError(
+            f"Invalid task number: {raw!r} (expected a number like 4 or T-4)"
+        )
     num = int(match.group(1))
     if num <= 0:
         raise ValueError(f"Invalid task number: {raw!r} (must be > 0)")
@@ -245,7 +247,7 @@ def _parse_epic_task_num(raw: str) -> tuple[int, str]:
 def _infer_task_label_from_local_path(local_path: str | None) -> str | None:
     if not local_path:
         return None
-    match = re.search(r"/tasks/(T-\\d+)/README\\.md$", local_path)
+    match = re.search(r"/tasks/(T-\d+)/README\.md$", local_path)
     return match.group(1) if match else None
 
 
@@ -408,7 +410,7 @@ def shell(
     label = task_label or _infer_task_label_from_local_path(resolved_task.local_path)
     num = None
     if label:
-        parsed = re.match(r"^T-(\\d+)$", label)
+        parsed = re.match(r"^T-(\d+)$", label)
         if parsed:
             num = parsed.group(1)
     suffix = f" {label}" if label else ""
