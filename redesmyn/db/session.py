@@ -108,7 +108,10 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
             raise DatabaseMigrationRequiredError(
                 "Database is missing Alembic metadata. Run `rn daemon run` (or `rn dev`) to migrate it."
             )
-        head = head_revision(db_path=db_path)
+        try:
+            head = head_revision(db_path=db_path)
+        except RuntimeError as e:
+            raise DatabaseMigrationRequiredError(str(e)) from e
         if alembic_version != head:
             raise DatabaseMigrationRequiredError(
                 f"Database schema is out of date (current={alembic_version or 'unknown'}, head={head}). "
