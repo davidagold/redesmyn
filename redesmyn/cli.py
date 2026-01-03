@@ -231,22 +231,6 @@ def init(
     typer.echo(f"DB: {ctx.db_path}")
 
 
-@app.command()
-def checkout(
-    task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
-) -> None:
-    """Ensure the task's git worktree exists and print its path."""
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-        path = asyncio.run(checkout_task_worktree(ctx, task_id=task_id))
-    except (NotAGitRepositoryError, NotInitializedError, RuntimeError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    typer.echo(str(path))
-
-
 def _parse_epic_task_num(raw: str) -> tuple[int, str]:
     trimmed = raw.strip()
     match = re.match(r"^(?:[Tt]-?)?(\\d+)$", trimmed)
