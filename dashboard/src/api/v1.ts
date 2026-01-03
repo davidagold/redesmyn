@@ -107,6 +107,40 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/epics/{epic}/sync/from/linear": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Sync From Linear */
+    post: operations["sync_from_linear_v1_epics__epic__sync_from_linear_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/epics/{epic}/sync/to/linear": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Sync To Linear */
+    post: operations["sync_to_linear_v1_epics__epic__sync_to_linear_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/harness-profiles": {
     parameters: {
       query?: never
@@ -170,6 +204,23 @@ export interface paths {
     put?: never
     /** Upsert Host */
     post: operations["upsert_host_v1_hosts_upsert_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/linear/logout": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Linear Logout */
+    post: operations["linear_logout_v1_linear_logout_post"]
     delete?: never
     options?: never
     head?: never
@@ -937,6 +988,21 @@ export interface components {
       /** Unavailablereason */
       unavailableReason?: string | null
     }
+    /** SyncStatsResponse */
+    SyncStatsResponse: {
+      /** Branchescreated */
+      branchesCreated: number
+      /** Branchesupdated */
+      branchesUpdated: number
+      /** Epicscreated */
+      epicsCreated: number
+      /** Epicsupdated */
+      epicsUpdated: number
+      /** Taskscreated */
+      tasksCreated: number
+      /** Tasksupdated */
+      tasksUpdated: number
+    }
     /** TaskAgentBulkActionItemRequest */
     TaskAgentBulkActionItemRequest: {
       /**
@@ -1475,6 +1541,68 @@ export interface operations {
       }
     }
   }
+  sync_from_linear_v1_epics__epic__sync_from_linear_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["SyncStatsResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  sync_to_linear_v1_epics__epic__sync_to_linear_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["SyncStatsResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
   list_harness_profiles_v1_harness_profiles_get: {
     parameters: {
       query?: never
@@ -1599,6 +1727,26 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  linear_logout_v1_linear_logout_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LinearStatusResponse"]
         }
       }
     }

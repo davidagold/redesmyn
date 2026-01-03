@@ -8,6 +8,8 @@ export type OrchestrationDefaultsUpdateRequest = components["schemas"]["Orchestr
 export type Host = components["schemas"]["HostResponse"]
 export type DaemonPresence = components["schemas"]["DaemonPresenceResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
+export type LinearStatus = components["schemas"]["LinearStatusResponse"]
+export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
   prelude?: string | null
@@ -85,12 +87,29 @@ export type TaskAgentLogsResponse = {
   truncated: boolean
 }
 
+async function apiError(response: Response): Promise<Error> {
+  try {
+    const payload = (await response.json()) as unknown
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "detail" in payload &&
+      typeof payload.detail === "string"
+    ) {
+      return new Error(payload.detail)
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return new Error(`${response.status} ${response.statusText}`)
+}
+
 export async function fetchStatus(): Promise<ApiStatus> {
   const response = await fetch("/v1/status", {
     headers: { Accept: "application/json" },
   })
   if (!response.ok) {
-    throw new Error(`GET /v1/status failed (${response.status})`)
+    throw await apiError(response)
   }
   return response.json() as Promise<ApiStatus>
 }
@@ -100,7 +119,7 @@ export async function fetchEpics(): Promise<Epic[]> {
     headers: { Accept: "application/json" },
   })
   if (!response.ok) {
-    throw new Error(`GET /v1/epics failed (${response.status})`)
+    throw await apiError(response)
   }
   return response.json() as Promise<Epic[]>
 }
@@ -112,7 +131,7 @@ export async function fetchEpicGraph(
     headers: { Accept: "application/json" },
   })
   if (!response.ok) {
-    throw new Error(`GET /v1/epics/${epic}/graph failed (${response.status})`)
+    throw await apiError(response)
   }
   return response.json() as Promise<EpicGraph>
 }
@@ -122,7 +141,7 @@ export async function fetchHosts(): Promise<Host[]> {
     headers: { Accept: "application/json" },
   })
   if (!response.ok) {
-    throw new Error(`GET /v1/hosts failed (${response.status})`)
+    throw await apiError(response)
   }
   return response.json() as Promise<Host[]>
 }
@@ -132,9 +151,52 @@ export async function fetchDaemons(): Promise<DaemonPresence[]> {
     headers: { Accept: "application/json" },
   })
   if (!response.ok) {
-    throw new Error(`GET /v1/daemons failed (${response.status})`)
+    throw await apiError(response)
   }
   return response.json() as Promise<DaemonPresence[]>
+}
+
+export async function fetchLinearStatus(): Promise<LinearStatus> {
+  const response = await fetch("/v1/linear/status", {
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw await apiError(response)
+  }
+  return response.json() as Promise<LinearStatus>
+}
+
+export async function postLinearLogout(): Promise<LinearStatus> {
+  const response = await fetch("/v1/linear/logout", {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw await apiError(response)
+  }
+  return response.json() as Promise<LinearStatus>
+}
+
+export async function postSyncFromLinear(epic: string): Promise<SyncStats> {
+  const response = await fetch(`/v1/epics/${epic}/sync/from/linear`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw await apiError(response)
+  }
+  return response.json() as Promise<SyncStats>
+}
+
+export async function postSyncToLinear(epic: string): Promise<SyncStats> {
+  const response = await fetch(`/v1/epics/${epic}/sync/to/linear`, {
+    method: "POST",
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw await apiError(response)
+  }
+  return response.json() as Promise<SyncStats>
 }
 
 export async function setTaskMergeReady(

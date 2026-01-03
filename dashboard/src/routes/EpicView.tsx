@@ -5,6 +5,7 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
 import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
+import { LinearSyncMenuButton } from "@/components/linear/LinearSyncMenuButton"
 import { Button } from "@/components/ui/button"
 import {
   Accordion,
@@ -1182,6 +1183,13 @@ export function EpicView() {
             status={repoDaemonStatus}
             startCommand="rn daemon run"
           />
+          {epicSlug ? (
+            <LinearSyncMenuButton
+              epicSlug={epicSlug}
+              variant="epic"
+              onSynced={handleRefresh}
+            />
+          ) : null}
           <Button
             variant="outline"
             onClick={() => void handleRefresh()}
@@ -2022,6 +2030,8 @@ export function EpicView() {
             mergeRun={selectedMergeRun}
             onRequestRefresh={scheduleGraphRefresh}
             edge={selectedEdge}
+            epicSlug={epicSlug ?? null}
+            onSynced={handleRefresh}
           />
         </div>
       ) : (
