@@ -75,14 +75,18 @@ async def send_event(websocket: WebSocket, event: Event) -> None:
         "data": {**raw_data, "type": event.event_type},
     }
     try:
-        payload = EventResponse.model_validate(payload_dict).model_dump(by_alias=True)
+        payload = EventResponse.model_validate(payload_dict).model_dump(
+            by_alias=True, mode="json"
+        )
     except ValidationError:
         payload_dict["data"] = {
             "type": "unknown",
             "event_type": event.event_type,
             "data": raw_data,
         }
-        payload = EventResponse.model_validate(payload_dict).model_dump(by_alias=True)
+        payload = EventResponse.model_validate(payload_dict).model_dump(
+            by_alias=True, mode="json"
+        )
     await websocket.send_json({"type": "event", "event": payload})
 
 
