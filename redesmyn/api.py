@@ -64,6 +64,7 @@ from redesmyn.orchestration_config import (
     set_config_value,
     write_config,
 )
+from redesmyn.merge_runs import apply_merge_run_event_update
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.repo_executor import (
     RepoExecutor,
@@ -1835,6 +1836,16 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         ):
                             host.last_seen_at = now
                             await session.commit()
+
+                    if msg.event_type == "merge.run" and host_key is not None:
+                        run_id_value = msg.data.get("run_id")
+                        if isinstance(run_id_value, str) and run_id_value:
+                            await apply_merge_run_event_update(
+                                session,
+                                run_id=run_id_value,
+                                host_key=host_key,
+                                data=msg.data,
+                            )
 
                     event = await _append_event(
                         session,

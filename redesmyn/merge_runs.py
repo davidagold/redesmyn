@@ -12,6 +12,60 @@ from redesmyn.domain.enums import MergeRunStatus
 from redesmyn.git_mechanics_v0 import MergeRunStepUpdate
 
 
+async def apply_merge_run_event_update(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    host_key: str | None,
+    data: dict[str, object],
+) -> None:
+    row = await session.scalar(select(MergeRun).where(MergeRun.run_id == run_id))
+    if row is None:
+        return
+
+    if host_key is not None:
+        row.host_key = host_key
+
+    status_value = data.get("status")
+    if isinstance(status_value, str):
+        try:
+            row.status = MergeRunStatus(status_value)
+        except Exception:
+            pass
+
+    plan_value = data.get("plan") or data.get("plan_snapshot")
+    if isinstance(plan_value, dict):
+        try:
+            plan = MergeRunPlanData.model_validate(plan_value)
+        except Exception:
+            plan = None
+        if plan is not None:
+            row.plan = plan.model_dump(mode="python")
+
+    blocked_step_index = data.get("blocked_step_index")
+    if isinstance(blocked_step_index, int):
+        row.blocked_step_index = blocked_step_index
+    blocked_step_kind = data.get("blocked_step_kind")
+    if isinstance(blocked_step_kind, str):
+        row.blocked_step_kind = blocked_step_kind
+    blocked_branch_name = data.get("blocked_branch_name")
+    if isinstance(blocked_branch_name, str):
+        row.blocked_branch_name = blocked_branch_name
+
+    error_value = data.get("error")
+    if isinstance(error_value, str):
+        row.blocked_error = error_value
+
+    if row.status in {MergeRunStatus.Succeeded, MergeRunStatus.Canceled}:
+        row.current_step_index = None
+        row.blocked_step_index = None
+        row.blocked_step_kind = None
+        row.blocked_task_id = None
+        row.blocked_branch_name = None
+        row.blocked_worktree_path = None
+        row.blocked_error = None
+
+
 async def emit_task_merge_event(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],

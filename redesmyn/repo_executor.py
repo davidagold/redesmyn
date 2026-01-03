@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, cast
 
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.context import RepoContext
 from redesmyn.db import DaemonCommand, MergeRun, Repository, Task
 from redesmyn.db.models import MergeRunPlanData
-from redesmyn.domain.enums import MergeRunStatus
+from redesmyn.domain.enums import CommandState, MergeRunStatus
 from redesmyn.git_mechanics_v0 import (
     MergeBlockedByRunningAgents,
     MergeCascadePlan,
@@ -267,6 +269,15 @@ def _daemon_placeholder_plan_snapshot(
         affected_task_ids=[],
         steps=[],
     ).model_dump(mode="python")
+
+
+class _DaemonRepoPlanAckData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    plan: MergeRunPlanData = Field(
+        validation_alias=AliasChoices("plan", "plan_snapshot"),
+    )
+    running_agents: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -599,6 +610,80 @@ class DaemonRepoExecutor:
     sessionmaker: async_sessionmaker[AsyncSession]
     daemon_connections: DaemonConnectionRegistry
 
+    async def _daemon_supports_repo_plans(self, host_key: str) -> bool:
+        presence = (await self.daemon_connections.snapshot()).get(host_key)
+        if presence is None:
+            return False
+        return presence.capabilities.get("repo_plan_v1") is True
+
+    async def _wait_for_command_final_state(
+        self,
+        *,
+        command_id: int,
+        timeout_s: float,
+    ) -> DaemonCommand:
+        deadline = time.monotonic() + timeout_s
+        while True:
+            async with self.sessionmaker() as session:
+                row = await session.get(DaemonCommand, command_id)
+            if row is None:
+                raise RepoExecutorError("Daemon command not found", status_code=500)
+            if row.state in {
+                CommandState.Succeeded,
+                CommandState.Failed,
+                CommandState.Canceled,
+            }:
+                return row
+            if time.monotonic() >= deadline:
+                raise RepoExecutorError(
+                    "Timed out waiting for daemon response.", status_code=504
+                )
+            await asyncio.sleep(0.1)
+
+    async def _compute_plan(
+        self,
+        *,
+        target: RepoExecutorTarget,
+        command_type: str,
+        payload: dict[str, Any],
+        timeout_s: float,
+    ) -> _DaemonRepoPlanAckData:
+        if not await self.daemon_connections.is_connected(target.target_host_key):
+            raise RepoExecutorError(
+                "No connected daemon available to compute this plan.", status_code=503
+            )
+        if not await self._daemon_supports_repo_plans(target.target_host_key):
+            raise RepoExecutorError(
+                "Daemon does not support repo plan computation yet (repo_plan_v1=false).",
+                status_code=501,
+            )
+
+        command = await self._enqueue_daemon_command(
+            host_key=target.target_host_key,
+            command_type=command_type,
+            workspace_id=target.repo.workspace_id,
+            repo_id=target.repo.repo_id,
+            payload=payload,
+        )
+        row = await self._wait_for_command_final_state(
+            command_id=command.id,
+            timeout_s=timeout_s,
+        )
+        if row.state != CommandState.Succeeded:
+            detail = (
+                row.ack_data.get("detail") if isinstance(row.ack_data, dict) else None
+            )
+            raise RepoExecutorError(
+                f"Daemon failed to compute plan{': ' + str(detail) if detail else ''}.",
+                status_code=502,
+            )
+        try:
+            return _DaemonRepoPlanAckData.model_validate(row.ack_data)
+        except Exception as e:
+            raise RepoExecutorError(
+                "Daemon returned an invalid plan response.", status_code=502
+            ) from e
+
     async def _enqueue_daemon_command(
         self,
         *,
@@ -645,26 +730,71 @@ class DaemonRepoExecutor:
         request: TaskMergeRequest,
     ) -> TaskMergeResponse:
         run_id = _require_run_id(run_id=request.run_id)
-        if request.dry_run:
-            raise RepoExecutorError(
-                "dryRun is not supported when routing to a remote repo executor.",
-                status_code=501,
-            )
 
         scope: Literal["descendants", "spine"] = (
             request.scope if request.cascade else "spine"
         )
         restack_mode: Literal["strict", "merge_then_restack"] = request.restack_mode
 
+        if request.dry_run:
+            plan_resp = await self._compute_plan(
+                target=target,
+                command_type="repo.merge_run.plan",
+                payload={
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "operation": "merge",
+                    "scope": scope,
+                    "restack_mode": restack_mode,
+                    "force": request.force,
+                },
+                timeout_s=15.0,
+            )
+            _raise_if_running_agents(
+                has_running_agents=plan_resp.running_agents,
+                allow_running=request.allow_running,
+                message="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+            )
+            return TaskMergeResponse(
+                run_id=run_id,
+                dry_run=True,
+                base_branch=plan_resp.plan.base_branch,
+                steps=_plan_steps_response(plan_steps=plan_resp.plan.steps),
+            )
+
         epic_id = await _require_epic_id_for_task(
             sessionmaker=self.sessionmaker,
             task_id=task_id,
         )
+        base_branch: str | None = None
         plan_snapshot = _daemon_placeholder_plan_snapshot(
-            operation="merge",
-            scope=scope,
-            restack_mode=restack_mode,
+            operation="merge", scope=scope, restack_mode=restack_mode
         )
+        if await self._daemon_supports_repo_plans(target.target_host_key):
+            try:
+                plan_resp = await self._compute_plan(
+                    target=target,
+                    command_type="repo.merge_run.plan",
+                    payload={
+                        "run_id": run_id,
+                        "task_id": task_id,
+                        "operation": "merge",
+                        "scope": scope,
+                        "restack_mode": restack_mode,
+                        "force": request.force,
+                    },
+                    timeout_s=5.0,
+                )
+                _raise_if_running_agents(
+                    has_running_agents=plan_resp.running_agents,
+                    allow_running=request.allow_running,
+                    message="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+                )
+                plan_snapshot = plan_resp.plan.model_dump(mode="python")
+                base_branch = plan_resp.plan.base_branch
+            except RepoExecutorError:
+                pass
+
         await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
@@ -695,7 +825,7 @@ class DaemonRepoExecutor:
                 "canonical": target.canonical,
             },
         )
-        return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=None)
+        return TaskMergeResponse(run_id=run_id, dry_run=False, base_branch=base_branch)
 
     async def restack(
         self,
@@ -705,22 +835,63 @@ class DaemonRepoExecutor:
         request: TaskRestackRequest,
     ) -> TaskRestackResponse:
         run_id = _require_run_id(run_id=request.run_id)
+        scope: Literal["descendants", "spine"] = request.scope
+
         if request.dry_run:
-            raise RepoExecutorError(
-                "dryRun is not supported when routing to a remote repo executor.",
-                status_code=501,
+            plan_resp = await self._compute_plan(
+                target=target,
+                command_type="repo.restack.plan",
+                payload={
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "operation": "restack",
+                    "scope": scope,
+                },
+                timeout_s=15.0,
+            )
+            _raise_if_running_agents(
+                has_running_agents=plan_resp.running_agents,
+                allow_running=request.allow_running,
+                message="Restack affects running tasks; retry with allowRunning=true once you confirm.",
+            )
+            return TaskRestackResponse(
+                run_id=run_id,
+                dry_run=True,
+                base_branch=plan_resp.plan.base_branch,
+                steps=_plan_steps_response(plan_steps=plan_resp.plan.steps),
             )
 
-        scope: Literal["descendants", "spine"] = request.scope
         epic_id = await _require_epic_id_for_task(
             sessionmaker=self.sessionmaker,
             task_id=task_id,
         )
+        base_branch: str | None = None
         plan_snapshot = _daemon_placeholder_plan_snapshot(
-            operation="restack",
-            scope=scope,
-            restack_mode="strict",
+            operation="restack", scope=scope, restack_mode="strict"
         )
+        if await self._daemon_supports_repo_plans(target.target_host_key):
+            try:
+                plan_resp = await self._compute_plan(
+                    target=target,
+                    command_type="repo.restack.plan",
+                    payload={
+                        "run_id": run_id,
+                        "task_id": task_id,
+                        "operation": "restack",
+                        "scope": scope,
+                    },
+                    timeout_s=5.0,
+                )
+                _raise_if_running_agents(
+                    has_running_agents=plan_resp.running_agents,
+                    allow_running=request.allow_running,
+                    message="Restack affects running tasks; retry with allowRunning=true once you confirm.",
+                )
+                plan_snapshot = plan_resp.plan.model_dump(mode="python")
+                base_branch = plan_resp.plan.base_branch
+            except RepoExecutorError:
+                pass
+
         await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
@@ -749,7 +920,9 @@ class DaemonRepoExecutor:
                 "canonical": target.canonical,
             },
         )
-        return TaskRestackResponse(run_id=run_id, dry_run=False, base_branch=None)
+        return TaskRestackResponse(
+            run_id=run_id, dry_run=False, base_branch=base_branch
+        )
 
     async def resume_merge_run(
         self,
@@ -759,19 +932,50 @@ class DaemonRepoExecutor:
         request: MergeRunResumeRequest,
     ) -> MergeRunResumeResponse:
         run_id = run.run_id
+        base_branch: str | None = None
+
+        if await self._daemon_supports_repo_plans(target.target_host_key):
+            try:
+                command_type = (
+                    "repo.restack.plan"
+                    if run.operation == "restack"
+                    else "repo.merge_run.plan"
+                )
+                plan_resp = await self._compute_plan(
+                    target=target,
+                    command_type=command_type,
+                    payload={
+                        "run_id": run_id,
+                        "task_id": run.requested_task_id,
+                        "operation": run.operation,
+                        "scope": run.scope,
+                        "restack_mode": run.restack_mode,
+                        "force": run.force,
+                    },
+                    timeout_s=5.0,
+                )
+                _raise_if_running_agents(
+                    has_running_agents=plan_resp.running_agents,
+                    allow_running=run.allow_running or request.allow_running,
+                    message="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+                )
+                plan_snapshot = plan_resp.plan.model_dump(mode="python")
+                base_branch = plan_resp.plan.base_branch
+            except RepoExecutorError:
+                plan_snapshot = dict(run.plan) if isinstance(run.plan, dict) else {}
+        else:
+            plan_snapshot = dict(run.plan) if isinstance(run.plan, dict) else {}
+
         normalized_scope = run.scope.strip().lower()
         scope_literal: Literal["descendants", "spine"] = (
             "descendants" if normalized_scope == "descendants" else "spine"
         )
-        plan_snapshot = (
-            dict(run.plan)
-            if isinstance(run.plan, dict)
-            else _daemon_placeholder_plan_snapshot(
+        if not plan_snapshot:
+            plan_snapshot = _daemon_placeholder_plan_snapshot(
                 operation=run.operation,
                 scope=scope_literal,
                 restack_mode=run.restack_mode,
             )
-        )
         await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
@@ -797,7 +1001,7 @@ class DaemonRepoExecutor:
                 "canonical": run.canonical,
             },
         )
-        return MergeRunResumeResponse(run_id=run_id, base_branch=None)
+        return MergeRunResumeResponse(run_id=run_id, base_branch=base_branch)
 
 
 @dataclass(frozen=True, slots=True)
