@@ -71,6 +71,8 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   ) {
     const title = mark.title ?? ""
     const message = mark.message ?? ""
+    const fullMessage =
+      title && message ? `${title}\n\n${message}` : title || message
     const committerName = mark.committerName ?? mark.authorName ?? null
     const committerEmail = mark.committerEmail ?? mark.authorEmail ?? null
     const committer =
@@ -106,9 +108,9 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
               <div className="text-[11px] text-background/75">{timestamp}</div>
             ) : null}
             {title ? <div className="text-xs font-medium">{title}</div> : null}
-            {message ? (
+            {fullMessage ? (
               <div className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-background/85">
-                {message}
+                {fullMessage}
               </div>
             ) : null}
           </div>
@@ -125,8 +127,8 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
           className={cn(
             "h-2.5 w-2.5 rounded-full border",
             emphasis
-              ? "border-foreground/75 bg-foreground/5"
-              : "border-foreground/60",
+              ? "border-foreground/75 bg-background"
+              : "border-foreground/60 bg-background",
           )}
         />
       </span>

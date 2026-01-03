@@ -99,6 +99,7 @@ const POSITION_EPSILON_PX = 0.25
 const VIEWPORT_EPSILON_PX = 0.5
 const VIEWPORT_EPSILON_ZOOM = 0.001
 const HANDLE_SIZE_PX = 8
+const DEFAULT_TRUNK_TITLE_MARGIN_PX = 80
 
 type TrunkMark = {
   type: "commit" | "base" | "connector" | "ellipsis"
@@ -205,33 +206,33 @@ function computeGraphBounds(
   return { minX, minY, maxX, maxY }
 }
 
-function computeFitViewport(
+function computeDefaultViewport(
   bounds: GraphBounds,
   rect: DOMRect,
   reserveWidth: number,
 ) {
   const padding = GRAPH_FIT_PADDING_PX
-  const visibleWidth = Math.max(1, rect.width - reserveWidth - padding * 2)
-  const visibleHeight = Math.max(1, rect.height - padding * 2)
+  const leftPadding = padding + DEFAULT_TRUNK_TITLE_MARGIN_PX
+  const rightPadding = padding
+  const visibleWidth = Math.max(1, rect.width - reserveWidth)
+  const visibleHeight = Math.max(1, rect.height)
   const boundsWidth = Math.max(1, bounds.maxX - bounds.minX)
   const boundsHeight = Math.max(1, bounds.maxY - bounds.minY)
 
   const fitZoom = Math.min(
-    visibleWidth / boundsWidth,
-    visibleHeight / boundsHeight,
+    (visibleWidth - leftPadding - rightPadding) / boundsWidth,
+    (visibleHeight - padding * 2) / boundsHeight,
   )
   const zoom = Math.min(
     GRAPH_FIT_MAX_ZOOM,
     Math.max(GRAPH_FIT_MIN_ZOOM, fitZoom),
   )
 
-  const centerX = (bounds.minX + bounds.maxX) / 2
   const centerY = (bounds.minY + bounds.maxY) / 2
-  const visibleCenterX = (rect.width - reserveWidth) / 2
-  const visibleCenterY = rect.height / 2
+  const visibleCenterY = visibleHeight / 2
 
   return {
-    x: visibleCenterX - centerX * zoom,
+    x: leftPadding - bounds.minX * zoom,
     y: visibleCenterY - centerY * zoom,
     zoom,
   }
@@ -1084,7 +1085,11 @@ export function GraphView({
       if (!bounds) {
         return
       }
-      const nextViewport = computeFitViewport(bounds, rect, 0)
+      const nextViewport = computeDefaultViewport(
+        bounds,
+        rect,
+        DETAILS_PANEL_WIDTH_PX,
+      )
       queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
     }
   }, [
@@ -1150,7 +1155,8 @@ export function GraphView({
     const visibleCenterX = (rect.width - DETAILS_PANEL_WIDTH_PX) / 2
     const visibleCenterY = rect.height / 2
 
-    const desiredTrunkScreenX = GRAPH_PADDING
+    const desiredTrunkScreenX =
+      GRAPH_FIT_PADDING_PX + DEFAULT_TRUNK_TITLE_MARGIN_PX
     const trunkWorldX = trunkLayout?.x ?? GRAPH_PADDING
     const trunkAnchorX = desiredTrunkScreenX - trunkWorldX * zoom
 
@@ -1189,9 +1195,30 @@ export function GraphView({
       return
     }
 
-    flow.fitView({ padding: 0.2, duration: 200 })
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return
+    }
+    const bounds = computeGraphBounds(targetPositions, trunkLayout)
+    if (!bounds) {
+      return
+    }
+    const nextViewport = computeDefaultViewport(
+      bounds,
+      rect,
+      DETAILS_PANEL_WIDTH_PX,
+    )
+    queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
     didInitialFitRef.current = true
-  }, [flow, epicSlug, layoutVersion, nodes.length])
+  }, [
+    flow,
+    epicSlug,
+    layoutVersion,
+    nodes.length,
+    queueViewportAnimation,
+    targetPositions,
+    trunkLayout,
+  ])
 
   const selectionBarTargetVisible = selectedNodeIds.size > 1
 
