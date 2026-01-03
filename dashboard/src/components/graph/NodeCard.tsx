@@ -1021,7 +1021,7 @@ export function NodeCard({
       shouldShowResumeButton ||
       blockingMergeRunBlockedRebase ? (
         <div
-          className="nodrag nopan absolute left-0 top-full z-50 mt-2 w-full space-y-2"
+          className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-full space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
