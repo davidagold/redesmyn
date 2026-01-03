@@ -15,6 +15,11 @@ class CommitInfo(TypedDict):
     author_name: str | None
     author_email: str | None
     authored_at: datetime | None
+    committer_name: str | None
+    committer_email: str | None
+    committed_at: datetime | None
+    title: str | None
+    message: str | None
 
 
 def _run_git(
@@ -188,8 +193,8 @@ def git_commit_info(repo_root: Path, shas: list[str]) -> dict[str, CommitInfo]:
     """
     Return basic commit metadata keyed by sha.
 
-    `git show --format=%aI` returns ISO 8601; we parse it to `datetime` so API
-    response types remain accurate.
+    `git show` emits ISO 8601; we parse it to `datetime` so API response types
+    remain accurate.
     """
 
     def parse_iso_dt(value: str) -> datetime | None:
@@ -211,21 +216,45 @@ def git_commit_info(repo_root: Path, shas: list[str]) -> dict[str, CommitInfo]:
         return {}
 
     proc = _run_git(
-        ["show", "-s", "--format=%H%x1f%an%x1f%ae%x1f%aI", *unique], cwd=repo_root
+        [
+            "show",
+            "-s",
+            "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI%x1f%s%x1f%b%x1e",
+            *unique,
+        ],
+        cwd=repo_root,
     )
     if proc.returncode != 0:
         return {}
 
     info: dict[str, CommitInfo] = {}
-    for line in proc.stdout.splitlines():
-        parts = line.split("\x1f")
-        if len(parts) != 4:
+    for record in proc.stdout.split("\x1e"):
+        record = record.strip("\n")
+        if not record.strip():
             continue
-        sha, author_name, author_email, authored_at = parts
+        parts = record.split("\x1f")
+        if len(parts) != 9:
+            continue
+        (
+            sha,
+            author_name,
+            author_email,
+            authored_at,
+            committer_name,
+            committer_email,
+            committed_at,
+            title,
+            message,
+        ) = parts
         commit_info: CommitInfo = {
             "author_name": author_name or None,
             "author_email": author_email or None,
             "authored_at": parse_iso_dt(authored_at) if authored_at else None,
+            "committer_name": committer_name or None,
+            "committer_email": committer_email or None,
+            "committed_at": parse_iso_dt(committed_at) if committed_at else None,
+            "title": title or None,
+            "message": message.rstrip("\n") or None,
         }
         info[sha] = commit_info
     return info

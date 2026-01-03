@@ -100,6 +100,27 @@ function statusSummary(
   return agentSession.status
 }
 
+function agentStatusTooltip(
+  task: Task | undefined,
+  agentSession: AgentSession | undefined,
+) {
+  if (!agentSession) {
+    return "Agent not started"
+  }
+
+  const summary = statusSummary(task, agentSession)
+  if (summary === "done") {
+    return "Done"
+  }
+  if (summary === "blocked") {
+    return "Blocked"
+  }
+  if (summary === "not started") {
+    return "Agent not started"
+  }
+  return `Agent ${agentSession.agentName} ${summary}`
+}
+
 export function NodeCard({
   node,
   task,
@@ -530,12 +551,11 @@ export function NodeCard({
     ) : null
 
   const tooltipParts = [
-    agentSession ? `Agent: ${agentSession.agentName}` : "Agent: (not started)",
-    `Status: ${statusSummary(task, agentSession)}`,
+    agentStatusTooltip(task, agentSession),
     stackInSync === true
-      ? "Stack: in sync"
+      ? "Stack in sync"
       : stackInSync === false
-        ? "Stack: out of sync"
+        ? "Stack out of sync"
         : null,
   ]
   const tooltip = tooltipParts.filter(Boolean).join("\n")

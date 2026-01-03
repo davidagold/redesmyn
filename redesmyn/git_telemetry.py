@@ -50,11 +50,20 @@ def _build_commit_payload(
     info = commit_info.get(sha)
     authored_at_raw = info.get("authored_at") if info is not None else None
     authored_at = authored_at_raw.isoformat() if authored_at_raw is not None else None
+    committed_at_raw = info.get("committed_at") if info is not None else None
+    committed_at = (
+        committed_at_raw.isoformat() if committed_at_raw is not None else None
+    )
     return {
         "sha": sha,
         "author_name": info.get("author_name") if info is not None else None,
         "author_email": info.get("author_email") if info is not None else None,
         "authored_at": authored_at,
+        "committer_name": info.get("committer_name") if info is not None else None,
+        "committer_email": info.get("committer_email") if info is not None else None,
+        "committed_at": committed_at,
+        "title": info.get("title") if info is not None else None,
+        "message": info.get("message") if info is not None else None,
     }
 
 

@@ -1157,8 +1157,18 @@ export interface components {
       authorName?: string | null
       /** Authoredat */
       authoredAt?: string | null
+      /** Committedat */
+      committedAt?: string | null
+      /** Committeremail */
+      committerEmail?: string | null
+      /** Committername */
+      committerName?: string | null
+      /** Message */
+      message?: string | null
       /** Sha */
       sha: string
+      /** Title */
+      title?: string | null
     }
     /** TrunkTimelineResponse */
     TrunkTimelineResponse: {

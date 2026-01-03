@@ -1,4 +1,5 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
+import type { ReactNode } from "react"
 import {
   Tooltip,
   TooltipContent,
@@ -10,9 +11,14 @@ import { TRUNK_COMMIT_ROW_HEIGHT } from "./graphConfig"
 type TrunkMark = {
   type: "commit" | "base" | "connector" | "ellipsis"
   sha?: string
+  title?: string | null
+  message?: string | null
   authorName?: string | null
   authorEmail?: string | null
   authoredAt?: string | null
+  committerName?: string | null
+  committerEmail?: string | null
+  committedAt?: string | null
 }
 
 export type TrunkNodeData = Record<string, unknown> & {
@@ -22,7 +28,10 @@ export type TrunkNodeData = Record<string, unknown> & {
   commitSpacing?: number
   commitPadding?: number
   lineWidth?: number
-  labelOffset?: number
+  lineX?: number
+  titleWidth?: number
+  markerWidth?: number
+  shaWidth?: number
 }
 
 export type TrunkNodeType = Node<TrunkNodeData, "trunk">
@@ -46,10 +55,60 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
   const commitSpacing = data.commitSpacing ?? 28
   const commitPadding = data.commitPadding ?? 16
   const lineWidth = data.lineWidth ?? 2
-  const labelOffset = data.labelOffset ?? lineWidth + 12
+  const titleWidth = data.titleWidth ?? 200
+  const markerWidth = data.markerWidth ?? 28
+  const shaWidth = data.shaWidth ?? 110
+  const lineX = data.lineX ?? titleWidth + markerWidth / 2
   const rowHeight = TRUNK_COMMIT_ROW_HEIGHT
   const baseOffset = data.baseOffset ?? commitPadding + rowHeight / 2
   const arrowSize = 12
+  const labelGapPx = 10
+
+  function renderCommitTooltip(mark: TrunkMark, child: ReactNode) {
+    const title = mark.title ?? ""
+    const message = mark.message ?? ""
+    const committerName = mark.committerName ?? mark.authorName ?? null
+    const committerEmail = mark.committerEmail ?? mark.authorEmail ?? null
+    const committer =
+      committerName && committerEmail
+        ? `${committerName} <${committerEmail}>`
+        : committerName || committerEmail || "Unknown committer"
+    const timestamp = formatTimestamp(mark.committedAt ?? mark.authoredAt)
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={(triggerProps) => (
+            <span
+              {...triggerProps}
+              className={cn("inline-flex w-full", triggerProps.className)}
+            >
+              {child}
+            </span>
+          )}
+        />
+        <TooltipContent
+          side="right"
+          sideOffset={14}
+          align="center"
+          className="max-w-[40rem]"
+        >
+          <div className="space-y-1">
+            <div className="text-xs font-medium">{committer}</div>
+            {timestamp ? (
+              <div className="text-[11px] text-background/75">{timestamp}</div>
+            ) : null}
+            {title ? <div className="text-xs font-medium">{title}</div> : null}
+            {message ? (
+              <div className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-background/85">
+                {message}
+              </div>
+            ) : null}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
 
   function renderMarker(emphasis: boolean) {
     const wrapperClass = "flex h-3 w-3 items-center justify-center"
@@ -72,7 +131,7 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
       <div
         className="absolute top-0"
         style={{
-          left: lineWidth / 2,
+          left: lineX,
           transform: `translate(-50%, -${arrowSize}px)`,
         }}
         aria-hidden="true"
@@ -87,8 +146,8 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
         </svg>
       </div>
       <div
-        className="absolute left-0 top-0 h-full rounded-full bg-border/60"
-        style={{ width: lineWidth }}
+        className="absolute top-0 h-full rounded-full bg-border/60"
+        style={{ width: lineWidth, left: lineX - lineWidth / 2 }}
       />
       <Handle
         id="base"
@@ -97,13 +156,13 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
         className="h-2 w-2 border-0 bg-transparent opacity-0"
         style={{
           top: baseOffset,
-          left: lineWidth / 2,
+          left: lineX,
           right: "auto",
           transform: "translate(-50%, -50%)",
         }}
       />
       {marks.length ? (
-        <div className="absolute top-0 h-full" style={{ left: labelOffset }}>
+        <div className="absolute left-0 top-0 h-full w-full">
           {marks.map((mark, index) => {
             const y = commitPadding + index * commitSpacing
             if (mark.type === "connector") {
@@ -114,7 +173,11 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                 <div
                   key={`ellipsis-${index}`}
                   className="absolute flex items-center text-xs text-foreground/50"
-                  style={{ top: y, height: rowHeight }}
+                  style={{
+                    top: y,
+                    height: rowHeight,
+                    left: titleWidth + markerWidth + labelGapPx,
+                  }}
                 >
                   <span className="tracking-[0.2em]">···</span>
                 </div>
@@ -122,41 +185,58 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
             }
             const sha = mark.sha ? mark.sha.slice(0, 7) : ""
             const isBase = mark.type === "base"
-            const authoredAt = formatTimestamp(mark.authoredAt)
-            const author =
-              mark.authorName || mark.authorEmail || "Unknown author"
+            const titleText = mark.title ?? "—"
             return (
-              <Tooltip key={`${mark.type}-${mark.sha ?? index}`}>
-                <TooltipTrigger
-                  className="absolute flex cursor-default items-center gap-2 border-0 bg-transparent p-0 text-xs"
-                  style={{ top: y, height: rowHeight }}
+              <div
+                key={`${mark.type}-${mark.sha ?? index}`}
+                className="absolute flex items-center"
+                style={{ top: y, height: rowHeight, left: 0 }}
+              >
+                <div
+                  className="flex items-center justify-end"
+                  style={{ width: titleWidth, paddingRight: labelGapPx }}
                 >
-                  {renderMarker(isBase)}
-                  <span
-                    className={cn(
-                      "font-mono",
-                      isBase
-                        ? "text-foreground/80 font-medium"
-                        : "text-foreground/70",
-                    )}
-                  >
-                    {sha}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="right"
-                  sideOffset={10}
-                  align="center"
-                  className="space-y-0.5"
+                  {renderCommitTooltip(
+                    mark,
+                    <span
+                      className={cn(
+                        "block w-full truncate text-right text-xs",
+                        isBase
+                          ? "text-foreground/75 font-medium"
+                          : "text-foreground/60",
+                      )}
+                    >
+                      {titleText}
+                    </span>,
+                  )}
+                </div>
+
+                <div
+                  className="flex items-center justify-center"
+                  style={{ width: markerWidth }}
                 >
-                  <div className="text-xs">{author}</div>
-                  {authoredAt ? (
-                    <div className="text-xs text-background/70">
-                      {authoredAt}
-                    </div>
-                  ) : null}
-                </TooltipContent>
-              </Tooltip>
+                  {renderCommitTooltip(mark, renderMarker(isBase))}
+                </div>
+
+                <div
+                  className="flex items-center"
+                  style={{ width: shaWidth, paddingLeft: labelGapPx }}
+                >
+                  {renderCommitTooltip(
+                    mark,
+                    <span
+                      className={cn(
+                        "truncate font-mono text-xs",
+                        isBase
+                          ? "text-foreground/80 font-medium"
+                          : "text-foreground/70",
+                      )}
+                    >
+                      {sha}
+                    </span>,
+                  )}
+                </div>
+              </div>
             )
           })}
         </div>

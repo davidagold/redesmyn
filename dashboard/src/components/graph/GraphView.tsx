@@ -55,7 +55,9 @@ import {
   TRUNK_COMMIT_PADDING,
   TRUNK_COMMIT_ROW_HEIGHT,
   TRUNK_COMMIT_SPACING,
-  TRUNK_LABEL_COLUMN,
+  TRUNK_COMMIT_MARK_COLUMN,
+  TRUNK_COMMIT_SHA_COLUMN,
+  TRUNK_COMMIT_TITLE_COLUMN,
   TRUNK_THICKNESS,
 } from "./graphConfig"
 import { layoutWithElk } from "./elkLayout"
@@ -101,9 +103,14 @@ const HANDLE_SIZE_PX = 8
 type TrunkMark = {
   type: "commit" | "base" | "connector" | "ellipsis"
   sha?: string
+  title?: string | null
+  message?: string | null
   authorName?: string | null
   authorEmail?: string | null
   authoredAt?: string | null
+  committerName?: string | null
+  committerEmail?: string | null
+  committedAt?: string | null
 }
 
 type TrunkLayout = {
@@ -449,25 +456,40 @@ export function GraphView({
       marks.push({
         type: "commit",
         sha: commit.sha,
+        title: commit.title ?? null,
+        message: commit.message ?? null,
         authorName: commit.authorName ?? null,
         authorEmail: commit.authorEmail ?? null,
         authoredAt: commit.authoredAt ?? null,
+        committerName: commit.committerName ?? null,
+        committerEmail: commit.committerEmail ?? null,
+        committedAt: commit.committedAt ?? null,
       })
     }
     marks.push({
       type: "base",
       sha: baseCommit.sha,
+      title: baseCommit.title ?? null,
+      message: baseCommit.message ?? null,
       authorName: baseCommit.authorName ?? null,
       authorEmail: baseCommit.authorEmail ?? null,
       authoredAt: baseCommit.authoredAt ?? null,
+      committerName: baseCommit.committerName ?? null,
+      committerEmail: baseCommit.committerEmail ?? null,
+      committedAt: baseCommit.committedAt ?? null,
     })
     for (const commit of commitsBefore) {
       marks.push({
         type: "commit",
         sha: commit.sha,
+        title: commit.title ?? null,
+        message: commit.message ?? null,
         authorName: commit.authorName ?? null,
         authorEmail: commit.authorEmail ?? null,
         authoredAt: commit.authoredAt ?? null,
+        committerName: commit.committerName ?? null,
+        committerEmail: commit.committerEmail ?? null,
+        committedAt: commit.committedAt ?? null,
       })
     }
     if (trunk.hasMoreBefore) {
@@ -491,7 +513,10 @@ export function GraphView({
   }, [trunk])
 
   const trunkColumnWidth = useMemo(
-    () => TRUNK_THICKNESS + TRUNK_LABEL_COLUMN,
+    () =>
+      TRUNK_COMMIT_TITLE_COLUMN +
+      TRUNK_COMMIT_MARK_COLUMN +
+      TRUNK_COMMIT_SHA_COLUMN,
     [],
   )
 
@@ -845,7 +870,9 @@ export function GraphView({
     const mapped: GraphFlowNode[] = []
     const includeTrunk = !focusPositions && positions.size > 0 && trunkLayout
     if (includeTrunk && trunkLayout) {
-      const trunkHandleX = TRUNK_THICKNESS / 2 - HANDLE_SIZE_PX / 2
+      const trunkLineX =
+        TRUNK_COMMIT_TITLE_COLUMN + TRUNK_COMMIT_MARK_COLUMN / 2
+      const trunkHandleX = trunkLineX - HANDLE_SIZE_PX / 2
       mapped.push({
         id: TRUNK_NODE_ID,
         type: "trunk",
@@ -869,7 +896,10 @@ export function GraphView({
           commitSpacing: trunkLayout.commitSpacing,
           commitPadding: trunkLayout.commitPadding,
           lineWidth: TRUNK_THICKNESS,
-          labelOffset: TRUNK_THICKNESS + 12,
+          lineX: trunkLineX,
+          titleWidth: TRUNK_COMMIT_TITLE_COLUMN,
+          markerWidth: TRUNK_COMMIT_MARK_COLUMN,
+          shaWidth: TRUNK_COMMIT_SHA_COLUMN,
         },
         draggable: false,
         selectable: false,
@@ -981,7 +1011,7 @@ export function GraphView({
           data: pulse ? { pulse } : undefined,
           style: {
             stroke: "var(--border)",
-            strokeOpacity: 0.35,
+            strokeOpacity: 0.45,
             strokeWidth: 2,
             transition: `stroke ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease, stroke-opacity ${GRAPH_EDGE_STYLE_ANIMATION_MS}ms ease`,
           },

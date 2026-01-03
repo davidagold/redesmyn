@@ -12,7 +12,9 @@ export const TRUNK_GAP = 56
 export const TRUNK_COMMIT_PADDING = 18
 export const TRUNK_COMMIT_SPACING = 30
 export const TRUNK_COMMIT_ROW_HEIGHT = 16
-export const TRUNK_LABEL_COLUMN = 120
+export const TRUNK_COMMIT_TITLE_COLUMN = 200
+export const TRUNK_COMMIT_MARK_COLUMN = 28
+export const TRUNK_COMMIT_SHA_COLUMN = 110
 
 export const DETAILS_PANEL_WIDTH_PX = 32 * 16
 export const GRAPH_FIT_PADDING_PX = 72

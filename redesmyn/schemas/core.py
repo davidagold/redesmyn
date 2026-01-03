@@ -563,6 +563,11 @@ class TrunkCommitResponse(ApiResponse):
     author_name: str | None = None
     author_email: str | None = None
     authored_at: datetime | None = None
+    committer_name: str | None = None
+    committer_email: str | None = None
+    committed_at: datetime | None = None
+    title: str | None = None
+    message: str | None = None
 
 
 class TrunkTimelineResponse(ApiResponse):
