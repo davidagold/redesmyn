@@ -19,6 +19,7 @@ export function getRebaseRemediation(
     return null
   }
 
+  const operation = mergeRun.operation ?? "merge"
   const worktreePath = mergeRun.blockedWorktreePath ?? null
   const branchName = mergeRun.blockedBranchName ?? fallbackBranchName
   const attachCommand =
@@ -29,7 +30,9 @@ export function getRebaseRemediation(
   const message =
     worktreePath && branchName
       ? [
-          "We hit a rebase conflict while merging the stack.",
+          `We hit a rebase conflict while ${
+            operation === "restack" ? "restacking" : "merging"
+          } the stack.`,
           "",
           `Branch: ${branchName}`,
           `Worktree: ${worktreePath}`,
@@ -42,7 +45,7 @@ export function getRebaseRemediation(
           "- `git rebase --continue`",
           "- Repeat until the rebase completes (resolving any further conflicts).",
           "",
-          "Once the rebase finishes and the worktree is clean, let me know so I can resume the merge run.",
+          `Once the rebase finishes and the worktree is clean, let me know so I can resume the ${operation} run.`,
         ].join("\n")
       : null
 

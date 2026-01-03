@@ -34,6 +34,13 @@ export type TaskMergeRequest = {
   force?: boolean
 }
 
+export type TaskRestackRequest = {
+  runId?: string | null
+  scope?: "descendants" | "spine"
+  dryRun?: boolean
+  allowRunning?: boolean
+}
+
 export type MergeRunResumeRequest = {
   allowRunning?: boolean
 }
@@ -54,6 +61,13 @@ export type TaskMergePlanStep = {
 }
 
 export type TaskMergeResponse = {
+  runId: string
+  dryRun: boolean
+  baseBranch?: string | null
+  steps: TaskMergePlanStep[]
+}
+
+export type TaskRestackResponse = {
   runId: string
   dryRun: boolean
   baseBranch?: string | null
@@ -144,6 +158,31 @@ export async function mergeTask(
     )
   }
   return response.json() as Promise<TaskMergeResponse>
+}
+
+export async function restackTask(
+  taskId: number,
+  request: TaskRestackRequest,
+): Promise<TaskRestackResponse> {
+  const response = await fetch(`/v1/tasks/${taskId}/restack`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new ApiHttpError(
+      `POST /v1/tasks/${taskId}/restack failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+      response.status,
+      detail,
+    )
+  }
+  return response.json() as Promise<TaskRestackResponse>
 }
 
 export async function resumeMergeRun(

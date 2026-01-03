@@ -95,6 +95,7 @@ export type MergeRunEventData = {
   epicId: number
   requestedTaskId: number
   status: "running" | "blocked" | "resumable" | "succeeded" | "failed" | "canceled"
+  operation?: "merge" | "restack"
   blockedStepIndex?: number | null
   blockedStepKind?: string | null
   blockedBranchName?: string | null
@@ -103,6 +104,7 @@ export type MergeRunEventData = {
 export type TaskMergeEventData = {
   type: "task.merge"
   runId: string
+  operation?: "merge" | "restack"
   taskId?: number | null
   kind: "rebase" | "merge_ff"
   phase: "started" | "finished" | "failed"

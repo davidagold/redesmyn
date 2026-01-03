@@ -105,6 +105,7 @@ function MergeRunDetails({
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
 
   const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
+  const operationLabel = mergeRun.operation === "restack" ? "Restack" : "Merge"
   const blockedError = mergeRun.blockedError?.trim() || null
   const blockedBranch = mergeRun.blockedBranchName ?? null
   const blockedWorktree = mergeRun.blockedWorktreePath ?? null
@@ -133,14 +134,15 @@ function MergeRunDetails({
     // When a descendant rebase conflicts, the merge run is blocked in the restack portion.
     // (The spine merge may or may not have completed depending on the merge mode.)
     mergeRun.status === "blocked"
-      ? (mergeRun as { blockedOnSpine?: boolean | null }).blockedOnSpine ===
-        false
+      ? operationLabel === "Merge" &&
+        (mergeRun as { blockedOnSpine?: boolean | null }).blockedOnSpine ===
+          false
         ? "Restack blocked (conflicts)"
-        : "Merge blocked (conflicts)"
+        : `${operationLabel} blocked (conflicts)`
       : mergeRun.status === "resumable"
-        ? "Merge ready to resume"
+        ? `${operationLabel} ready to resume`
         : mergeRun.status === "failed"
-          ? "Merge failed"
+          ? `${operationLabel} failed`
           : null
 
   const calloutIcon =
@@ -238,7 +240,9 @@ function MergeRunDetails({
                       ) : (
                         <Play />
                       )}
-                      Resume merge
+                      {operationLabel === "Restack"
+                        ? "Resume restack"
+                        : "Resume merge"}
                     </Button>
                   ) : null}
 

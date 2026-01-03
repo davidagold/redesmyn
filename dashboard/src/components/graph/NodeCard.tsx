@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import {
   ApiHttpError,
   mergeTask,
+  restackTask,
   resumeMergeRun,
   restartTaskAgent,
   setTaskMergeReady,
@@ -21,6 +22,7 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -80,9 +82,15 @@ interface MergeAllowRunningPrompt {
 interface ResumeAllowRunningPrompt {
   kind: "resume"
   runId: string
+  operation: "merge" | "restack"
 }
 
-type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt
+interface RestackAllowRunningPrompt {
+  kind: "restack"
+  scope: "descendants" | "spine"
+}
+
+type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
 
 function statusSummary(
   task: Task | undefined,
@@ -142,6 +150,7 @@ export function NodeCard({
   const stackInSync = node.stackInSync ?? null
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
+  const mergeRunOperation = mergeRun?.operation ?? "merge"
   const mergeRunBlocked = mergeRunStatus === "blocked"
   const rebaseRemediation = getRebaseRemediation(mergeRun, node.branchName)
   const mergeRunBlockedRebase = rebaseRemediation !== null
@@ -155,7 +164,9 @@ export function NodeCard({
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [pendingMerge, setPendingMerge] =
-    useState<"ready" | "merge" | "mergeStack" | "resume" | null>(null)
+    useState<"ready" | "merge" | "mergeStack" | "restack" | "resume" | null>(
+      null,
+    )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
   const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
@@ -387,10 +398,40 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({ kind: "resume", runId: mergeRun.runId })
+        setAllowRunningPrompt({
+          kind: "resume",
+          runId: mergeRun.runId,
+          operation: mergeRunOperation,
+        })
         return
       }
-      setActionErrorFromException("Resume merge", e)
+      setActionErrorFromException(
+        mergeRunOperation === "restack" ? "Resume restack" : "Resume merge",
+        e,
+      )
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
+  async function handleRestack({ scope }: { scope: "descendants" | "spine" }) {
+    if (taskId === null || !onRequestRefresh) {
+      return
+    }
+    setRefreshPendingAfterMenuClose(false)
+    setPendingMerge("restack")
+    clearActionError()
+    const actionLabel = "Restack"
+    try {
+      await restackTask(taskId, { scope })
+      onRequestRefresh()
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409) {
+        setAllowRunningPrompt({ kind: "restack", scope })
+        return
+      }
+      setActionErrorFromException(actionLabel, e)
+      return
     } finally {
       setPendingMerge(null)
     }
@@ -411,7 +452,11 @@ export function NodeCard({
             ? "Merge then Restack"
             : "Merge and Restack"
           : "Merge"
-        : "Resume merge"
+        : allowRunningPrompt.kind === "restack"
+          ? "Restack"
+          : allowRunningPrompt.operation === "restack"
+            ? "Resume restack"
+            : "Resume merge"
 
     try {
       if (allowRunningPrompt.kind === "merge") {
@@ -422,6 +467,15 @@ export function NodeCard({
         await mergeTask(taskId, {
           cascade: allowRunningPrompt.cascade,
           restackMode: allowRunningPrompt.restackMode,
+          allowRunning: true,
+        })
+      } else if (allowRunningPrompt.kind === "restack") {
+        if (taskId === null) {
+          throw new Error("Task id missing for restack confirmation.")
+        }
+        setPendingMerge("restack")
+        await restackTask(taskId, {
+          scope: allowRunningPrompt.scope,
           allowRunning: true,
         })
       } else {
@@ -609,9 +663,13 @@ export function NodeCard({
           ? "Merge then Restack"
           : "Merge and Restack"
         : "Merge"
-      : allowRunningPrompt?.kind === "resume"
-        ? "Resume merge"
-        : null
+      : allowRunningPrompt?.kind === "restack"
+        ? "Restack"
+        : allowRunningPrompt?.kind === "resume"
+          ? allowRunningPrompt.operation === "restack"
+            ? "Resume restack"
+            : "Resume merge"
+          : null
 
   return (
     <Card
@@ -683,6 +741,30 @@ export function NodeCard({
               )}
             />
             <DropdownMenuContent align="end" side="bottom" sideOffset={10}>
+              <DropdownMenuLabel>Git</DropdownMenuLabel>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={pendingMerge !== null || canResumeMerge}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleRestack({ scope: "descendants" })
+                      }}
+                    >
+                      <GitBranch className="size-3.5" />
+                      Restack
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Rebase downstream branches to keep the stack intact.
+                </TooltipContent>
+              </Tooltip>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Merge</DropdownMenuLabel>
               <DropdownMenuCheckboxItem
                 checked={mergeReady}
                 disabled={!canMerge || pendingMerge !== null || canResumeMerge}
@@ -710,13 +792,16 @@ export function NodeCard({
                           }}
                         >
                           <Play className="size-3.5" />
-                          Resume merge
+                          {mergeRunOperation === "restack"
+                            ? "Resume restack"
+                            : "Resume merge"}
                         </DropdownMenuItem>
                       )}
                     />
                     <TooltipContent side="right" sideOffset={12} align="center">
-                      Continue a previously-blocked merge run after resolving
-                      conflicts.
+                      Continue a previously-blocked{" "}
+                      {mergeRunOperation === "restack" ? "restack" : "merge"}{" "}
+                      run after resolving conflicts.
                     </TooltipContent>
                   </Tooltip>
                   <DropdownMenuSeparator />
@@ -1171,7 +1256,9 @@ export function NodeCard({
                 ) : (
                   <Play className="size-3" />
                 )}
-                Resume merge
+                {mergeRunOperation === "restack"
+                  ? "Resume restack"
+                  : "Resume merge"}
               </Button>
             </div>
           ) : null}
