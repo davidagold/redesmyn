@@ -25,6 +25,7 @@ import {
 import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
+import { useHosts } from "@/hooks/useHosts"
 import {
   type StreamEvent,
   type TaskMergeEventData,
@@ -138,6 +139,7 @@ export function EpicView() {
     error: epicsError,
     refresh: refreshEpics,
   } = useEpics()
+  const { hosts } = useHosts()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
@@ -313,6 +315,15 @@ export function EpicView() {
 
   const loading = epicsLoading || graphLoading
   const error = epicsError || graphError
+
+  const primaryHostDisplayName = useMemo(() => {
+    const primaryHostKey = graph?.repoExecutor?.primaryHostKey ?? null
+    if (!primaryHostKey) {
+      return null
+    }
+    const host = hosts.find((candidate) => candidate.hostKey === primaryHostKey)
+    return host?.displayName || primaryHostKey
+  }, [graph?.repoExecutor?.primaryHostKey, hosts])
 
   const runSummary = useMemo(() => {
     if (!graph) {
@@ -1124,24 +1135,22 @@ export function EpicView() {
               </Button>
             </>
           ) : null}
-
-          {graph?.repoExecutor ? (
-            <span className="ml-2 hidden shrink-0 items-center gap-1 text-xs text-muted-foreground md:inline-flex">
-              <span>Primary:</span>
-              <span className="font-mono text-foreground/80">
-                {graph.repoExecutor.primaryHostKey ?? "none"}
-              </span>
-            </span>
-          ) : null}
         </div>
 
-        <Button
-          variant="outline"
-          onClick={() => void handleRefresh()}
-          disabledReason={loading ? "Refreshing…" : null}
-        >
-          {loading ? "Refreshing..." : "Refresh"}
-        </Button>
+        <div className="flex items-center justify-end gap-2">
+          {primaryHostDisplayName ? (
+            <span className="hidden max-w-56 truncate text-xs text-muted-foreground md:inline-flex">
+              {primaryHostDisplayName}
+            </span>
+          ) : null}
+          <Button
+            variant="outline"
+            onClick={() => void handleRefresh()}
+            disabledReason={loading ? "Refreshing…" : null}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </Button>
+        </div>
       </ContentPanelHeader>
 
       {error ? (

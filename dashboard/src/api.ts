@@ -5,6 +5,7 @@ export type Epic = components["schemas"]["EpicResponse"]
 export type EpicGraph = components["schemas"]["EpicGraphResponse"]
 export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaultsResponse"]
 export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
+export type Host = components["schemas"]["HostResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
@@ -113,6 +114,16 @@ export async function fetchEpicGraph(
     throw new Error(`GET /v1/epics/${epic}/graph failed (${response.status})`)
   }
   return response.json() as Promise<EpicGraph>
+}
+
+export async function fetchHosts(): Promise<Host[]> {
+  const response = await fetch("/v1/hosts", {
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw new Error(`GET /v1/hosts failed (${response.status})`)
+  }
+  return response.json() as Promise<Host[]>
 }
 
 export async function setTaskMergeReady(
