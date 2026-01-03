@@ -268,6 +268,7 @@ export function GraphView({
     useState<Map<number, FlowPosition> | null>(null)
   const [layoutVersion, setLayoutVersion] = useState(0)
   const didInitialFitRef = useRef(false)
+  const epicEnteredAtRef = useRef(performance.now())
   const viewportAnimationIdRef = useRef(0)
   const [viewportAnimation, setViewportAnimation] =
     useState<ViewportAnimation | null>(null)
@@ -671,6 +672,8 @@ export function GraphView({
 
   useEffect(() => {
     didInitialFitRef.current = false
+    epicEnteredAtRef.current = performance.now()
+    setElkPositions(null)
   }, [epicSlug])
 
   const selectionLensRef = useRef<{
@@ -1226,6 +1229,52 @@ export function GraphView({
     flow,
     epicSlug,
     layoutVersion,
+    nodes.length,
+    queueViewportAnimation,
+    routeEpicSlug,
+    targetPositions,
+    trunkLayout,
+  ])
+
+  useEffect(() => {
+    if (!flow || !nodes.length) {
+      return
+    }
+    if (!elkPositions) {
+      return
+    }
+    if (!didInitialFitRef.current || hasSelectionRef.current) {
+      return
+    }
+    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
+      return
+    }
+    if (performance.now() - epicEnteredAtRef.current > 1_500) {
+      return
+    }
+
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      return
+    }
+    const bounds = computeGraphBounds(targetPositions, trunkLayout)
+    if (!bounds) {
+      return
+    }
+
+    const nextViewport = computeDefaultViewport(
+      bounds,
+      rect,
+      DETAILS_PANEL_WIDTH_PX,
+    )
+    const currentViewport = flow.getViewport()
+    if (currentViewport.zoom > nextViewport.zoom + 0.05) {
+      queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
+    }
+  }, [
+    elkPositions,
+    epicSlug,
+    flow,
     nodes.length,
     queueViewportAnimation,
     routeEpicSlug,
