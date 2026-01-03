@@ -5,6 +5,7 @@ export type Task = EpicGraph["tasks"][number]
 export type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 export type AgentSession = EpicGraph["agentSessions"][number]
 export type TrunkTimeline = EpicGraph["trunk"]
+export type RepoExecutorStatus = EpicGraph["repoExecutor"]
 
 export function formatBranchName(
   branchName: string,

@@ -64,6 +64,7 @@ interface NodeCardProps {
   blockingMergeRun?: MergeRun
   activity?: NodeActivity
   branchLabel: string
+  gitMutationsDisabledReason?: string | null
   harnessCommand: string
   detach: boolean
   isSelected: boolean
@@ -140,6 +141,7 @@ export function NodeCard({
   agentSession,
   activity,
   branchLabel,
+  gitMutationsDisabledReason,
   harnessCommand,
   detach,
   isSelected,
@@ -162,6 +164,7 @@ export function NodeCard({
     node.branchName,
   )
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
+  const gitDisabledReason = gitMutationsDisabledReason ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
 
   const [pendingAction, setPendingAction] =
@@ -741,7 +744,11 @@ export function NodeCard({
                   render={(triggerProps) => (
                     <DropdownMenuItem
                       {...triggerProps}
-                      disabled={pendingMerge !== null || canResumeMerge}
+                      disabled={
+                        pendingMerge !== null ||
+                        canResumeMerge ||
+                        gitDisabledReason !== null
+                      }
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -754,8 +761,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Rebase this branch and downstream branches to keep the stack
-                  intact.
+                  {gitDisabledReason ??
+                    "Rebase this branch and downstream branches to keep the stack intact."}
                 </TooltipContent>
               </Tooltip>
               <DropdownMenuSeparator />
@@ -778,7 +785,9 @@ export function NodeCard({
                       render={(triggerProps) => (
                         <DropdownMenuItem
                           {...triggerProps}
-                          disabled={pendingMerge !== null}
+                          disabled={
+                            pendingMerge !== null || gitDisabledReason !== null
+                          }
                           onClick={(e) => {
                             e.preventDefault()
                             e.stopPropagation()
@@ -793,9 +802,10 @@ export function NodeCard({
                       )}
                     />
                     <TooltipContent side="right" sideOffset={12} align="center">
-                      Continue a previously-blocked{" "}
-                      {mergeRunOperation === "restack" ? "restack" : "merge"}{" "}
-                      run after resolving conflicts.
+                      {gitDisabledReason ??
+                        `Continue a previously-blocked ${
+                          mergeRunOperation === "restack" ? "restack" : "merge"
+                        } run after resolving conflicts.`}
                     </TooltipContent>
                   </Tooltip>
                   <DropdownMenuSeparator />
@@ -810,7 +820,8 @@ export function NodeCard({
                         !canMerge ||
                         !mergeReady ||
                         pendingMerge !== null ||
-                        canResumeMerge
+                        canResumeMerge ||
+                        gitDisabledReason !== null
                       }
                       onClick={(e) => {
                         e.preventDefault()
@@ -824,8 +835,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Fast-forward merge the task + its unmerged ancestors into the
-                  epic base branch.
+                  {gitDisabledReason ??
+                    "Fast-forward merge the task + its unmerged ancestors into the epic base branch."}
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
@@ -837,7 +848,8 @@ export function NodeCard({
                         !canMerge ||
                         !mergeReady ||
                         pendingMerge !== null ||
-                        canResumeMerge
+                        canResumeMerge ||
+                        gitDisabledReason !== null
                       }
                       onClick={(e) => {
                         e.preventDefault()
@@ -851,9 +863,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Rebase downstream branches to keep the stack intact, then
-                  fast-forward the task and unmerged ancestors into the epic
-                  base branch.
+                  {gitDisabledReason ??
+                    "Rebase downstream branches to keep the stack intact, then fast-forward merge the task + its unmerged ancestors into the epic base branch."}
                 </TooltipContent>
               </Tooltip>
               <Tooltip>
@@ -865,7 +876,8 @@ export function NodeCard({
                         !canMerge ||
                         !mergeReady ||
                         pendingMerge !== null ||
-                        canResumeMerge
+                        canResumeMerge ||
+                        gitDisabledReason !== null
                       }
                       onClick={(e) => {
                         e.preventDefault()
@@ -879,8 +891,8 @@ export function NodeCard({
                   )}
                 />
                 <TooltipContent side="right" sideOffset={12} align="center">
-                  Fast-forward the task and unmerged ancestors as in [Merge],
-                  then rebase downstream branches to keep the stack intact.
+                  {gitDisabledReason ??
+                    "Fast-forward merge the task + its unmerged ancestors as in [Merge], then rebase downstream branches to keep the stack intact."}
                 </TooltipContent>
               </Tooltip>
             </DropdownMenuContent>
@@ -1238,7 +1250,9 @@ export function NodeCard({
                 size="sm"
                 className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
                 disabledReason={
-                  pendingMerge !== null ? "Action in progress" : null
+                  pendingMerge !== null
+                    ? "Action in progress"
+                    : gitDisabledReason
                 }
                 onClick={(e) => {
                   e.preventDefault()

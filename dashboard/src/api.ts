@@ -26,6 +26,7 @@ export type TaskAgentBulkActionResponse = components["schemas"]["TaskAgentBulkAc
 
 export type TaskMergeRequest = {
   runId?: string | null
+  hostKey?: string | null
   cascade?: boolean
   scope?: "descendants" | "spine"
   restackMode?: "strict" | "merge_then_restack"
@@ -36,6 +37,7 @@ export type TaskMergeRequest = {
 
 export type TaskRestackRequest = {
   runId?: string | null
+  hostKey?: string | null
   scope?: "descendants" | "spine"
   dryRun?: boolean
   allowRunning?: boolean
@@ -43,6 +45,7 @@ export type TaskRestackRequest = {
 
 export type MergeRunResumeRequest = {
   allowRunning?: boolean
+  hostKey?: string | null
 }
 
 export type MergeRunResumeResponse = {

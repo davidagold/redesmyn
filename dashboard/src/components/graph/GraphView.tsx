@@ -26,6 +26,7 @@ import type {
   AgentSession,
   GraphNode,
   MergeRun,
+  RepoExecutorStatus,
   Task,
   TrunkTimeline,
 } from "@/lib/graph-utils"
@@ -75,6 +76,7 @@ interface GraphViewProps {
   harnessCommand: string
   detach: boolean
   trunk?: TrunkTimeline | null
+  repoExecutor?: RepoExecutorStatus | null
   selectedNodeIds: ReadonlySet<number>
   selectedNodeId: number | null
   selectedEdgeId: string | null
@@ -249,6 +251,7 @@ export function GraphView({
   harnessCommand,
   detach,
   trunk,
+  repoExecutor,
   selectedNodeIds,
   selectedNodeId,
   selectedEdgeId,
@@ -276,6 +279,24 @@ export function GraphView({
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
   const [selectionBarVisible, setSelectionBarVisible] = useState(false)
   const selectionBarHideTimerRef = useRef<number | null>(null)
+
+  const gitMutationsDisabledReason = useMemo(() => {
+    const executor = repoExecutor ?? null
+    if (!executor) {
+      return null
+    }
+    const attached = executor.attachedHostKeys ?? []
+    const primary = executor.primaryHostKey ?? null
+    if (!primary) {
+      return attached.length > 0
+        ? "No primary repo executor. Acquire a primary executor lease."
+        : "No repo executor attached. Start a daemon and attach this repo."
+    }
+    if (attached.length > 0 && !attached.includes(primary)) {
+      return `Primary executor ${primary} is not attached.`
+    }
+    return null
+  }, [repoExecutor])
 
   const [edgePulseById, setEdgePulseById] =
     useState<Record<string, EdgePulseData>>({})
@@ -965,6 +986,7 @@ export function GraphView({
           agentSession,
           activity,
           epicSlug,
+          gitMutationsDisabledReason,
           harnessCommand,
           detach,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
@@ -988,6 +1010,7 @@ export function GraphView({
     focusPositions,
     harnessCommand,
     mergeRunsByTaskId,
+    gitMutationsDisabledReason,
     onSelectNode,
     onRequestRefresh,
     nodesById,

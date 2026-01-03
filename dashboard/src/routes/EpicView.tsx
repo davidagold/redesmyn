@@ -1124,6 +1124,15 @@ export function EpicView() {
               </Button>
             </>
           ) : null}
+
+          {graph?.repoExecutor ? (
+            <span className="ml-2 hidden shrink-0 items-center gap-1 text-xs text-muted-foreground md:inline-flex">
+              <span>Primary:</span>
+              <span className="font-mono text-foreground/80">
+                {graph.repoExecutor.primaryHostKey ?? "none"}
+              </span>
+            </span>
+          ) : null}
         </div>
 
         <Button
@@ -1904,6 +1913,7 @@ export function EpicView() {
             harnessCommand={configuredHarnessCommand}
             detach={configuredDetach}
             trunk={graph.trunk ?? null}
+            repoExecutor={graph.repoExecutor ?? null}
             selectedNodeIds={selectedNodeIds}
             selectedNodeId={taskId}
             selectedEdgeId={selectedEdgeId}

@@ -17,6 +17,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   agentSession?: AgentSession
   activity?: NodeActivity
   epicSlug?: string | null
+  gitMutationsDisabledReason?: string | null
   harnessCommand: string
   detach: boolean
   edgeHighlighted?: boolean
@@ -38,6 +39,7 @@ export function FlowBranchNode({
     agentSession,
     activity,
     epicSlug,
+    gitMutationsDisabledReason,
     harnessCommand,
     detach,
     edgeHighlighted,
@@ -66,6 +68,7 @@ export function FlowBranchNode({
         blockingMergeRun={blockingMergeRun}
         activity={activity}
         branchLabel={branchLabel}
+        gitMutationsDisabledReason={gitMutationsDisabledReason ?? null}
         harnessCommand={harnessCommand}
         detach={detach}
         isSelected={selected}
