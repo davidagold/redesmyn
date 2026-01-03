@@ -13,6 +13,7 @@ import webbrowser
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import click
@@ -52,6 +53,11 @@ from redesmyn.db import (
     create_sessionmaker,
     init_db,
 )
+from redesmyn.docs.markdown import (
+    MarkdownSectionError,
+    extract_fenced_block_after_heading,
+    parse_yaml_block,
+)
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
@@ -68,6 +74,7 @@ from redesmyn.integrations.linear import (
     exchange_code_for_token,
     fetch_project_issue_relations,
     fetch_project_issues,
+    fetch_project_issues_by_label,
     linear_authorize_url,
     linear_redirect_uri,
     new_oauth_state,
@@ -1706,8 +1713,30 @@ async def _sync_from_linear(
             "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
         )
 
+    def _load_metadata_dict(markdown: str) -> dict[str, Any]:
+        try:
+            block = extract_fenced_block_after_heading(
+                markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
+            )
+        except MarkdownSectionError:
+            return {}
+        return parse_yaml_block(block.content)
+
+    def _parse_task_number(task_id: str | None) -> int | None:
+        if not task_id:
+            return None
+        prefix = "T-"
+        if not task_id.startswith(prefix):
+            return None
+        suffix = task_id[len(prefix) :]
+        if not suffix.isdigit():
+            return None
+        return int(suffix)
+
     client = LinearClient(access_token=creds.access_token)
-    issues = await fetch_project_issues(client, project_id=project_id)
+    issues = await fetch_project_issues_by_label(
+        client, project_id=project_id, label_name=epic_row.slug
+    )
     try:
         relations = await fetch_project_issue_relations(client, project_id=project_id)
     except Exception as e:
@@ -1717,7 +1746,7 @@ async def _sync_from_linear(
         )
         relations = []
 
-    issue_by_id = {i.id: i for i in issues}
+    issues_by_id = {i.id: i for i in issues}
     blockers_by_issue: dict[str, list[str]] = {i.id: [] for i in issues}
     for rel in relations:
         rel_type = rel.type.lower()
@@ -1731,21 +1760,8 @@ async def _sync_from_linear(
         ):
             blockers_by_issue[rel.issue_id].append(rel.related_issue_id)
 
-    parent_issue_by_issue: dict[str, str | None] = {}
     for issue_id, blockers in blockers_by_issue.items():
-        if not blockers:
-            parent_issue_by_issue[issue_id] = None
-            continue
-        if len(blockers) > 1:
-            raise typer.BadParameter(
-                f"Linear issue {issue_id} has multiple blockers; choose a parent explicitly (v0)"
-            )
-        parent = blockers[0]
-        if parent not in issue_by_id:
-            raise typer.BadParameter(
-                f"Linear issue {issue_id} blocker {parent} is outside the imported project (v0)"
-            )
-        parent_issue_by_issue[issue_id] = parent
+        blockers_by_issue[issue_id] = list(dict.fromkeys(blockers))
 
     epic_dir = ctx.worktree_root / "epics" / epic_row.slug
     tasks_dir = epic_dir / "tasks"
@@ -1768,29 +1784,210 @@ async def _sync_from_linear(
         short = slugify(title, fallback="task")[:60].strip("-") or "task"
         return f"rn/{epic_row.slug}/{identifier}-{short}"
 
-    for issue in issues:
-        parent_issue_id = parent_issue_by_issue.get(issue.id)
-        parent_identifier = (
-            issue_by_id[parent_issue_id].identifier if parent_issue_id else None
+    existing_readmes = sorted(tasks_dir.glob("*/README.md"))
+    existing_readme_by_linear_issue_id: dict[str, Path] = {}
+    existing_task_id_by_linear_issue_id: dict[str, str] = {}
+    used_task_numbers: set[int] = set()
+
+    for readme in existing_readmes:
+        try:
+            doc = load_task_doc(readme)
+        except DocLoadError as e:
+            raise typer.BadParameter(str(e)) from e
+
+        meta = doc.metadata
+        dir_name = readme.parent.name
+        meta_task_id = meta.id
+        task_num = _parse_task_number(meta_task_id)
+        task_id = meta_task_id
+        if task_num is None:
+            task_num = _parse_task_number(dir_name)
+            if task_num is not None:
+                task_id = dir_name
+        if task_num is not None:
+            used_task_numbers.add(task_num)
+
+        linear_issue_id = meta.linear.issue_id if meta.linear else None
+        if not linear_issue_id:
+            continue
+        existing = existing_readme_by_linear_issue_id.get(linear_issue_id)
+        if existing is not None and existing != readme:
+            raise typer.BadParameter(
+                f"Multiple task docs found for Linear issue {linear_issue_id} (v0)"
+            )
+        existing_readme_by_linear_issue_id[linear_issue_id] = readme
+        if task_id:
+            existing_task_id_by_linear_issue_id[linear_issue_id] = task_id
+
+    next_task_number = (max(used_task_numbers) + 1) if used_task_numbers else 1
+    local_task_id_by_issue_id: dict[str, str] = {}
+    for issue in sorted(issues, key=lambda x: x.identifier):
+        if existing_id := existing_task_id_by_linear_issue_id.get(issue.id):
+            local_task_id_by_issue_id[issue.id] = existing_id
+            continue
+        while next_task_number in used_task_numbers:
+            next_task_number += 1
+        local_task_id_by_issue_id[issue.id] = f"T-{next_task_number}"
+        used_task_numbers.add(next_task_number)
+        next_task_number += 1
+
+    def _choose_parent_issue_id(
+        *,
+        issue: LinearIssue,
+        blocker_issue_ids: list[str],
+        existing_stacked_on: str | None,
+        existing_must_land_after: list[str],
+    ) -> str | None:
+        imported_blocker_ids = sorted(
+            [bid for bid in blocker_issue_ids if bid in issues_by_id],
+            key=lambda bid: issues_by_id[bid].identifier,
         )
+        if not imported_blocker_ids:
+            return None
+        if len(imported_blocker_ids) == 1:
+            return imported_blocker_ids[0]
 
-        readme = tasks_dir / issue.identifier / "README.md"
-        readme.parent.mkdir(parents=True, exist_ok=True)
+        if existing_stacked_on:
+            for bid in imported_blocker_ids:
+                if existing_stacked_on in {
+                    local_task_id_by_issue_id.get(bid),
+                    issues_by_id[bid].identifier,
+                    bid,
+                }:
+                    return bid
 
-        if readme.exists():
-            markdown = readme.read_text(encoding="utf-8")
+        if existing_stacked_on is None:
+            for ref in existing_must_land_after:
+                for bid in imported_blocker_ids:
+                    if ref in {
+                        local_task_id_by_issue_id.get(bid),
+                        issues_by_id[bid].identifier,
+                        bid,
+                    }:
+                        return None
+
+        if not sys.stdin.isatty():
+            raise typer.BadParameter(
+                f"Linear issue {issue.identifier} has multiple blockers; run in a TTY to choose a parent (v0)"
+            )
+
+        typer.echo("")
+        typer.echo(
+            f"Linear issue {issue.identifier} has multiple blockers; choose `stacked_on`:"
+        )
+        typer.echo("  0) No parent")
+        for idx, bid in enumerate(imported_blocker_ids, start=1):
+            blocker = issues_by_id[bid]
+            local_id = local_task_id_by_issue_id.get(bid)
+            if local_id:
+                typer.echo(
+                    f"  {idx}) {local_id} ({blocker.identifier}) {blocker.title}"
+                )
+            else:
+                typer.echo(f"  {idx}) {blocker.identifier} {blocker.title}")
+
+        while True:
+            raw = typer.prompt("Parent", default="0").strip()
+            if not raw:
+                return None
+            if not raw.isdigit():
+                typer.echo("Enter a number from the list above.", err=True)
+                continue
+            choice = int(raw)
+            if choice == 0:
+                return None
+            if 1 <= choice <= len(imported_blocker_ids):
+                return imported_blocker_ids[choice - 1]
+            typer.echo("Enter a number from the list above.", err=True)
+
+    for issue in sorted(issues, key=lambda x: x.identifier):
+        local_task_id = local_task_id_by_issue_id[issue.id]
+
+        target_dir = tasks_dir / local_task_id
+        target_readme = target_dir / "README.md"
+
+        existing_readme = existing_readme_by_linear_issue_id.get(issue.id)
+        if existing_readme:
+            existing_dir = existing_readme.parent
+            if existing_dir != target_dir and target_dir.exists():
+                raise typer.BadParameter(
+                    f"Task path collision for {local_task_id}: {target_dir} already exists (v0)"
+                )
+            if existing_dir != target_dir:
+                existing_dir.rename(target_dir)
+        else:
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+        if target_readme.exists():
+            markdown = target_readme.read_text(encoding="utf-8")
         else:
             markdown = f"# {issue.identifier} {issue.title}\n\n## Brief (local)\n\n"
 
-        yaml_data = {
-            "id": None,
-            "group_under": None,
-            "stacked_on": parent_identifier,
-            "must_land_after": [],
-            "linear": {"issue_id": issue.id, "identifier": issue.identifier},
-            "node": {"branch": _branch_name(issue.identifier, issue.title)},
-        }
-        markdown = upsert_metadata_yaml(markdown, yaml_data=yaml_data)
+        existing_meta = _load_metadata_dict(markdown)
+        existing_stacked_on = None
+        existing_must_land_after: list[str] = []
+        try:
+            doc = load_task_doc(target_readme) if target_readme.exists() else None
+        except DocLoadError:
+            doc = None
+        if doc is not None:
+            existing_stacked_on = doc.metadata.stacked_on
+            existing_must_land_after = doc.metadata.must_land_after
+
+        blocker_issue_ids = blockers_by_issue.get(issue.id, [])
+        parent_issue_id = _choose_parent_issue_id(
+            issue=issue,
+            blocker_issue_ids=blocker_issue_ids,
+            existing_stacked_on=existing_stacked_on,
+            existing_must_land_after=existing_must_land_after,
+        )
+        stacked_on = (
+            local_task_id_by_issue_id[parent_issue_id] if parent_issue_id else None
+        )
+
+        imported_blockers = sorted(
+            [bid for bid in blocker_issue_ids if bid in local_task_id_by_issue_id],
+            key=lambda bid: issues_by_id[bid].identifier
+            if bid in issues_by_id
+            else bid,
+        )
+        external_blockers = sorted(
+            [bid for bid in blocker_issue_ids if bid not in issues_by_id]
+        )
+        must_land_after: list[str] = []
+        for bid in [*imported_blockers, *external_blockers]:
+            ref = local_task_id_by_issue_id.get(bid) or bid
+            if stacked_on and ref == stacked_on:
+                continue
+            must_land_after.append(ref)
+        must_land_after_dedup: list[str] = []
+        seen = set()
+        for ref in must_land_after:
+            if ref in seen:
+                continue
+            seen.add(ref)
+            must_land_after_dedup.append(ref)
+
+        existing_meta["id"] = local_task_id
+        existing_meta["stacked_on"] = stacked_on
+        existing_meta["must_land_after"] = must_land_after_dedup
+
+        linear_meta = existing_meta.get("linear")
+        if not isinstance(linear_meta, dict):
+            linear_meta = {}
+            existing_meta["linear"] = linear_meta
+        linear_meta["issue_id"] = issue.id
+        linear_meta["identifier"] = issue.identifier
+
+        node_meta = existing_meta.get("node")
+        if not isinstance(node_meta, dict):
+            node_meta = {}
+            existing_meta["node"] = node_meta
+        branch = node_meta.get("branch")
+        if not isinstance(branch, str) or not branch.strip():
+            node_meta["branch"] = _branch_name(issue.identifier, issue.title)
+
+        markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
 
         synced_lines: list[str] = []
         if issue.state_type:
@@ -1804,7 +2001,7 @@ async def _sync_from_linear(
             title="Synced (from Linear)",
             content="\n".join(synced_lines).rstrip(),
         )
-        readme.write_text(markdown, encoding="utf-8")
+        target_readme.write_text(markdown, encoding="utf-8")
 
     return await _sync_from_local(
         ctx, epic=epic_row.slug, create_branches=create_branches
