@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -100,6 +101,174 @@ class RepoExecutor(Protocol):
     ) -> MergeRunResumeResponse: ...
 
 
+def _require_run_id(*, run_id: str | None) -> str:
+    run_id_value = run_id or ""
+    if not run_id_value:
+        raise RepoExecutorError("Missing run id", status_code=400)
+    return run_id_value
+
+
+def _plan_steps_response(*, plan_steps) -> list[TaskMergePlanStepResponse]:
+    return [
+        TaskMergePlanStepResponse(
+            kind=step.kind,
+            task_id=step.task_id,
+            branch_name=step.branch_name,
+            worktree_path=str(step.worktree_path),
+            upstream_ref=step.upstream_ref,
+            base_branch=step.base_branch,
+        )
+        for step in plan_steps
+    ]
+
+
+def _raise_if_running_agents(
+    *,
+    has_running_agents: bool,
+    allow_running: bool,
+    message: str,
+) -> None:
+    if has_running_agents and not allow_running:
+        raise RepoExecutorError(message, status_code=409)
+
+
+async def _mark_merge_run_running(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    epic_id: int,
+    requested_task_id: int,
+    merge_run_task_id: int,
+    host_key: str,
+    canonical: bool,
+    scope: str,
+    allow_running: bool,
+    force: bool,
+    plan_snapshot: dict[str, object],
+    operation: Literal["merge", "restack"],
+) -> None:
+    await upsert_merge_run(
+        sessionmaker=sessionmaker,
+        run_id=run_id,
+        epic_id=epic_id,
+        task_id=requested_task_id,
+        host_key=host_key,
+        canonical=canonical,
+        scope=scope,
+        allow_running=allow_running,
+        force=force,
+        plan_snapshot=plan_snapshot,
+    )
+    await emit_merge_run_event(
+        sessionmaker=sessionmaker,
+        run_id=run_id,
+        task_id=merge_run_task_id,
+        epic_id=epic_id,
+        requested_task_id=requested_task_id,
+        status=MergeRunStatus.Running,
+        host_key=host_key,
+        operation=operation,
+    )
+
+
+async def _run_local_merge_run(
+    *,
+    execute: Callable[[], Awaitable[None]],
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    task_id: int,
+    operation: Literal["merge", "restack"],
+    failure_kind: Literal["merge_ff", "rebase"],
+    base_branch: str,
+    host_key: str,
+) -> None:
+    try:
+        await execute()
+        await set_merge_run_status(
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            status=MergeRunStatus.Succeeded,
+        )
+    except MergeBlockedByRunningAgents:
+        return
+    except Exception as e:
+        if not isinstance(e, GitCommandError):
+            await set_merge_run_status(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                status=MergeRunStatus.Failed,
+                error=str(e),
+            )
+        await emit_task_merge_event(
+            sessionmaker=sessionmaker,
+            payload={
+                "run_id": run_id,
+                "task_id": task_id,
+                "kind": failure_kind,
+                "phase": "failed",
+                "operation": operation,
+                "branch_name": base_branch,
+                "error": str(e),
+            },
+            host_key=host_key,
+        )
+
+
+def _spawn_local_merge_run(
+    *,
+    execute: Callable[[], Awaitable[None]],
+    sessionmaker: async_sessionmaker[AsyncSession],
+    run_id: str,
+    task_id: int,
+    operation: Literal["merge", "restack"],
+    failure_kind: Literal["merge_ff", "rebase"],
+    base_branch: str,
+    host_key: str,
+) -> None:
+    asyncio.create_task(
+        _run_local_merge_run(
+            execute=execute,
+            sessionmaker=sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            operation=operation,
+            failure_kind=failure_kind,
+            base_branch=base_branch,
+            host_key=host_key,
+        )
+    )
+
+
+async def _require_epic_id_for_task(
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    task_id: int,
+) -> int:
+    async with sessionmaker() as session:
+        task_row = await session.get(Task, task_id)
+        if task_row is None:
+            raise RepoExecutorError("Task not found", status_code=404)
+        return task_row.epic_id
+
+
+def _daemon_placeholder_plan_snapshot(
+    *,
+    operation: Literal["merge", "restack"],
+    scope: Literal["descendants", "spine"],
+    restack_mode: Literal["strict", "merge_then_restack"],
+) -> dict[str, object]:
+    return MergeRunPlanData(
+        operation=operation,
+        base_branch="",
+        base_worktree="",
+        scope=scope,
+        restack_mode=restack_mode,
+        spine_task_ids=[],
+        affected_task_ids=[],
+        steps=[],
+    ).model_dump(mode="python")
+
+
 @dataclass(frozen=True, slots=True)
 class LocalRepoExecutor:
     ctx: RepoContext
@@ -112,9 +281,7 @@ class LocalRepoExecutor:
         task_id: int,
         request: TaskMergeRequest,
     ) -> TaskMergeResponse:
-        run_id = request.run_id or ""
-        if not run_id:
-            raise RepoExecutorError("Missing run id", status_code=400)
+        run_id = _require_run_id(run_id=request.run_id)
 
         scope: Literal["descendants", "spine"] = (
             request.scope if request.cascade else "spine"
@@ -133,24 +300,14 @@ class LocalRepoExecutor:
         except MergePlanError as e:
             raise RepoExecutorError(str(e), status_code=400) from e
 
-        if plan.running_agents and not request.allow_running:
-            raise RepoExecutorError(
-                "Merge affects running tasks; retry with allowRunning=true once you confirm.",
-                status_code=409,
-            )
+        _raise_if_running_agents(
+            has_running_agents=bool(plan.running_agents),
+            allow_running=request.allow_running,
+            message="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+        )
 
         if request.dry_run:
-            steps = [
-                TaskMergePlanStepResponse(
-                    kind=step.kind,
-                    task_id=step.task_id,
-                    branch_name=step.branch_name,
-                    worktree_path=str(step.worktree_path),
-                    upstream_ref=step.upstream_ref,
-                    base_branch=step.base_branch,
-                )
-                for step in plan.steps
-            ]
+            steps = _plan_steps_response(plan_steps=plan.steps)
             return TaskMergeResponse(
                 run_id=run_id,
                 dry_run=True,
@@ -159,78 +316,47 @@ class LocalRepoExecutor:
             )
 
         plan_snapshot = merge_run_plan_snapshot(plan=plan, operation="merge")
-        await upsert_merge_run(
+        merge_task_id = plan.spine_task_ids[-1] if plan.spine_task_ids else task_id
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             epic_id=plan.epic_id,
-            task_id=task_id,
+            requested_task_id=task_id,
+            merge_run_task_id=merge_task_id,
             host_key=target.target_host_key,
             canonical=target.canonical,
             scope=scope,
             allow_running=request.allow_running,
             force=request.force,
             plan_snapshot=plan_snapshot,
-        )
-        merge_task_id = plan.spine_task_ids[-1] if plan.spine_task_ids else task_id
-        await emit_merge_run_event(
-            sessionmaker=self.sessionmaker,
-            run_id=run_id,
-            task_id=merge_task_id,
-            epic_id=plan.epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-            host_key=target.target_host_key,
             operation="merge",
         )
 
-        async def _run() -> None:
-            try:
-                await execute_merge_cascade_plan(
-                    ctx=self.ctx,
+        _spawn_local_merge_run(
+            execute=lambda: execute_merge_cascade_plan(
+                ctx=self.ctx,
+                sessionmaker=self.sessionmaker,
+                plan=plan,
+                allow_running=request.allow_running,
+                emit_event=lambda payload: emit_task_merge_event(
                     sessionmaker=self.sessionmaker,
-                    plan=plan,
-                    allow_running=request.allow_running,
-                    emit_event=lambda payload: emit_task_merge_event(
-                        sessionmaker=self.sessionmaker,
-                        payload={**payload, "operation": "merge"},
-                        host_key=target.target_host_key,
-                    ),
-                    update_run=lambda update: record_merge_run_step_update(
-                        sessionmaker=self.sessionmaker,
-                        run_id=run_id,
-                        update=update,
-                    ),
-                )
-                await set_merge_run_status(
+                    payload={**payload, "operation": "merge"},
+                    host_key=target.target_host_key,
+                ),
+                update_run=lambda update: record_merge_run_step_update(
                     sessionmaker=self.sessionmaker,
                     run_id=run_id,
-                    status=MergeRunStatus.Succeeded,
-                )
-            except MergeBlockedByRunningAgents:
-                return
-            except Exception as e:
-                if not isinstance(e, GitCommandError):
-                    await set_merge_run_status(
-                        sessionmaker=self.sessionmaker,
-                        run_id=run_id,
-                        status=MergeRunStatus.Failed,
-                        error=str(e),
-                    )
-                await emit_task_merge_event(
-                    sessionmaker=self.sessionmaker,
-                    payload={
-                        "run_id": run_id,
-                        "operation": "merge",
-                        "task_id": task_id,
-                        "kind": "merge_ff",
-                        "phase": "failed",
-                        "branch_name": plan.base_branch,
-                        "error": str(e),
-                    },
-                    host_key=target.target_host_key,
-                )
-
-        asyncio.create_task(_run())
+                    update=update,
+                ),
+            ),
+            sessionmaker=self.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            operation="merge",
+            failure_kind="merge_ff",
+            base_branch=plan.base_branch,
+            host_key=target.target_host_key,
+        )
         return TaskMergeResponse(
             run_id=run_id,
             dry_run=False,
@@ -244,9 +370,7 @@ class LocalRepoExecutor:
         task_id: int,
         request: TaskRestackRequest,
     ) -> TaskRestackResponse:
-        run_id = request.run_id or ""
-        if not run_id:
-            raise RepoExecutorError("Missing run id", status_code=400)
+        run_id = _require_run_id(run_id=request.run_id)
 
         scope: Literal["descendants", "spine"] = request.scope
         try:
@@ -260,24 +384,14 @@ class LocalRepoExecutor:
         except MergePlanError as e:
             raise RepoExecutorError(str(e), status_code=400) from e
 
-        if plan.running_agents and not request.allow_running:
-            raise RepoExecutorError(
-                "Restack affects running tasks; retry with allowRunning=true once you confirm.",
-                status_code=409,
-            )
+        _raise_if_running_agents(
+            has_running_agents=bool(plan.running_agents),
+            allow_running=request.allow_running,
+            message="Restack affects running tasks; retry with allowRunning=true once you confirm.",
+        )
 
         if request.dry_run:
-            steps = [
-                TaskMergePlanStepResponse(
-                    kind=step.kind,
-                    task_id=step.task_id,
-                    branch_name=step.branch_name,
-                    worktree_path=str(step.worktree_path),
-                    upstream_ref=step.upstream_ref,
-                    base_branch=step.base_branch,
-                )
-                for step in plan.steps
-            ]
+            steps = _plan_steps_response(plan_steps=plan.steps)
             return TaskRestackResponse(
                 run_id=run_id,
                 dry_run=True,
@@ -286,77 +400,46 @@ class LocalRepoExecutor:
             )
 
         plan_snapshot = merge_run_plan_snapshot(plan=plan, operation="restack")
-        await upsert_merge_run(
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             epic_id=plan.epic_id,
-            task_id=task_id,
+            requested_task_id=task_id,
+            merge_run_task_id=task_id,
             host_key=target.target_host_key,
             canonical=target.canonical,
             scope=scope,
             allow_running=request.allow_running,
             force=False,
             plan_snapshot=plan_snapshot,
+            operation="restack",
         )
-        await emit_merge_run_event(
+
+        _spawn_local_merge_run(
+            execute=lambda: execute_restack_plan(
+                ctx=self.ctx,
+                sessionmaker=self.sessionmaker,
+                plan=plan,
+                allow_running=request.allow_running,
+                emit_event=lambda payload: emit_task_merge_event(
+                    sessionmaker=self.sessionmaker,
+                    payload={**payload, "operation": "restack"},
+                    host_key=target.target_host_key,
+                ),
+                update_run=lambda update: record_merge_run_step_update(
+                    sessionmaker=self.sessionmaker,
+                    run_id=run_id,
+                    update=update,
+                ),
+            ),
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             task_id=task_id,
-            epic_id=plan.epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
             operation="restack",
+            failure_kind="rebase",
+            base_branch=plan.base_branch,
             host_key=target.target_host_key,
         )
-
-        async def _run() -> None:
-            try:
-                await execute_restack_plan(
-                    ctx=self.ctx,
-                    sessionmaker=self.sessionmaker,
-                    plan=plan,
-                    allow_running=request.allow_running,
-                    emit_event=lambda payload: emit_task_merge_event(
-                        sessionmaker=self.sessionmaker,
-                        payload={**payload, "operation": "restack"},
-                        host_key=target.target_host_key,
-                    ),
-                    update_run=lambda update: record_merge_run_step_update(
-                        sessionmaker=self.sessionmaker,
-                        run_id=run_id,
-                        update=update,
-                    ),
-                )
-                await set_merge_run_status(
-                    sessionmaker=self.sessionmaker,
-                    run_id=run_id,
-                    status=MergeRunStatus.Succeeded,
-                )
-            except MergeBlockedByRunningAgents:
-                return
-            except Exception as e:
-                if not isinstance(e, GitCommandError):
-                    await set_merge_run_status(
-                        sessionmaker=self.sessionmaker,
-                        run_id=run_id,
-                        status=MergeRunStatus.Failed,
-                        error=str(e),
-                    )
-                await emit_task_merge_event(
-                    sessionmaker=self.sessionmaker,
-                    payload={
-                        "run_id": run_id,
-                        "operation": "restack",
-                        "task_id": task_id,
-                        "kind": "rebase",
-                        "phase": "failed",
-                        "branch_name": plan.base_branch,
-                        "error": str(e),
-                    },
-                    host_key=target.target_host_key,
-                )
-
-        asyncio.create_task(_run())
         return TaskRestackResponse(
             run_id=run_id,
             dry_run=False,
@@ -418,11 +501,11 @@ class LocalRepoExecutor:
         if plan is None:
             raise RepoExecutorError("Failed to rebuild merge run plan", status_code=500)
 
-        if plan.running_agents and not allow_running:
-            raise RepoExecutorError(
-                "Merge affects running tasks; retry with allowRunning=true once you confirm.",
-                status_code=409,
-            )
+        _raise_if_running_agents(
+            has_running_agents=bool(plan.running_agents),
+            allow_running=allow_running,
+            message="Merge affects running tasks; retry with allowRunning=true once you confirm.",
+        )
 
         start_at_step_index = blocked_step_index or 0
         if start_at_step_index >= len(plan.steps):
@@ -436,18 +519,6 @@ class LocalRepoExecutor:
                 start_at_step_index = 0
 
         plan_snapshot = merge_run_plan_snapshot(plan=plan, operation=operation)
-        await upsert_merge_run(
-            sessionmaker=self.sessionmaker,
-            run_id=run_id,
-            epic_id=plan.epic_id,
-            task_id=task_id,
-            host_key=target.target_host_key,
-            canonical=run.canonical,
-            scope=normalized_scope,
-            allow_running=allow_running,
-            force=force,
-            plan_snapshot=plan_snapshot,
-        )
         if operation == "merge":
             assert merge_plan is not None
             merge_task_id = (
@@ -455,21 +526,25 @@ class LocalRepoExecutor:
             )
         else:
             merge_task_id = task_id
-        await emit_merge_run_event(
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
-            task_id=merge_task_id,
             epic_id=plan.epic_id,
             requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-            operation=operation,
+            merge_run_task_id=merge_task_id,
             host_key=target.target_host_key,
+            canonical=run.canonical,
+            scope=normalized_scope,
+            allow_running=allow_running,
+            force=force,
+            plan_snapshot=plan_snapshot,
+            operation=operation,
         )
 
-        async def _run() -> None:
-            try:
-                if operation == "restack":
-                    await execute_restack_plan(
+        _spawn_local_merge_run(
+            execute=(
+                (
+                    lambda: execute_restack_plan(
                         ctx=self.ctx,
                         sessionmaker=self.sessionmaker,
                         plan=cast(RestackPlan, plan),
@@ -486,8 +561,10 @@ class LocalRepoExecutor:
                         ),
                         start_at_step_index=start_at_step_index,
                     )
-                else:
-                    await execute_merge_cascade_plan(
+                )
+                if operation == "restack"
+                else (
+                    lambda: execute_merge_cascade_plan(
                         ctx=self.ctx,
                         sessionmaker=self.sessionmaker,
                         plan=cast(MergeCascadePlan, plan),
@@ -504,36 +581,16 @@ class LocalRepoExecutor:
                         ),
                         start_at_step_index=start_at_step_index,
                     )
-                await set_merge_run_status(
-                    sessionmaker=self.sessionmaker,
-                    run_id=run_id,
-                    status=MergeRunStatus.Succeeded,
                 )
-            except MergeBlockedByRunningAgents:
-                return
-            except Exception as e:
-                if not isinstance(e, GitCommandError):
-                    await set_merge_run_status(
-                        sessionmaker=self.sessionmaker,
-                        run_id=run_id,
-                        status=MergeRunStatus.Failed,
-                        error=str(e),
-                    )
-                await emit_task_merge_event(
-                    sessionmaker=self.sessionmaker,
-                    payload={
-                        "run_id": run_id,
-                        "task_id": task_id,
-                        "kind": "merge_ff" if operation == "merge" else "rebase",
-                        "phase": "failed",
-                        "operation": operation,
-                        "branch_name": plan.base_branch,
-                        "error": str(e),
-                    },
-                    host_key=target.target_host_key,
-                )
-
-        asyncio.create_task(_run())
+            ),
+            sessionmaker=self.sessionmaker,
+            run_id=run_id,
+            task_id=task_id,
+            operation=operation,
+            failure_kind="rebase" if operation == "restack" else "merge_ff",
+            base_branch=plan.base_branch,
+            host_key=target.target_host_key,
+        )
         return MergeRunResumeResponse(run_id=run_id, base_branch=plan.base_branch)
 
 
@@ -587,9 +644,7 @@ class DaemonRepoExecutor:
         task_id: int,
         request: TaskMergeRequest,
     ) -> TaskMergeResponse:
-        run_id = request.run_id or ""
-        if not run_id:
-            raise RepoExecutorError("Missing run id", status_code=400)
+        run_id = _require_run_id(run_id=request.run_id)
         if request.dry_run:
             raise RepoExecutorError(
                 "dryRun is not supported when routing to a remote repo executor.",
@@ -601,42 +656,27 @@ class DaemonRepoExecutor:
         )
         restack_mode: Literal["strict", "merge_then_restack"] = request.restack_mode
 
-        async with self.sessionmaker() as session:
-            task_row = await session.get(Task, task_id)
-            if task_row is None:
-                raise RepoExecutorError("Task not found", status_code=404)
-            epic_id = task_row.epic_id
-
-        plan_snapshot = MergeRunPlanData(
+        epic_id = await _require_epic_id_for_task(
+            sessionmaker=self.sessionmaker,
+            task_id=task_id,
+        )
+        plan_snapshot = _daemon_placeholder_plan_snapshot(
             operation="merge",
-            base_branch="",
-            base_worktree="",
             scope=scope,
             restack_mode=restack_mode,
-            spine_task_ids=[],
-            affected_task_ids=[],
-            steps=[],
-        ).model_dump(mode="python")
-        await upsert_merge_run(
+        )
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             epic_id=epic_id,
-            task_id=task_id,
+            requested_task_id=task_id,
+            merge_run_task_id=task_id,
             host_key=target.target_host_key,
             canonical=target.canonical,
             scope=scope,
             allow_running=request.allow_running,
             force=request.force,
             plan_snapshot=plan_snapshot,
-        )
-        await emit_merge_run_event(
-            sessionmaker=self.sessionmaker,
-            run_id=run_id,
-            task_id=task_id,
-            epic_id=epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-            host_key=target.target_host_key,
             operation="merge",
         )
         await self._enqueue_daemon_command(
@@ -664,9 +704,7 @@ class DaemonRepoExecutor:
         task_id: int,
         request: TaskRestackRequest,
     ) -> TaskRestackResponse:
-        run_id = request.run_id or ""
-        if not run_id:
-            raise RepoExecutorError("Missing run id", status_code=400)
+        run_id = _require_run_id(run_id=request.run_id)
         if request.dry_run:
             raise RepoExecutorError(
                 "dryRun is not supported when routing to a remote repo executor.",
@@ -674,42 +712,27 @@ class DaemonRepoExecutor:
             )
 
         scope: Literal["descendants", "spine"] = request.scope
-        async with self.sessionmaker() as session:
-            task_row = await session.get(Task, task_id)
-            if task_row is None:
-                raise RepoExecutorError("Task not found", status_code=404)
-            epic_id = task_row.epic_id
-
-        plan_snapshot = MergeRunPlanData(
+        epic_id = await _require_epic_id_for_task(
+            sessionmaker=self.sessionmaker,
+            task_id=task_id,
+        )
+        plan_snapshot = _daemon_placeholder_plan_snapshot(
             operation="restack",
-            base_branch="",
-            base_worktree="",
             scope=scope,
             restack_mode="strict",
-            spine_task_ids=[],
-            affected_task_ids=[],
-            steps=[],
-        ).model_dump(mode="python")
-        await upsert_merge_run(
+        )
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             epic_id=epic_id,
-            task_id=task_id,
+            requested_task_id=task_id,
+            merge_run_task_id=task_id,
             host_key=target.target_host_key,
             canonical=target.canonical,
             scope=scope,
             allow_running=request.allow_running,
             force=False,
             plan_snapshot=plan_snapshot,
-        )
-        await emit_merge_run_event(
-            sessionmaker=self.sessionmaker,
-            run_id=run_id,
-            task_id=task_id,
-            epic_id=epic_id,
-            requested_task_id=task_id,
-            status=MergeRunStatus.Running,
-            host_key=target.target_host_key,
             operation="restack",
         )
         await self._enqueue_daemon_command(
@@ -736,38 +759,31 @@ class DaemonRepoExecutor:
         request: MergeRunResumeRequest,
     ) -> MergeRunResumeResponse:
         run_id = run.run_id
-        if run.plan is None:
-            raise RepoExecutorError("Merge run plan is missing", status_code=400)
-
+        normalized_scope = run.scope.strip().lower()
+        scope_literal: Literal["descendants", "spine"] = (
+            "descendants" if normalized_scope == "descendants" else "spine"
+        )
         plan_snapshot = (
-            dict(run.plan) if isinstance(run.plan, dict) else None
-        ) or MergeRunPlanData(
-            operation=run.operation,
-            base_branch="",
-            base_worktree="",
-            scope="spine",
-        ).model_dump(mode="python")
-
-        await upsert_merge_run(
+            dict(run.plan)
+            if isinstance(run.plan, dict)
+            else _daemon_placeholder_plan_snapshot(
+                operation=run.operation,
+                scope=scope_literal,
+                restack_mode=run.restack_mode,
+            )
+        )
+        await _mark_merge_run_running(
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             epic_id=run.epic_id,
-            task_id=run.requested_task_id,
+            requested_task_id=run.requested_task_id,
+            merge_run_task_id=run.requested_task_id,
             host_key=target.target_host_key,
             canonical=run.canonical,
             scope=run.scope,
             allow_running=run.allow_running or request.allow_running,
             force=run.force,
             plan_snapshot=plan_snapshot,
-        )
-        await emit_merge_run_event(
-            sessionmaker=self.sessionmaker,
-            run_id=run_id,
-            task_id=run.requested_task_id,
-            epic_id=run.epic_id,
-            requested_task_id=run.requested_task_id,
-            status=MergeRunStatus.Running,
-            host_key=target.target_host_key,
             operation=run.operation,
         )
         await self._enqueue_daemon_command(
