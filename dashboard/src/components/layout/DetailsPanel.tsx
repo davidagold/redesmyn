@@ -848,11 +848,13 @@ function AgentActions({
           </div>
         )}
         <div className="text-xs text-muted-foreground">
-          {harnessEditable && harnessDirty
-            ? "Edited command will be used when restarting this agent."
-            : agentArgv
-              ? "Command used for the most recent run."
-              : "Command used when starting this agent."}
+          {harnessEditable && !harnessDraftTrimmed
+            ? "Enter a harness command to use when restarting this agent."
+            : harnessEditable && harnessDirty
+              ? "Edited command will be used when restarting this agent."
+              : agentArgv
+                ? "Command used for the most recent run."
+                : "Command used when starting this agent."}
         </div>
       </div>
 
