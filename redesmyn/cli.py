@@ -94,7 +94,8 @@ from redesmyn.git_mechanics_v0 import (
     execute_restack_plan,
     execute_merge_cascade_plan,
     format_merge_plan,
-    format_running_agents_confirmation,
+    format_restack_plan,
+    format_running_agents_warning,
 )
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
@@ -451,9 +452,55 @@ def shell(
         raise typer.Exit(2)
 
 
+async def _resolve_task_id_for_current_context(
+    *,
+    sessionmaker: object,
+    explicit_task_id: int | None,
+) -> int:
+    if explicit_task_id is not None:
+        return explicit_task_id
+
+    if raw := os.environ.get("RN_TASK_ID"):
+        try:
+            return int(raw)
+        except ValueError as e:
+            raise MergePlanError(
+                f"Invalid RN_TASK_ID={raw!r} (expected an integer)"
+            ) from e
+
+    branch = current_branch(cwd=Path.cwd())
+    if branch == "HEAD":
+        raise MergePlanError("Pass --task (or run from rn shell / a task worktree).")
+
+    async with sessionmaker() as session:  # type: ignore[misc]
+        matches = list(
+            await session.scalars(select(Task).where(Task.branch_name == branch))
+        )
+
+    if not matches:
+        raise MergePlanError(
+            f"No task matches current branch {branch!r}. "
+            "Pass --task (or run from rn shell / a task worktree)."
+        )
+    if len(matches) > 1:
+        ids = ", ".join(str(t.id) for t in matches)
+        raise MergePlanError(
+            f"Ambiguous branch {branch!r}; assigned to multiple tasks ({ids}). "
+            "Pass --task to disambiguate."
+        )
+    return matches[0].id
+
+
 @app.command()
 def merge(
-    task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
+    task_id: int | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Task id (DB primary key). Defaults from RN_TASK_ID (rn shell) or the "
+            "current git branch (when run from a task worktree)."
+        ),
+    ),
     cascade: bool = typer.Option(
         False,
         "--cascade",
@@ -478,6 +525,7 @@ def merge(
     ),
     yes: bool = typer.Option(
         False,
+        "-y",
         "--yes",
         help="Proceed without prompting (including when running agents are detected).",
     ),
@@ -514,11 +562,17 @@ def merge(
     engine = create_engine(ctx.db_path)
     sessionmaker = create_sessionmaker(engine)
     try:
+        resolved_task_id = asyncio.run(
+            _resolve_task_id_for_current_context(
+                sessionmaker=sessionmaker,
+                explicit_task_id=task_id,
+            )
+        )
         plan = asyncio.run(
             build_merge_cascade_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
-                task_id=task_id,
+                task_id=resolved_task_id,
                 run_id=f"cli-{int(time.time())}",
                 scope=selected_scope,  # type: ignore[arg-type]
                 restack_mode=selected_restack_mode,  # type: ignore[arg-type]
@@ -526,25 +580,28 @@ def merge(
             )
         )
 
-        confirmed_running = False
-        if plan.running_agents and not yes:
-            confirmed_running = typer.confirm(
-                format_running_agents_confirmation(plan.running_agents),
-                default=False,
-            )
-            if not confirmed_running:
-                raise typer.Exit(1)
-
+        typer.echo("Merge plan:")
+        for line in format_merge_plan(plan).splitlines():
+            typer.echo(f"  {line}" if line else "")
         if dry_run:
-            typer.echo(format_merge_plan(plan))
             return
+
+        allow_running = yes
+        if not yes:
+            if plan.running_agents:
+                typer.echo("")
+                typer.echo(format_running_agents_warning(plan.running_agents))
+                typer.echo("")
+            if not typer.confirm("Proceed with merge?", default=False):
+                raise typer.Exit(1)
+            allow_running = bool(plan.running_agents)
 
         asyncio.run(
             execute_merge_cascade_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
                 plan=plan,
-                allow_running=yes or confirmed_running,
+                allow_running=allow_running,
                 emit_event=None,
             )
         )
@@ -567,7 +624,14 @@ def merge(
 
 @app.command()
 def restack(
-    task_id: int = typer.Option(..., "--task", help="Task id (DB primary key)."),
+    task_id: int | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Task id (DB primary key). Defaults from RN_TASK_ID (rn shell) or the "
+            "current git branch (when run from a task worktree)."
+        ),
+    ),
     scope: str = typer.Option(
         "descendants",
         "--scope",
@@ -581,6 +645,7 @@ def restack(
     ),
     yes: bool = typer.Option(
         False,
+        "-y",
         "--yes",
         help="Proceed without prompting (including when running agents are detected).",
     ),
@@ -601,42 +666,44 @@ def restack(
     engine = create_engine(ctx.db_path)
     sessionmaker = create_sessionmaker(engine)
     try:
+        resolved_task_id = asyncio.run(
+            _resolve_task_id_for_current_context(
+                sessionmaker=sessionmaker,
+                explicit_task_id=task_id,
+            )
+        )
         plan = asyncio.run(
             build_restack_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
-                task_id=task_id,
+                task_id=resolved_task_id,
                 run_id=f"cli-{int(time.time())}",
                 scope=normalized_scope,  # type: ignore[arg-type]
             )
         )
 
-        confirmed_running = False
-        if plan.running_agents and not yes:
-            confirmed_running = typer.confirm(
-                format_running_agents_confirmation(plan.running_agents),
-                default=False,
-            )
-            if not confirmed_running:
-                raise typer.Exit(1)
-
+        typer.echo("Restack plan:")
+        for line in format_restack_plan(plan).splitlines():
+            typer.echo(f"  {line}" if line else "")
         if dry_run:
-            typer.echo(f"Epic base: {plan.base_branch}")
-            typer.echo(f"Scope: {plan.scope}")
-            typer.echo(f"Affected: {len(plan.affected_task_ids)} task(s)")
-            typer.echo("")
-            for step in plan.steps:
-                typer.echo(
-                    f"rebase {step.branch_name} on {step.upstream_ref} ({step.worktree_path})"
-                )
             return
+
+        allow_running = yes
+        if not yes:
+            if plan.running_agents:
+                typer.echo("")
+                typer.echo(format_running_agents_warning(plan.running_agents))
+                typer.echo("")
+            if not typer.confirm("Proceed with restack?", default=False):
+                raise typer.Exit(1)
+            allow_running = bool(plan.running_agents)
 
         asyncio.run(
             execute_restack_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
                 plan=plan,
-                allow_running=yes or confirmed_running,
+                allow_running=allow_running,
                 emit_event=None,
             )
         )
@@ -655,6 +722,43 @@ def restack(
         raise typer.Exit(2)
     finally:
         asyncio.run(engine.dispose())
+
+
+@app.command()
+def attach(
+    task_id: int | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Task id (DB primary key). Defaults from RN_TASK_ID (rn shell) or the "
+            "current git branch (when run from a task worktree)."
+        ),
+    ),
+) -> None:
+    """Attach to the current task's detached agent session (tmux)."""
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    engine = create_engine(repo_ctx.db_path)
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        resolved_task_id = asyncio.run(
+            _resolve_task_id_for_current_context(
+                sessionmaker=sessionmaker,
+                explicit_task_id=task_id,
+            )
+        )
+    except MergePlanError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    finally:
+        asyncio.run(engine.dispose())
+
+    _attach_agent_for_task_id(repo_ctx, task_id=resolved_task_id)
 
 
 def _parse_bool(value: str) -> bool:
@@ -2149,7 +2253,7 @@ def agent_start(
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
 
-    typer.echo(f"Attach:  rn agent attach --task {task_id}")
+    typer.echo(f"Attach:  rn attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
     typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
@@ -2202,23 +2306,12 @@ def agent_restart(
     typer.echo(f"Restarted: agent a-{task_id} (attach={result.attach.type})")
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
-    typer.echo(f"Attach:  rn agent attach --task {task_id}")
+    typer.echo(f"Attach:  rn attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
     typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
 
-@agent_app.command("attach")
-def agent_attach(
-    task_id: int = typer.Option(..., "--task", help="Task id."),
-) -> None:
-    """Attach to a detached agent session (tmux)."""
-    try:
-        repo_ctx = get_repo_context()
-        _ensure_initialized(repo_ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
+def _attach_agent_for_task_id(repo_ctx: RepoContext, *, task_id: int) -> None:
     try:
         agent_session_row = asyncio.run(
             load_task_agent_session(repo_ctx, task_id=task_id)
@@ -2241,6 +2334,43 @@ def agent_attach(
         typer.echo(f"Logs: rn agent logs --task {task_id}  (path: {log_path})")
         raise typer.Exit(2)
     raise typer.Exit(code)
+
+
+@agent_app.command("attach")
+def agent_attach(
+    task_id: int | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Task id (DB primary key). Defaults from RN_TASK_ID (rn shell) or the "
+            "current git branch (when run from a task worktree)."
+        ),
+    ),
+) -> None:
+    """Attach to a detached agent session (tmux)."""
+    try:
+        repo_ctx = get_repo_context()
+        _ensure_initialized(repo_ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    engine = create_engine(repo_ctx.db_path)
+    sessionmaker = create_sessionmaker(engine)
+    try:
+        resolved_task_id = asyncio.run(
+            _resolve_task_id_for_current_context(
+                sessionmaker=sessionmaker,
+                explicit_task_id=task_id,
+            )
+        )
+    except MergePlanError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+    finally:
+        asyncio.run(engine.dispose())
+
+    _attach_agent_for_task_id(repo_ctx, task_id=resolved_task_id)
 
 
 @agent_app.command("stop")

@@ -865,6 +865,18 @@ def format_running_agents_confirmation(
     return "\n".join(lines)
 
 
+def format_running_agents_warning(
+    agents: Sequence[RunningAgentInfo],
+) -> str:
+    lines = ["This operation affects running tasks/agents:"]
+    for info in agents:
+        label = f"{info.branch_name} ({info.agent_name}, {info.agent_status})"
+        if info.task_id is not None:
+            label = f"T-{info.task_id} {label}"
+        lines.append(f"- {label}")
+    return "\n".join(lines)
+
+
 def format_merge_plan(plan: MergeCascadePlan) -> str:
     lines: list[str] = []
     lines.append(f"Epic base: {plan.base_branch} ({plan.base_worktree})")
@@ -882,4 +894,17 @@ def format_merge_plan(plan: MergeCascadePlan) -> str:
             lines.append(
                 f"merge --ff-only {step.branch_name} -> {plan.base_branch} ({plan.base_worktree})"
             )
+    return "\n".join(lines)
+
+
+def format_restack_plan(plan: RestackPlan) -> str:
+    lines: list[str] = []
+    lines.append(f"Epic base: {plan.base_branch}")
+    lines.append(f"Scope: {plan.scope}")
+    lines.append(f"Affected: {len(plan.affected_task_ids)} task(s)")
+    lines.append("")
+    for step in plan.steps:
+        lines.append(
+            f"rebase {step.branch_name} on {step.upstream_ref} ({step.worktree_path})"
+        )
     return "\n".join(lines)
