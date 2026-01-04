@@ -10,6 +10,7 @@
 - Keep the codebase well-typed: prefer typed data models (Pydantic, enums, `Literal`/union types) over unstructured `str`/`dict` payloads unless there is a compelling necessity.
 - Leverage existing types to keep code simple (avoid overly defensive type-guards / `getattr`-style access when strong typing is available).
 - Be thoughtful about design and architecture: favor simple, maintainable, composable building blocks and avoid very long functions; when a function has multiple distinct steps, split into helpers whose names document the flow and act as single sources of truth.
+- When writing tests, follow `tests/README.md`.
 
 ## Data Model Conventions
 
