@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, overload
+from typing import Any, Literal, Protocol, cast, overload
 from uuid import uuid4
 
 import structlog
@@ -132,7 +132,7 @@ from redesmyn.schemas.core import (
     TaskRestackResponse,
     TrunkTimelineResponse,
 )
-from redesmyn.settings import load_settings
+from redesmyn.settings import RedesmynSettings, load_settings
 from redesmyn.logging_config import configure_logging
 from redesmyn.host_identity import load_or_create_host_identity
 from redesmyn.repo_executor_leases import (
@@ -165,6 +165,14 @@ class App(FastAPI):
     state: AppState
 
 
+def _app_from_request(request: Request) -> App:
+    return cast(App, request.app)
+
+
+def _app_from_websocket(websocket: WebSocket) -> App:
+    return cast(App, websocket.scope["app"])
+
+
 class DashboardStaticFiles(StaticFiles):
     async def get_response(self, path: str, scope) -> Response:  # type: ignore[override]
         try:
@@ -178,10 +186,13 @@ class DashboardStaticFiles(StaticFiles):
 
 
 @asynccontextmanager
-async def lifespan(app: App):
-    env_repo_root_raw = os.environ.get("REDESMYN_REPO_ROOT")
-    env_repo_root = Path(env_repo_root_raw) if env_repo_root_raw else None
-    settings = load_settings(repo_root=env_repo_root)
+async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
+    settings = settings_override
+    env_repo_root: Path | None = None
+    if settings is None:
+        env_repo_root_raw = os.environ.get("REDESMYN_REPO_ROOT")
+        env_repo_root = Path(env_repo_root_raw) if env_repo_root_raw else None
+        settings = load_settings(repo_root=env_repo_root)
 
     repo_root = settings.repo_root or env_repo_root or Path.cwd()
     worktree_root = settings.worktree_root or repo_root
@@ -331,11 +342,10 @@ def maybe_mount_dashboard(app_: FastAPI, worktree_root: Path) -> None:
         )
 
 
-app = App(title="Redesmyn", lifespan=lifespan)
 v1 = APIRouter(prefix="/v1")
+root = APIRouter()
 
 
-@app.middleware("http")
 async def log_unhandled_errors(request: Request, call_next):
     request_id = uuid4().hex
     start = time.monotonic()
@@ -404,6 +414,7 @@ async def v1_ws(
     after_id: int | None = None,
 ) -> None:
     """WebSocket event stream (v0: activity + presence)."""
+    app = _app_from_websocket(websocket)
     await websocket.accept()
     try:
         await run_event_stream(
@@ -416,15 +427,15 @@ async def v1_ws(
         return
 
 
-async def _repo_id(session: AsyncSession) -> int | None:
+async def _repo_id(session: AsyncSession, *, app: App) -> int | None:
     repo = await session.scalar(
         select(Repository).where(Repository.repo_root == str(app.state.ctx.repo_root))
     )
     return repo.id if repo is not None else None
 
 
-async def _resolve_epic_row(session: AsyncSession, *, epic: str) -> Epic:
-    repo_id = await _repo_id(session)
+async def _resolve_epic_row(session: AsyncSession, *, app: App, epic: str) -> Epic:
+    repo_id = await _repo_id(session, app=app)
     if repo_id is None:
         raise HTTPException(status_code=404, detail="Repository not initialized")
 
@@ -452,17 +463,32 @@ async def _append_event(
     return EventResponse.model_validate(event, from_attributes=True)
 
 
-async def _broadcast_event(event: EventResponse) -> None:
+async def _broadcast_event(app: App, event: EventResponse) -> None:
     await app.state.event_hub.publish(
         {"type": "event", "event": event.model_dump(by_alias=True)}
     )
 
 
+def create_app(*, settings: RedesmynSettings | None = None) -> App:
+    app = App(
+        title="Redesmyn",
+        lifespan=lambda app_: _lifespan(app_, settings_override=settings),
+    )
+    app.middleware("http")(log_unhandled_errors)
+    app.include_router(root)
+    app.include_router(v1)
+    return app
+
+
+app = create_app()
+
+
 @v1.get("/epics", response_model=list[EpicResponse])
-async def list_epics() -> list[EpicResponse]:
+async def list_epics(request: Request) -> list[EpicResponse]:
+    app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        repo_id = await _repo_id(session)
+        repo_id = await _repo_id(session, app=app)
         if repo_id is None:
             return []
         rows = await session.scalars(
@@ -472,19 +498,21 @@ async def list_epics() -> list[EpicResponse]:
 
 
 @v1.get("/epics/{epic}", response_model=EpicResponse)
-async def get_epic(epic: str) -> EpicResponse:
+async def get_epic(request: Request, epic: str) -> EpicResponse:
+    app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        row = await _resolve_epic_row(session, epic=epic)
+        row = await _resolve_epic_row(session, app=app, epic=epic)
         return EpicResponse.model_validate(row, from_attributes=True)
 
 
 @v1.get("/epics/{epic}/graph", response_model=EpicGraphResponse)
-async def epic_graph(epic: str) -> EpicGraphResponse:
+async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
+    app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     now = datetime.now(UTC)
     async with sessionmaker() as session:
-        epic_row = await _resolve_epic_row(session, epic=epic)
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
         repo_row = await session.get(Repository, epic_row.repository_id)
         repo_key: RepoKey | None = None
         primary_host_key: str | None = None
@@ -604,7 +632,8 @@ async def epic_graph(epic: str) -> EpicGraphResponse:
 
 
 @v1.get("/hosts", response_model=list[HostResponse])
-async def list_hosts() -> list[HostResponse]:
+async def list_hosts(request: Request) -> list[HostResponse]:
+    app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         rows = list(await session.scalars(select(Host).order_by(Host.id)))
@@ -612,7 +641,10 @@ async def list_hosts() -> list[HostResponse]:
 
 
 @v1.post("/hosts/upsert", response_model=HostResponse)
-async def upsert_host(request: HostUpsertRequest) -> HostResponse:
+async def upsert_host(
+    http_request: Request, request: HostUpsertRequest
+) -> HostResponse:
+    app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         row = await session.scalar(
@@ -642,7 +674,8 @@ async def upsert_host(request: HostUpsertRequest) -> HostResponse:
 
 
 @v1.get("/harness-profiles", response_model=list[HarnessProfileResponse])
-async def list_harness_profiles() -> list[HarnessProfileResponse]:
+async def list_harness_profiles(request: Request) -> list[HarnessProfileResponse]:
+    app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         rows = list(
@@ -655,8 +688,10 @@ async def list_harness_profiles() -> list[HarnessProfileResponse]:
 
 @v1.post("/harness-profiles", response_model=HarnessProfileResponse)
 async def upsert_harness_profile(
+    http_request: Request,
     request: HarnessProfileUpsertRequest,
 ) -> HarnessProfileResponse:
+    app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         row = await session.get(HarnessProfile, request.id)
@@ -687,7 +722,7 @@ async def _require_task(session: AsyncSession, *, task_id: int) -> Task:
     return task
 
 
-async def _require_current_repo(session: AsyncSession) -> Repository:
+async def _require_current_repo(session: AsyncSession, *, app: App) -> Repository:
     repo = await session.scalar(
         select(Repository).where(Repository.repo_root == str(app.state.ctx.repo_root))
     )
@@ -699,10 +734,11 @@ async def _require_current_repo(session: AsyncSession) -> Repository:
 async def _resolve_repo_executor_target(
     session: AsyncSession,
     *,
+    app: App,
     requested_host_key: str | None,
     operation: Literal["merge", "restack"],
 ) -> RepoExecutorTarget:
-    repo = await _require_current_repo(session)
+    repo = await _require_current_repo(session, app=app)
     repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
     primary = await get_primary_host_key(session, repo_key)
     target_host_key = requested_host_key or primary
@@ -740,13 +776,16 @@ async def _resolve_repo_executor_target(
 
 @v1.post("/tasks/{task_id}/agent/start", response_model=TaskAgentStartResponse)
 async def start_task_agent(
+    http_request: Request,
     task_id: int,
     request: TaskAgentStartRequest,
 ) -> TaskAgentStartResponse:
+    app = _app_from_request(http_request)
     run_id = uuid4().hex
     try:
         _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             run_id=run_id,
             task_id=task_id,
             action="start",
@@ -864,6 +903,7 @@ async def _task_info(
 async def _perform_task_agent_action(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     run_id: str,
     task_id: int,
     action: Literal["stop"],
@@ -877,6 +917,7 @@ async def _perform_task_agent_action(
 async def _perform_task_agent_action(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     run_id: str,
     task_id: int,
     action: Literal["start", "restart"],
@@ -889,6 +930,7 @@ async def _perform_task_agent_action(
 async def _perform_task_agent_action(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     run_id: str,
     task_id: int,
     action: Literal["start", "restart", "stop"],
@@ -915,7 +957,7 @@ async def _perform_task_agent_action(
 
     try:
         if action == "start":
-            result = await app.state.runner_backend.start_task_agent(
+            result = await runner_backend.start_task_agent(
                 task_id=task.id,
                 harness_command=harness or "",
                 detach=detach,
@@ -934,7 +976,7 @@ async def _perform_task_agent_action(
             return task, result, warnings
 
         if action == "restart":
-            result = await app.state.runner_backend.restart_task_agent(
+            result = await runner_backend.restart_task_agent(
                 task_id=task.id,
                 harness_command=harness,
                 detach=detach,
@@ -953,7 +995,7 @@ async def _perform_task_agent_action(
             return task, result, warnings
 
         if action == "stop":
-            stopped = await app.state.runner_backend.stop_task_agent(task_id=task.id)
+            stopped = await runner_backend.stop_task_agent(task_id=task.id)
             await _emit_task_agent_action_event(
                 sessionmaker=sessionmaker,
                 run_id=run_id,
@@ -982,6 +1024,7 @@ async def _perform_task_agent_action(
 async def _run_task_agents_bulk(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     run_id: str,
     start_task_ids: list[int],
     restart_task_ids: list[int],
@@ -998,7 +1041,7 @@ async def _run_task_agents_bulk(
             phase="requested",
         )
         try:
-            result = await app.state.runner_backend.start_task_agent(
+            result = await runner_backend.start_task_agent(
                 task_id=task_id,
                 harness_command=harness or "",
                 detach=detach,
@@ -1032,7 +1075,7 @@ async def _run_task_agents_bulk(
             phase="requested",
         )
         try:
-            result = await app.state.runner_backend.restart_task_agent(
+            result = await runner_backend.restart_task_agent(
                 task_id=task_id,
                 harness_command=None,
                 detach=detach,
@@ -1061,6 +1104,7 @@ async def _run_task_agents_bulk(
 async def _run_task_agents_bulk_actions(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     run_id: str,
     actions: list[TaskAgentBulkActionItemRequest],
     harness: str | None,
@@ -1071,6 +1115,7 @@ async def _run_task_agents_bulk_actions(
         try:
             await _perform_task_agent_action(
                 sessionmaker=sessionmaker,
+                runner_backend=runner_backend,
                 run_id=run_id,
                 task_id=item.task_id,
                 action=item.action,
@@ -1084,8 +1129,10 @@ async def _run_task_agents_bulk_actions(
 
 @v1.post("/tasks/agent/actions", response_model=TaskAgentBulkActionResponse)
 async def bulk_task_agent_actions(
+    http_request: Request,
     request: TaskAgentBulkActionRequest,
 ) -> TaskAgentBulkActionResponse:
+    app = _app_from_request(http_request)
     actions = request.actions
     requires_harness = any(a.action == "start" for a in actions)
     if requires_harness and not request.harness:
@@ -1098,6 +1145,7 @@ async def bulk_task_agent_actions(
     asyncio.create_task(
         _run_task_agents_bulk_actions(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             run_id=run_id,
             actions=actions,
             harness=request.harness,
@@ -1110,8 +1158,10 @@ async def bulk_task_agent_actions(
 
 @v1.post("/tasks/agent/run", response_model=TaskAgentBulkRunResponse)
 async def run_task_agents_bulk(
+    http_request: Request,
     request: TaskAgentBulkRunRequest,
 ) -> TaskAgentBulkRunResponse:
+    app = _app_from_request(http_request)
     if request.start_task_ids and not request.harness:
         raise HTTPException(
             status_code=400,
@@ -1122,6 +1172,7 @@ async def run_task_agents_bulk(
     asyncio.create_task(
         _run_task_agents_bulk(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             run_id=run_id,
             start_task_ids=request.start_task_ids,
             restart_task_ids=request.restart_task_ids,
@@ -1134,11 +1185,13 @@ async def run_task_agents_bulk(
 
 
 @v1.post("/tasks/{task_id}/agent/stop", response_model=TaskAgentStopResponse)
-async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
+async def stop_task_agent(http_request: Request, task_id: int) -> TaskAgentStopResponse:
+    app = _app_from_request(http_request)
     run_id = uuid4().hex
     try:
         task, stopped, _ = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             run_id=run_id,
             task_id=task_id,
             action="stop",
@@ -1174,13 +1227,16 @@ async def stop_task_agent(task_id: int) -> TaskAgentStopResponse:
 
 @v1.post("/tasks/{task_id}/agent/restart", response_model=TaskAgentStartResponse)
 async def restart_task_agent(
+    http_request: Request,
     task_id: int,
     request: TaskAgentRestartRequest,
 ) -> TaskAgentStartResponse:
+    app = _app_from_request(http_request)
     run_id = uuid4().hex
     try:
         _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             run_id=run_id,
             task_id=task_id,
             action="restart",
@@ -1215,9 +1271,11 @@ async def restart_task_agent(
 
 @v1.post("/tasks/{task_id}/merge-ready", response_model=TaskResponse)
 async def set_task_merge_ready(
+    http_request: Request,
     task_id: int,
     request: TaskMergeReadyRequest,
 ) -> TaskResponse:
+    app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         task = await session.get(Task, task_id)
@@ -1230,7 +1288,10 @@ async def set_task_merge_ready(
 
 
 @v1.post("/tasks/{task_id}/merge", response_model=TaskMergeResponse)
-async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeResponse:
+async def merge_task(
+    http_request: Request, task_id: int, request: TaskMergeRequest
+) -> TaskMergeResponse:
+    app = _app_from_request(http_request)
     run_id = request.run_id or uuid4().hex
     resolved_request = request.model_copy(update={"run_id": run_id})
 
@@ -1251,6 +1312,7 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
     async with sessionmaker() as session:
         target = await _resolve_repo_executor_target(
             session,
+            app=app,
             requested_host_key=resolved_request.host_key,
             operation="merge",
         )
@@ -1274,8 +1336,9 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
 
 @v1.post("/tasks/{task_id}/restack", response_model=TaskRestackResponse)
 async def restack_task(
-    task_id: int, request: TaskRestackRequest
+    http_request: Request, task_id: int, request: TaskRestackRequest
 ) -> TaskRestackResponse:
+    app = _app_from_request(http_request)
     run_id = request.run_id or uuid4().hex
     resolved_request = request.model_copy(update={"run_id": run_id})
 
@@ -1283,6 +1346,7 @@ async def restack_task(
     async with sessionmaker() as session:
         target = await _resolve_repo_executor_target(
             session,
+            app=app,
             requested_host_key=resolved_request.host_key,
             operation="restack",
         )
@@ -1299,8 +1363,9 @@ async def restack_task(
 
 @v1.post("/merge-runs/{run_id}/resume", response_model=MergeRunResumeResponse)
 async def resume_merge_run(
-    run_id: str, request: MergeRunResumeRequest
+    http_request: Request, run_id: str, request: MergeRunResumeRequest
 ) -> MergeRunResumeResponse:
+    app = _app_from_request(http_request)
     log.info(
         "merge_run.resume.request",
         run_id=run_id,
@@ -1332,7 +1397,7 @@ async def resume_merge_run(
         if run.status != MergeRunStatus.Resumable:
             raise HTTPException(status_code=400, detail="Merge run is not resumable")
 
-        repo = await _require_current_repo(session)
+        repo = await _require_current_repo(session, app=app)
         repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
 
         primary_host_key = await get_primary_host_key(
@@ -1386,11 +1451,13 @@ async def resume_merge_run(
 
 @v1.get("/tasks/{task_id}/agent/logs", include_in_schema=False)
 async def task_agent_logs(
+    http_request: Request,
     task_id: int,
     lines: int = 200,
     max_bytes: int = 65536,
 ) -> dict[str, object]:
     """Return a tail of the agent log for a task (best-effort)."""
+    app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         task = await _require_task(session, task_id=task_id)
@@ -1425,7 +1492,8 @@ async def task_agent_logs(
 
 
 @v1.get("/linear/status", response_model=LinearStatusResponse)
-async def linear_status() -> LinearStatusResponse:
+async def linear_status(request: Request) -> LinearStatusResponse:
+    app = _app_from_request(request)
     store = default_linear_credential_store()
     creds = store.get()
     if creds is None:
@@ -1453,7 +1521,8 @@ async def linear_status() -> LinearStatusResponse:
 
 
 @v1.get("/linear/oauth/start", include_in_schema=False)
-async def linear_oauth_start() -> Response:
+async def linear_oauth_start(request: Request) -> Response:
+    app = _app_from_request(request)
     settings = load_settings(repo_root=app.state.ctx.repo_root)
     state = new_oauth_state()
     code_verifier = new_pkce_verifier()
@@ -1484,11 +1553,13 @@ async def linear_oauth_start() -> Response:
 
 @v1.get("/linear/oauth/callback", include_in_schema=False)
 async def linear_oauth_callback(
+    request: Request,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
     error_description: str | None = None,
 ) -> Response:
+    app = _app_from_request(request)
     if error:
         return HTMLResponse(
             f"<h1>Linear auth failed</h1><p>{error}</p><p>{error_description or ''}</p>",
@@ -1529,7 +1600,8 @@ async def linear_oauth_callback(
 
 
 @v1.get("/daemons", response_model=list[DaemonPresenceResponse])
-async def list_daemons() -> list[DaemonPresenceResponse]:
+async def list_daemons(request: Request) -> list[DaemonPresenceResponse]:
+    app = _app_from_request(request)
     # NOTE: "connected" is derived from the in-process WS registry, not a DB time window.
     #
     # Multi-instance note: this only reports connections attached to *this* server
@@ -1582,8 +1654,9 @@ class IssueDaemonCommandRequest(BaseModel):
 
 @v1.post("/daemons/{host_key}/commands", response_model=DaemonCommandResponse)
 async def issue_daemon_command(
-    host_key: str, req: IssueDaemonCommandRequest
+    http_request: Request, host_key: str, req: IssueDaemonCommandRequest
 ) -> DaemonCommandResponse:
+    app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         cmd = DaemonCommand(
@@ -1617,6 +1690,7 @@ async def issue_daemon_command(
 
 @v1.websocket("/ws")
 async def ui_event_stream(websocket: WebSocket) -> None:
+    app = _app_from_websocket(websocket)
     send_queue = await app.state.event_hub.connect(websocket)
     sender_task = asyncio.create_task(
         app.state.event_hub.sender_loop(websocket, send_queue)
@@ -1654,6 +1728,7 @@ async def ui_event_stream(websocket: WebSocket) -> None:
 
 @v1.websocket("/daemon/ws")
 async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
+    app = _app_from_websocket(websocket)
     settings = load_settings(repo_root=app.state.ctx.repo_root)
     if token != settings.daemon_auth_token:
         await websocket.close(code=1008)
@@ -1764,7 +1839,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                 "attached_repos": attached_repos,
             },
         )
-    await _broadcast_event(connected_event)
+    await _broadcast_event(app, connected_event)
 
     await websocket.send_json({"type": "hello_ack", "server_time": now.isoformat()})
 
@@ -1914,7 +1989,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                             **msg.data,
                         },
                     )
-                await _broadcast_event(event)
+                await _broadcast_event(app, event)
                 await websocket.send_json({"type": "event_ack", "event_id": event.id})
                 continue
 
@@ -1940,7 +2015,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                             "state": cmd.state.value,
                         },
                     )
-                await _broadcast_event(command_event)
+                await _broadcast_event(app, command_event)
                 await websocket.send_json({"type": "command_ack_ok"})
                 continue
     except WebSocketDisconnect:
@@ -1980,11 +2055,12 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         },
                     )
             if disconnected_event is not None:
-                await _broadcast_event(disconnected_event)
+                await _broadcast_event(app, disconnected_event)
 
 
-@app.get("/", include_in_schema=False)
-async def index() -> Response:
+@root.get("/", include_in_schema=False)
+async def index(request: Request) -> Response:
+    app = _app_from_request(request)
     ctx = app.state.ctx
     index_html = ctx.worktree_root / "dashboard" / "dist" / "index.html"
     if index_html.is_file():
@@ -2000,7 +2076,8 @@ def _dist_path(repo_root: Path) -> Path:
 
 
 @v1.get("/config", response_model=OrchestrationDefaultsResponse)
-async def get_orchestration_config() -> OrchestrationDefaultsResponse:
+async def get_orchestration_config(request: Request) -> OrchestrationDefaultsResponse:
+    app = _app_from_request(request)
     defaults = load_orchestration_defaults(app.state.ctx)
     return OrchestrationDefaultsResponse(
         default_epic=defaults.default_epic,
@@ -2025,8 +2102,10 @@ async def get_orchestration_config() -> OrchestrationDefaultsResponse:
 
 @v1.post("/config", response_model=OrchestrationDefaultsResponse)
 async def update_orchestration_config(
+    http_request: Request,
     request: OrchestrationDefaultsUpdateRequest,
 ) -> OrchestrationDefaultsResponse:
+    app = _app_from_request(http_request)
     ctx = app.state.ctx
     path = repo_config_path(ctx)
     data = read_config_file(path)
@@ -2061,7 +2140,7 @@ async def update_orchestration_config(
             set_config_value(data, "sandbox.network", request.sandbox.network)
 
     write_config(path, data)
-    return await get_orchestration_config()
+    return await get_orchestration_config(http_request)
 
 
 @v1.get("/sandbox/capabilities", response_model=SandboxCapabilitiesResponse)
@@ -2073,7 +2152,8 @@ async def sandbox_capabilities() -> SandboxCapabilitiesResponse:
 
 
 @v1.get("/status", response_model=ApiStatusResponse)
-async def api_status() -> ApiStatusResponse:
+async def api_status(request: Request) -> ApiStatusResponse:
+    app = _app_from_request(request)
     ctx = app.state.ctx
     sessionmaker = app.state.sessionmaker
 
@@ -2108,6 +2188,3 @@ async def api_status() -> ApiStatusResponse:
             ),
         ),
     )
-
-
-app.include_router(v1)
