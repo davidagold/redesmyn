@@ -297,9 +297,16 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
 
     observer_task: asyncio.Task[None] | None = None
     agent_monitor_task: asyncio.Task[None] | None = None
-    if settings.runner_mode == "local" and os.environ.get(
-        "REDESMYN_NO_OBSERVER"
-    ) not in {"1", "true", "TRUE"}:
+    env_no_observer = os.environ.get("REDESMYN_NO_OBSERVER") in {"1", "true", "TRUE"}
+    env_no_agent_monitor = os.environ.get("REDESMYN_NO_AGENT_MONITOR") in {
+        "1",
+        "true",
+        "TRUE",
+    }
+    enable_repo_observer = settings.enable_repo_observer and not env_no_observer
+    enable_agent_monitor = settings.enable_agent_monitor and not env_no_agent_monitor
+
+    if settings.runner_mode == "local" and enable_repo_observer:
         observer_task = asyncio.create_task(
             run_repo_observer(
                 ctx,
@@ -309,9 +316,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
             )
         )
 
-    if settings.runner_mode == "local" and os.environ.get(
-        "REDESMYN_NO_AGENT_MONITOR"
-    ) not in {"1", "true", "TRUE"}:
+    if settings.runner_mode == "local" and enable_agent_monitor:
         agent_monitor_task = asyncio.create_task(
             run_agent_monitor(
                 ctx,

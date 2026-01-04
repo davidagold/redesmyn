@@ -23,6 +23,11 @@ class RedesmynSettings(BaseSettings):
     runner_mode: Literal["local", "remote"] = "local"
     daemon_auth_token: str = "dev"
 
+    # Local-only background loops. Prefer disabling these in tests unless a test
+    # explicitly needs them.
+    enable_repo_observer: bool = True
+    enable_agent_monitor: bool = True
+
     linear_client_id: str | None = None
     linear_client_secret: str | None = None
     # `sync --to linear` requires write scope.

@@ -55,6 +55,8 @@ async def _make_scenario(
             worktree_root=ctx.worktree_root,
             db_path=ctx.db_path,
             runner_mode=runner_mode,
+            enable_repo_observer=False,
+            enable_agent_monitor=False,
         )
     )
     app = await ScenarioApp.open(api_app)

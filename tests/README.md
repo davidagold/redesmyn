@@ -43,6 +43,7 @@ The test harness is designed to be xdist-ready:
 
 - Each test gets an isolated temp repo/worktree + DB (`tmp_path`).
 - Each scenario constructs its own ASGI app instance (no global FastAPI app state).
+- Local background loops (repo observer, agent monitor) are disabled by default in tests for determinism/speed.
 
 Write tests assuming they may run concurrently across multiple workers.
 
