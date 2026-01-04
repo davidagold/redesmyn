@@ -25,6 +25,11 @@ type Notice = {
   message: string
 }
 
+type LinearStatusChange = {
+  connected: boolean
+  loading: boolean
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -40,7 +45,7 @@ interface LinearSyncMenuButtonProps {
   onSynced?: () => Promise<void> | void
   showStatusDot?: boolean
   buttonClassName?: string
-  onStatusChange?: (status: { connected: boolean loading: boolean }) => void
+  onStatusChange?: (status: LinearStatusChange) => void
 }
 
 export function LinearSyncMenuButton({
