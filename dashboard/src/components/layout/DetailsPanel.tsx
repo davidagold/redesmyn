@@ -78,6 +78,27 @@ function stripAnsi(text: string) {
   return withoutCsi.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
 }
 
+const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
+
+function isRunningAgentsConflict(error: ApiHttpError) {
+  const detail = error.detail
+  return (
+    typeof detail === "string" &&
+    detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)
+  )
+}
+
+function runningAgentsSummary(error: ApiHttpError) {
+  const detail = error.detail
+  if (typeof detail !== "string") {
+    return null
+  }
+  if (!detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)) {
+    return null
+  }
+  return detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
+}
+
 interface DetailsPanelProps {
   open: boolean
   task: Task | null
@@ -104,6 +125,9 @@ function MergeRunDetails({
   const [resumeError, setResumeError] = useState<string | null>(null)
   const [resumePending, setResumePending] = useState(false)
   const [resumePromptOpen, setResumePromptOpen] = useState(false)
+  const [resumePromptDetail, setResumePromptDetail] = useState<string | null>(
+    null,
+  )
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
 
   const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
@@ -193,8 +217,11 @@ function MergeRunDetails({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409 && !allowRunning) {
-        setResumePromptOpen(true)
-        return
+        if (isRunningAgentsConflict(e)) {
+          setResumePromptDetail(runningAgentsSummary(e))
+          setResumePromptOpen(true)
+          return
+        }
       }
       setResumeError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -413,6 +440,9 @@ function MergeRunDetails({
           if (resumePending && !open) {
             return
           }
+          if (!open) {
+            setResumePromptDetail(null)
+          }
           setResumePromptOpen(open)
         }}
       >
@@ -421,6 +451,11 @@ function MergeRunDetails({
             <AlertDialogTitle>Proceed anyway?</AlertDialogTitle>
             <AlertDialogDescription>
               This resume affects running tasks/agents.
+              {resumePromptDetail ? (
+                <div className="mt-2 whitespace-pre-line text-xs text-muted-foreground">
+                  {resumePromptDetail}
+                </div>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -80,20 +80,44 @@ interface MergeAllowRunningPrompt {
   kind: "merge"
   cascade: boolean
   restackMode: "strict" | "merge_then_restack"
+  detail?: string | null
 }
 
 interface ResumeAllowRunningPrompt {
   kind: "resume"
   runId: string
   operation: "merge" | "restack"
+  detail?: string | null
 }
 
 interface RestackAllowRunningPrompt {
   kind: "restack"
   scope: "descendants" | "spine"
+  detail?: string | null
 }
 
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
+
+const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
+
+function isRunningAgentsConflict(error: ApiHttpError) {
+  const detail = error.detail
+  return (
+    typeof detail === "string" &&
+    detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)
+  )
+}
+
+function runningAgentsSummary(error: ApiHttpError) {
+  const detail = error.detail
+  if (typeof detail !== "string") {
+    return null
+  }
+  if (!detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)) {
+    return null
+  }
+  return detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
+}
 
 function statusSummary(
   task: Task | undefined,
@@ -369,8 +393,15 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({ kind: "merge", cascade, restackMode })
-        return
+        if (isRunningAgentsConflict(e)) {
+          setAllowRunningPrompt({
+            kind: "merge",
+            cascade,
+            restackMode,
+            detail: runningAgentsSummary(e),
+          })
+          return
+        }
       }
       setActionErrorFromException(actionLabel, e)
       return
@@ -393,8 +424,15 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({ kind: "merge", cascade: true, restackMode })
-        return
+        if (isRunningAgentsConflict(e)) {
+          setAllowRunningPrompt({
+            kind: "merge",
+            cascade: true,
+            restackMode,
+            detail: runningAgentsSummary(e),
+          })
+          return
+        }
       }
       setActionErrorFromException(actionLabel, e)
       return
@@ -415,12 +453,15 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({
-          kind: "resume",
-          runId: mergeRun.runId,
-          operation: mergeRunOperation,
-        })
-        return
+        if (isRunningAgentsConflict(e)) {
+          setAllowRunningPrompt({
+            kind: "resume",
+            runId: mergeRun.runId,
+            operation: mergeRunOperation,
+            detail: runningAgentsSummary(e),
+          })
+          return
+        }
       }
       setActionErrorFromException(
         mergeRunOperation === "restack" ? "Resume restack" : "Resume merge",
@@ -444,8 +485,14 @@ export function NodeCard({
       onRequestRefresh()
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
-        setAllowRunningPrompt({ kind: "restack", scope })
-        return
+        if (isRunningAgentsConflict(e)) {
+          setAllowRunningPrompt({
+            kind: "restack",
+            scope,
+            detail: runningAgentsSummary(e),
+          })
+          return
+        }
       }
       setActionErrorFromException(actionLabel, e)
       return
@@ -1418,6 +1465,11 @@ export function NodeCard({
             <AlertDialogDescription>
               This {allowRunningActionLabel ?? "merge"} affects running
               tasks/agents.
+              {allowRunningPrompt?.detail ? (
+                <div className="mt-2 whitespace-pre-line text-xs text-muted-foreground">
+                  {allowRunningPrompt.detail}
+                </div>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
