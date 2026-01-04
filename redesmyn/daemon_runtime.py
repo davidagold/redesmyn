@@ -679,7 +679,6 @@ class DaemonRuntime:
         *,
         payload: MergeRunStartCommand,
     ) -> None:
-        del api  # not needed for start
         try:
             await self._ensure_db_ready()
             if payload.operation == "restack":
@@ -701,15 +700,31 @@ class DaemonRuntime:
                     force=payload.force,
                 )
         except Exception as exc:
+            epic_id: int | None = None
+            try:
+                existing = await asyncio.wait_for(
+                    api.find_merge_run(payload.run_id),
+                    timeout=2.0,
+                )
+            except Exception:
+                existing = None
+            if existing is not None:
+                epic_id = existing.epic_id
+
+            data: dict[str, object] = {
+                "run_id": payload.run_id,
+                "status": MergeRunStatus.Failed,
+                "operation": payload.operation,
+                "task_id": payload.task_id,
+                "requested_task_id": payload.task_id,
+                "error": str(exc),
+            }
+            if epic_id is not None:
+                data["epic_id"] = epic_id
             await self._send_event(
                 send_queue,
                 event_type="merge.run",
-                data={
-                    "run_id": payload.run_id,
-                    "status": MergeRunStatus.Failed,
-                    "operation": payload.operation,
-                    "error": str(exc),
-                },
+                data=data,
             )
             return
 
