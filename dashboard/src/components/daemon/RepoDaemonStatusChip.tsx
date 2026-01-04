@@ -13,6 +13,7 @@ import {
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { RepoDaemonStatus } from "@/lib/repo-daemon-status"
+import { Copy } from "lucide-react"
 
 type HostDotInput = {
   connected: boolean
@@ -98,6 +99,11 @@ export function RepoDaemonStatusChip(props: {
   const primaryLastSeen = useMemo(
     () => formatLastSeen(nowMs, primaryHost?.lastSeenAt ?? null),
     [nowMs, primaryHost?.lastSeenAt],
+  )
+
+  const attachedHosts = useMemo(
+    () => status.hosts.filter((host) => host.isAttached),
+    [status.hosts],
   )
 
   const tooltipSummary = useMemo(() => {
@@ -189,28 +195,35 @@ export function RepoDaemonStatusChip(props: {
           </div>
           {status.primaryHostKey ? (
             <div className="text-xs text-muted-foreground">
-              Primary:{" "}
               <span className="text-foreground/90">
                 {status.primaryDisplayName ?? status.primaryHostKey}
+              </span>{" "}
+              <span className="text-muted-foreground/70">
+                {status.primaryIsLocal
+                  ? "(local)"
+                  : status.primaryConnected
+                    ? "(online)"
+                    : "(offline)"}
               </span>
-              {status.primaryIsLocal
-                ? " (local)"
-                : status.primaryConnected
-                  ? " (online)"
-                  : " (offline)"}
             </div>
           ) : (
-            <div className="text-xs text-muted-foreground">Primary: none</div>
+            <div className="text-xs text-muted-foreground">
+              No primary host.
+            </div>
           )}
-          <div className="text-xs text-muted-foreground">
-            Attached:{" "}
-            {status.hosts.filter((host) => host.isAttached).length > 0
-              ? status.hosts
-                  .filter((host) => host.isAttached)
-                  .map((host) => host.displayName)
-                  .join(", ")
-              : "none"}
-          </div>
+          {attachedHosts.length > 0 &&
+          !(
+            attachedHosts.length === 1 &&
+            primaryHost &&
+            attachedHosts[0]?.hostKey === primaryHost.hostKey
+          ) ? (
+            <div className="text-xs text-muted-foreground">
+              Attached:{" "}
+              <span className="text-foreground/90">
+                {attachedHosts.map((host) => host.displayName).join(", ")}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         {status.hosts.length > 0 ? (
@@ -220,7 +233,7 @@ export function RepoDaemonStatusChip(props: {
               {status.hosts.map((host) => (
                 <div
                   key={host.hostKey}
-                  className="flex items-center justify-between gap-2"
+                  className="flex min-w-0 items-center justify-between gap-2"
                 >
                   <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                     <span
@@ -230,38 +243,51 @@ export function RepoDaemonStatusChip(props: {
                       )}
                       aria-hidden="true"
                     />
-                    <span className="min-w-0 truncate">
-                      {host.displayName}
-                      <span className="text-muted-foreground/70">
-                        {" "}
-                        <span className="font-mono">{host.hostKey}</span>
-                      </span>
-                    </span>
+                    <span className="min-w-0 truncate">{host.displayName}</span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
                     {host.isPrimary ? (
-                      <span className="shrink-0 text-[0.625rem] text-muted-foreground/70">
+                      <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
                         primary
                       </span>
                     ) : null}
                     {host.isAttached ? (
-                      <span className="shrink-0 text-[0.625rem] text-muted-foreground/70">
+                      <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
                         attached
                       </span>
                     ) : null}
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-xs"
+                            className={cn("h-5 w-5", triggerProps.className)}
+                            aria-label="Copy host key"
+                            onClick={() => {
+                              void copyToClipboard(host.hostKey)
+                                .then(() => setNotice("Host key copied"))
+                                .catch((e: unknown) =>
+                                  setNotice(
+                                    e instanceof Error ? e.message : String(e),
+                                  ),
+                                )
+                            }}
+                          >
+                            <Copy className="size-3" />
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="right"
+                        sideOffset={10}
+                        showArrow={false}
+                      >
+                        Copy host key
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="h-5 px-2"
-                    onClick={() => {
-                      void copyToClipboard(host.hostKey)
-                        .then(() => setNotice("Host key copied"))
-                        .catch((e: unknown) =>
-                          setNotice(e instanceof Error ? e.message : String(e)),
-                        )
-                    }}
-                  >
-                    Copy
-                  </Button>
                 </div>
               ))}
             </div>
@@ -308,7 +334,7 @@ export function RepoDaemonStatusChip(props: {
         ) : null}
 
         <div className="space-y-2">
-          <div className="text-xs font-medium text-foreground">Fix</div>
+          <div className="text-xs font-medium text-foreground">Commands</div>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -341,9 +367,9 @@ export function RepoDaemonStatusChip(props: {
             <div className="text-xs text-muted-foreground">{notice}</div>
           ) : null}
           <div className="text-xs text-muted-foreground">
-            Troubleshooting: run{" "}
-            <span className="font-mono text-foreground/80">rn status</span> to
-            confirm repo state, then restart the daemon if needed.
+            If things look wrong: run{" "}
+            <span className="font-mono text-foreground/80">rn status</span>,
+            then restart the daemon.
           </div>
         </div>
       </PopoverContent>
