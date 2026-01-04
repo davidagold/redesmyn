@@ -72,14 +72,17 @@ from redesmyn.integrations.linear import (
     LinearClient,
     LinearIssue,
     LinearIssueRelation,
+    LinearProject,
     create_issue,
     ensure_issue_has_label,
     exchange_code_for_token,
     fetch_issue,
     fetch_issue_team_id,
+    fetch_project,
     fetch_project_issue_relations,
     fetch_project_issues,
     fetch_project_issues_by_label,
+    fetch_projects,
     linear_authorize_url,
     linear_redirect_uri,
     new_oauth_state,
@@ -223,7 +226,9 @@ def sync(
         None, help="Epic slug or id (defaults if only one epic)."
     ),
     project: str | None = typer.Option(
-        None, "--project", help="Linear project id (when syncing from/to Linear)."
+        None,
+        "--project",
+        help="Linear project id, slug, or name (when syncing from/to Linear).",
     ),
     create_branches: bool = typer.Option(
         True,
@@ -1729,6 +1734,7 @@ async def _sync_from_linear(
     create_branches: bool,
 ) -> SyncStats:
     creds = await _require_fresh_linear_credentials(ctx=ctx)
+    client = LinearClient(access_token=creds.access_token)
 
     epic_row = await _resolve_epic(ctx, epic=epic)
 
@@ -1744,8 +1750,15 @@ async def _sync_from_linear(
 
     if not project_id:
         raise typer.BadParameter(
-            "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
+            "Missing Linear project id. Pass --project <id|slug|name>, set it in the epic doc metadata, "
+            "or run `rn linear projects` to discover ids."
         )
+    try:
+        project_id = await _resolve_linear_project_id(client, project_id)
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        raise typer.BadParameter(str(e)) from e
 
     def _load_metadata_dict(markdown: str) -> dict[str, Any]:
         try:
@@ -1767,7 +1780,6 @@ async def _sync_from_linear(
             return None
         return int(suffix)
 
-    client = LinearClient(access_token=creds.access_token)
     issues = await fetch_project_issues_by_label(
         client, project_id=project_id, label_name=epic_row.slug
     )
@@ -2105,6 +2117,64 @@ def _looks_like_uuid(value: str) -> bool:
     return True
 
 
+def _format_linear_project(project: LinearProject) -> str:
+    slug = project.slug or ""
+    teams = ", ".join(f"{t.key} {t.name}" for t in project.teams)
+    return f"{project.id}\t{slug}\t{project.name}\t{teams}".rstrip()
+
+
+async def _resolve_linear_project_id(client: LinearClient, raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        raise typer.BadParameter("Missing Linear project value")
+
+    if _looks_like_uuid(value):
+        try:
+            project = await fetch_project(client, project_id=value)
+        except Exception:
+            project = None
+        if project is None:
+            raise typer.BadParameter(
+                f"Unknown Linear project {raw!r}. Run `rn linear projects` to list valid ids."
+            )
+        return project.id
+
+    try:
+        projects = await fetch_projects(client)
+    except Exception as e:
+        raise typer.BadParameter(f"Could not list Linear projects: {e}") from e
+
+    def _match_slug(v: str) -> list[LinearProject]:
+        return [p for p in projects if p.slug == v]
+
+    def _match_name(v: str) -> list[LinearProject]:
+        return [p for p in projects if p.name == v]
+
+    candidates = _match_slug(value)
+    if not candidates:
+        candidates = _match_name(value)
+    if not candidates:
+        lowered = value.lower()
+        candidates = [p for p in projects if (p.slug or "").lower() == lowered]
+    if not candidates:
+        lowered = value.lower()
+        candidates = [p for p in projects if p.name.lower() == lowered]
+
+    if not candidates:
+        raise typer.BadParameter(
+            f"Unknown Linear project {raw!r}. Run `rn linear projects` to list valid ids."
+        )
+    if len(candidates) == 1:
+        return candidates[0].id
+
+    preview = "\n".join(f"  {_format_linear_project(p)}" for p in candidates[:15])
+    suffix = "\n  …" if len(candidates) > 15 else ""
+    raise typer.BadParameter(
+        f"Multiple Linear projects match {raw!r}:\n{preview}{suffix}\n"
+        "Run `rn linear projects` to pick a unique id."
+    )
+
+
 def _task_ref_from_doc(doc_path: Path, meta: TaskMetadata) -> str | None:
     if meta.id:
         return meta.id
@@ -2139,6 +2209,7 @@ async def _sync_to_linear(
 
     epic_row = await _resolve_epic(ctx, epic=requested_epic)
     creds = await _require_fresh_linear_credentials(ctx=ctx)
+    client = LinearClient(access_token=creds.access_token)
 
     project_id = project or epic_row.linear_project_id
     if not project_id:
@@ -2152,11 +2223,17 @@ async def _sync_to_linear(
 
     if not project_id:
         raise typer.BadParameter(
-            "Missing Linear project id. Pass --project <id> or set it in the epic doc metadata."
+            "Missing Linear project id. Pass --project <id|slug|name>, set it in the epic doc metadata, "
+            "or run `rn linear projects` to discover ids."
         )
+    try:
+        project_id = await _resolve_linear_project_id(client, project_id)
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        raise typer.BadParameter(str(e)) from e
 
     stats = LinearPushStats()
-    client = LinearClient(access_token=creds.access_token)
 
     epic_dir = ctx.worktree_root / "epics" / epic_row.slug
     tasks_dir = epic_dir / "tasks"
@@ -3658,6 +3735,45 @@ def linear_whoami() -> None:
     asyncio.run(_run())
 
 
+@linear_app.command("projects")
+def linear_projects() -> None:
+    """List accessible Linear projects (id, slug, name, teams)."""
+    ctx: RepoContext | None
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+
+    if ctx is not None and not ctx.db_path.exists():
+        ctx = None
+
+    try:
+        creds = asyncio.run(_require_fresh_linear_credentials(ctx=ctx))
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _run() -> None:
+        client = LinearClient(access_token=creds.access_token)
+        try:
+            projects = await fetch_projects(client)
+        except Exception as e:
+            raise typer.BadParameter(f"Could not list Linear projects: {e}") from e
+
+        typer.echo("id\tslug\tname\tteams")
+        for project in sorted(
+            projects,
+            key=lambda p: ((p.slug or "").lower(), p.name.lower(), p.id),
+        ):
+            typer.echo(_format_linear_project(project))
+
+    try:
+        asyncio.run(_run())
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+
 def _task_state_from_linear(state_type: str | None) -> TaskState:
     if state_type is None:
         return TaskState.Todo
@@ -3673,7 +3789,9 @@ def _task_state_from_linear(state_type: str | None) -> TaskState:
 
 @linear_app.command("import")
 def linear_import(
-    project: str = typer.Option(..., "--project", help="Linear project id."),
+    project: str = typer.Option(
+        ..., "--project", help="Linear project id, slug, or name."
+    ),
     epic: str | None = typer.Option(
         None, help="Epic slug or id (defaults if only one epic)."
     ),
@@ -3698,11 +3816,18 @@ def linear_import(
 
     epic_row = asyncio.run(_resolve_epic(ctx, epic=epic))
     client = LinearClient(access_token=creds.access_token)
+    try:
+        project_id = asyncio.run(_resolve_linear_project_id(client, project))
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
 
     async def _fetch() -> tuple[list[LinearIssue], list[LinearIssueRelation]]:
-        issues = await fetch_project_issues(client, project_id=project)
+        issues = await fetch_project_issues(client, project_id=project_id)
         try:
-            relations = await fetch_project_issue_relations(client, project_id=project)
+            relations = await fetch_project_issue_relations(
+                client, project_id=project_id
+            )
         except Exception as e:
             typer.echo(
                 f"warning: could not fetch issue relations; parent inference disabled ({e})",

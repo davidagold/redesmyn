@@ -57,6 +57,14 @@ class LinearTeam:
 
 
 @dataclass(frozen=True, slots=True)
+class LinearProject:
+    id: str
+    name: str
+    slug: str | None
+    teams: tuple[LinearTeam, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class LinearLabel:
     id: str
     name: str
@@ -375,6 +383,54 @@ query ProjectTeams($projectId: String!) {
 }
 """
 
+PROJECT_QUERY_MIN = """
+query Project($projectId: String!) {
+  project(id: $projectId) {
+    id
+    name
+    slugId
+  }
+}
+"""
+
+PROJECT_QUERY_BARE = """
+query Project($projectId: String!) {
+  project(id: $projectId) {
+    id
+    name
+  }
+}
+"""
+
+PROJECTS_QUERY_MIN = """
+query Projects($after: String) {
+  projects(first: 50, after: $after) {
+    nodes {
+      id
+      name
+      slugId
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+PROJECTS_QUERY_FULL = """
+query Projects($after: String) {
+  projects(first: 50, after: $after) {
+    nodes {
+      id
+      name
+      slugId
+      teams(first: 25) {
+        nodes { id key name }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
 TEAMS_QUERY = """
 query Teams($after: String) {
   teams(first: 50, after: $after) {
@@ -593,6 +649,35 @@ def _parse_label(node: object) -> LinearLabel | None:
     return LinearLabel(id=label_id, name=name)
 
 
+def _parse_project(node: object) -> LinearProject | None:
+    if not isinstance(node, dict):
+        return None
+    node_dict = cast(dict[str, Any], node)
+    project_id = node_dict.get("id")
+    name = node_dict.get("name")
+    slug_id = node_dict.get("slugId")
+
+    if not isinstance(project_id, str) or not isinstance(name, str):
+        return None
+
+    teams: list[LinearTeam] = []
+    teams_conn = node_dict.get("teams")
+    if isinstance(teams_conn, dict):
+        teams_nodes = cast(dict[str, Any], teams_conn).get("nodes")
+        if isinstance(teams_nodes, list):
+            for tnode in teams_nodes:
+                team = _parse_team(tnode)
+                if team is not None:
+                    teams.append(team)
+
+    return LinearProject(
+        id=project_id,
+        name=name,
+        slug=slug_id if isinstance(slug_id, str) and slug_id else None,
+        teams=tuple(teams),
+    )
+
+
 def _parse_workflow_state(node: object) -> LinearWorkflowState | None:
     if not isinstance(node, dict):
         return None
@@ -752,6 +837,21 @@ async def fetch_project_issue_relations(
     return relations
 
 
+async def fetch_project(
+    client: LinearClient, *, project_id: str
+) -> LinearProject | None:
+    try:
+        data = await client.graphql(
+            PROJECT_QUERY_MIN, variables={"projectId": project_id}
+        )
+    except ValueError:
+        data = await client.graphql(
+            PROJECT_QUERY_BARE, variables={"projectId": project_id}
+        )
+    project = data.get("project")
+    return _parse_project(project)
+
+
 async def fetch_project_teams(
     client: LinearClient, *, project_id: str
 ) -> list[LinearTeam]:
@@ -800,6 +900,47 @@ async def fetch_teams(client: LinearClient) -> list[LinearTeam]:
         if after is None:
             break
     return teams
+
+
+async def fetch_projects(client: LinearClient) -> list[LinearProject]:
+    after: str | None = None
+    projects: list[LinearProject] = []
+
+    query = PROJECTS_QUERY_FULL
+    while True:
+        try:
+            data = await client.graphql(query, variables={"after": after})
+        except ValueError:
+            if query == PROJECTS_QUERY_MIN:
+                raise
+            # Be conservative: if the workspace GraphQL schema doesn't expose some
+            # fields we request (e.g. teams), fall back to a minimal query.
+            query = PROJECTS_QUERY_MIN
+            after = None
+            projects = []
+            continue
+
+        conn = data.get("projects")
+        if not isinstance(conn, dict):
+            raise ValueError("Linear: missing projects")
+        conn_dict = cast(dict[str, Any], conn)
+
+        nodes = conn_dict.get("nodes")
+        if not isinstance(nodes, list):
+            raise ValueError("Linear: missing projects.nodes")
+        for node in nodes:
+            project = _parse_project(node)
+            if project is not None:
+                projects.append(project)
+
+        has_next, end_cursor = _maybe_page_info(conn_dict)
+        if not has_next:
+            break
+        after = end_cursor
+        if after is None:
+            break
+
+    return projects
 
 
 def select_default_team(teams: list[LinearTeam]) -> LinearTeam:
