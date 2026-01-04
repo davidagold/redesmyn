@@ -12,6 +12,7 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import click
 import typer
@@ -54,6 +55,7 @@ from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
     BlockPolicy,
+    MergeRunStatus,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -98,6 +100,15 @@ from redesmyn.git_mechanics_v0 import (
     format_merge_plan,
     format_restack_plan,
     format_running_agents_warning,
+)
+from redesmyn.host_identity import load_or_create_host_identity
+from redesmyn.merge_runs import (
+    emit_merge_run_event,
+    emit_task_merge_event,
+    merge_run_plan_snapshot,
+    record_merge_run_step_update,
+    set_merge_run_status,
+    upsert_merge_run,
 )
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
@@ -586,18 +597,20 @@ def merge(
     engine = create_engine(ctx.db_path)
     sessionmaker = create_sessionmaker(engine)
     try:
+        host_key = load_or_create_host_identity(ctx).host_key
         resolved_task_id = asyncio.run(
             _resolve_task_id_for_current_context(
                 sessionmaker=sessionmaker,
                 explicit_task_id=task_id,
             )
         )
+        run_id = f"cli-{uuid4().hex}"
         plan = asyncio.run(
             build_merge_cascade_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
                 task_id=resolved_task_id,
-                run_id=f"cli-{int(time.time())}",
+                run_id=run_id,
                 scope=selected_scope,  # type: ignore[arg-type]
                 restack_mode=selected_restack_mode,  # type: ignore[arg-type]
                 force=force,
@@ -620,15 +633,77 @@ def merge(
                 raise typer.Exit(1)
             allow_running = bool(plan.running_agents)
 
+        plan_snapshot = merge_run_plan_snapshot(plan=plan, operation="merge")
+        merge_run_task_id = (
+            plan.spine_task_ids[-1] if plan.spine_task_ids else resolved_task_id
+        )
         asyncio.run(
-            execute_merge_cascade_plan(
-                ctx=ctx,
+            upsert_merge_run(
                 sessionmaker=sessionmaker,
-                plan=plan,
+                run_id=plan.run_id,
+                epic_id=plan.epic_id,
+                task_id=resolved_task_id,
+                host_key=host_key,
+                canonical=True,
+                scope=plan.scope,
                 allow_running=allow_running,
-                emit_event=None,
+                force=force,
+                plan_snapshot=plan_snapshot,
             )
         )
+        asyncio.run(
+            emit_merge_run_event(
+                sessionmaker=sessionmaker,
+                run_id=plan.run_id,
+                task_id=merge_run_task_id,
+                epic_id=plan.epic_id,
+                requested_task_id=resolved_task_id,
+                status=MergeRunStatus.Running,
+                host_key=host_key,
+                operation="merge",
+            )
+        )
+
+        try:
+            asyncio.run(
+                execute_merge_cascade_plan(
+                    ctx=ctx,
+                    sessionmaker=sessionmaker,
+                    plan=plan,
+                    allow_running=allow_running,
+                    emit_event=lambda payload: emit_task_merge_event(
+                        sessionmaker=sessionmaker,
+                        payload={**payload, "operation": "merge"},
+                        host_key=host_key,
+                    ),
+                    update_run=lambda update: record_merge_run_step_update(
+                        sessionmaker=sessionmaker,
+                        run_id=plan.run_id,
+                        update=update,
+                    ),
+                )
+            )
+        except GitCommandError:
+            # `record_merge_run_step_update` already recorded blocked/failed status.
+            raise
+        except Exception as e:
+            asyncio.run(
+                set_merge_run_status(
+                    sessionmaker=sessionmaker,
+                    run_id=plan.run_id,
+                    status=MergeRunStatus.Failed,
+                    error=str(e),
+                )
+            )
+            raise
+        else:
+            asyncio.run(
+                set_merge_run_status(
+                    sessionmaker=sessionmaker,
+                    run_id=plan.run_id,
+                    status=MergeRunStatus.Succeeded,
+                )
+            )
 
         typer.echo(f"Merged into {plan.base_branch}")
     except MergePlanError as e:
@@ -690,18 +765,20 @@ def restack(
     engine = create_engine(ctx.db_path)
     sessionmaker = create_sessionmaker(engine)
     try:
+        host_key = load_or_create_host_identity(ctx).host_key
         resolved_task_id = asyncio.run(
             _resolve_task_id_for_current_context(
                 sessionmaker=sessionmaker,
                 explicit_task_id=task_id,
             )
         )
+        run_id = f"cli-{uuid4().hex}"
         plan = asyncio.run(
             build_restack_plan(
                 ctx=ctx,
                 sessionmaker=sessionmaker,
                 task_id=resolved_task_id,
-                run_id=f"cli-{int(time.time())}",
+                run_id=run_id,
                 scope=normalized_scope,  # type: ignore[arg-type]
             )
         )
@@ -722,15 +799,73 @@ def restack(
                 raise typer.Exit(1)
             allow_running = bool(plan.running_agents)
 
+        plan_snapshot = merge_run_plan_snapshot(plan=plan, operation="restack")
         asyncio.run(
-            execute_restack_plan(
-                ctx=ctx,
+            upsert_merge_run(
                 sessionmaker=sessionmaker,
-                plan=plan,
+                run_id=plan.run_id,
+                epic_id=plan.epic_id,
+                task_id=resolved_task_id,
+                host_key=host_key,
+                canonical=True,
+                scope=plan.scope,
                 allow_running=allow_running,
-                emit_event=None,
+                force=False,
+                plan_snapshot=plan_snapshot,
             )
         )
+        asyncio.run(
+            emit_merge_run_event(
+                sessionmaker=sessionmaker,
+                run_id=plan.run_id,
+                task_id=resolved_task_id,
+                epic_id=plan.epic_id,
+                requested_task_id=resolved_task_id,
+                status=MergeRunStatus.Running,
+                host_key=host_key,
+                operation="restack",
+            )
+        )
+
+        try:
+            asyncio.run(
+                execute_restack_plan(
+                    ctx=ctx,
+                    sessionmaker=sessionmaker,
+                    plan=plan,
+                    allow_running=allow_running,
+                    emit_event=lambda payload: emit_task_merge_event(
+                        sessionmaker=sessionmaker,
+                        payload={**payload, "operation": "restack"},
+                        host_key=host_key,
+                    ),
+                    update_run=lambda update: record_merge_run_step_update(
+                        sessionmaker=sessionmaker,
+                        run_id=plan.run_id,
+                        update=update,
+                    ),
+                )
+            )
+        except GitCommandError:
+            raise
+        except Exception as e:
+            asyncio.run(
+                set_merge_run_status(
+                    sessionmaker=sessionmaker,
+                    run_id=plan.run_id,
+                    status=MergeRunStatus.Failed,
+                    error=str(e),
+                )
+            )
+            raise
+        else:
+            asyncio.run(
+                set_merge_run_status(
+                    sessionmaker=sessionmaker,
+                    run_id=plan.run_id,
+                    status=MergeRunStatus.Succeeded,
+                )
+            )
 
         typer.echo("Restacked.")
     except MergePlanError as e:
