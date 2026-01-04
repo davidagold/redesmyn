@@ -321,7 +321,7 @@ class LinearClient:
 
 
 PROJECT_ISSUES_QUERY = """
-query ProjectIssues($projectId: String!, $after: String) {
+query ProjectIssues($projectId: ID!, $after: String) {
   project(id: $projectId) {
     id
     name
@@ -340,7 +340,7 @@ query ProjectIssues($projectId: String!, $after: String) {
 """
 
 PROJECT_ISSUES_BY_LABEL_QUERY = """
-query ProjectIssuesByLabel($projectId: String!, $labelName: String!, $after: String) {
+query ProjectIssuesByLabel($projectId: ID!, $labelName: String!, $after: String) {
   issues(
     first: 50,
     after: $after,
@@ -359,7 +359,7 @@ query ProjectIssuesByLabel($projectId: String!, $labelName: String!, $after: Str
 """
 
 PROJECT_RELATIONS_QUERY = """
-query ProjectIssueRelations($projectId: String!, $after: String) {
+query ProjectIssueRelations($projectId: ID!, $after: String) {
   issueRelations(first: 100, after: $after, filter: { issue: { project: { id: { eq: $projectId } } } }) {
     nodes {
       id
@@ -373,7 +373,7 @@ query ProjectIssueRelations($projectId: String!, $after: String) {
 """
 
 PROJECT_TEAMS_QUERY = """
-query ProjectTeams($projectId: String!) {
+query ProjectTeams($projectId: ID!) {
   project(id: $projectId) {
     id
     teams(first: 50) {
@@ -384,7 +384,7 @@ query ProjectTeams($projectId: String!) {
 """
 
 PROJECT_QUERY_MIN = """
-query Project($projectId: String!) {
+query Project($projectId: ID!) {
   project(id: $projectId) {
     id
     name
@@ -394,7 +394,7 @@ query Project($projectId: String!) {
 """
 
 PROJECT_QUERY_BARE = """
-query Project($projectId: String!) {
+query Project($projectId: ID!) {
   project(id: $projectId) {
     id
     name
@@ -441,7 +441,7 @@ query Teams($after: String) {
 """
 
 ISSUE_LABELS_QUERY = """
-query IssueLabels($teamId: String, $labelName: String!, $after: String) {
+query IssueLabels($teamId: ID, $labelName: String!, $after: String) {
   issueLabels(
     first: 50,
     after: $after,
@@ -454,7 +454,7 @@ query IssueLabels($teamId: String, $labelName: String!, $after: String) {
 """
 
 ISSUE_LABEL_CREATE_MUTATION = """
-mutation IssueLabelCreate($name: String!, $teamId: String) {
+mutation IssueLabelCreate($name: String!, $teamId: ID) {
   issueLabelCreate(input: { name: $name, teamId: $teamId }) {
     success
     issueLabel { id name }
@@ -464,12 +464,12 @@ mutation IssueLabelCreate($name: String!, $teamId: String) {
 
 ISSUE_CREATE_MUTATION = """
 mutation IssueCreate(
-  $teamId: String!,
-  $projectId: String,
+  $teamId: ID!,
+  $projectId: ID,
   $title: String!,
   $description: String,
-  $labelIds: [String!],
-  $stateId: String
+  $labelIds: [ID!],
+  $stateId: ID
 ) {
   issueCreate(input: {
     teamId: $teamId,
@@ -487,10 +487,10 @@ mutation IssueCreate(
 
 ISSUE_UPDATE_MUTATION = """
 mutation IssueUpdate(
-  $id: String!,
+  $id: ID!,
   $title: String!,
   $description: String,
-  $stateId: String!
+  $stateId: ID!
 ) {
   issueUpdate(id: $id, input: {
     title: $title,
@@ -504,7 +504,7 @@ mutation IssueUpdate(
 """
 
 ISSUE_UPDATE_LABELS_MUTATION = """
-mutation IssueUpdateLabels($id: String!, $labelIds: [String!]) {
+mutation IssueUpdateLabels($id: ID!, $labelIds: [ID!]) {
   issueUpdate(id: $id, input: { labelIds: $labelIds }) {
     success
     issue { id labelIds }
@@ -513,7 +513,7 @@ mutation IssueUpdateLabels($id: String!, $labelIds: [String!]) {
 """
 
 ISSUE_QUERY = """
-query Issue($id: String!) {
+query Issue($id: ID!) {
   issue(id: $id) {
     id
     identifier
@@ -527,7 +527,7 @@ query Issue($id: String!) {
 """
 
 TEAM_STATES_QUERY = """
-query TeamStates($teamId: String!, $after: String) {
+query TeamStates($teamId: ID!, $after: String) {
   team(id: $teamId) {
     id
     states(first: 50, after: $after) {
@@ -539,7 +539,7 @@ query TeamStates($teamId: String!, $after: String) {
 """
 
 ISSUE_BLOCKER_RELATIONS_QUERY = """
-query IssueBlockerRelations($issueId: String!, $after: String) {
+query IssueBlockerRelations($issueId: ID!, $after: String) {
   issueRelations(
     first: 100,
     after: $after,
@@ -560,7 +560,7 @@ query IssueBlockerRelations($issueId: String!, $after: String) {
 """
 
 ISSUE_RELATION_CREATE_MUTATION = """
-mutation IssueRelationCreate($issueId: String!, $relatedIssueId: String!) {
+mutation IssueRelationCreate($issueId: ID!, $relatedIssueId: ID!) {
   issueRelationCreate(input: { type: blocks, issueId: $issueId, relatedIssueId: $relatedIssueId }) {
     success
     issueRelation { id type issue { id } relatedIssue { id } }
@@ -569,7 +569,7 @@ mutation IssueRelationCreate($issueId: String!, $relatedIssueId: String!) {
 """
 
 ISSUE_RELATION_DELETE_MUTATION = """
-mutation IssueRelationDelete($id: String!) {
+mutation IssueRelationDelete($id: ID!) {
   issueRelationDelete(id: $id) {
     success
   }

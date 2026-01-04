@@ -2159,6 +2159,10 @@ async def _resolve_linear_project_id(client: LinearClient, raw: str) -> str:
     if not candidates:
         lowered = value.lower()
         candidates = [p for p in projects if p.name.lower() == lowered]
+    if not candidates and "-" not in value:
+        # Linear project URLs look like `/project/v0-<slugId>/...`. Let users
+        # paste either the full slug (`v0-...`) or the short suffix.
+        candidates = _match_slug(f"v0-{value}")
 
     if not candidates:
         raise typer.BadParameter(
