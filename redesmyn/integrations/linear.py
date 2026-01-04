@@ -56,6 +56,8 @@ class LinearIssue:
     title: str
     description: str | None
     state_type: str | None
+    team_id: str | None = None
+    label_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -709,6 +711,19 @@ def _parse_issue(node: object) -> LinearIssue | None:
         if isinstance(st, str):
             state_type = st
 
+    team_id: str | None = None
+    team = node_dict.get("team")
+    if isinstance(team, dict):
+        team_dict = cast(dict[str, Any], team)
+        tid = team_dict.get("id")
+        if isinstance(tid, str) and tid:
+            team_id = tid
+
+    label_ids: tuple[str, ...] = ()
+    raw_label_ids = node_dict.get("labelIds")
+    if isinstance(raw_label_ids, list):
+        label_ids = tuple(v for v in raw_label_ids if isinstance(v, str) and v)
+
     if (
         not isinstance(issue_id, str)
         or not isinstance(identifier, str)
@@ -722,6 +737,8 @@ def _parse_issue(node: object) -> LinearIssue | None:
         title=title,
         description=description if isinstance(description, str) else None,
         state_type=state_type,
+        team_id=team_id,
+        label_ids=label_ids,
     )
 
 
@@ -1109,6 +1126,35 @@ async def resolve_or_create_label(
     if label is None:
         raise ValueError("Linear: invalid issueLabelCreate response")
     return label
+
+
+async def fetch_label_by_name(
+    client: LinearClient, *, label_name: str
+) -> LinearLabel | None:
+    after: str | None = None
+    while True:
+        data = await client.graphql(
+            ISSUE_LABELS_QUERY,
+            variables={"labelName": label_name, "after": after},
+        )
+        conn = data.get("issueLabels")
+        if not isinstance(conn, dict):
+            raise ValueError("Linear: missing issueLabels")
+        conn_dict = cast(dict[str, Any], conn)
+        nodes = conn_dict.get("nodes")
+        if not isinstance(nodes, list):
+            raise ValueError("Linear: missing issueLabels.nodes")
+        for node in nodes:
+            label = _parse_label(node)
+            if label is not None:
+                return label
+        has_next, end_cursor = _maybe_page_info(conn_dict)
+        if not has_next:
+            break
+        after = end_cursor
+        if after is None:
+            break
+    return None
 
 
 async def fetch_issue(client: LinearClient, *, issue_id: str) -> LinearIssue:

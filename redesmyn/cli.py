@@ -12,6 +12,7 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
@@ -77,6 +78,7 @@ from redesmyn.integrations.linear import (
     create_issue,
     ensure_issue_has_label,
     exchange_code_for_token,
+    fetch_label_by_name,
     fetch_issue,
     fetch_issue_team_id,
     fetch_project,
@@ -99,7 +101,10 @@ from redesmyn.integrations.linear_credentials import (
     default_linear_credential_store,
     is_expiring_soon,
 )
-from redesmyn.integrations.linear_write_defaults import ensure_linear_write_defaults
+from redesmyn.integrations.linear_write_defaults import (
+    ensure_linear_write_defaults,
+    load_linear_write_defaults,
+)
 from redesmyn.git_proxy import (
     READ_ONLY_SUBCOMMANDS,
     detect_git_subcommand,
@@ -207,6 +212,11 @@ class LinearPushStats:
     blockers_skipped: int = 0
 
 
+class SyncOutputFormat(StrEnum):
+    Text = "text"
+    Json = "json"
+
+
 @app.command()
 def sync(
     from_: str | None = typer.Option(
@@ -236,6 +246,16 @@ def sync(
         "--create-branches/--no-create-branches",
         help="Create/update the branch graph for tasks.",
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Plan changes without writing to Linear."
+    ),
+    output_format: SyncOutputFormat = typer.Option(
+        SyncOutputFormat.Text,
+        "--format",
+        case_sensitive=False,
+        show_choices=True,
+        help="Output format for --dry-run (text|json).",
+    ),
 ) -> None:
     """Synchronize between local task docs, Linear, and the DB projection."""
     if from_ and to:
@@ -256,6 +276,16 @@ def sync(
         raise typer.Exit(2)
 
     if from_:
+        if dry_run:
+            typer.echo(
+                "error: --dry-run is only supported with --to linear (v0)", err=True
+            )
+            raise typer.Exit(2)
+        if output_format != SyncOutputFormat.Text:
+            typer.echo(
+                "error: --format is only supported with --dry-run (v0)", err=True
+            )
+            raise typer.Exit(2)
         src = from_.lower()
         if src == "local":
             stats = asyncio.run(
@@ -289,20 +319,28 @@ def sync(
 
     dst = (to or "").lower()
     if dst == "linear":
+        if not dry_run and output_format != SyncOutputFormat.Text:
+            typer.echo(
+                "error: --format is only supported with --dry-run (v0)", err=True
+            )
+            raise typer.Exit(2)
         stats = asyncio.run(
             _sync_to_linear(
                 ctx,
                 epic=epic,
                 project=project,
                 create_branches=create_branches,
+                dry_run=dry_run,
+                output_format=output_format,
             )
         )
-        typer.echo(
-            "Synced to Linear: "
-            f"issues +{stats.issues_created}/~{stats.issues_updated}, "
-            f"docs ~{stats.docs_updated}, "
-            f"blockers ~{stats.blockers_updated} (skipped {stats.blockers_skipped})"
-        )
+        if not dry_run:
+            typer.echo(
+                "Synced to Linear: "
+                f"issues +{stats.issues_created}/~{stats.issues_updated}, "
+                f"docs ~{stats.docs_updated}, "
+                f"blockers ~{stats.blockers_updated} (skipped {stats.blockers_skipped})"
+            )
         return
     typer.echo("error: --to must be one of: linear", err=True)
     raise typer.Exit(2)
@@ -2206,11 +2244,17 @@ async def _sync_to_linear(
     epic: str | None,
     project: str | None,
     create_branches: bool,
+    dry_run: bool,
+    output_format: SyncOutputFormat,
 ) -> LinearPushStats:
     # Make sure local docs/DB are in sync before we push, and so we have Task rows
     # (including state) for every task doc.
     requested_epic = epic or _infer_single_epic_slug_from_fs(ctx.worktree_root)
-    await _sync_from_local(ctx, epic=requested_epic, create_branches=create_branches)
+    # For --dry-run we avoid branch graph churn, but still want the DB projection
+    # up to date so state/title refs are current.
+    await _sync_from_local(
+        ctx, epic=requested_epic, create_branches=(create_branches and not dry_run)
+    )
 
     epic_row = await _resolve_epic(ctx, epic=requested_epic)
     creds = await _require_fresh_linear_credentials(ctx=ctx)
@@ -2282,23 +2326,28 @@ async def _sync_to_linear(
             epic_db = await session.get(Epic, epic_row.id)
             if epic_db is None:
                 raise typer.BadParameter("Epic not found")
-            if epic_db.linear_project_id is None:
-                epic_db.linear_project_id = project_id
-            elif epic_db.linear_project_id != project_id:
+            if (
+                epic_db.linear_project_id is not None
+                and epic_db.linear_project_id != project_id
+            ):
                 raise typer.BadParameter(
                     f"Epic is linked to a different Linear project ({epic_db.linear_project_id})"
                 )
+            if epic_db.linear_project_id is None and not dry_run:
+                epic_db.linear_project_id = project_id
 
-            try:
-                defaults = await ensure_linear_write_defaults(
-                    session,
-                    epic_id=epic_db.id,
-                    epic_slug=epic_db.slug,
-                    project_id=project_id,
-                    client=client,
-                )
-            except LinearApiError as e:
-                _raise_linear(e)
+            defaults = None
+            if not dry_run:
+                try:
+                    defaults = await ensure_linear_write_defaults(
+                        session,
+                        epic_id=epic_db.id,
+                        epic_slug=epic_db.slug,
+                        project_id=project_id,
+                        client=client,
+                    )
+                except LinearApiError as e:
+                    _raise_linear(e)
 
             tasks = list(
                 await session.scalars(
@@ -2324,6 +2373,399 @@ async def _sync_to_linear(
                     _raise_linear(e)
                 state_id_cache[key] = resolved
                 return resolved
+
+            def _preview(value: str | None, *, limit: int = 200) -> str | None:
+                if value is None:
+                    return None
+                if len(value) <= limit:
+                    return value
+                return f"{value[:limit]}…"
+
+            if dry_run:
+                from redesmyn.integrations.linear import (
+                    fetch_issue_blocker_ids,
+                    resolve_default_team,
+                )
+
+                planned_issue_ops: list[dict[str, Any]] = []
+                planned_doc_ops: list[dict[str, Any]] = []
+                planned_blocker_ops: list[dict[str, Any]] = []
+                warnings: list[str] = []
+
+                cached_defaults = await load_linear_write_defaults(
+                    session, epic_id=epic_db.id
+                )
+                label_id: str | None = (
+                    cached_defaults.label_id if cached_defaults else None
+                )
+                team_id: str | None = (
+                    cached_defaults.team_id if cached_defaults else None
+                )
+
+                if team_id is None:
+                    try:
+                        team = await resolve_default_team(
+                            client,
+                            project_id=project_id,
+                            preferred_team_id=(
+                                cached_defaults.team_id if cached_defaults else None
+                            ),
+                        )
+                        team_id = team.id
+                    except Exception:
+                        team_id = None
+
+                if label_id is None:
+                    try:
+                        found = await fetch_label_by_name(
+                            client, label_name=epic_db.slug
+                        )
+                        label_id = found.id if found is not None else None
+                    except Exception as e:
+                        warnings.append(
+                            f"Could not resolve Linear label {epic_db.slug!r}: {e}"
+                        )
+                        label_id = None
+
+                task_issue_by_path: dict[Path, dict[str, Any]] = {}
+                # First pass: plan issue create/update + doc metadata updates.
+                for readme, doc in task_docs:
+                    if doc.title is None:
+                        raise typer.BadParameter(
+                            f"Task doc missing title (H1): {readme}"
+                        )
+
+                    rel_path = str(readme.relative_to(ctx.worktree_root))
+                    task_row = tasks_by_local_path.get(rel_path)
+                    if task_row is None:
+                        raise typer.BadParameter(f"Task not found in DB for {rel_path}")
+
+                    meta = doc.metadata
+                    doc_issue_id = meta.linear.issue_id if meta.linear else None
+                    db_issue_id = task_row.linear_issue_id
+                    if doc_issue_id and db_issue_id and doc_issue_id != db_issue_id:
+                        raise typer.BadParameter(
+                            f"Task {rel_path} has conflicting Linear issue ids (doc={doc_issue_id}, db={db_issue_id})"
+                        )
+                    issue_id = doc_issue_id or db_issue_id
+
+                    local_ref = _task_ref_from_doc(readme, meta)
+                    desired_title = _linear_title_from_doc(
+                        doc.title or "",
+                        identifier=meta.linear.identifier if meta.linear else None,
+                        local_id=local_ref,
+                    )
+                    brief = _extract_markdown_section(
+                        doc.markdown, heading="Brief (local)"
+                    )
+                    task_state = task_row.state if task_row.state else TaskState.Todo
+                    desired_state_type = _linear_state_type_from_task_state(task_state)
+
+                    existing: LinearIssue | None = None
+                    if issue_id:
+                        try:
+                            existing = await fetch_issue(client, issue_id=issue_id)
+                        except LinearApiError as e:
+                            _raise_linear(e)
+
+                    changes: dict[str, Any] = {}
+                    ensure_label = {"name": epic_db.slug, "id": label_id}
+                    needs_label = False
+                    if existing is not None and label_id is not None:
+                        needs_label = label_id not in existing.label_ids
+                        if needs_label:
+                            changes["labels_add"] = [label_id]
+                    elif existing is not None and label_id is None:
+                        changes["labels_add"] = ["<unknown_label_id>"]
+
+                    if existing is not None:
+                        desired_description = (
+                            brief if brief is not None else existing.description
+                        )
+                        if existing.title != desired_title:
+                            changes["title"] = {
+                                "from": existing.title,
+                                "to": desired_title,
+                            }
+                        if (existing.description or "") != (desired_description or ""):
+                            changes["description"] = {
+                                "from_preview": _preview(existing.description),
+                                "to_preview": _preview(desired_description),
+                                "from_len": len(existing.description or ""),
+                                "to_len": len(desired_description or ""),
+                            }
+                        if (
+                            existing.state_type or ""
+                        ).lower() != desired_state_type.lower():
+                            changes["state_type"] = {
+                                "from": existing.state_type,
+                                "to": desired_state_type,
+                            }
+                        action = "update" if (changes or needs_label) else "noop"
+                        planned_issue_ops.append(
+                            {
+                                "kind": "issue",
+                                "action": action,
+                                "task": {"path": rel_path, "ref": local_ref},
+                                "linear": {
+                                    "issue_id": existing.id,
+                                    "identifier": existing.identifier,
+                                },
+                                "ensure_label": ensure_label,
+                                "changes": changes,
+                            }
+                        )
+                        task_issue_by_path[readme] = {
+                            "issue_id": existing.id,
+                            "identifier": existing.identifier,
+                            "ref": local_ref,
+                            "planned_create": False,
+                        }
+
+                        markdown = readme.read_text(encoding="utf-8")
+                        existing_meta = _load_metadata_dict(markdown)
+                        linear_meta = existing_meta.get("linear")
+                        if not isinstance(linear_meta, dict):
+                            linear_meta = {}
+                            existing_meta["linear"] = linear_meta
+                        linear_meta["issue_id"] = existing.id
+                        linear_meta["identifier"] = existing.identifier
+                        next_markdown = upsert_metadata_yaml(
+                            markdown, yaml_data=existing_meta
+                        )
+                        if next_markdown != markdown:
+                            planned_doc_ops.append(
+                                {
+                                    "kind": "doc",
+                                    "action": "update",
+                                    "task": {"path": rel_path, "ref": local_ref},
+                                    "linear": {
+                                        "issue_id": existing.id,
+                                        "identifier": existing.identifier,
+                                    },
+                                }
+                            )
+                    else:
+                        planned_issue_ops.append(
+                            {
+                                "kind": "issue",
+                                "action": "create",
+                                "task": {"path": rel_path, "ref": local_ref},
+                                "linear": {"issue_id": None, "identifier": None},
+                                "ensure_label": ensure_label,
+                                "changes": {
+                                    "title": {"to": desired_title},
+                                    "description": {
+                                        "to_preview": _preview(brief),
+                                        "to_len": len(brief or ""),
+                                    },
+                                    "state_type": {"to": desired_state_type},
+                                    "team_id": team_id,
+                                },
+                            }
+                        )
+                        task_issue_by_path[readme] = {
+                            "issue_id": None,
+                            "identifier": None,
+                            "ref": local_ref,
+                            "planned_create": True,
+                        }
+                        planned_doc_ops.append(
+                            {
+                                "kind": "doc",
+                                "action": "update_after_create",
+                                "task": {"path": rel_path, "ref": local_ref},
+                            }
+                        )
+
+                # Second pass: plan dependency edges after all issues exist.
+                ref_to_issue_id: dict[str, str] = {}
+                ref_to_planned_task: dict[str, str] = {}
+                for readme, info in task_issue_by_path.items():
+                    issue_id = info.get("issue_id")
+                    identifier = info.get("identifier")
+                    local_ref = info.get("ref")
+                    if isinstance(issue_id, str) and issue_id:
+                        for ref in [local_ref, identifier, issue_id]:
+                            if isinstance(ref, str) and ref:
+                                existing_issue_id = ref_to_issue_id.get(ref)
+                                if (
+                                    existing_issue_id is not None
+                                    and existing_issue_id != issue_id
+                                ):
+                                    raise typer.BadParameter(
+                                        f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
+                                    )
+                                ref_to_issue_id[ref] = issue_id
+                    else:
+                        if isinstance(local_ref, str) and local_ref:
+                            ref_to_planned_task[local_ref] = str(readme)
+
+                for readme, doc in task_docs:
+                    rel_path = str(readme.relative_to(ctx.worktree_root))
+                    info = task_issue_by_path.get(readme) or {}
+                    issue_id = info.get("issue_id")
+                    local_ref = info.get("ref")
+
+                    markdown = readme.read_text(encoding="utf-8")
+                    meta_dict = _load_metadata_dict(markdown)
+                    try:
+                        meta_parsed = TaskMetadata.model_validate(meta_dict)
+                    except Exception as e:
+                        raise typer.BadParameter(
+                            f"Invalid task doc metadata in {readme}: {e}"
+                        ) from e
+
+                    refs: list[str] = []
+                    if meta_parsed.stacked_on:
+                        refs.append(meta_parsed.stacked_on)
+                    refs.extend(meta_parsed.must_land_after)
+
+                    deduped: list[str] = []
+                    seen = set()
+                    for ref in refs:
+                        if ref in seen:
+                            continue
+                        seen.add(ref)
+                        deduped.append(ref)
+
+                    desired_ids: list[str] = []
+                    pending_refs: list[str] = []
+                    unresolved: list[str] = []
+                    for ref in deduped:
+                        resolved = ref_to_issue_id.get(ref)
+                        if resolved is not None:
+                            desired_ids.append(resolved)
+                            continue
+                        if ref in ref_to_planned_task:
+                            pending_refs.append(ref)
+                            continue
+                        if _looks_like_uuid(ref):
+                            desired_ids.append(ref)
+                            continue
+                        unresolved.append(ref)
+
+                    if unresolved:
+                        planned_blocker_ops.append(
+                            {
+                                "kind": "blockers",
+                                "action": "skip",
+                                "task": {
+                                    "path": rel_path,
+                                    "ref": local_ref,
+                                    "issue_id": issue_id,
+                                },
+                                "unresolved_refs": unresolved,
+                            }
+                        )
+                        continue
+
+                    if not isinstance(issue_id, str) or not issue_id:
+                        planned_blocker_ops.append(
+                            {
+                                "kind": "blockers",
+                                "action": "update_after_create",
+                                "task": {
+                                    "path": rel_path,
+                                    "ref": local_ref,
+                                    "issue_id": None,
+                                },
+                                "desired_blocker_issue_ids": desired_ids,
+                                "pending_blocker_refs": pending_refs,
+                            }
+                        )
+                        continue
+
+                    try:
+                        existing_blockers = await fetch_issue_blocker_ids(
+                            client, issue_id=issue_id
+                        )
+                    except LinearApiError as e:
+                        _raise_linear(e)
+
+                    desired_set = set(desired_ids)
+                    existing_set = set(existing_blockers)
+                    to_add = sorted(desired_set - existing_set)
+                    to_remove = sorted(existing_set - desired_set)
+                    action = (
+                        "update" if (to_add or to_remove or pending_refs) else "noop"
+                    )
+                    planned_blocker_ops.append(
+                        {
+                            "kind": "blockers",
+                            "action": action,
+                            "task": {
+                                "path": rel_path,
+                                "ref": local_ref,
+                                "issue_id": issue_id,
+                            },
+                            "desired_blocker_issue_ids": sorted(desired_set),
+                            "existing_blocker_issue_ids": sorted(existing_set),
+                            "add": to_add,
+                            "remove": to_remove,
+                            "pending_blocker_refs": pending_refs,
+                        }
+                    )
+
+                # Emit plan
+                plan = {
+                    "version": 1,
+                    "mode": "dry_run",
+                    "target": "linear",
+                    "epic": epic_db.slug,
+                    "project_id": project_id,
+                    "operations": {
+                        "issues": planned_issue_ops,
+                        "docs": planned_doc_ops,
+                        "blockers": planned_blocker_ops,
+                    },
+                    "warnings": warnings,
+                }
+
+                if output_format == SyncOutputFormat.Json:
+                    typer.echo(json.dumps(plan, indent=2, sort_keys=True))
+                else:
+                    creates = sum(
+                        1 for op in planned_issue_ops if op.get("action") == "create"
+                    )
+                    updates = sum(
+                        1 for op in planned_issue_ops if op.get("action") == "update"
+                    )
+                    noops = sum(
+                        1 for op in planned_issue_ops if op.get("action") == "noop"
+                    )
+                    blocker_updates = sum(
+                        1 for op in planned_blocker_ops if op.get("action") == "update"
+                    )
+                    blocker_skips = sum(
+                        1 for op in planned_blocker_ops if op.get("action") == "skip"
+                    )
+                    typer.echo(
+                        f"Plan (dry-run): issues create={creates} update={updates} noop={noops}"
+                    )
+                    for op in planned_issue_ops:
+                        action = op.get("action")
+                        task = op.get("task", {})
+                        linear = op.get("linear", {})
+                        ident = linear.get("identifier") or "<new>"
+                        ref = task.get("ref") or task.get("path")
+                        changes = op.get("changes") or {}
+                        changed_keys = ", ".join(
+                            sorted(k for k in changes.keys() if k != "description")
+                        )
+                        if "description" in changes:
+                            changed_keys = (changed_keys + ", description").strip(", ")
+                        suffix = f" ({changed_keys})" if changed_keys else ""
+                        typer.echo(f"- {action}: {ident} [{ref}]{suffix}")
+                    typer.echo(
+                        f"Plan (dry-run): blockers update={blocker_updates} skip={blocker_skips}"
+                    )
+                    for w in warnings:
+                        typer.echo(f"warning: {w}", err=True)
+
+                return stats
+
+            assert defaults is not None
 
             for readme, doc in task_docs:
                 if doc.title is None:
@@ -2356,28 +2798,50 @@ async def _sync_to_linear(
 
                 if issue_id:
                     try:
-                        team_id = await fetch_issue_team_id(client, issue_id=issue_id)
                         existing = await fetch_issue(client, issue_id=issue_id)
                     except LinearApiError as e:
                         _raise_linear(e)
+                    team_id = existing.team_id
+                    if not team_id:
+                        try:
+                            team_id = await fetch_issue_team_id(
+                                client, issue_id=issue_id
+                            )
+                        except LinearApiError as e:
+                            _raise_linear(e)
+                    if not team_id:
+                        raise typer.BadParameter(
+                            f"Linear issue {issue_id} is missing a team id"
+                        )
                     description = brief if brief is not None else existing.description
                     try:
-                        updated = await update_issue(
-                            client,
-                            issue_id=issue_id,
-                            title=desired_title,
-                            description=description,
-                            state_id=await _state_id(
-                                team_id=team_id, state_type=state_type
-                            ),
+                        wrote = False
+                        needs_update = (
+                            existing.title != desired_title
+                            or (existing.description or "") != (description or "")
+                            or (existing.state_type or "").lower() != state_type.lower()
                         )
-                        await ensure_issue_has_label(
-                            client, issue_id=issue_id, label_id=defaults.label_id
-                        )
+                        issue = existing
+                        if needs_update:
+                            issue = await update_issue(
+                                client,
+                                issue_id=issue_id,
+                                title=desired_title,
+                                description=description,
+                                state_id=await _state_id(
+                                    team_id=team_id, state_type=state_type
+                                ),
+                            )
+                            wrote = True
+                        if defaults.label_id not in existing.label_ids:
+                            await ensure_issue_has_label(
+                                client, issue_id=issue_id, label_id=defaults.label_id
+                            )
+                            wrote = True
                     except LinearApiError as e:
                         _raise_linear(e)
-                    issue = updated
-                    stats.issues_updated += 1
+                    if wrote:
+                        stats.issues_updated += 1
                 else:
                     try:
                         issue = await create_issue(
@@ -2420,18 +2884,19 @@ async def _sync_to_linear(
 
     # Ensure the epic project id is persisted in the epic doc for deterministic
     # bootstrap on a new machine.
-    epic_readme = epic_dir / "README.md"
-    if epic_readme.exists():
-        markdown = epic_readme.read_text(encoding="utf-8")
-        yaml_data = {
-            "slug": epic_row.slug,
-            "name": epic_row.name,
-            "root_branch": epic_row.root_branch,
-            "linear": {"project_id": project_id},
-        }
-        epic_readme.write_text(
-            upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
-        )
+    if not dry_run:
+        epic_readme = epic_dir / "README.md"
+        if epic_readme.exists():
+            markdown = epic_readme.read_text(encoding="utf-8")
+            yaml_data = {
+                "slug": epic_row.slug,
+                "name": epic_row.name,
+                "root_branch": epic_row.root_branch,
+                "linear": {"project_id": project_id},
+            }
+            epic_readme.write_text(
+                upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
+            )
 
     # Second pass: after all issues exist, push dependency edges.
     ref_to_issue_id: dict[str, str] = {}
