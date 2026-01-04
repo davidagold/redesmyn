@@ -80,8 +80,15 @@ function formatLastSeen(nowMs: number, lastSeenAt: string | null) {
 export function RepoDaemonStatusChip(props: {
   status: RepoDaemonStatus
   startCommand?: string
+  showStatusDot?: boolean
+  buttonClassName?: string
 }) {
-  const { status, startCommand = "rn daemon run" } = props
+  const {
+    status,
+    startCommand = "rn daemon run",
+    showStatusDot = true,
+    buttonClassName,
+  } = props
   const nowMs = Date.now()
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -160,16 +167,18 @@ export function RepoDaemonStatusChip(props: {
                     {...popoverProps}
                     variant="ghost"
                     size="sm"
-                    className="h-7 gap-2 px-2"
+                    className={cn("h-7 gap-2 px-2", buttonClassName)}
                   >
                     <span className="inline-flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "size-2 rounded-full",
-                          kindDotClass(status.kind),
-                        )}
-                        aria-hidden="true"
-                      />
+                      {showStatusDot ? (
+                        <span
+                          className={cn(
+                            "size-2 rounded-full",
+                            kindDotClass(status.kind),
+                          )}
+                          aria-hidden="true"
+                        />
+                      ) : null}
                       <span className="hidden sm:inline">{status.label}</span>
                       <span className="sm:hidden">Daemon</span>
                     </span>

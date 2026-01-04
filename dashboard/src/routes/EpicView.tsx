@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
+import { ConnectionsCluster } from "@/components/layout/ConnectionsCluster"
 import { GraphView } from "@/components/graph/GraphView"
 import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
-import { LinearSyncMenuButton } from "@/components/linear/LinearSyncMenuButton"
 import { Button } from "@/components/ui/button"
 import {
   Accordion,
@@ -1179,17 +1179,19 @@ export function EpicView() {
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          <RepoDaemonStatusChip
-            status={repoDaemonStatus}
-            startCommand="rn daemon run"
-          />
           {epicSlug ? (
-            <LinearSyncMenuButton
+            <ConnectionsCluster
+              repoDaemonStatus={repoDaemonStatus}
               epicSlug={epicSlug}
-              variant="epic"
               onSynced={handleRefresh}
+              startCommand="rn daemon run"
             />
-          ) : null}
+          ) : (
+            <RepoDaemonStatusChip
+              status={repoDaemonStatus}
+              startCommand="rn daemon run"
+            />
+          )}
           <Button
             variant="outline"
             onClick={() => void handleRefresh()}

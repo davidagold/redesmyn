@@ -38,6 +38,9 @@ interface LinearSyncMenuButtonProps {
   variant: "epic" | "task"
   task?: Task | null
   onSynced?: () => Promise<void> | void
+  showStatusDot?: boolean
+  buttonClassName?: string
+  onStatusChange?: (status: { connected: boolean loading: boolean }) => void
 }
 
 export function LinearSyncMenuButton({
@@ -45,6 +48,9 @@ export function LinearSyncMenuButton({
   variant,
   task,
   onSynced,
+  showStatusDot = true,
+  buttonClassName,
+  onStatusChange,
 }: LinearSyncMenuButtonProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<string | null>(null)
@@ -95,6 +101,10 @@ export function LinearSyncMenuButton({
       }
     }
   }, [notice])
+
+  useEffect(() => {
+    onStatusChange?.({ connected, loading: statusLoading })
+  }, [connected, onStatusChange, statusLoading])
 
   async function handleConnect() {
     setMenuOpen(false)
@@ -225,7 +235,7 @@ export function LinearSyncMenuButton({
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-2 px-2"
+        className={cn("h-7 gap-2 px-2", buttonClassName)}
         onClick={() => setMenuOpen((open) => !open)}
         aria-expanded={menuOpen}
         disabledReason={busyAction ? "Working…" : null}
@@ -234,10 +244,12 @@ export function LinearSyncMenuButton({
         <span className="inline-flex items-center gap-2">
           <LinearIcon className="size-3.5 text-muted-foreground" />
           <span>Linear</span>
-          <span
-            className={cn("size-1.5 rounded-full", statusDotClass)}
-            aria-hidden="true"
-          />
+          {showStatusDot ? (
+            <span
+              className={cn("size-2 rounded-full", statusDotClass)}
+              aria-hidden="true"
+            />
+          ) : null}
         </span>
         <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </Button>
