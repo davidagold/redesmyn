@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from datetime import timedelta
 from typing import Any, cast
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -135,7 +135,8 @@ def linear_authorize_url(
     if code_challenge:
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
-    return f"{LINEAR_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
+    # OAuth `scope` is space-delimited; Linear expects `%20` separators (not `+`).
+    return f"{LINEAR_OAUTH_AUTHORIZE_URL}?{urlencode(params, quote_via=quote)}"
 
 
 async def exchange_code_for_token(
