@@ -116,7 +116,14 @@ function runningAgentsSummary(error: ApiHttpError) {
   if (!detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)) {
     return null
   }
-  return detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
+  const summary = detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
+  if (!summary) {
+    return null
+  }
+  if (/allowRunning\s*=?/i.test(summary)) {
+    return null
+  }
+  return summary
 }
 
 function statusSummary(
