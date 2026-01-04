@@ -15,14 +15,14 @@ from redesmyn.integrations.linear import (
 @dataclass(frozen=True, slots=True)
 class LinearWriteDefaults:
     team_id: str
-    label_id: str
+    label_id: str | None
 
 
 async def load_linear_write_defaults(
     session: AsyncSession, *, epic_id: int
 ) -> LinearWriteDefaults | None:
     row = await session.get(LinearEpicDefaults, epic_id)
-    if row is None or row.team_id is None or row.label_id is None:
+    if row is None or row.team_id is None:
         return None
     return LinearWriteDefaults(team_id=row.team_id, label_id=row.label_id)
 
@@ -31,7 +31,7 @@ async def ensure_linear_write_defaults(
     session: AsyncSession,
     *,
     epic_id: int,
-    epic_slug: str,
+    label_name: str | None,
     project_id: str,
     client: LinearClient,
 ) -> LinearWriteDefaults:
@@ -45,12 +45,16 @@ async def ensure_linear_write_defaults(
     except ValueError:
         team = await resolve_default_team(client, project_id=project_id)
 
-    label_id: str
-    if row is not None and row.label_id is not None:
+    label_id: str | None
+    if label_name is None:
+        label_id = None
+    elif row is not None and row.label_id is not None:
         label_id = row.label_id
     else:
         label_id = (
-            await resolve_or_create_label(client, label_name=epic_slug, team_id=team.id)
+            await resolve_or_create_label(
+                client, label_name=label_name, team_id=team.id
+            )
         ).id
 
     if row is None:
@@ -58,7 +62,8 @@ async def ensure_linear_write_defaults(
         session.add(row)
     else:
         row.team_id = team.id
-        row.label_id = label_id
+        if label_name is not None:
+            row.label_id = label_id
 
     await session.flush()
     return LinearWriteDefaults(team_id=team.id, label_id=label_id)

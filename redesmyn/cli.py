@@ -74,17 +74,21 @@ from redesmyn.integrations.linear import (
     LinearClient,
     LinearIssue,
     LinearIssueRelation,
+    LinearMilestone,
     LinearProject,
     create_issue,
     ensure_issue_has_label,
     exchange_code_for_token,
     fetch_label_by_name,
     fetch_issue,
+    fetch_issue_project_milestone_id,
     fetch_issue_team_id,
     fetch_project,
     fetch_project_issue_relations,
     fetch_project_issues,
     fetch_project_issues_by_label,
+    fetch_project_issues_by_milestone,
+    fetch_project_milestones,
     fetch_projects,
     linear_authorize_url,
     linear_redirect_uri,
@@ -1777,15 +1781,23 @@ async def _sync_from_linear(
 
     epic_row = await _resolve_epic(ctx, epic=epic)
 
+    epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
+    epic_doc = None
+    if epic_readme.exists():
+        try:
+            epic_doc = load_epic_doc(epic_readme)
+        except DocLoadError:
+            epic_doc = None
+
     project_id = project or epic_row.linear_project_id
-    if not project_id:
-        epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
-        if epic_readme.exists():
-            try:
-                epic_doc = load_epic_doc(epic_readme)
-                project_id = epic_doc.metadata.linear_project_id
-            except DocLoadError:
-                project_id = None
+    if not project_id and epic_doc is not None:
+        project_id = epic_doc.metadata.linear_project_id
+
+    milestone_raw = (
+        epic_doc.metadata.linear.milestone_id
+        if epic_doc is not None and epic_doc.metadata.linear is not None
+        else None
+    )
 
     if not project_id:
         raise typer.BadParameter(
@@ -1798,6 +1810,12 @@ async def _sync_from_linear(
         raise
     except Exception as e:
         raise typer.BadParameter(str(e)) from e
+
+    milestone: LinearMilestone | None = None
+    if milestone_raw:
+        milestone = await _resolve_linear_milestone(
+            client, project_id=project_id, raw=milestone_raw
+        )
 
     def _load_metadata_dict(markdown: str) -> dict[str, Any]:
         try:
@@ -1819,9 +1837,14 @@ async def _sync_from_linear(
             return None
         return int(suffix)
 
-    issues = await fetch_project_issues_by_label(
-        client, project_id=project_id, label_name=epic_row.slug
-    )
+    if milestone is not None:
+        issues = await fetch_project_issues_by_milestone(
+            client, project_id=project_id, milestone_id=milestone.id
+        )
+    else:
+        issues = await fetch_project_issues_by_label(
+            client, project_id=project_id, label_name=epic_row.slug
+        )
     try:
         relations = await fetch_project_issue_relations(client, project_id=project_id)
     except Exception as e:
@@ -1855,12 +1878,15 @@ async def _sync_from_linear(
     epic_readme = epic_dir / "README.md"
     if epic_readme.exists():
         markdown = epic_readme.read_text(encoding="utf-8")
-        yaml_data = {
-            "slug": epic_row.slug,
-            "name": epic_row.name,
-            "root_branch": epic_row.root_branch,
-            "linear": {"project_id": project_id},
-        }
+        yaml_data = _load_metadata_dict(markdown)
+        yaml_data["slug"] = epic_row.slug
+        yaml_data["name"] = epic_row.name
+        yaml_data["root_branch"] = epic_row.root_branch
+        linear_meta = yaml_data.get("linear")
+        if not isinstance(linear_meta, dict):
+            linear_meta = {}
+            yaml_data["linear"] = linear_meta
+        linear_meta["project_id"] = project_id
         epic_readme.write_text(
             upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
         )
@@ -2162,6 +2188,50 @@ def _format_linear_project(project: LinearProject) -> str:
     return f"{project.id}\t{slug}\t{project.name}\t{teams}".rstrip()
 
 
+def _format_linear_milestone(milestone: LinearMilestone) -> str:
+    return f"{milestone.id}\t{milestone.name}".rstrip()
+
+
+async def _resolve_linear_milestone(
+    client: LinearClient, *, project_id: str, raw: str
+) -> LinearMilestone:
+    value = raw.strip()
+    if not value:
+        raise typer.BadParameter("Missing Linear milestone value")
+
+    try:
+        milestones = await fetch_project_milestones(client, project_id=project_id)
+    except Exception as e:
+        raise typer.BadParameter(f"Could not list Linear milestones: {e}") from e
+
+    if _looks_like_uuid(value):
+        for m in milestones:
+            if m.id == value:
+                return m
+        raise typer.BadParameter(
+            f"Unknown Linear milestone {raw!r}. Run `rn linear milestones --project ...` to list valid ids."
+        )
+
+    candidates = [m for m in milestones if m.name == value]
+    if not candidates:
+        lowered = value.lower()
+        candidates = [m for m in milestones if m.name.lower() == lowered]
+
+    if not candidates:
+        raise typer.BadParameter(
+            f"Unknown Linear milestone {raw!r}. Run `rn linear milestones --project ...` to list valid ids."
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+
+    preview = "\n".join(f"  {_format_linear_milestone(m)}" for m in candidates[:15])
+    suffix = "\n  …" if len(candidates) > 15 else ""
+    raise typer.BadParameter(
+        f"Multiple Linear milestones match {raw!r}:\n{preview}{suffix}\n"
+        "Run `rn linear milestones --project ...` to pick a unique id."
+    )
+
+
 async def _resolve_linear_project_id(client: LinearClient, raw: str) -> str:
     value = raw.strip()
     if not value:
@@ -2260,15 +2330,23 @@ async def _sync_to_linear(
     creds = await _require_fresh_linear_credentials(ctx=ctx)
     client = LinearClient(access_token=creds.access_token)
 
+    epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
+    epic_doc = None
+    if epic_readme.exists():
+        try:
+            epic_doc = load_epic_doc(epic_readme)
+        except DocLoadError:
+            epic_doc = None
+
     project_id = project or epic_row.linear_project_id
-    if not project_id:
-        epic_readme = ctx.worktree_root / "epics" / epic_row.slug / "README.md"
-        if epic_readme.exists():
-            try:
-                epic_doc = load_epic_doc(epic_readme)
-                project_id = epic_doc.metadata.linear_project_id
-            except DocLoadError:
-                project_id = None
+    if not project_id and epic_doc is not None:
+        project_id = epic_doc.metadata.linear_project_id
+
+    milestone_raw = (
+        epic_doc.metadata.linear.milestone_id
+        if epic_doc is not None and epic_doc.metadata.linear is not None
+        else None
+    )
 
     if not project_id:
         raise typer.BadParameter(
@@ -2281,6 +2359,12 @@ async def _sync_to_linear(
         raise
     except Exception as e:
         raise typer.BadParameter(str(e)) from e
+
+    milestone: LinearMilestone | None = None
+    if milestone_raw:
+        milestone = await _resolve_linear_milestone(
+            client, project_id=project_id, raw=milestone_raw
+        )
 
     stats = LinearPushStats()
 
@@ -2336,13 +2420,15 @@ async def _sync_to_linear(
             if epic_db.linear_project_id is None and not dry_run:
                 epic_db.linear_project_id = project_id
 
+            label_name = epic_db.slug if milestone is None else None
+
             defaults = None
             if not dry_run:
                 try:
                     defaults = await ensure_linear_write_defaults(
                         session,
                         epic_id=epic_db.id,
-                        epic_slug=epic_db.slug,
+                        label_name=label_name,
                         project_id=project_id,
                         client=client,
                     )
@@ -2395,9 +2481,9 @@ async def _sync_to_linear(
                 cached_defaults = await load_linear_write_defaults(
                     session, epic_id=epic_db.id
                 )
-                label_id: str | None = (
-                    cached_defaults.label_id if cached_defaults else None
-                )
+                label_id: str | None = None
+                if milestone is None:
+                    label_id = cached_defaults.label_id if cached_defaults else None
                 team_id: str | None = (
                     cached_defaults.team_id if cached_defaults else None
                 )
@@ -2415,7 +2501,7 @@ async def _sync_to_linear(
                     except Exception:
                         team_id = None
 
-                if label_id is None:
+                if milestone is None and label_id is None:
                     try:
                         found = await fetch_label_by_name(
                             client, label_name=epic_db.slug
@@ -2469,14 +2555,36 @@ async def _sync_to_linear(
                             _raise_linear(e)
 
                     changes: dict[str, Any] = {}
-                    ensure_label = {"name": epic_db.slug, "id": label_id}
-                    needs_label = False
-                    if existing is not None and label_id is not None:
-                        needs_label = label_id not in existing.label_ids
-                        if needs_label:
-                            changes["labels_add"] = [label_id]
-                    elif existing is not None and label_id is None:
-                        changes["labels_add"] = ["<unknown_label_id>"]
+                    ensure_scope: dict[str, Any]
+                    needs_scope = False
+                    if milestone is not None:
+                        ensure_scope = {
+                            "mode": "milestone",
+                            "id": milestone.id,
+                            "name": milestone.name,
+                        }
+                        if existing is not None:
+                            current = await fetch_issue_project_milestone_id(
+                                client, issue_id=existing.id
+                            )
+                            if current != milestone.id:
+                                needs_scope = True
+                                changes["project_milestone_id"] = {
+                                    "from": current,
+                                    "to": milestone.id,
+                                }
+                    else:
+                        ensure_scope = {
+                            "mode": "label",
+                            "id": label_id,
+                            "name": epic_db.slug,
+                        }
+                        if existing is not None and label_id is not None:
+                            needs_scope = label_id not in existing.label_ids
+                            if needs_scope:
+                                changes["labels_add"] = [label_id]
+                        elif existing is not None and label_id is None:
+                            changes["labels_add"] = ["<unknown_label_id>"]
 
                     if existing is not None:
                         desired_description = (
@@ -2501,7 +2609,7 @@ async def _sync_to_linear(
                                 "from": existing.state_type,
                                 "to": desired_state_type,
                             }
-                        action = "update" if (changes or needs_label) else "noop"
+                        action = "update" if (changes or needs_scope) else "noop"
                         planned_issue_ops.append(
                             {
                                 "kind": "issue",
@@ -2511,7 +2619,7 @@ async def _sync_to_linear(
                                     "issue_id": existing.id,
                                     "identifier": existing.identifier,
                                 },
-                                "ensure_label": ensure_label,
+                                "ensure_scope": ensure_scope,
                                 "changes": changes,
                             }
                         )
@@ -2552,7 +2660,7 @@ async def _sync_to_linear(
                                 "action": "create",
                                 "task": {"path": rel_path, "ref": local_ref},
                                 "linear": {"issue_id": None, "identifier": None},
-                                "ensure_label": ensure_label,
+                                "ensure_scope": ensure_scope,
                                 "changes": {
                                     "title": {"to": desired_title},
                                     "description": {
@@ -2561,6 +2669,9 @@ async def _sync_to_linear(
                                     },
                                     "state_type": {"to": desired_state_type},
                                     "team_id": team_id,
+                                    "project_milestone_id": (
+                                        milestone.id if milestone is not None else None
+                                    ),
                                 },
                             }
                         )
@@ -2708,12 +2819,18 @@ async def _sync_to_linear(
                     )
 
                 # Emit plan
+                scope = (
+                    {"mode": "milestone", "id": milestone.id, "name": milestone.name}
+                    if milestone is not None
+                    else {"mode": "label", "name": epic_db.slug, "id": label_id}
+                )
                 plan = {
                     "version": 1,
                     "mode": "dry_run",
                     "target": "linear",
                     "epic": epic_db.slug,
                     "project_id": project_id,
+                    "scope": scope,
                     "operations": {
                         "issues": planned_issue_ops,
                         "docs": planned_doc_ops,
@@ -2725,6 +2842,9 @@ async def _sync_to_linear(
                 if output_format == SyncOutputFormat.Json:
                     typer.echo(json.dumps(plan, indent=2, sort_keys=True))
                 else:
+                    typer.echo(
+                        f"Scope: {scope['mode']} ({scope.get('name') or scope.get('id')})"
+                    )
                     creates = sum(
                         1 for op in planned_issue_ops if op.get("action") == "create"
                     )
@@ -2821,6 +2941,12 @@ async def _sync_to_linear(
                             or (existing.description or "") != (description or "")
                             or (existing.state_type or "").lower() != state_type.lower()
                         )
+                        if milestone is not None:
+                            current_mid = await fetch_issue_project_milestone_id(
+                                client, issue_id=issue_id
+                            )
+                            if current_mid != milestone.id:
+                                needs_update = True
                         issue = existing
                         if needs_update:
                             issue = await update_issue(
@@ -2828,14 +2954,22 @@ async def _sync_to_linear(
                                 issue_id=issue_id,
                                 title=desired_title,
                                 description=description,
+                                project_milestone_id=(
+                                    milestone.id if milestone is not None else None
+                                ),
                                 state_id=await _state_id(
                                     team_id=team_id, state_type=state_type
                                 ),
                             )
                             wrote = True
-                        if defaults.label_id not in existing.label_ids:
+                        if (
+                            defaults.label_id is not None
+                            and defaults.label_id not in existing.label_ids
+                        ):
                             await ensure_issue_has_label(
-                                client, issue_id=issue_id, label_id=defaults.label_id
+                                client,
+                                issue_id=issue_id,
+                                label_id=defaults.label_id,
                             )
                             wrote = True
                     except LinearApiError as e:
@@ -2848,9 +2982,16 @@ async def _sync_to_linear(
                             client,
                             team_id=defaults.team_id,
                             project_id=project_id,
+                            project_milestone_id=(
+                                milestone.id if milestone is not None else None
+                            ),
                             title=desired_title,
                             description=brief,
-                            label_ids=[defaults.label_id],
+                            label_ids=(
+                                [defaults.label_id]
+                                if defaults.label_id is not None
+                                else None
+                            ),
                             state_id=await _state_id(
                                 team_id=defaults.team_id, state_type=state_type
                             ),
@@ -2888,12 +3029,15 @@ async def _sync_to_linear(
         epic_readme = epic_dir / "README.md"
         if epic_readme.exists():
             markdown = epic_readme.read_text(encoding="utf-8")
-            yaml_data = {
-                "slug": epic_row.slug,
-                "name": epic_row.name,
-                "root_branch": epic_row.root_branch,
-                "linear": {"project_id": project_id},
-            }
+            yaml_data = _load_metadata_dict(markdown)
+            yaml_data["slug"] = epic_row.slug
+            yaml_data["name"] = epic_row.name
+            yaml_data["root_branch"] = epic_row.root_branch
+            linear_meta = yaml_data.get("linear")
+            if not isinstance(linear_meta, dict):
+                linear_meta = {}
+                yaml_data["linear"] = linear_meta
+            linear_meta["project_id"] = project_id
             epic_readme.write_text(
                 upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
             )
@@ -4294,6 +4438,43 @@ def linear_projects() -> None:
             key=lambda p: ((p.slug or "").lower(), p.name.lower(), p.id),
         ):
             typer.echo(_format_linear_project(project))
+
+    try:
+        asyncio.run(_run())
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+
+@linear_app.command("milestones")
+def linear_milestones(
+    project: str = typer.Option(
+        ..., "--project", help="Linear project id, slug, or name."
+    ),
+) -> None:
+    """List milestones for a Linear project (id, name)."""
+    ctx: RepoContext | None
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+
+    if ctx is not None and not ctx.db_path.exists():
+        ctx = None
+
+    try:
+        creds = asyncio.run(_require_fresh_linear_credentials(ctx=ctx))
+    except typer.BadParameter as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _run() -> None:
+        client = LinearClient(access_token=creds.access_token)
+        project_id = await _resolve_linear_project_id(client, project)
+        milestones = await fetch_project_milestones(client, project_id=project_id)
+        typer.echo("id\tname")
+        for milestone in sorted(milestones, key=lambda m: (m.name.lower(), m.id)):
+            typer.echo(_format_linear_milestone(milestone))
 
     try:
         asyncio.run(_run())

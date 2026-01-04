@@ -84,6 +84,12 @@ class LinearProject:
 
 
 @dataclass(frozen=True, slots=True)
+class LinearMilestone:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
 class LinearLabel:
     id: str
     name: str
@@ -478,6 +484,48 @@ query ProjectTeams($projectId: String!) {
 }
 """
 
+PROJECT_MILESTONES_QUERY = """
+query ProjectMilestones($projectId: String!, $after: String) {
+  project(id: $projectId) {
+    id
+    projectMilestones(first: 50, after: $after) {
+      nodes { id name }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+PROJECT_MILESTONES_QUERY_FALLBACK = """
+query ProjectMilestonesFallback($projectId: String!, $after: String) {
+  project(id: $projectId) {
+    id
+    milestones(first: 50, after: $after) {
+      nodes { id name }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+ISSUE_MILESTONE_QUERY = """
+query IssueMilestone($id: String!) {
+  issue(id: $id) {
+    id
+    projectMilestone { id name }
+  }
+}
+"""
+
+ISSUE_MILESTONE_QUERY_FALLBACK = """
+query IssueMilestoneFallback($id: String!) {
+  issue(id: $id) {
+    id
+    milestone { id name }
+  }
+}
+"""
+
 PROJECT_QUERY_MIN = """
 query Project($projectId: String!) {
   project(id: $projectId) {
@@ -561,6 +609,7 @@ ISSUE_CREATE_MUTATION = """
 mutation IssueCreate(
   $teamId: String!,
   $projectId: String,
+  $projectMilestoneId: String,
   $title: String!,
   $description: String,
   $labelIds: [String!],
@@ -569,6 +618,7 @@ mutation IssueCreate(
   issueCreate(input: {
     teamId: $teamId,
     projectId: $projectId,
+    projectMilestoneId: $projectMilestoneId,
     title: $title,
     description: $description,
     labelIds: $labelIds,
@@ -585,11 +635,13 @@ mutation IssueUpdate(
   $id: String!,
   $title: String!,
   $description: String,
+  $projectMilestoneId: String,
   $stateId: String!
 ) {
   issueUpdate(id: $id, input: {
     title: $title,
     description: $description,
+    projectMilestoneId: $projectMilestoneId,
     stateId: $stateId
   }) {
     success
@@ -769,6 +821,17 @@ def _parse_label(node: object) -> LinearLabel | None:
     return LinearLabel(id=label_id, name=name)
 
 
+def _parse_milestone(node: object) -> LinearMilestone | None:
+    if not isinstance(node, dict):
+        return None
+    node_dict = cast(dict[str, Any], node)
+    milestone_id = node_dict.get("id")
+    name = node_dict.get("name")
+    if not isinstance(milestone_id, str) or not isinstance(name, str):
+        return None
+    return LinearMilestone(id=milestone_id, name=name)
+
+
 def _parse_project(node: object) -> LinearProject | None:
     if not isinstance(node, dict):
         return None
@@ -899,6 +962,18 @@ async def fetch_project_issues_by_label(
     return issues
 
 
+async def fetch_project_issues_by_milestone(
+    client: LinearClient, *, project_id: str, milestone_id: str
+) -> list[LinearIssue]:
+    issues = await fetch_project_issues(client, project_id=project_id)
+    scoped: list[LinearIssue] = []
+    for issue in issues:
+        mid = await fetch_issue_project_milestone_id(client, issue_id=issue.id)
+        if mid == milestone_id:
+            scoped.append(issue)
+    return scoped
+
+
 async def fetch_project_issue_relations(
     client: LinearClient, *, project_id: str
 ) -> list[LinearIssueRelation]:
@@ -995,6 +1070,53 @@ async def fetch_project_teams(
         if team is not None:
             teams.append(team)
     return teams
+
+
+async def fetch_project_milestones(
+    client: LinearClient, *, project_id: str
+) -> list[LinearMilestone]:
+    milestones: list[LinearMilestone] = []
+    after: str | None = None
+    query = PROJECT_MILESTONES_QUERY
+    while True:
+        try:
+            data = await client.graphql(
+                query, variables={"projectId": project_id, "after": after}
+            )
+        except LinearApiError:
+            if query == PROJECT_MILESTONES_QUERY:
+                query = PROJECT_MILESTONES_QUERY_FALLBACK
+                after = None
+                milestones = []
+                continue
+            raise
+
+        project = data.get("project")
+        if not isinstance(project, dict):
+            raise ValueError("Linear: project not found or invalid response")
+        project_dict = cast(dict[str, Any], project)
+        conn = project_dict.get(
+            "projectMilestones" if query == PROJECT_MILESTONES_QUERY else "milestones"
+        )
+        if not isinstance(conn, dict):
+            raise ValueError("Linear: missing project milestones")
+        conn_dict = cast(dict[str, Any], conn)
+        nodes = conn_dict.get("nodes")
+        if not isinstance(nodes, list):
+            raise ValueError("Linear: missing project milestones nodes")
+        for node in nodes:
+            milestone = _parse_milestone(node)
+            if milestone is not None:
+                milestones.append(milestone)
+
+        has_next, end_cursor = _maybe_page_info(conn_dict)
+        if not has_next:
+            break
+        after = end_cursor
+        if after is None:
+            break
+
+    return milestones
 
 
 async def fetch_teams(client: LinearClient) -> list[LinearTeam]:
@@ -1166,6 +1288,31 @@ async def fetch_issue(client: LinearClient, *, issue_id: str) -> LinearIssue:
     return parsed
 
 
+async def fetch_issue_project_milestone_id(
+    client: LinearClient, *, issue_id: str
+) -> str | None:
+    query = ISSUE_MILESTONE_QUERY
+    try:
+        data = await client.graphql(query, variables={"id": issue_id})
+    except LinearApiError:
+        query = ISSUE_MILESTONE_QUERY_FALLBACK
+        data = await client.graphql(query, variables={"id": issue_id})
+    issue = data.get("issue")
+    if not isinstance(issue, dict):
+        raise ValueError("Linear: issue not found or invalid response")
+    issue_dict = cast(dict[str, Any], issue)
+    milestone = issue_dict.get(
+        "projectMilestone" if query == ISSUE_MILESTONE_QUERY else "milestone"
+    )
+    if milestone is None:
+        return None
+    if not isinstance(milestone, dict):
+        raise ValueError("Linear: invalid issue milestone payload")
+    milestone_dict = cast(dict[str, Any], milestone)
+    milestone_id = milestone_dict.get("id")
+    return milestone_id if isinstance(milestone_id, str) and milestone_id else None
+
+
 async def fetch_issue_label_ids(client: LinearClient, *, issue_id: str) -> list[str]:
     data = await client.graphql(ISSUE_QUERY, variables={"id": issue_id})
     issue = data.get("issue")
@@ -1229,6 +1376,7 @@ async def create_issue(
     *,
     team_id: str,
     project_id: str | None,
+    project_milestone_id: str | None = None,
     title: str,
     description: str | None,
     label_ids: list[str] | None = None,
@@ -1239,6 +1387,7 @@ async def create_issue(
         variables={
             "teamId": team_id,
             "projectId": project_id,
+            "projectMilestoneId": project_milestone_id,
             "title": title,
             "description": description,
             "labelIds": label_ids,
@@ -1262,6 +1411,7 @@ async def update_issue(
     issue_id: str,
     title: str,
     description: str | None = None,
+    project_milestone_id: str | None = None,
     state_id: str,
 ) -> LinearIssue:
     data = await client.graphql(
@@ -1270,6 +1420,7 @@ async def update_issue(
             "id": issue_id,
             "title": title,
             "description": description,
+            "projectMilestoneId": project_milestone_id,
             "stateId": state_id,
         },
     )

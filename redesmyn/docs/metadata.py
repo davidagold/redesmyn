@@ -7,6 +7,7 @@ class LinearRef(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     project_id: str | None = None
+    milestone_id: str | None = None
     issue_id: str | None = None
     identifier: str | None = None
 
