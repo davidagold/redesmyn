@@ -54,7 +54,7 @@ We will use Redesmyn to build Redesmyn.
 - **Repo observation loop (daemon capability)**: Converts raw git/worktree observations into semantic events; not a separate product concept.
 - **Observer (deprecated)**: Legacy v0 name for the repo observation loop; avoid using “observer” as a user-facing concept (UI/CLI/docs).
 - **`rn` CLI**: The user/agent-facing CLI. Agents are instructed to funnel git actions through `rn`, which proxies `git` while enforcing invariants.
-- **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “pause” and “barrier/sync point”).
+- **Block**: A scoped gate that prevents certain operations until a release condition is satisfied (unifies “barrier/sync point”).
 - **Work Range**: The commit range representing a node’s “work”: `parent..branch` (multi-commit allowed).
 - **Event Log**: Append-only record of domain events (git, agent, integration, orchestration).
 - **Projection**: A materialized view computed from the event log for fast UI queries.
@@ -340,7 +340,7 @@ These are enforced by the daemon and by `rn` when possible:
   - `state` (queued/running/succeeded/failed/canceled)
   - `createdAt/updatedAt`
 
-- **Block (unified pause/barrier)**
+- **Block (barrier/sync point)**
   - `blockId`
   - `scope` (repo/branch/subtree)
   - `policy` (e.g. git_mutations, daemon_mutations)
@@ -440,7 +440,6 @@ When disallowing, `rn` provides a remediation:
 Notes:
 
 - v0 keeps policy knobs internal; user-facing `rn block` primarily targets `git_mutations`.
-- `rn pause` may remain as an alias for `rn block` for ergonomics/compatibility.
 
 First-pass mutating command classification (v0):
 

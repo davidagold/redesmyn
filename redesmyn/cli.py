@@ -116,7 +116,7 @@ config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
 sandbox_app = typer.Typer(add_completion=False, help="Sandbox configuration + health.")
 block_app = typer.Typer(
     add_completion=False,
-    help="Block controls (use `rn pause` as an alias for v0).",
+    help="Block controls.",
 )
 epic_app = typer.Typer(add_completion=False, help="Epic management.")
 task_app = typer.Typer(add_completion=False, help="Task management.")
@@ -2903,7 +2903,6 @@ def block_list(
 
 
 app.add_typer(block_app, name="block")
-app.add_typer(block_app, name="pause")
 
 
 @app.command(
