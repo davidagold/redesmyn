@@ -3639,6 +3639,14 @@ def linear_auth(
                     except httpx.RequestError:
                         raise typer.BadParameter(
                             f"Could not listen on {host}:{port} for OAuth callback ({listen_error_msg}). "
+                            "Stop the process using that port, or run the Redesmyn API on that port, or change "
+                            "REDESMYN_API_HOST/REDESMYN_API_PORT and update your Linear OAuth redirect URL."
+                        ) from None
+
+                    if resp.status_code == 404:
+                        raise typer.BadParameter(
+                            f"Could not listen on {host}:{port} for OAuth callback ({listen_error_msg}). "
+                            f"Also, {status_url} returned 404 (this does not look like the Redesmyn API). "
                             "Stop the process using that port or change REDESMYN_API_HOST/REDESMYN_API_PORT "
                             "and update your Linear OAuth redirect URL."
                         ) from None
@@ -3647,7 +3655,24 @@ def linear_auth(
                         await asyncio.sleep(1.0)
                         continue
 
-                    payload = resp.json()
+                    try:
+                        payload = resp.json()
+                    except ValueError:
+                        raise typer.BadParameter(
+                            f"Could not listen on {host}:{port} for OAuth callback ({listen_error_msg}). "
+                            f"Also, {status_url} did not return JSON (this does not look like the Redesmyn API). "
+                            "Stop the process using that port or change REDESMYN_API_HOST/REDESMYN_API_PORT "
+                            "and update your Linear OAuth redirect URL."
+                        ) from None
+
+                    if not isinstance(payload, dict) or "connected" not in payload:
+                        raise typer.BadParameter(
+                            f"Could not listen on {host}:{port} for OAuth callback ({listen_error_msg}). "
+                            f"Also, {status_url} returned an unexpected payload (this does not look like the Redesmyn API). "
+                            "Stop the process using that port or change REDESMYN_API_HOST/REDESMYN_API_PORT "
+                            "and update your Linear OAuth redirect URL."
+                        ) from None
+
                     if payload.get("connected"):
                         return
                     await asyncio.sleep(1.0)
