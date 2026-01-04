@@ -480,9 +480,6 @@ def create_app(*, settings: RedesmynSettings | None = None) -> App:
     return app
 
 
-app = create_app()
-
-
 @v1.get("/epics", response_model=list[EpicResponse])
 async def list_epics(request: Request) -> list[EpicResponse]:
     app = _app_from_request(request)
@@ -2188,3 +2185,7 @@ async def api_status(request: Request) -> ApiStatusResponse:
             ),
         ),
     )
+
+
+# Module-level ASGI app (used by `uvicorn redesmyn.api:app` and `scripts/export_openapi.py`).
+app = create_app()
