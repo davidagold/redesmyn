@@ -4,9 +4,12 @@
 
 ```yaml
 id: T-1
-stacked_on:
+stacked_on: null
 node:
   branch: rn/linear-integration/T-1-linear-auth
+linear:
+  issue_id: 242facae-d600-472b-a095-8c8cac6e7136
+  identifier: RED-11
 ```
 
 ## Brief (local)

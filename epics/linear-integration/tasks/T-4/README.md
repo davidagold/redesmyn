@@ -7,6 +7,9 @@ id: T-4
 stacked_on: T-3
 node:
   branch: rn/linear-integration/T-4-sync-to-linear
+linear:
+  issue_id: b790eca1-b0f3-4161-9c04-c44774ccdf97
+  identifier: RED-14
 ```
 
 ## Brief (local)
@@ -29,4 +32,3 @@ node:
 
 - v0 overwrite model intentionally punts on conflicts; record known conflict situations in the epic control doc.
 - Branch naming should remain stable; do not auto-rename branches on title edits.
-

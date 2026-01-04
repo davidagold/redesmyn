@@ -7,6 +7,9 @@ id: T-5
 stacked_on: T-2
 node:
   branch: rn/linear-integration/T-5-dashboard-linear-sync
+linear:
+  issue_id: 2be4144e-5201-461e-8982-6e0107ab57ed
+  identifier: RED-15
 ```
 
 ## Brief (local)
@@ -29,4 +32,3 @@ node:
 ## Notes / Design
 
 - Follow dashboard UI conventions: avoid extra borders and inert property lists; keep the menu short and action-oriented.
-

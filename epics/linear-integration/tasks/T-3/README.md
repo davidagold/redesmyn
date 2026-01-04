@@ -7,6 +7,9 @@ id: T-3
 stacked_on: T-2
 node:
   branch: rn/linear-integration/T-3-sync-from-linear
+linear:
+  issue_id: 948137cf-96c4-4765-8cd2-5337dfda019c
+  identifier: RED-13
 ```
 
 ## Brief (local)
@@ -31,4 +34,3 @@ node:
 
 - Use the label == epic slug filter to allow multiple epics to share one Linear project.
 - Conflict handling is out of scope; overwrites are acceptable in v0.
-

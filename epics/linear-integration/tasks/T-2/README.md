@@ -7,6 +7,9 @@ id: T-2
 stacked_on: T-1
 node:
   branch: rn/linear-integration/T-2-linear-client-write
+linear:
+  issue_id: e173b21e-02b2-4f33-9b1b-aace082e8199
+  identifier: RED-12
 ```
 
 ## Brief (local)
@@ -32,4 +35,3 @@ node:
 
 - Store ids (team id, label id) as needed; prefer stable ids over names for writes.
 - Keep the API surface small and testable (GraphQL wrappers with typed return objects).
-
