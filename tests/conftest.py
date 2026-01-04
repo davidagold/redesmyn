@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
+from redesmyn.api import create_app
 from redesmyn.context import build_repo_context
-from redesmyn.api import app as global_app
 from redesmyn.host_identity import HostIdentity, host_identity_path
 from redesmyn.orchestrator import init_repo
+from redesmyn.settings import RedesmynSettings
 
 from tests.scenarios.scenario import (
     Scenario,
@@ -34,23 +36,8 @@ def _write_host_identity(*, repo_root: Path, host_key: str) -> None:
     )
 
 
-def _configure_env(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    repo_root: Path,
-    worktree_root: Path,
-    db_path: Path,
-    runner_mode: str,
-) -> None:
-    monkeypatch.setenv("REDESMYN_REPO_ROOT", str(repo_root))
-    monkeypatch.setenv("REDESMYN_WORKTREE_ROOT", str(worktree_root))
-    monkeypatch.setenv("REDESMYN_DB_PATH", str(db_path))
-    monkeypatch.setenv("REDESMYN_RUNNER_MODE", runner_mode)
-    monkeypatch.delenv("REDESMYN_DB_URL", raising=False)
-
-
 async def _make_scenario(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, runner_mode: str
+    tmp_path: Path, *, runner_mode: Literal["local", "remote"]
 ) -> Scenario:
     repo = ScenarioRepo.init(tmp_path)
     ctx = build_repo_context(
@@ -61,16 +48,16 @@ async def _make_scenario(
 
     await init_repo(ctx, migrate=True)
 
-    _configure_env(
-        monkeypatch,
-        repo_root=ctx.repo_root,
-        worktree_root=ctx.worktree_root,
-        db_path=ctx.db_path,
-        runner_mode=runner_mode,
-    )
-
     db = await ScenarioDB.connect(db_path=ctx.db_path)
-    app = await ScenarioApp.open(global_app)
+    api_app = create_app(
+        settings=RedesmynSettings(
+            repo_root=ctx.repo_root,
+            worktree_root=ctx.worktree_root,
+            db_path=ctx.db_path,
+            runner_mode=runner_mode,
+        )
+    )
+    app = await ScenarioApp.open(api_app)
     scenario = Scenario(
         ctx=ctx,
         repo=repo,
@@ -83,10 +70,8 @@ async def _make_scenario(
 
 
 @pytest.fixture
-async def scenario(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[Scenario]:
-    scenario_ = await _make_scenario(tmp_path, monkeypatch, runner_mode="local")
+async def scenario(tmp_path: Path) -> AsyncIterator[Scenario]:
+    scenario_ = await _make_scenario(tmp_path, runner_mode="local")
     try:
         yield scenario_
     finally:
@@ -113,9 +98,9 @@ async def scenario_with_conflicted_merge_run(scenario: Scenario) -> Scenario:
 
 @pytest.fixture
 async def scenario_without_primary_executor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> AsyncIterator[Scenario]:
-    scenario_ = await _make_scenario(tmp_path, monkeypatch, runner_mode="remote")
+    scenario_ = await _make_scenario(tmp_path, runner_mode="remote")
     try:
         yield scenario_
     finally:

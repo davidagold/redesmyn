@@ -31,14 +31,18 @@ Most integration tests should start from the `scenario` fixture (or a `scenario_
 
 To add a new variant, prefer composing from `scenario` and then mutating DB/git state in one place (a helper or fixture),
 so the “world setup” is reusable across tests.
-
 Guidelines:
 
 - Keep scenario primitives strongly typed (dataclasses are encouraged).
 - Seed helpers should be named `seed_<situation>` and return a typed handle with the IDs/paths needed for assertions.
 - Avoid reaching into “private” helpers across modules; if a helper is reused, make it part of the public scenario API.
 
-## xdist readiness (required)
+## Parallelism (xdist)
+
+The test harness is designed to be xdist-ready:
+
+- Each test gets an isolated temp repo/worktree + DB (`tmp_path`).
+- Each scenario constructs its own ASGI app instance (no global FastAPI app state).
 
 Write tests assuming they may run concurrently across multiple workers.
 
@@ -67,5 +71,4 @@ Avoid unit tests for behavior that is already well-covered by integration tests.
 - Unit only: `uv run pytest -m unit`
 
 When `pytest-xdist` is available, tests should also pass with:
-
 - `uv run pytest -n auto`

@@ -167,6 +167,7 @@ class _FakeWebSocket:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioDaemonConnection:
+    registry: DaemonConnectionRegistry
     host_key: str
     websocket: _FakeWebSocket
     sender_task: asyncio.Task[None]
@@ -182,16 +183,22 @@ class ScenarioDaemonConnection:
             await self.sender_task
         except asyncio.CancelledError:
             pass
+        await self.registry.unregister(self.host_key)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ScenarioDaemon:
     registry: DaemonConnectionRegistry
     event_hub: JsonWebSocketHub
+    _connections: list[ScenarioDaemonConnection]
 
     @classmethod
     def from_app(cls, app: App) -> "ScenarioDaemon":
-        return cls(registry=app.state.daemon_connections, event_hub=app.state.event_hub)
+        return cls(
+            registry=app.state.daemon_connections,
+            event_hub=app.state.event_hub,
+            _connections=[],
+        )
 
     async def connect(
         self,
@@ -212,9 +219,20 @@ class ScenarioDaemon:
         sender_task = asyncio.create_task(
             self.event_hub.sender_loop(websocket, queue)  # type: ignore[arg-type]
         )
-        return ScenarioDaemonConnection(
-            host_key=host_key, websocket=websocket, sender_task=sender_task
+        conn = ScenarioDaemonConnection(
+            registry=self.registry,
+            host_key=host_key,
+            websocket=websocket,
+            sender_task=sender_task,
         )
+        self._connections.append(conn)
+        return conn
+
+    async def aclose(self) -> None:
+        conns = list(self._connections)
+        self._connections.clear()
+        for conn in conns:
+            await conn.aclose()
 
 
 @dataclass(slots=True)
@@ -227,8 +245,6 @@ class Scenario:
     host_key: str
 
     async def aclose(self) -> None:
-        # NOTE: Daemon connections are owned by the app runtime and will be torn down
-        # with the app lifespan; scenarios should explicitly close any connections
-        # they open via `ScenarioDaemon.connect`.
+        await self.daemon.aclose()
         await self.app.aclose()
         await self.db.aclose()
