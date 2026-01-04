@@ -93,6 +93,7 @@ from redesmyn.git_proxy import (
     does_block_git,
 )
 from redesmyn.git_telemetry import update_git_projections
+from redesmyn.logging_config import configure_logging
 from redesmyn.orchestration_config import (
     global_config_path,
     load_orchestration_defaults,
@@ -3626,6 +3627,13 @@ def git_proxy(ctx: typer.Context) -> None:
 
 
 def main() -> None:
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+    if ctx is not None:
+        configure_logging(state_dir=ctx.state_dir)
+
     try:
         typer.main.get_command(app).main(
             args=sys.argv[1:],

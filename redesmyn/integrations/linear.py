@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,6 +18,9 @@ from redesmyn.settings import RedesmynSettings
 LINEAR_OAUTH_AUTHORIZE_URL = "https://linear.app/oauth/authorize"
 LINEAR_OAUTH_TOKEN_URL = "https://api.linear.app/oauth/token"
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
+
+logger = logging.getLogger("redesmyn.integrations.linear")
+_GRAPHQL_OPERATION_RE = re.compile(r"^\s*(query|mutation)\s+(?P<name>[A-Za-z0-9_]+)\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +222,36 @@ class LinearClient:
     async def graphql(
         self, query: str, variables: dict[str, object] | None = None
     ) -> dict[str, Any]:
+        operation_match = _GRAPHQL_OPERATION_RE.search(query)
+        operation_name = (
+            operation_match.group("name") if operation_match is not None else None
+        )
+        vars_payload = variables or {}
+
+        safe_vars: dict[str, object] = {}
+        for key, value in vars_payload.items():
+            if isinstance(value, str) and len(value) > 256:
+                safe_vars[key] = f"{value[:256]}…"
+            elif isinstance(value, list) and len(value) > 20:
+                preview: list[object] = []
+                for idx, item in enumerate(value):
+                    if idx >= 20:
+                        break
+                    preview.append(item)
+                preview.append("…")
+                safe_vars[key] = preview
+            else:
+                safe_vars[key] = value
+
+        def _truncate_obj(obj: object, *, limit: int = 4000) -> str:
+            try:
+                text = repr(obj)
+            except Exception:
+                text = str(obj)
+            if len(text) <= limit:
+                return text
+            return f"{text[:limit]}…"
+
         headers = {
             "Authorization": f"Bearer {self._access_token}",
             "Content-Type": "application/json",
@@ -224,13 +259,53 @@ class LinearClient:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 LINEAR_GRAPHQL_URL,
-                json={"query": query, "variables": variables or {}},
+                json={"query": query, "variables": vars_payload},
                 headers=headers,
             )
-            resp.raise_for_status()
-            payload: dict[str, Any] = resp.json()
+
+            payload: object | None
+            raw_text: str | None = None
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = None
+                raw_text = resp.text
+
+            request_id = resp.headers.get("x-request-id")
+            if resp.status_code >= 400:
+                details = payload if payload is not None else (raw_text or "<no body>")
+                logger.error(
+                    "Linear GraphQL HTTP error: status=%s request_id=%s op=%s vars=%s response=%s",
+                    resp.status_code,
+                    request_id,
+                    operation_name,
+                    safe_vars,
+                    _truncate_obj(details),
+                )
+                resp.raise_for_status()
+
+            if not isinstance(payload, dict):
+                raw_text = raw_text if raw_text is not None else resp.text
+                logger.error(
+                    "Linear GraphQL response was not JSON: status=%s request_id=%s op=%s vars=%s response=%s",
+                    resp.status_code,
+                    request_id,
+                    operation_name,
+                    safe_vars,
+                    _truncate_obj(raw_text),
+                )
+                raise ValueError("Linear GraphQL response missing data")
+
         if "errors" in payload:
+            logger.error(
+                "Linear GraphQL error: request_id=%s op=%s vars=%s errors=%s",
+                request_id,
+                operation_name,
+                safe_vars,
+                _truncate_obj(payload.get("errors")),
+            )
             raise ValueError(f"Linear GraphQL error: {payload['errors']}")
+
         data = payload.get("data")
         if not isinstance(data, dict):
             raise ValueError("Linear GraphQL response missing data")

@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast, overload
+from typing import Any, Literal, Protocol, overload
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
