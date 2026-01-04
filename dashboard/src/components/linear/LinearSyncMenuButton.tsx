@@ -18,6 +18,7 @@ import {
   LogIn,
   LogOut,
 } from "lucide-react"
+import { LinearIcon } from "@/components/linear/LinearIcon"
 
 type Notice = {
   kind: "info" | "success" | "error"
@@ -222,19 +223,21 @@ export function LinearSyncMenuButton({
   return (
     <div className="relative">
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
+        className="h-7 gap-2 px-2"
         onClick={() => setMenuOpen((open) => !open)}
         aria-expanded={menuOpen}
         disabledReason={busyAction ? "Working…" : null}
+        title={`Linear (${statusLabel})`}
       >
-        <span className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-2">
+          <LinearIcon className="size-3.5 text-muted-foreground" />
           <span>Linear</span>
           <span
-            className={cn("h-1.5 w-1.5 rounded-full", statusDotClass)}
+            className={cn("size-1.5 rounded-full", statusDotClass)}
             aria-hidden="true"
           />
-          <span className="text-muted-foreground">{statusLabel}</span>
         </span>
         <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </Button>
@@ -325,7 +328,11 @@ export function LinearSyncMenuButton({
                 className="w-full justify-start"
                 onClick={handleOpenInLinear}
                 disabledReason={
-                  busyAction ? "Working…" : !connected ? "Connect Linear to open" : null
+                  busyAction
+                    ? "Working…"
+                    : !connected
+                      ? "Connect Linear to open"
+                      : null
                 }
               >
                 <ExternalLink className="h-3.5 w-3.5" />
