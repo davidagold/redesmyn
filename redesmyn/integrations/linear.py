@@ -125,11 +125,23 @@ def linear_authorize_url(
     if not client_id:
         raise ValueError("Missing REDESMYN_LINEAR_CLIENT_ID")
 
+    scopes_raw = settings.linear_scopes or ""
+    # Linear expects a comma-separated list of scopes. Accept either commas or
+    # spaces from config/env and normalize.
+    scopes: list[str] = []
+    for part in scopes_raw.replace(",", " ").split():
+        p = part.strip()
+        if not p:
+            continue
+        if p not in scopes:
+            scopes.append(p)
+    scope_value = ",".join(scopes) if scopes else "read"
+
     params = {
         "response_type": "code",
         "client_id": client_id,
         "redirect_uri": redirect_uri or linear_redirect_uri(settings),
-        "scope": settings.linear_scopes,
+        "scope": scope_value,
         "state": state,
     }
     if code_challenge:

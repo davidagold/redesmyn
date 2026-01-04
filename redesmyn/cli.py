@@ -2254,7 +2254,7 @@ async def _sync_to_linear(
             or (e.code or "").upper() == "FORBIDDEN"
         ):
             raise typer.BadParameter(
-                "Linear token lacks write scope. Set REDESMYN_LINEAR_SCOPES='read write', "
+                "Linear token lacks write scope. Set REDESMYN_LINEAR_SCOPES='read,write' (or 'read write'), "
                 "then run `rn linear logout` and `rn linear auth`."
             ) from e
         raise typer.BadParameter(f"Linear API error: {msg}") from e

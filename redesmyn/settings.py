@@ -26,7 +26,8 @@ class RedesmynSettings(BaseSettings):
     linear_client_id: str | None = None
     linear_client_secret: str | None = None
     # `sync --to linear` requires write scope.
-    linear_scopes: str = "read write"
+    # Linear expects a comma-separated list of scopes (e.g. "read,write").
+    linear_scopes: str = "read,write"
 
 
 def load_settings(*, repo_root: Path | None = None) -> RedesmynSettings:
