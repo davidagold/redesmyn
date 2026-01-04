@@ -69,6 +69,7 @@ from redesmyn.domain.enums import (
     TaskState,
 )
 from redesmyn.integrations.linear import (
+    LinearApiError,
     LinearClient,
     LinearIssue,
     LinearIssueRelation,
@@ -2245,6 +2246,19 @@ async def _sync_to_linear(
     if not task_readmes:
         return stats
 
+    def _raise_linear(e: LinearApiError) -> None:
+        msg = str(e)
+        if (
+            "Invalid scope" in msg
+            or e.status_code == 403
+            or (e.code or "").upper() == "FORBIDDEN"
+        ):
+            raise typer.BadParameter(
+                "Linear token lacks write scope. Set REDESMYN_LINEAR_SCOPES='read write', "
+                "then run `rn linear logout` and `rn linear auth`."
+            ) from e
+        raise typer.BadParameter(f"Linear API error: {msg}") from e
+
     task_docs: list[tuple[Path, "TaskDoc"]] = []
     for readme in task_readmes:
         try:
@@ -2275,13 +2289,16 @@ async def _sync_to_linear(
                     f"Epic is linked to a different Linear project ({epic_db.linear_project_id})"
                 )
 
-            defaults = await ensure_linear_write_defaults(
-                session,
-                epic_id=epic_db.id,
-                epic_slug=epic_db.slug,
-                project_id=project_id,
-                client=client,
-            )
+            try:
+                defaults = await ensure_linear_write_defaults(
+                    session,
+                    epic_id=epic_db.id,
+                    epic_slug=epic_db.slug,
+                    project_id=project_id,
+                    client=client,
+                )
+            except LinearApiError as e:
+                _raise_linear(e)
 
             tasks = list(
                 await session.scalars(
@@ -2299,9 +2316,12 @@ async def _sync_to_linear(
                 cached = state_id_cache.get(key)
                 if cached is not None:
                     return cached
-                resolved = await resolve_team_state_id(
-                    client, team_id=team_id, state_type=state_type
-                )
+                try:
+                    resolved = await resolve_team_state_id(
+                        client, team_id=team_id, state_type=state_type
+                    )
+                except LinearApiError as e:
+                    _raise_linear(e)
                 state_id_cache[key] = resolved
                 return resolved
 
@@ -2335,35 +2355,44 @@ async def _sync_to_linear(
                 state_type = _linear_state_type_from_task_state(task_state)
 
                 if issue_id:
-                    team_id = await fetch_issue_team_id(client, issue_id=issue_id)
-                    existing = await fetch_issue(client, issue_id=issue_id)
+                    try:
+                        team_id = await fetch_issue_team_id(client, issue_id=issue_id)
+                        existing = await fetch_issue(client, issue_id=issue_id)
+                    except LinearApiError as e:
+                        _raise_linear(e)
                     description = brief if brief is not None else existing.description
-                    updated = await update_issue(
-                        client,
-                        issue_id=issue_id,
-                        title=desired_title,
-                        description=description,
-                        state_id=await _state_id(
-                            team_id=team_id, state_type=state_type
-                        ),
-                    )
-                    await ensure_issue_has_label(
-                        client, issue_id=issue_id, label_id=defaults.label_id
-                    )
+                    try:
+                        updated = await update_issue(
+                            client,
+                            issue_id=issue_id,
+                            title=desired_title,
+                            description=description,
+                            state_id=await _state_id(
+                                team_id=team_id, state_type=state_type
+                            ),
+                        )
+                        await ensure_issue_has_label(
+                            client, issue_id=issue_id, label_id=defaults.label_id
+                        )
+                    except LinearApiError as e:
+                        _raise_linear(e)
                     issue = updated
                     stats.issues_updated += 1
                 else:
-                    issue = await create_issue(
-                        client,
-                        team_id=defaults.team_id,
-                        project_id=project_id,
-                        title=desired_title,
-                        description=brief,
-                        label_ids=[defaults.label_id],
-                        state_id=await _state_id(
-                            team_id=defaults.team_id, state_type=state_type
-                        ),
-                    )
+                    try:
+                        issue = await create_issue(
+                            client,
+                            team_id=defaults.team_id,
+                            project_id=project_id,
+                            title=desired_title,
+                            description=brief,
+                            label_ids=[defaults.label_id],
+                            state_id=await _state_id(
+                                team_id=defaults.team_id, state_type=state_type
+                            ),
+                        )
+                    except LinearApiError as e:
+                        _raise_linear(e)
                     stats.issues_created += 1
 
                 if task_row.linear_issue_id != issue.id:
@@ -2477,9 +2506,12 @@ async def _sync_to_linear(
             )
             continue
 
-        await set_issue_blockers(
-            client, issue_id=issue_id, blocker_issue_ids=blocker_ids
-        )
+        try:
+            await set_issue_blockers(
+                client, issue_id=issue_id, blocker_issue_ids=blocker_ids
+            )
+        except LinearApiError as e:
+            _raise_linear(e)
         stats.blockers_updated += 1
 
     return stats
@@ -3496,6 +3528,8 @@ def linear_status(
 
     typer.echo("Linear: connected")
     typer.echo(f"Connected at: {creds.connected_at.isoformat()}")
+    if creds.scope:
+        typer.echo(f"Scopes: {creds.scope}")
 
     if whoami:
 
