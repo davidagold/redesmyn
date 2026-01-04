@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
+from contextlib import suppress
 import logging
 import os
 import time
@@ -159,6 +161,7 @@ class AppState(Protocol):
     linear_oauth_states: dict[str, tuple[datetime, str]]
     event_hub: JsonWebSocketHub
     daemon_connections: DaemonConnectionRegistry
+    background_tasks: set[asyncio.Task[object]]
 
 
 class App(FastAPI):
@@ -171,6 +174,14 @@ def _app_from_request(request: Request) -> App:
 
 def _app_from_websocket(websocket: WebSocket) -> App:
     return cast(App, websocket.scope["app"])
+
+
+def _spawn_background_task(
+    app: App, coro: Coroutine[Any, Any, object], *, name: str
+) -> None:
+    task = asyncio.create_task(coro, name=name)
+    app.state.background_tasks.add(task)
+    task.add_done_callback(app.state.background_tasks.discard)
 
 
 class DashboardStaticFiles(StaticFiles):
@@ -220,6 +231,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     app.state.linear_oauth_states = {}
     app.state.event_hub = JsonWebSocketHub()
     app.state.daemon_connections = DaemonConnectionRegistry()
+    app.state.background_tasks = set()
     maybe_mount_dashboard(app, ctx.worktree_root)
 
     lease_refresh_task: asyncio.Task[None] | None = None
@@ -331,6 +343,13 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
             await lease_refresh_task
         except asyncio.CancelledError:
             pass
+
+    background_tasks = list(app.state.background_tasks)
+    if background_tasks:
+        for task in background_tasks:
+            task.cancel()
+        await asyncio.gather(*background_tasks, return_exceptions=True)
+        app.state.background_tasks.clear()
 
     await app.state.engine.dispose()
 
@@ -1139,7 +1158,8 @@ async def bulk_task_agent_actions(
         )
     run_id = request.run_id or uuid4().hex
     submitted = len(actions)
-    asyncio.create_task(
+    _spawn_background_task(
+        app,
         _run_task_agents_bulk_actions(
             sessionmaker=app.state.sessionmaker,
             runner_backend=app.state.runner_backend,
@@ -1148,7 +1168,8 @@ async def bulk_task_agent_actions(
             harness=request.harness,
             detach=request.detach,
             prelude=request.prelude,
-        )
+        ),
+        name=f"task_agent_bulk_actions:{run_id}",
     )
     return TaskAgentBulkActionResponse(run_id=run_id, submitted=submitted)
 
@@ -1166,7 +1187,8 @@ async def run_task_agents_bulk(
         )
     run_id = request.run_id or uuid4().hex
     submitted = len(set(request.start_task_ids)) + len(set(request.restart_task_ids))
-    asyncio.create_task(
+    _spawn_background_task(
+        app,
         _run_task_agents_bulk(
             sessionmaker=app.state.sessionmaker,
             runner_backend=app.state.runner_backend,
@@ -1176,7 +1198,8 @@ async def run_task_agents_bulk(
             harness=request.harness,
             detach=request.detach,
             prelude=request.prelude,
-        )
+        ),
+        name=f"task_agent_bulk_run:{run_id}",
     )
     return TaskAgentBulkRunResponse(run_id=run_id, submitted=submitted)
 
@@ -1720,6 +1743,8 @@ async def ui_event_stream(websocket: WebSocket) -> None:
         pass
     finally:
         sender_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sender_task
         await app.state.event_hub.disconnect(websocket)
 
 
@@ -2019,6 +2044,8 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
         pass
     finally:
         sender_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sender_task
         if host_key is not None:
             await app.state.daemon_connections.unregister(host_key)
             now = datetime.now(UTC)
