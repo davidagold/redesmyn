@@ -54,6 +54,20 @@ def configure_logging(*, state_dir: Path) -> None:
         foreign_pre_chain=pre_chain,
     )
 
+    # When tests create many temporary repos (and thus many distinct state_dirs),
+    # `configure_logging()` is called repeatedly in a single Python process.
+    # Remove stale rotating file handlers so we don't leak handlers or duplicate logs.
+    for handler in list(logger.handlers):
+        if not isinstance(handler, RotatingFileHandler):
+            continue
+        try:
+            current = Path(handler.baseFilename)
+        except Exception:
+            current = None
+        if current is not None and current != log_path:
+            logger.removeHandler(handler)
+            handler.close()
+
     if not any(
         isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
         for h in logger.handlers

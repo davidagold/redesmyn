@@ -14,7 +14,7 @@ async def test_scenario_smoke_healthz_and_repo_initialized(scenario: Scenario) -
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
-    async with scenario.db.sessionmaker() as session:
+    async with scenario.db.session() as session:
         repo = await session.scalar(
             select(Repository).where(
                 Repository.repo_root == str(scenario.ctx.repo_root)
