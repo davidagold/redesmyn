@@ -4,6 +4,7 @@ import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { GraphView } from "@/components/graph/GraphView"
+import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
 import { Button } from "@/components/ui/button"
 import {
   Accordion,
@@ -25,7 +26,7 @@ import {
 import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
-import { useHosts } from "@/hooks/useHosts"
+import { useDaemons } from "@/hooks/useDaemons"
 import {
   type StreamEvent,
   type TaskMergeEventData,
@@ -34,6 +35,7 @@ import {
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
+import { computeRepoDaemonStatus } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
 import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
@@ -139,7 +141,7 @@ export function EpicView() {
     error: epicsError,
     refresh: refreshEpics,
   } = useEpics()
-  const { hosts } = useHosts()
+  const { daemons, refresh: refreshDaemons } = useDaemons()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
@@ -149,6 +151,7 @@ export function EpicView() {
   const [bulkAction, setBulkAction] = useState<BulkActionState | null>(null)
   const refreshTimerRef = useRef<number | null>(null)
   const streamRefreshTimerRef = useRef<number | null>(null)
+  const daemonRefreshTimerRef = useRef<number | null>(null)
   const [activityByNodeId, setActivityByNodeId] =
     useState<Map<number, NodeActivity>>(new Map())
   const [, setActivityTick] = useState(0)
@@ -316,14 +319,16 @@ export function EpicView() {
   const loading = epicsLoading || graphLoading
   const error = epicsError || graphError
 
-  const primaryHostDisplayName = useMemo(() => {
-    const primaryHostKey = graph?.repoExecutor?.primaryHostKey ?? null
-    if (!primaryHostKey) {
-      return null
-    }
-    const host = hosts.find((candidate) => candidate.hostKey === primaryHostKey)
-    return host?.displayName || primaryHostKey
-  }, [graph?.repoExecutor?.primaryHostKey, hosts])
+  const repoDaemonStatus = useMemo(
+    () =>
+      computeRepoDaemonStatus({
+        repoExecutor: graph?.repoExecutor ?? null,
+        daemons,
+      }),
+    [daemons, graph?.repoExecutor],
+  )
+
+  const stackProjectionsFresh = repoDaemonStatus.telemetryFresh
 
   const runSummary = useMemo(() => {
     if (!graph) {
@@ -335,7 +340,7 @@ export function EpicView() {
     let running = 0
     let blocked = 0
     let failed = 0
-    let outOfSync = 0
+    let outOfSync: number | null = stackProjectionsFresh ? 0 : null
 
     for (const task of tasks) {
       if (task.branchName === null) {
@@ -352,8 +357,8 @@ export function EpicView() {
       eligible += 1
       const session = agentSessionsByNodeId.get(task.id) ?? null
 
-      if (task.stackInSync === false) {
-        outOfSync += 1
+      if (stackProjectionsFresh && task.stackInSync === false) {
+        outOfSync = (outOfSync ?? 0) + 1
       }
 
       if (session?.status === "running") {
@@ -366,7 +371,7 @@ export function EpicView() {
     }
 
     return { eligible, running, blocked, failed, outOfSync }
-  }, [agentSessionsByNodeId, graph])
+  }, [agentSessionsByNodeId, graph, stackProjectionsFresh])
 
   const actionTargets = useMemo(() => {
     const empty = {
@@ -457,7 +462,7 @@ export function EpicView() {
         continue
       }
 
-      if (task.stackInSync === false) {
+      if (stackProjectionsFresh && task.stackInSync === false) {
         outOfSync.add(task.id)
       }
 
@@ -485,7 +490,7 @@ export function EpicView() {
       failed: Array.from(failed),
       outOfSync: Array.from(outOfSync),
     }
-  }, [agentSessionsByNodeId, graph])
+  }, [agentSessionsByNodeId, graph, stackProjectionsFresh])
 
   const selectionEquals = useCallback(
     (nodeIds: number[]) => {
@@ -572,8 +577,23 @@ export function EpicView() {
     }, 750)
   }, [refreshGraph])
 
+  const scheduleDaemonsRefresh = useCallback(() => {
+    if (daemonRefreshTimerRef.current !== null) {
+      return
+    }
+    daemonRefreshTimerRef.current = window.setTimeout(() => {
+      daemonRefreshTimerRef.current = null
+      void refreshDaemons()
+    }, 250)
+  }, [refreshDaemons])
+
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
+      if (event.eventType.startsWith("daemon.")) {
+        scheduleDaemonsRefresh()
+        scheduleGraphRefresh()
+        return
+      }
       const taskId =
         "taskId" in event.data && typeof event.data.taskId === "number"
           ? event.data.taskId
@@ -668,7 +688,7 @@ export function EpicView() {
         return { ...current, completed, failed }
       })
     },
-    [scheduleGraphRefresh, scheduleStreamGraphRefresh],
+    [scheduleDaemonsRefresh, scheduleGraphRefresh, scheduleStreamGraphRefresh],
   )
 
   useEventStream({
@@ -684,6 +704,9 @@ export function EpicView() {
       }
       if (streamRefreshTimerRef.current !== null) {
         window.clearTimeout(streamRefreshTimerRef.current)
+      }
+      if (daemonRefreshTimerRef.current !== null) {
+        window.clearTimeout(daemonRefreshTimerRef.current)
       }
     }
   }, [])
@@ -853,6 +876,7 @@ export function EpicView() {
   async function handleRefresh() {
     await refreshEpics()
     await refreshOrchestrationDefaults()
+    await refreshDaemons()
     await refreshGraph()
   }
 
@@ -1143,11 +1167,10 @@ export function EpicView() {
         </div>
 
         <div className="flex items-center justify-end gap-2">
-          {primaryHostDisplayName ? (
-            <span className="hidden max-w-56 truncate text-xs text-muted-foreground md:inline-flex">
-              {primaryHostDisplayName}
-            </span>
-          ) : null}
+          <RepoDaemonStatusChip
+            status={repoDaemonStatus}
+            startCommand="rn daemon run"
+          />
           <Button
             variant="outline"
             onClick={() => void handleRefresh()}
@@ -1233,7 +1256,32 @@ export function EpicView() {
                     {runSummary.failed}
                   </span>
                 </Button>
-                {runSummary.outOfSync > 0 ? (
+                {runSummary.outOfSync === null ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-full rounded-none border-0 border-l px-1.5 leading-none",
+                            triggerProps.className,
+                          )}
+                          disabledReason="Telemetry stale; sync status unknown"
+                        >
+                          <span className="truncate">Out of sync</span>
+                          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
+                            —
+                          </span>
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent side="bottom" align="center">
+                      Telemetry is stale, so sync projections are unknown.
+                    </TooltipContent>
+                  </Tooltip>
+                ) : runSummary.outOfSync > 0 ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={(triggerProps) => (
@@ -1929,6 +1977,7 @@ export function EpicView() {
             detach={configuredDetach}
             trunk={graph.trunk ?? null}
             repoExecutor={graph.repoExecutor ?? null}
+            stackProjectionsFresh={stackProjectionsFresh}
             selectedNodeIds={selectedNodeIds}
             selectedNodeId={taskId}
             selectedEdgeId={selectedEdgeId}

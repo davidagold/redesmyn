@@ -6,6 +6,7 @@ export type EpicGraph = components["schemas"]["EpicGraphResponse"]
 export type OrchestrationDefaults = components["schemas"]["OrchestrationDefaultsResponse"]
 export type OrchestrationDefaultsUpdateRequest = components["schemas"]["OrchestrationDefaultsUpdateRequest"]
 export type Host = components["schemas"]["HostResponse"]
+export type DaemonPresence = components["schemas"]["DaemonPresenceResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
@@ -124,6 +125,16 @@ export async function fetchHosts(): Promise<Host[]> {
     throw new Error(`GET /v1/hosts failed (${response.status})`)
   }
   return response.json() as Promise<Host[]>
+}
+
+export async function fetchDaemons(): Promise<DaemonPresence[]> {
+  const response = await fetch("/v1/daemons", {
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) {
+    throw new Error(`GET /v1/daemons failed (${response.status})`)
+  }
+  return response.json() as Promise<DaemonPresence[]>
 }
 
 export async function setTaskMergeReady(

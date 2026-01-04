@@ -67,6 +67,7 @@ interface NodeCardProps {
   activity?: NodeActivity
   branchLabel: string
   gitMutationsDisabledReason?: string | null
+  stackProjectionsFresh: boolean
   harnessCommand: string
   detach: boolean
   isSelected: boolean
@@ -144,6 +145,7 @@ export function NodeCard({
   activity,
   branchLabel,
   gitMutationsDisabledReason,
+  stackProjectionsFresh,
   harnessCommand,
   detach,
   isSelected,
@@ -154,7 +156,7 @@ export function NodeCard({
   const now = Date.now()
   const commitHot = isRecentActivity(activity?.lastCommitAt, now)
   const worktreeHot = isRecentActivity(activity?.lastWorktreeAt, now)
-  const stackInSync = node.stackInSync ?? null
+  const stackInSync = stackProjectionsFresh ? (node.stackInSync ?? null) : null
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunOperation = mergeRun?.operation ?? "merge"

@@ -18,6 +18,7 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   activity?: NodeActivity
   epicSlug?: string | null
   gitMutationsDisabledReason?: string | null
+  stackProjectionsFresh: boolean
   harnessCommand: string
   detach: boolean
   edgeHighlighted?: boolean
@@ -40,6 +41,7 @@ export function FlowBranchNode({
     activity,
     epicSlug,
     gitMutationsDisabledReason,
+    stackProjectionsFresh,
     harnessCommand,
     detach,
     edgeHighlighted,
@@ -69,6 +71,7 @@ export function FlowBranchNode({
         activity={activity}
         branchLabel={branchLabel}
         gitMutationsDisabledReason={gitMutationsDisabledReason ?? null}
+        stackProjectionsFresh={stackProjectionsFresh}
         harnessCommand={harnessCommand}
         detach={detach}
         isSelected={selected}

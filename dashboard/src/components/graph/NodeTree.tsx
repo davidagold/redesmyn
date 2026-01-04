@@ -13,6 +13,7 @@ interface NodeTreeProps {
   agentSessionsByNodeId: Map<number, AgentSession>
   harnessCommand: string
   detach: boolean
+  stackProjectionsFresh: boolean
   selectedNodeId: number | null
   epicSlug?: string | null
   onSelectNode: (nodeId: number) => void
@@ -26,6 +27,7 @@ export function NodeTree({
   agentSessionsByNodeId,
   harnessCommand,
   detach,
+  stackProjectionsFresh,
   selectedNodeId,
   epicSlug,
   onSelectNode,
@@ -48,6 +50,7 @@ export function NodeTree({
               branchLabel={branchLabel}
               harnessCommand={harnessCommand}
               detach={detach}
+              stackProjectionsFresh={stackProjectionsFresh}
               isSelected={selectedNodeId === node.id}
               onSelect={(_options) => onSelectNode(node.id)}
             />
@@ -61,6 +64,7 @@ export function NodeTree({
                   agentSessionsByNodeId={agentSessionsByNodeId}
                   harnessCommand={harnessCommand}
                   detach={detach}
+                  stackProjectionsFresh={stackProjectionsFresh}
                   selectedNodeId={selectedNodeId}
                   epicSlug={epicSlug}
                   onSelectNode={onSelectNode}

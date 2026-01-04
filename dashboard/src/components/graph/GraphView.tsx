@@ -77,6 +77,7 @@ interface GraphViewProps {
   detach: boolean
   trunk?: TrunkTimeline | null
   repoExecutor?: RepoExecutorStatus | null
+  stackProjectionsFresh: boolean
   selectedNodeIds: ReadonlySet<number>
   selectedNodeId: number | null
   selectedEdgeId: string | null
@@ -252,6 +253,7 @@ export function GraphView({
   detach,
   trunk,
   repoExecutor,
+  stackProjectionsFresh,
   selectedNodeIds,
   selectedNodeId,
   selectedEdgeId,
@@ -292,7 +294,7 @@ export function GraphView({
         ? "No primary repo executor. Acquire a primary executor lease."
         : "No repo executor attached. Start a daemon and attach this repo."
     }
-    if (attached.length > 0 && !attached.includes(primary)) {
+    if (!attached.includes(primary)) {
       return `Primary executor ${primary} is not attached.`
     }
     return null
@@ -987,6 +989,7 @@ export function GraphView({
           activity,
           epicSlug,
           gitMutationsDisabledReason,
+          stackProjectionsFresh,
           harnessCommand,
           detach,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
@@ -1017,6 +1020,7 @@ export function GraphView({
     positions,
     selectedEdgeNodeIds,
     selectedNodeIds,
+    stackProjectionsFresh,
     tasksById,
     trunkLayout,
     mergeRunsByBlockedTaskId,
