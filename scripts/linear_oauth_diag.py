@@ -104,7 +104,16 @@ def main() -> int:
 
     host = settings.api_host
     port = settings.api_port
-    httpd = HTTPServer((host, port), Handler)
+    try:
+        httpd = HTTPServer((host, port), Handler)
+    except OSError as e:
+        print(f"error: could not bind OAuth callback listener on {host}:{port} ({e})")
+        print(
+            "This usually means another process (often `rn dev` / the API server) is already listening.\n"
+            "Stop whatever is using that port, then rerun this script.\n"
+            "Tip: `lsof -nP -iTCP:9234 -sTCP:LISTEN`"
+        )
+        return 2
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
 
