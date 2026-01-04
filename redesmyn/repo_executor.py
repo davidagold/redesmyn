@@ -131,7 +131,7 @@ def _raise_if_running_agents(
     message: str,
 ) -> None:
     if has_running_agents and not allow_running:
-        raise RepoExecutorError(message, status_code=409)
+        raise RepoExecutorError(f"RUNNING_AGENTS: {message}", status_code=409)
 
 
 async def _mark_merge_run_running(

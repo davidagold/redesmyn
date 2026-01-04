@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, overload
 from uuid import uuid4
 
+import structlog
+from structlog.contextvars import bind_contextvars, clear_contextvars
 from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
@@ -143,6 +145,7 @@ from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerComman
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
 
 logger = logging.getLogger("redesmyn")
+log = structlog.get_logger("redesmyn.api")
 
 
 class AppState(Protocol):
@@ -336,15 +339,15 @@ v1 = APIRouter(prefix="/v1")
 async def log_unhandled_errors(request: Request, call_next):
     request_id = uuid4().hex
     start = time.monotonic()
+    bind_contextvars(
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+    )
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception(
-            "Unhandled request error request_id=%s method=%s path=%s",
-            request_id,
-            request.method,
-            request.url.path,
-        )
+        log.exception("http.unhandled_error")
         response = JSONResponse(
             status_code=500,
             content={"detail": f"Internal server error (request_id={request_id})"},
@@ -353,14 +356,12 @@ async def log_unhandled_errors(request: Request, call_next):
     response.headers["x-request-id"] = request_id
     duration_ms = int((time.monotonic() - start) * 1000)
     if response.status_code >= 500:
-        logger.error(
-            "HTTP %s request_id=%s method=%s path=%s duration_ms=%s",
-            response.status_code,
-            request_id,
-            request.method,
-            request.url.path,
-            duration_ms,
+        log.error(
+            "http.response",
+            status_code=response.status_code,
+            duration_ms=duration_ms,
         )
+    clear_contextvars()
     return response
 
 
@@ -1233,6 +1234,19 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
     run_id = request.run_id or uuid4().hex
     resolved_request = request.model_copy(update={"run_id": run_id})
 
+    log.info(
+        "merge.request",
+        task_id=task_id,
+        run_id=run_id,
+        cascade=bool(resolved_request.cascade),
+        scope=resolved_request.scope,
+        restack_mode=resolved_request.restack_mode,
+        allow_running=bool(resolved_request.allow_running),
+        dry_run=bool(resolved_request.dry_run),
+        force=bool(resolved_request.force),
+        requested_host_key=resolved_request.host_key,
+    )
+
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         target = await _resolve_repo_executor_target(
@@ -1248,6 +1262,13 @@ async def merge_task(task_id: int, request: TaskMergeRequest) -> TaskMergeRespon
             request=resolved_request,
         )
     except RepoExecutorError as e:
+        log.warning(
+            "merge.rejected",
+            task_id=task_id,
+            run_id=run_id,
+            status_code=e.status_code,
+            detail=e.detail,
+        )
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
@@ -1280,6 +1301,12 @@ async def restack_task(
 async def resume_merge_run(
     run_id: str, request: MergeRunResumeRequest
 ) -> MergeRunResumeResponse:
+    log.info(
+        "merge_run.resume.request",
+        run_id=run_id,
+        allow_running=bool(request.allow_running),
+        requested_host_key=request.host_key,
+    )
     sessionmaker = app.state.sessionmaker
     local_host_key = (
         app.state.local_host_key if app.state.runner_mode == "local" else None
@@ -1348,6 +1375,12 @@ async def resume_merge_run(
             request=request,
         )
     except RepoExecutorError as e:
+        log.warning(
+            "merge_run.resume.rejected",
+            run_id=run_id,
+            status_code=e.status_code,
+            detail=e.detail,
+        )
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 

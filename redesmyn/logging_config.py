@@ -4,6 +4,11 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+import structlog
+from structlog.contextvars import merge_contextvars
+from structlog.processors import JSONRenderer, TimeStamper, format_exc_info
+from structlog.stdlib import ProcessorFormatter, add_logger_name
+
 
 def configure_logging(*, state_dir: Path) -> None:
     """Configure daemon/control-plane logging.
@@ -20,9 +25,33 @@ def configure_logging(*, state_dir: Path) -> None:
     logger = logging.getLogger("redesmyn")
     logger.setLevel(logging.INFO)
 
-    formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    pre_chain = [
+        merge_contextvars,
+        structlog.stdlib.add_log_level,
+        add_logger_name,
+        TimeStamper(fmt="iso", utc=True),
+    ]
+
+    # Configure structlog once (idempotent-ish).
+    structlog.configure(
+        processors=[
+            *pre_chain,
+            structlog.processors.StackInfoRenderer(),
+            format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    console_formatter = ProcessorFormatter(
+        processor=structlog.dev.ConsoleRenderer(colors=True),
+        foreign_pre_chain=pre_chain,
+    )
+
+    file_formatter = ProcessorFormatter(
+        processor=JSONRenderer(sort_keys=True),
+        foreign_pre_chain=pre_chain,
     )
 
     if not any(
@@ -31,7 +60,7 @@ def configure_logging(*, state_dir: Path) -> None:
     ):
         stream = logging.StreamHandler()
         stream.setLevel(logging.INFO)
-        stream.setFormatter(formatter)
+        stream.setFormatter(console_formatter)
         logger.addHandler(stream)
 
     if not any(
@@ -45,7 +74,7 @@ def configure_logging(*, state_dir: Path) -> None:
             encoding="utf-8",
         )
         file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
 
     # Avoid double logging when uvicorn config attaches handlers upstream.
