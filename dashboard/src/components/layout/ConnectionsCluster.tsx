@@ -83,14 +83,14 @@ export function ConnectionsCluster({
   )
 
   return (
-    <div className="inline-flex items-stretch overflow-hidden rounded-md border border-border/60 bg-foreground/5">
+    <div className="inline-flex items-center">
       <Tooltip>
         <TooltipTrigger
           render={(triggerProps) => (
             <span
               {...triggerProps}
               className={cn(
-                "flex items-center pl-2 pr-1",
+                "flex h-7 items-center pl-2 pr-1",
                 triggerProps.className,
               )}
             >
@@ -107,21 +107,21 @@ export function ConnectionsCluster({
         </TooltipContent>
       </Tooltip>
 
+      <div className="mx-1 h-4 w-px bg-border/60" aria-hidden="true" />
+
       <RepoDaemonStatusChip
         status={repoDaemonStatus}
         startCommand={startCommand}
         showStatusDot={false}
-        buttonClassName="rounded-none border-0"
+        buttonClassName="border-0"
       />
-
-      <div className="my-1 w-px bg-border/60" aria-hidden="true" />
 
       <LinearSyncMenuButton
         epicSlug={epicSlug}
         variant="epic"
         onSynced={onSynced}
         showStatusDot={false}
-        buttonClassName="rounded-none border-0"
+        buttonClassName="border-0"
         onStatusChange={handleLinearStatusChange}
       />
     </div>
