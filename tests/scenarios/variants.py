@@ -10,7 +10,7 @@ from sqlalchemy import select
 from redesmyn.db import Agent, AgentSession, Epic, MergeRun, Repository, Task
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus, TaskState
 
-from tests.scenarios.scenario import Scenario, _run_git
+from tests.scenarios.scenario import Scenario
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +47,7 @@ async def seed_merged_parent(scenario: Scenario) -> SeededSpine:
         message="child change",
     )
 
-    async with scenario.db.sessionmaker() as session:
+    async with scenario.db.session() as session:
         repo_row = await session.scalar(
             select(Repository).where(
                 Repository.repo_root == str(scenario.ctx.repo_root)
@@ -100,7 +100,7 @@ async def seed_merged_parent(scenario: Scenario) -> SeededSpine:
 
 async def seed_running_agent(scenario: Scenario) -> SeededSpine:
     seeded = await seed_merged_parent(scenario)
-    async with scenario.db.sessionmaker() as session:
+    async with scenario.db.session() as session:
         agent = Agent(display_name="test-agent", status=AgentStatus.Running)
         session.add(agent)
         await session.flush()
@@ -119,10 +119,9 @@ async def seed_conflicted_merge_run(scenario: Scenario) -> SeededSpine:
     seeded = await seed_merged_parent(scenario)
 
     # Create a real rebase conflict to leave the child worktree in a blocked state.
-    repo_root = scenario.ctx.repo_root
-    _run_git(repo_root, ["checkout", "main"], cwd=repo_root)
+    scenario.repo.git(["checkout", "main"], cwd=scenario.ctx.repo_root)
     scenario.repo.commit_file(
-        worktree_path=repo_root,
+        worktree_path=scenario.ctx.repo_root,
         relpath="conflict.txt",
         content="main\n",
         message="main conflict",
@@ -133,12 +132,9 @@ async def seed_conflicted_merge_run(scenario: Scenario) -> SeededSpine:
         content="child\n",
         message="child conflict",
     )
-    try:
-        _run_git(repo_root, ["rebase", "main"], cwd=seeded.child_worktree)
-    except Exception:
-        pass
+    scenario.repo.try_rebase(worktree_path=seeded.child_worktree, upstream_ref="main")
 
-    async with scenario.db.sessionmaker() as session:
+    async with scenario.db.session() as session:
         run = MergeRun(
             run_id=uuid4().hex,
             epic_id=seeded.epic_id,

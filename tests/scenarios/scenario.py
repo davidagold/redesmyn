@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
-from contextlib import AbstractAsyncContextManager
+from collections import deque
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,17 +14,17 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocketState
 
-from redesmyn.api import App, app as global_app, lifespan as app_lifespan
+from redesmyn.api import App
 from redesmyn.context import RepoContext
 from redesmyn.db import create_engine, create_sessionmaker, init_db
-from redesmyn.ws_runtime import DaemonConnectionRegistry
+from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
 
 
 class GitError(RuntimeError):
     pass
 
 
-def _run_git(repo_root: Path, args: list[str], *, cwd: Path | None = None) -> str:
+def run_git(repo_root: Path, args: list[str], *, cwd: Path | None = None) -> str:
     proc = subprocess.run(
         ["git", *args],
         cwd=str(cwd or repo_root),
@@ -46,25 +49,25 @@ class ScenarioRepo:
         repo_root.mkdir(parents=True, exist_ok=False)
         worktrees_root.mkdir(parents=True, exist_ok=False)
 
-        _run_git(repo_root, ["init", "-b", "main"], cwd=repo_root)
-        _run_git(repo_root, ["config", "user.email", "tests@example.invalid"])
-        _run_git(repo_root, ["config", "user.name", "Redesmyn Tests"])
-        _run_git(repo_root, ["config", "commit.gpgsign", "false"])
+        run_git(repo_root, ["init", "-b", "main"], cwd=repo_root)
+        run_git(repo_root, ["config", "user.email", "tests@example.invalid"])
+        run_git(repo_root, ["config", "user.name", "Redesmyn Tests"])
+        run_git(repo_root, ["config", "commit.gpgsign", "false"])
 
         (repo_root / "README.md").write_text("test repo\n", encoding="utf-8")
-        _run_git(repo_root, ["add", "-A"])
-        _run_git(repo_root, ["commit", "-m", "init"])
+        run_git(repo_root, ["add", "-A"])
+        run_git(repo_root, ["commit", "-m", "init"])
 
         return cls(repo_root=repo_root, worktrees_root=worktrees_root)
+
+    def git(self, args: list[str], *, cwd: Path | None = None) -> str:
+        return run_git(self.repo_root, args, cwd=cwd)
 
     def create_worktree(self, *, branch_name: str, from_ref: str = "main") -> Path:
         path = self.worktrees_root / branch_name
         if path.exists():
             raise FileExistsError(str(path))
-        _run_git(
-            self.repo_root,
-            ["worktree", "add", "-b", branch_name, str(path), from_ref],
-        )
+        self.git(["worktree", "add", "-b", branch_name, str(path), from_ref])
         return path
 
     def commit_file(
@@ -78,15 +81,26 @@ class ScenarioRepo:
         file_path = worktree_path / relpath
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
-        _run_git(self.repo_root, ["add", "-A"], cwd=worktree_path)
-        _run_git(self.repo_root, ["commit", "-m", message], cwd=worktree_path)
-        return _run_git(self.repo_root, ["rev-parse", "HEAD"], cwd=worktree_path)
+        self.git(["add", "-A"], cwd=worktree_path)
+        self.git(["commit", "-m", message], cwd=worktree_path)
+        return self.git(["rev-parse", "HEAD"], cwd=worktree_path)
 
     def fast_forward_main(self, *, from_branch: str) -> None:
-        _run_git(self.repo_root, ["checkout", "main"], cwd=self.repo_root)
-        _run_git(
-            self.repo_root, ["merge", "--ff-only", from_branch], cwd=self.repo_root
+        self.git(["checkout", "main"], cwd=self.repo_root)
+        self.git(["merge", "--ff-only", from_branch], cwd=self.repo_root)
+
+    def rebase(self, *, worktree_path: Path, upstream_ref: str) -> str:
+        return self.git(["rebase", upstream_ref], cwd=worktree_path)
+
+    def try_rebase(self, *, worktree_path: Path, upstream_ref: str) -> bool:
+        proc = subprocess.run(
+            ["git", "rebase", upstream_ref],
+            cwd=str(worktree_path),
+            text=True,
+            capture_output=True,
+            check=False,
         )
+        return proc.returncode == 0
 
 
 @dataclass(slots=True)
@@ -105,6 +119,11 @@ class ScenarioDB:
             sessionmaker=create_sessionmaker(engine),
         )
 
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[AsyncSession]:
+        async with self.sessionmaker() as session:
+            yield session
+
     async def aclose(self) -> None:
         await self.engine.dispose()
 
@@ -113,16 +132,16 @@ class ScenarioDB:
 class ScenarioApp:
     app: App
     client: httpx.AsyncClient
-    _lifespan: AbstractAsyncContextManager[None]
+    _lifespan: AbstractAsyncContextManager[Any]
 
     @classmethod
-    async def open(cls) -> "ScenarioApp":
-        lifespan_cm = app_lifespan(global_app)
-        await lifespan_cm.__aenter__()
+    async def open(cls, app: App) -> "ScenarioApp":
+        lifespan_cm = app.router.lifespan_context(app)
+        await lifespan_cm.__aenter__()  # type: ignore[call-arg]
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=global_app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
         )
-        return cls(app=global_app, client=client, _lifespan=lifespan_cm)
+        return cls(app=app, client=client, _lifespan=lifespan_cm)
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -132,26 +151,47 @@ class ScenarioApp:
 class _FakeWebSocket:
     client_state = WebSocketState.CONNECTED
 
-    async def send_json(self, _payload: dict[str, Any]) -> None:  # pragma: no cover
-        return
+    def __init__(self, *, max_payloads: int = 64) -> None:
+        self._payloads = deque(maxlen=max_payloads)
+        self.sent_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    @property
+    def payloads(self) -> list[dict[str, Any]]:
+        return list(self._payloads)
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        json.dumps(payload)
+        self._payloads.append(payload)
+        self.sent_queue.put_nowait(payload)
 
 
 @dataclass(frozen=True, slots=True)
 class ScenarioDaemonConnection:
     host_key: str
-    send_queue: asyncio.Queue[dict[str, Any]]
+    websocket: _FakeWebSocket
+    sender_task: asyncio.Task[None]
 
     async def recv(self, *, timeout_s: float = 1.0) -> dict[str, Any]:
-        return await asyncio.wait_for(self.send_queue.get(), timeout=timeout_s)
+        return await asyncio.wait_for(
+            self.websocket.sent_queue.get(), timeout=timeout_s
+        )
+
+    async def aclose(self) -> None:
+        self.sender_task.cancel()
+        try:
+            await self.sender_task
+        except asyncio.CancelledError:
+            pass
 
 
 @dataclass(frozen=True, slots=True)
 class ScenarioDaemon:
     registry: DaemonConnectionRegistry
+    event_hub: JsonWebSocketHub
 
     @classmethod
     def from_app(cls, app: App) -> "ScenarioDaemon":
-        return cls(registry=app.state.daemon_connections)
+        return cls(registry=app.state.daemon_connections, event_hub=app.state.event_hub)
 
     async def connect(
         self,
@@ -161,14 +201,20 @@ class ScenarioDaemon:
         capabilities: dict[str, Any] | None = None,
         display_name: str | None = None,
     ) -> ScenarioDaemonConnection:
+        websocket = _FakeWebSocket()
         queue = await self.registry.register(
             host_key,
-            _FakeWebSocket(),  # type: ignore[arg-type]
+            websocket,  # type: ignore[arg-type]
             attached_repos=attached_repos or [],
             capabilities=capabilities or {},
             display_name=display_name,
         )
-        return ScenarioDaemonConnection(host_key=host_key, send_queue=queue)
+        sender_task = asyncio.create_task(
+            self.event_hub.sender_loop(websocket, queue)  # type: ignore[arg-type]
+        )
+        return ScenarioDaemonConnection(
+            host_key=host_key, websocket=websocket, sender_task=sender_task
+        )
 
 
 @dataclass(slots=True)
@@ -181,5 +227,8 @@ class Scenario:
     host_key: str
 
     async def aclose(self) -> None:
+        # NOTE: Daemon connections are owned by the app runtime and will be torn down
+        # with the app lifespan; scenarios should explicitly close any connections
+        # they open via `ScenarioDaemon.connect`.
         await self.app.aclose()
         await self.db.aclose()

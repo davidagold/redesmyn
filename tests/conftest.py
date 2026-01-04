@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from redesmyn.context import build_repo_context
+from redesmyn.api import app as global_app
 from redesmyn.host_identity import HostIdentity, host_identity_path
 from redesmyn.orchestrator import init_repo
 
@@ -69,7 +70,7 @@ async def _make_scenario(
     )
 
     db = await ScenarioDB.connect(db_path=ctx.db_path)
-    app = await ScenarioApp.open()
+    app = await ScenarioApp.open(global_app)
     scenario = Scenario(
         ctx=ctx,
         repo=repo,
