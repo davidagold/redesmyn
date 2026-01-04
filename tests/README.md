@@ -10,7 +10,10 @@ This repo’s tests are intended to be:
 ## Naming + structure
 
 - Prefer module-level tests named like `test_<expected_behavior>`.
+- Prefer integration tests (API + DB + git) unless a unit test is clearly cheaper and more stable.
 - Keep one behavior per test.
+- Keep test bodies small: push setup into fixtures and typed scenario helpers.
+- Avoid flakes: no real network services; isolate temp repos/dbs per test; add explicit timeouts where needed.
 - Use marks to keep the suite legible:
   - `@pytest.mark.integration`: API + DB + git, in-process.
   - `@pytest.mark.unit`: pure-ish helpers (no IO).
@@ -24,25 +27,26 @@ Prefer fixtures and typed “scenario” bundles over hand-rolled setup inside e
 - **Scenario fixture**: a typed bundle that represents a coherent “world” (`Scenario`).
 - **Variants**: scenario + one additional situation (e.g. “merged parent”, “running agent”).
 
+Most integration tests should start from the `scenario` fixture (or a `scenario_with_*` variant) and focus on assertions.
+
+To add a new variant, prefer composing from `scenario` and then mutating DB/git state in one place (a helper or fixture),
+so the “world setup” is reusable across tests.
+
 Guidelines:
 
 - Keep scenario primitives strongly typed (dataclasses are encouraged).
-- Seed helpers should be named `seed_<situation>` and return a typed handle with the IDs/paths
-  needed for assertions.
-- Avoid reaching into “private” helpers across modules; if a helper is reused, make it part of
-  the public scenario API.
+- Seed helpers should be named `seed_<situation>` and return a typed handle with the IDs/paths needed for assertions.
+- Avoid reaching into “private” helpers across modules; if a helper is reused, make it part of the public scenario API.
 
 ## xdist readiness (required)
 
 Write tests assuming they may run concurrently across multiple workers.
 
 - **No shared global state**: avoid module-level singletons and caches that mutate at runtime.
-- **No shared filesystem paths**: always use `tmp_path` (or `tmp_path_factory`) and isolate
-  repo/worktree/db under it.
+- **No shared filesystem paths**: always use `tmp_path` (or `tmp_path_factory`) and isolate repo/worktree/db under it.
 - **No shared ports**: prefer in-process clients (e.g. ASGI + `httpx`) over binding sockets.
-- **No implicit env**: do not rely on ambient `REDESMYN_*` env vars across tests. If env is
-  required for legacy code paths, set *all* required vars per-test and tear them down, or
-  prefer passing explicit context/config objects.
+- **No implicit env**: do not rely on ambient `REDESMYN_*` env vars across tests. If env is required for legacy code
+  paths, set *all* required vars per-test and tear them down, or prefer passing explicit context/config objects.
 - Ensure any background tasks started by app lifespans are reliably shut down by fixtures.
 
 ## When to add unit tests
@@ -65,4 +69,3 @@ Avoid unit tests for behavior that is already well-covered by integration tests.
 When `pytest-xdist` is available, tests should also pass with:
 
 - `uv run pytest -n auto`
-

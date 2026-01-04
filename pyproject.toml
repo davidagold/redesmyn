@@ -28,6 +28,9 @@ rn = "redesmyn.cli:main"
 dev = [
   "ruff",
   "ty",
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "pytest-timeout>=2.3",
 ]
 
 [tool.uv]
@@ -35,3 +38,14 @@ package = true
 
 [tool.setuptools.packages.find]
 include = ["redesmyn*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --tb=short -ra"
+asyncio_mode = "auto"
+timeout = 30
+timeout_method = "thread"
+markers = [
+  "integration: exercises app + db + git",
+  "unit: pure-ish helper tests",
+]
