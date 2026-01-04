@@ -14,6 +14,11 @@ import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { RepoDaemonStatus } from "@/lib/repo-daemon-status"
 
+type HostDotInput = {
+  connected: boolean
+  isLocal: boolean
+}
+
 function kindDotClass(kind: RepoDaemonStatus["kind"]) {
   if (kind === "ok") {
     return "bg-emerald-400"
@@ -27,7 +32,7 @@ function kindDotClass(kind: RepoDaemonStatus["kind"]) {
   return "bg-destructive/80"
 }
 
-function hostDotClass(host: { connected: boolean isLocal: boolean }) {
+function hostDotClass(host: HostDotInput) {
   if (host.isLocal) {
     return "bg-emerald-400"
   }
