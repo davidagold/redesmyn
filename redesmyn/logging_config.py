@@ -53,7 +53,6 @@ def configure_logging(*, state_dir: Path) -> None:
         processor=JSONRenderer(sort_keys=True),
         foreign_pre_chain=pre_chain,
     )
-
     # When tests create many temporary repos (and thus many distinct state_dirs),
     # `configure_logging()` is called repeatedly in a single Python process.
     # Remove stale rotating file handlers so we don't leak handlers or duplicate logs.
