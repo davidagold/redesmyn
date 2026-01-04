@@ -27,6 +27,9 @@ check:
     cd dashboard && npm run typecheck
     cd dashboard && npm run test
 
+test:
+    uv run pytest
+
 run flags="":
     @if [[ "{{flags}}" == "--local" ]]; then \
       rn server run & server_pid=$$!; \
