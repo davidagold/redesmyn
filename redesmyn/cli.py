@@ -288,7 +288,7 @@ def sync(
                 ctx,
                 epic=epic,
                 project=project,
-                create_nodes=create_nodes,
+                create_branches=create_branches,
             )
         )
         typer.echo(
@@ -2130,12 +2130,12 @@ async def _sync_to_linear(
     *,
     epic: str | None,
     project: str | None,
-    create_nodes: bool,
+    create_branches: bool,
 ) -> LinearPushStats:
     # Make sure local docs/DB are in sync before we push, and so we have Task rows
     # (including state) for every task doc.
     requested_epic = epic or _infer_single_epic_slug_from_fs(ctx.worktree_root)
-    await _sync_from_local(ctx, epic=requested_epic, create_nodes=create_nodes)
+    await _sync_from_local(ctx, epic=requested_epic, create_branches=create_branches)
 
     epic_row = await _resolve_epic(ctx, epic=requested_epic)
     creds = await _require_fresh_linear_credentials(ctx=ctx)
@@ -2210,15 +2210,6 @@ async def _sync_to_linear(
             tasks_by_local_path = {
                 t.local_path: t for t in tasks if t.local_path is not None
             }
-
-            nodes_by_id: dict[int, Node] = {}
-            if create_nodes:
-                nodes = list(
-                    await session.scalars(
-                        select(Node).where(Node.epic_id == epic_db.id)
-                    )
-                )
-                nodes_by_id = {n.id: n for n in nodes}
 
             state_id_cache: dict[tuple[str, str], str] = {}
 
@@ -2297,11 +2288,6 @@ async def _sync_to_linear(
                 if task_row.linear_issue_id != issue.id:
                     task_row.linear_issue_id = issue.id
 
-                if create_nodes and task_row.node_id is not None:
-                    node = nodes_by_id.get(task_row.node_id)
-                    if node is not None and node.linear_issue_id != issue.id:
-                        node.linear_issue_id = issue.id
-
                 markdown = readme.read_text(encoding="utf-8")
                 existing_meta = _load_metadata_dict(markdown)
 
@@ -2311,17 +2297,6 @@ async def _sync_to_linear(
                     existing_meta["linear"] = linear_meta
                 linear_meta["issue_id"] = issue.id
                 linear_meta["identifier"] = issue.identifier
-
-                if create_nodes and task_row.node_id is not None:
-                    node = nodes_by_id.get(task_row.node_id)
-                    if node is not None:
-                        node_meta = existing_meta.get("node")
-                        if not isinstance(node_meta, dict):
-                            node_meta = {}
-                            existing_meta["node"] = node_meta
-                        branch = node_meta.get("branch")
-                        if not isinstance(branch, str) or not branch.strip():
-                            node_meta["branch"] = node.branch_name
 
                 next_markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
                 if next_markdown != markdown:
