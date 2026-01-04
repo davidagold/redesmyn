@@ -13,6 +13,7 @@ import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
+import click
 import typer
 from sqlalchemy import desc, select
 
@@ -101,7 +102,15 @@ from redesmyn.repo_observer import run_repo_observer
 from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.strings import slugify
 
-app = typer.Typer(add_completion=False, help="Redesmyn CLI (`rn`).")
+_DEBUG = False
+
+
+app = typer.Typer(
+    add_completion=False,
+    help="Redesmyn CLI (`rn`).",
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+)
 daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
 config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
 sandbox_app = typer.Typer(add_completion=False, help="Sandbox configuration + health.")
@@ -114,6 +123,19 @@ task_app = typer.Typer(add_completion=False, help="Task management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
 observer_app = typer.Typer(add_completion=False, help="Repo observer + telemetry.")
+
+
+@app.callback()
+def _global_options(
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Show full traceback on errors.",
+        is_eager=True,
+    ),
+) -> None:
+    global _DEBUG
+    _DEBUG = debug
 
 
 @dataclass(slots=True)
@@ -2936,9 +2958,39 @@ def git_proxy(ctx: typer.Context) -> None:
 
 def main() -> None:
     try:
-        app()
+        typer.main.get_command(app).main(
+            args=sys.argv[1:],
+            prog_name="rn",
+            standalone_mode=False,
+        )
     except BrokenPipeError:
         raise typer.Exit(141) from None
+    except click.Abort:
+        typer.echo("", err=True)
+        raise typer.Exit(1) from None
     except KeyboardInterrupt:
         typer.echo("", err=True)
         raise typer.Exit(130) from None
+    except (typer.Exit, click.exceptions.Exit) as e:
+        raise typer.Exit(e.exit_code) from None
+    except click.ClickException as e:
+        e.show()
+        raise typer.Exit(e.exit_code) from None
+    except Exception as e:
+        if _DEBUG or os.environ.get("REDESMYN_DEBUG") in {"1", "true", "TRUE"}:
+            raise
+
+        def _fmt_one(exc: BaseException) -> str:
+            message = str(exc).strip()
+            return message or exc.__class__.__name__
+
+        lines = [f"error: {_fmt_one(e)}"]
+        cause = e.__cause__ or (
+            None if getattr(e, "__suppress_context__", False) else e.__context__
+        )
+        if cause is not None:
+            lines.append(f"caused by: {_fmt_one(cause)}")
+        lines.append("hint: re-run with --debug for a full traceback")
+        for line in lines:
+            typer.echo(line, err=True)
+        raise typer.Exit(1) from None
