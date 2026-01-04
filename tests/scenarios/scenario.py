@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 from collections import deque
 from collections.abc import AsyncIterator
@@ -16,12 +17,21 @@ from starlette.websockets import WebSocketState
 
 from redesmyn.api import App
 from redesmyn.context import RepoContext
-from redesmyn.db import create_engine, create_sessionmaker, init_db
+from redesmyn.db import create_engine, create_sessionmaker
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
 
 
 class GitError(RuntimeError):
     pass
+
+
+def _noninteractive_git_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GIT_CONFIG_NOSYSTEM", "1")
+    env.setdefault("GIT_CONFIG_GLOBAL", os.devnull)
+    env.setdefault("GCM_INTERACTIVE", "never")
+    return env
 
 
 def run_git(repo_root: Path, args: list[str], *, cwd: Path | None = None) -> str:
@@ -31,6 +41,7 @@ def run_git(repo_root: Path, args: list[str], *, cwd: Path | None = None) -> str
         text=True,
         capture_output=True,
         check=False,
+        env=_noninteractive_git_env(),
     )
     if proc.returncode != 0:
         raise GitError(proc.stderr.strip() or "git command failed")
@@ -99,6 +110,7 @@ class ScenarioRepo:
             text=True,
             capture_output=True,
             check=False,
+            env=_noninteractive_git_env(),
         )
         return proc.returncode == 0
 
@@ -112,7 +124,6 @@ class ScenarioDB:
     @classmethod
     async def connect(cls, *, db_path: Path) -> "ScenarioDB":
         engine = create_engine(db_path)
-        await init_db(engine, migrate=False)
         return cls(
             db_path=db_path,
             engine=engine,
