@@ -633,14 +633,24 @@ query TeamStates($teamId: String!, $after: String) {
 
 ISSUE_BLOCKER_RELATIONS_QUERY = """
 query IssueBlockerRelations($issueId: String!, $after: String) {
-  issueRelations(
-    first: 100,
-    after: $after,
-    filter: {
-      type: { eq: blocks },
-      relatedIssue: { id: { eq: $issueId } }
+  issue(id: $issueId) {
+    id
+    inverseRelations(first: 100, after: $after) {
+      nodes {
+        id
+        type
+        issue { id }
+        relatedIssue { id }
+      }
+      pageInfo { hasNextPage endCursor }
     }
-  ) {
+  }
+}
+"""
+
+ISSUE_BLOCKER_RELATIONS_FALLBACK_QUERY = """
+query IssueBlockerRelationsFallback($issueId: String!, $after: String) {
+  issueRelations(first: 100, after: $after, relatedIssueId: $issueId) {
     nodes {
       id
       type
@@ -1283,17 +1293,33 @@ async def fetch_issue_blocker_relations(
     relations: list[LinearIssueRelation] = []
     after: str | None = None
     while True:
-        data = await client.graphql(
-            ISSUE_BLOCKER_RELATIONS_QUERY,
-            variables={"issueId": issue_id, "after": after},
-        )
-        conn = data.get("issueRelations")
-        if not isinstance(conn, dict):
-            raise ValueError("Linear: missing issueRelations")
-        conn_dict = cast(dict[str, Any], conn)
+        try:
+            data = await client.graphql(
+                ISSUE_BLOCKER_RELATIONS_QUERY,
+                variables={"issueId": issue_id, "after": after},
+            )
+            issue = data.get("issue")
+            if not isinstance(issue, dict):
+                raise ValueError("Linear: issue not found or invalid response")
+            issue_dict = cast(dict[str, Any], issue)
+            conn = issue_dict.get("inverseRelations")
+            if not isinstance(conn, dict):
+                raise ValueError("Linear: missing issue.inverseRelations")
+            conn_dict = cast(dict[str, Any], conn)
+        except LinearApiError as e:
+            if e.code != "GRAPHQL_VALIDATION_FAILED":
+                raise
+            data = await client.graphql(
+                ISSUE_BLOCKER_RELATIONS_FALLBACK_QUERY,
+                variables={"issueId": issue_id, "after": after},
+            )
+            conn = data.get("issueRelations")
+            if not isinstance(conn, dict):
+                raise ValueError("Linear: missing issueRelations")
+            conn_dict = cast(dict[str, Any], conn)
         nodes = conn_dict.get("nodes")
         if not isinstance(nodes, list):
-            raise ValueError("Linear: missing issueRelations.nodes")
+            raise ValueError("Linear: missing issue relations nodes")
         for node in nodes:
             if not isinstance(node, dict):
                 continue
