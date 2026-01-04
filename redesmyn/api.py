@@ -1584,7 +1584,7 @@ def _resolve_linear_project_id(epic_row: Epic) -> str | None:
 async def open_epic_in_linear(epic: str) -> Response:
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        epic_row = await _resolve_epic_row(session, epic=epic)
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
 
     project_id = _resolve_linear_project_id(epic_row)
     if not project_id:
