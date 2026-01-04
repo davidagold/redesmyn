@@ -81,6 +81,7 @@ from redesmyn.orchestration_config import (
     write_config,
 )
 from redesmyn.orchestrator import init_repo
+from redesmyn.repo_identity import compute_repo_id
 from redesmyn.repo import (
     GitCommandError,
     NotAGitRepositoryError,
@@ -1927,7 +1928,36 @@ def daemon_run(
     ctx = get_repo_context()
     settings = load_settings(repo_root=ctx.repo_root)
 
-    inferred_repo_id = slugify(ctx.repo_root.name)
+    inferred_workspace_id = workspace_id
+    inferred_repo_id = repo_id
+    if inferred_repo_id is None:
+        inferred_repo_id = compute_repo_id(ctx.repo_root)
+        try:
+
+            async def _read_repo_key() -> tuple[str, str] | None:
+                engine = create_engine(ctx.db_path)
+                try:
+                    sessionmaker = create_sessionmaker(engine)
+                    async with sessionmaker() as session:
+                        row = await session.scalar(
+                            select(Repository).where(
+                                Repository.repo_root == str(ctx.repo_root)
+                            )
+                        )
+                        if row is None:
+                            return None
+                        return row.workspace_id, row.repo_id
+                finally:
+                    await engine.dispose()
+
+            key = asyncio.run(_read_repo_key())
+        except Exception:
+            key = None
+        if key is not None:
+            db_workspace_id, db_repo_id = key
+            inferred_repo_id = db_repo_id
+            if workspace_id == "default":
+                inferred_workspace_id = db_workspace_id
     cfg = DaemonRuntimeConfig(
         control_plane_url=(
             control_plane
@@ -1935,8 +1965,8 @@ def daemon_run(
             or f"http://{settings.api_host}:{settings.api_port}"
         ),
         token=token or settings.daemon_auth_token,
-        workspace_id=workspace_id,
-        repo_id=repo_id or inferred_repo_id,
+        workspace_id=inferred_workspace_id,
+        repo_id=inferred_repo_id,
         poll_interval_s=poll_interval,
         heartbeat_interval_s=heartbeat_interval,
     )
