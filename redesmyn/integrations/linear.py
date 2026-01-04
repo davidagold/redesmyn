@@ -147,8 +147,11 @@ def linear_authorize_url(
     if code_challenge:
         params["code_challenge"] = code_challenge
         params["code_challenge_method"] = "S256"
-    # OAuth `scope` is space-delimited; Linear expects `%20` separators (not `+`).
-    return f"{LINEAR_OAUTH_AUTHORIZE_URL}?{urlencode(params, quote_via=quote)}"
+    # Linear expects `scope` as a comma-separated list, and their authorize
+    # endpoint appears sensitive to commas being percent-encoded.
+    return (
+        f"{LINEAR_OAUTH_AUTHORIZE_URL}?{urlencode(params, quote_via=quote, safe=',')}"
+    )
 
 
 async def exchange_code_for_token(
