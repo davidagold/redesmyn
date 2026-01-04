@@ -48,9 +48,15 @@ async def apply_merge_run_event_update(
     blocked_step_kind = data.get("blocked_step_kind")
     if isinstance(blocked_step_kind, str):
         row.blocked_step_kind = blocked_step_kind
+    blocked_task_id = data.get("blocked_task_id")
+    if isinstance(blocked_task_id, int):
+        row.blocked_task_id = blocked_task_id
     blocked_branch_name = data.get("blocked_branch_name")
     if isinstance(blocked_branch_name, str):
         row.blocked_branch_name = blocked_branch_name
+    blocked_worktree_path = data.get("blocked_worktree_path")
+    if isinstance(blocked_worktree_path, str):
+        row.blocked_worktree_path = blocked_worktree_path
 
     error_value = data.get("error")
     if isinstance(error_value, str):
