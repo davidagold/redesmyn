@@ -1,4 +1,4 @@
-import type { DaemonPresence, EpicGraph } from "@/api"
+import type { DaemonPresence, EpicGraph, Host } from "@/api"
 
 export const DEFAULT_TELEMETRY_STALE_MS = 90_000
 
@@ -33,6 +33,14 @@ function daemonByHostKey(daemons: DaemonPresence[]) {
   return map
 }
 
+function hostByHostKey(hosts: Host[]) {
+  const map = new Map<string, Host>()
+  for (const host of hosts) {
+    map.set(host.hostKey, host)
+  }
+  return map
+}
+
 function uniqueHostKeys(hostKeys: (string | null | undefined)[]) {
   const seen = new Set<string>()
   const result: string[] = []
@@ -52,12 +60,14 @@ function uniqueHostKeys(hostKeys: (string | null | undefined)[]) {
 export function computeRepoDaemonStatus(options: {
   repoExecutor: EpicGraph["repoExecutor"] | null | undefined
   daemons: DaemonPresence[]
+  hosts?: Host[]
   nowMs?: number
   staleThresholdMs?: number
 }): RepoDaemonStatus {
   const {
     repoExecutor,
     daemons,
+    hosts: hostRows = [],
     nowMs = Date.now(),
     staleThresholdMs = DEFAULT_TELEMETRY_STALE_MS,
   } = options
@@ -80,9 +90,13 @@ export function computeRepoDaemonStatus(options: {
   const attachedHostKeys = repoExecutor.attachedHostKeys ?? []
   const primaryHostKey = repoExecutor.primaryHostKey ?? null
   const daemonMap = daemonByHostKey(daemons)
+  const hostMap = hostByHostKey(hostRows)
 
   const primaryDaemon = primaryHostKey
     ? (daemonMap.get(primaryHostKey) ?? null)
+    : null
+  const primaryHost = primaryHostKey
+    ? (hostMap.get(primaryHostKey) ?? null)
     : null
   const primaryConnected = primaryDaemon?.connected ?? false
   const primaryAttached = primaryHostKey
@@ -91,7 +105,9 @@ export function computeRepoDaemonStatus(options: {
   const primaryIsLocal = primaryAttached && !primaryConnected
 
   const primaryDisplayName =
-    primaryDaemon?.displayName ?? (primaryHostKey ? primaryHostKey : null)
+    primaryHost?.displayName ??
+    primaryDaemon?.displayName ??
+    (primaryHostKey ? primaryHostKey : null)
 
   let telemetryFresh = false
   if (primaryHostKey && primaryAttached) {
@@ -114,13 +130,14 @@ export function computeRepoDaemonStatus(options: {
       : null
 
   const relevantHostKeys = uniqueHostKeys([...attachedHostKeys, primaryHostKey])
-  const hosts: RepoDaemonHost[] = relevantHostKeys.map((hostKey) => {
+  const repoHosts: RepoDaemonHost[] = relevantHostKeys.map((hostKey) => {
     const daemon = daemonMap.get(hostKey) ?? null
+    const host = hostMap.get(hostKey) ?? null
     const connected = daemon?.connected ?? false
     const isAttached = attachedHostKeys.includes(hostKey)
     const isPrimary = primaryHostKey === hostKey
     const isLocal = isAttached && !connected
-    const displayName = daemon?.displayName ?? hostKey
+    const displayName = host?.displayName ?? daemon?.displayName ?? hostKey
     return {
       hostKey,
       displayName,
@@ -158,7 +175,7 @@ export function computeRepoDaemonStatus(options: {
     primaryDisplayName,
     primaryConnected,
     primaryIsLocal,
-    hosts,
+    hosts: repoHosts,
     staleThresholdMs,
   }
 }

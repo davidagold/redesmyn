@@ -27,6 +27,7 @@ import { bulkTaskAgentActions, updateOrchestrationDefaults } from "@/api"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import { useEpics } from "@/hooks/useEpics"
 import { useDaemons } from "@/hooks/useDaemons"
+import { useHosts } from "@/hooks/useHosts"
 import {
   type StreamEvent,
   type TaskMergeEventData,
@@ -142,6 +143,7 @@ export function EpicView() {
     refresh: refreshEpics,
   } = useEpics()
   const { daemons, refresh: refreshDaemons } = useDaemons()
+  const { hosts, refresh: refreshHosts } = useHosts()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
@@ -324,8 +326,9 @@ export function EpicView() {
       computeRepoDaemonStatus({
         repoExecutor: graph?.repoExecutor ?? null,
         daemons,
+        hosts,
       }),
-    [daemons, graph?.repoExecutor],
+    [daemons, graph?.repoExecutor, hosts],
   )
 
   const stackProjectionsFresh = repoDaemonStatus.telemetryFresh
@@ -591,6 +594,13 @@ export function EpicView() {
     (event: StreamEvent) => {
       if (event.eventType.startsWith("daemon.")) {
         scheduleDaemonsRefresh()
+        scheduleGraphRefresh()
+        return
+      }
+      if (
+        event.eventType === "node.stack_in_sync" ||
+        event.eventType === "task.stack_in_sync"
+      ) {
         scheduleGraphRefresh()
         return
       }
@@ -877,6 +887,7 @@ export function EpicView() {
     await refreshEpics()
     await refreshOrchestrationDefaults()
     await refreshDaemons()
+    await refreshHosts()
     await refreshGraph()
   }
 
@@ -1277,7 +1288,11 @@ export function EpicView() {
                         </Button>
                       )}
                     />
-                    <TooltipContent side="bottom" align="center">
+                    <TooltipContent
+                      side="bottom"
+                      align="center"
+                      showArrow={false}
+                    >
                       Telemetry is stale, so sync projections are unknown.
                     </TooltipContent>
                   </Tooltip>
@@ -1308,7 +1323,11 @@ export function EpicView() {
                         </Button>
                       )}
                     />
-                    <TooltipContent side="bottom" align="center">
+                    <TooltipContent
+                      side="bottom"
+                      align="center"
+                      showArrow={false}
+                    >
                       Tasks whose branch is out of sync with its effective
                       upstream (ignores merged ancestors).
                     </TooltipContent>
