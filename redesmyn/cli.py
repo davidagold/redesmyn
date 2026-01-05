@@ -3006,6 +3006,8 @@ async def _sync_to_linear(
 
                 if task_row.linear_issue_id != issue.id:
                     task_row.linear_issue_id = issue.id
+                if task_row.linear_identifier != issue.identifier:
+                    task_row.linear_identifier = issue.identifier
 
                 markdown = readme.read_text(encoding="utf-8")
                 existing_meta = _load_metadata_dict(markdown)
