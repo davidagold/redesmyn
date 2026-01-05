@@ -1404,6 +1404,12 @@ export interface components {
     TaskMergeReadyRequest: {
       /** Ready */
       ready: boolean
+      /**
+       * Scope
+       * @default task
+       * @enum {string}
+       */
+      scope: "task" | "spine"
     }
     /** TaskMergeRequest */
     TaskMergeRequest: {
