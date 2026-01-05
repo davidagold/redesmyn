@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 
 import structlog
@@ -127,7 +128,7 @@ async def maybe_push_task_merge_ready_to_linear(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     task_id: int,
-    timeout_s: float = 90.0,
+    timeout_s: float = 15.0,
 ) -> None:
     step = "init"
 
@@ -171,15 +172,14 @@ async def maybe_push_task_merge_ready_to_linear(
             client = LinearClient(access_token=creds.access_token)
             step = "fetch_issue"
             issue = await fetch_issue(client, issue_id=task.linear_issue_id)
-
             observed_at = datetime.now(UTC)
-            task.linear_state_type = issue.state_type
-            task.linear_state_observed_at = observed_at
-            await _safe_commit(session)
 
             step = "fetch_label"
             label = await fetch_label_by_name(client, label_name=epic.slug)
             if label is None or label.id not in issue.label_ids:
+                task.linear_state_type = issue.state_type
+                task.linear_state_observed_at = observed_at
+                await _safe_commit(session)
                 log.info(
                     "linear.automation.push_merge_ready.skipped",
                     task_id=task_id,
@@ -193,6 +193,9 @@ async def maybe_push_task_merge_ready_to_linear(
                 client, issue_id=issue.id
             )
             if not team_id:
+                task.linear_state_type = issue.state_type
+                task.linear_state_observed_at = observed_at
+                await _safe_commit(session)
                 log.info(
                     "linear.automation.push_merge_ready.skipped",
                     task_id=task_id,
@@ -213,24 +216,25 @@ async def maybe_push_task_merge_ready_to_linear(
                 issue_id=issue.id,
                 state_id=state_id,
             )
+            step = "commit"
             task.linear_state_type = updated.state_type
-            task.linear_state_observed_at = observed_at
+            task.linear_state_observed_at = datetime.now(UTC)
             await _safe_commit(session)
+            log.info(
+                "linear.automation.push_merge_ready.updated",
+                task_id=task_id,
+                from_state_type=issue.state_type,
+                to_state_type=updated.state_type,
+            )
 
+    start = time.monotonic()
+    log.info(
+        "linear.automation.push_merge_ready.started",
+        task_id=task_id,
+        timeout_s=timeout_s,
+    )
     try:
-        log.info(
-            "linear.automation.push_merge_ready.started",
-            task_id=task_id,
-            timeout_s=timeout_s,
-        )
-        await asyncio.wait_for(_run(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        log.info(
-            "linear.automation.push_merge_ready.timeout",
-            task_id=task_id,
-            timeout_s=timeout_s,
-            step=step,
-        )
+        await _run()
     except LinearApiError as exc:
         log.info(
             "linear.automation.push_merge_ready.failed",
@@ -238,12 +242,23 @@ async def maybe_push_task_merge_ready_to_linear(
             code=exc.code,
             status_code=exc.status_code,
             operation=exc.operation,
+            step=step,
+            duration_s=round(time.monotonic() - start, 3),
         )
     except Exception as exc:
         log.info(
             "linear.automation.push_merge_ready.failed",
             task_id=task_id,
             error=str(exc),
+            step=step,
+            duration_s=round(time.monotonic() - start, 3),
+        )
+    else:
+        log.info(
+            "linear.automation.push_merge_ready.finished",
+            task_id=task_id,
+            step=step,
+            duration_s=round(time.monotonic() - start, 3),
         )
 
 

@@ -1448,7 +1448,6 @@ async def set_task_merge_ready(
                     app.state.ctx,
                     sessionmaker=sessionmaker,
                     task_id=task_id,
-                    timeout_s=90.0,
                 ),
                 name=f"linear:merge_ready:{task_id}",
             )
