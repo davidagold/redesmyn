@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +17,7 @@ import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
 import { isRecentActivity, type NodeActivity } from "@/lib/presence"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
+import { LinearIcon } from "@/components/linear/LinearIcon"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -100,6 +101,27 @@ interface RestackAllowRunningPrompt {
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
 
 const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
+
+function extractLinearIdentifier(readme: string | null | undefined) {
+  if (!readme) {
+    return null
+  }
+
+  const normalized = readme.replaceAll("\r\n", "\n")
+  const match = normalized.match(/(^|\n)\s*linear:\s*\n([\s\S]*?)(\n\S|$)/)
+  if (!match) {
+    return null
+  }
+
+  const linearBlock = match[2] ?? ""
+  const identifierMatch = linearBlock.match(/^\s*identifier:\s*(.+?)\s*$/m)
+  const rawIdentifier = identifierMatch?.[1]?.split("#")[0]?.trim() ?? ""
+  if (!rawIdentifier) {
+    return null
+  }
+
+  return rawIdentifier.replace(/^['"]|['"]$/g, "")
+}
 
 function isRunningAgentsConflict(error: ApiHttpError) {
   const detail = error.detail
@@ -203,6 +225,12 @@ export function NodeCard({
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
   const gitDisabledReason = gitMutationsDisabledReason ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
+  const linearIssueId = task?.linearIssueId ?? null
+  const linearIdentifier = useMemo(
+    () => extractLinearIdentifier(task?.readme),
+    [task?.readme],
+  )
+  const linearPillLabel = linearIdentifier ?? "Open in Linear"
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -768,6 +796,40 @@ export function NodeCard({
         }
       }}
     >
+      {linearIssueId ? (
+        <div
+          className={cn(
+            "nodrag nopan absolute left-0 top-2.5 z-40 -translate-x-[calc(100%+8px)] transition-opacity",
+            isSelected || actionsMenuOpen
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+          )}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className={cn(
+              "group/linear inline-flex max-w-7 items-center overflow-hidden rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur transition-[max-width,background-color] duration-200 hover:max-w-48 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+            )}
+            aria-label={linearPillLabel}
+            onClick={() => {
+              window.open(
+                `/v1/linear/issues/${linearIssueId}/open`,
+                "_blank",
+                "noreferrer",
+              )
+            }}
+          >
+            <span className="inline-flex size-6 items-center justify-center">
+              <LinearIcon className="size-3.5 text-muted-foreground" />
+            </span>
+            <span className="pr-2 font-mono text-[0.625rem] text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/linear:opacity-100">
+              {linearPillLabel}
+            </span>
+          </button>
+        </div>
+      ) : null}
       {taskId !== null && onRequestRefresh ? (
         <div
           className={cn(
