@@ -166,26 +166,41 @@ Instead of “N harness adapters”, we want:
 
 ## 5) v0 scope (proposal)
 
-This section is intentionally a stub; we will revise it as we align on the new model.
+This section captures the v0 plan as revised by the goals in this thread.
 
 ### Must-have
 
-- Define `Harness` / `HarnessProfile` / `HarnessCapabilities` types as the API we build against.
-- Ensure the interface supports:
-  - tmux-backed attach in local-first mode
-  - explicit degraded-mode reporting (e.g. “can’t inject git shim”)
-  - prelude delivery semantics that are testable and deterministic
-- Establish the remote executor command surface (server ↔ daemon) for harness lifecycle.
+- Define a first-class **Harness interface**: semantic status + capability contract that is independent of the terminal/session transport.
+- Implement a **GenericHarness** that supports any command (best-effort), with only the capabilities we can provide without harness-specific assumptions.
+- Implement harness-specific adapters for:
+  - **Codex**
+  - **Claude Code**
+- Add harness identification:
+  - automatically infer harness kind from the user command (best-effort)
+  - allow users to override the inferred harness explicitly
+- Enable conflict auto-assist for merge/restack:
+  - on conflict, automatically send the remediation message to the agent when supported
+  - require **both**: (a) repo conflict resolved and (b) agent has completed its turn before resuming
 
 ### Nice-to-have
 
-- `rn harness doctor <kind>` (or `rn agent doctor`) driven by the interface/profiles.
-- A harness support matrix surface in the UI derived from capabilities.
+- A harness “support matrix” surface in the UI derived from capabilities.
+- `rn harness doctor <kind>` (or `rn agent doctor`) driven by the interface/capabilities.
 
 ### Non-goals (v0)
 
 - Deep harness-specific message/command integrations beyond what we can standardize.
 - Multi-user scheduling/quotas for shared fleets.
+- Supporting every harness under the sun with first-class semantics (GenericHarness exists specifically so unknown harnesses still work, just without advanced features).
+
+## 7) Task map (v0)
+
+- `epics/harness-interface-v0/tasks/T-1/README.md`: Harness interface + capability model + GenericHarness (baseline).
+- `epics/harness-interface-v0/tasks/T-2/README.md`: Harness identification (infer from command) + user override (UI/CLI/data model).
+- `epics/harness-interface-v0/tasks/T-3/README.md`: Codex harness adapter (turn/idle detection + capabilities).
+- `epics/harness-interface-v0/tasks/T-4/README.md`: Claude Code harness adapter (turn/idle detection + capabilities).
+- `epics/harness-interface-v0/tasks/T-5/README.md`: Conflict auto-assist + gated auto-resume (requires repo clean + agent turn complete).
+- `epics/harness-interface-v0/tasks/T-6/README.md`: Harness doctor + capabilities surface (UI + CLI).
 
 ## 6) Relationship to `tests-v0`
 
