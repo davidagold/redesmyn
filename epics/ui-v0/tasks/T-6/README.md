@@ -5,7 +5,6 @@
 ```yaml
 id: T-6
 epic: ui-v0
-stacked_on: T-5
 branch:
   suggested: rn/ui-v0/T-6-error-tooltip-removal
 ```
@@ -32,4 +31,3 @@ Remove the tooltip so error details are accessed via the callout expansion only.
 - Hovering the error summary does not show a tooltip with duplicated error text.
 - Expanding the callout continues to reveal the error details.
 - `just check` remains green.
-

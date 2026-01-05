@@ -5,7 +5,6 @@
 ```yaml
 id: T-7
 epic: ui-v0
-stacked_on: T-6
 branch:
   suggested: rn/ui-v0/T-7-repo-executor-panel-polish
 ```
@@ -63,4 +62,3 @@ Make the repo executor panel:
 - “No primary executor” is displayed once, with consistent terminology and clearer explanation of impact.
 - When telemetry is unavailable, projections remain visible and are labeled as potentially stale.
 - UI layout is calmer and more deliberate; `just check` remains green.
-

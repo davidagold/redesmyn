@@ -5,7 +5,6 @@
 ```yaml
 id: T-8
 epic: ui-v0
-stacked_on: T-7
 branch:
   suggested: rn/ui-v0/T-8-graph-selection-simplify
 ```
@@ -43,4 +42,3 @@ Keep selection itself (single-select, multi-select, focus mode) working, but wit
 - Focus mode does not introduce diagonal repositioning of nodes.
 - Graph remains usable for typical dogfooding flows (select, multi-select, inspect details).
 - `just check` remains green.
-

@@ -5,7 +5,6 @@
 ```yaml
 id: T-2
 epic: ui-v0
-stacked_on: T-1
 branch:
   suggested: rn/ui-v0/T-2-query-management
 ```

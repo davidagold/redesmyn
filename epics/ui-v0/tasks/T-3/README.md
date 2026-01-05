@@ -5,7 +5,6 @@
 ```yaml
 id: T-3
 epic: ui-v0
-stacked_on: T-2
 branch:
   suggested: rn/ui-v0/T-3-frontend-refactor
 ```

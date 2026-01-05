@@ -5,7 +5,6 @@
 ```yaml
 id: T-5
 epic: ui-v0
-stacked_on: T-4
 branch:
   suggested: rn/ui-v0/T-5-task-card-error-dedupe
 ```
@@ -36,4 +35,3 @@ Display the error in a single place on the task card (the callout), keeping the 
 - The task card does not render a separate red inline error line when the error callout is present.
 - The callout continues to show a compact summary and expandable details.
 - `just check` remains green.
-

@@ -5,7 +5,6 @@
 ```yaml
 id: T-4
 epic: ui-v0
-stacked_on: T-3
 branch:
   suggested: rn/ui-v0/T-4-details-linear-button-removal
 ```
@@ -35,4 +34,3 @@ Remove the Linear connection/status control from the Details panel so:
 - The Details panel no longer renders a Linear connection/status button.
 - Users can still connect/disconnect Linear via the global Linear control.
 - `just check` remains green.
-
