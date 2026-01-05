@@ -6,7 +6,7 @@
 id: T-6
 stacked_on: T-5
 node:
-  branch: rn/linear-integration/T-6-linear-status-automation
+  branch: rn/linear-integration/T-6-t-6-linear-automation-push-local-status-linear-sync-indicato
 linear:
   issue_id:
   identifier:
@@ -32,4 +32,3 @@ linear:
 - Treat all writes as best-effort:
   - If Linear is disconnected/unavailable, do not block local actions; record/log the failure.
 - Prefer a single place to trigger updates (API/daemon), so both CLI actions and dashboard actions share behavior.
-
