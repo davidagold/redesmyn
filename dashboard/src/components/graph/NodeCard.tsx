@@ -230,7 +230,7 @@ export function NodeCard({
     () => extractLinearIdentifier(task?.readme),
     [task?.readme],
   )
-  const linearPillLabel = linearIdentifier ?? "Open in Linear"
+  const linearPillLabel = linearIdentifier ?? "Linear"
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -799,10 +799,7 @@ export function NodeCard({
       {linearIssueId ? (
         <div
           className={cn(
-            "nodrag nopan absolute left-2 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)] transition-opacity",
-            isSelected || actionsMenuOpen
-              ? "opacity-100"
-              : "opacity-60 group-hover:opacity-100 group-focus-within:opacity-100",
+            "nodrag nopan absolute left-2 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)]",
           )}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
@@ -810,11 +807,11 @@ export function NodeCard({
           <button
             type="button"
             className={cn(
-              "group/linear inline-flex h-6 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-              "transition-[max-width,background-color] duration-200",
-              isSelected || actionsMenuOpen
-                ? "max-w-48"
-                : "max-w-[26px] group-hover:max-w-48 group-focus-within:max-w-48",
+              "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              "transition-colors duration-200",
+              actionsMenuOpen
+                ? "bg-accent/40"
+                : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
             )}
             aria-label={linearPillLabel}
             onClick={() => {
@@ -828,14 +825,7 @@ export function NodeCard({
             <span className="inline-flex size-6 shrink-0 items-center justify-center">
               <LinearIcon className="size-3.5 text-muted-foreground" />
             </span>
-            <span
-              className={cn(
-                "min-w-0 font-mono text-[0.625rem] leading-none text-muted-foreground transition-opacity duration-150",
-                isSelected || actionsMenuOpen
-                  ? "pr-2 opacity-100"
-                  : "pr-0 opacity-0 group-hover:pr-2 group-hover:opacity-100 group-focus-within:pr-2 group-focus-within:opacity-100",
-              )}
-            >
+            <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
               {linearPillLabel}
             </span>
           </button>
