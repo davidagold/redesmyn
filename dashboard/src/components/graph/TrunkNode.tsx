@@ -204,14 +204,14 @@ export function TrunkNode({ data }: NodeProps<TrunkNodeType>) {
                 style={{ top: y, height: rowHeight, left: 0 }}
               >
                 <div
-                  className="flex items-center justify-end"
+                  className="flex items-center justify-start"
                   style={{ width: titleWidth, paddingRight: labelGapPx }}
                 >
                   {renderCommitTooltip(
                     mark,
                     <span
                       className={cn(
-                        "block w-full truncate text-right text-xs",
+                        "block w-full truncate text-left text-xs",
                         isBase
                           ? "text-foreground/75 font-medium"
                           : "text-foreground/60",
