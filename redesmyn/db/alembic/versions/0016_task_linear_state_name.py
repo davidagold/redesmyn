@@ -1,7 +1,7 @@
 """Cache last observed Linear workflow state name on tasks.
 
-Revision ID: 0015_task_linear_state_name
-Revises: 0014_task_linear_state_cache
+Revision ID: 0016_task_linear_state_name
+Revises: 0015_remove_db_agent_construct
 Create Date: 2026-01-05
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0015_task_linear_state_name"
-down_revision = "0014_task_linear_state_cache"
+revision = "0016_task_linear_state_name"
+down_revision = "0015_remove_db_agent_construct"
 branch_labels = None
 depends_on = None
 
