@@ -6,6 +6,10 @@ export type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 export type AgentSession = EpicGraph["agentSessions"][number]
 export type TrunkTimeline = EpicGraph["trunk"]
 export type RepoExecutorStatus = EpicGraph["repoExecutor"]
+export type BranchLabel = {
+  label: string
+  provisional: boolean
+}
 
 export function formatBranchName(
   branchName: string,
@@ -33,7 +37,7 @@ function _slugifyBranchSegment(raw: string): string {
 export function displayBranchLabel(
   node: GraphNode,
   epicSlug?: string | null,
-): { label: string provisional: boolean } {
+): BranchLabel {
   if (node.branchName) {
     return {
       label: formatBranchName(node.branchName, epicSlug),
