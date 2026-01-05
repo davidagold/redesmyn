@@ -115,6 +115,57 @@ function linearStateTypeFromTaskState(state: Task["state"]) {
   }
 }
 
+function linearStateTypeLabel(stateType: string | null) {
+  const normalized = stateType?.trim().toLowerCase() ?? ""
+  if (normalized === "unstarted") {
+    return "Todo"
+  }
+  if (normalized === "started") {
+    return "In progress"
+  }
+  if (normalized === "blocked") {
+    return "Blocked"
+  }
+  if (normalized === "completed") {
+    return "Done"
+  }
+  return "Unknown"
+}
+
+function linearStateDotClass(stateType: string | null) {
+  const normalized = stateType?.trim().toLowerCase() ?? ""
+  if (normalized === "started") {
+    return "bg-sky-500"
+  }
+  if (normalized === "blocked") {
+    return "bg-amber-400"
+  }
+  if (normalized === "completed") {
+    return "bg-emerald-500"
+  }
+  if (normalized === "unstarted") {
+    return "bg-muted-foreground/60"
+  }
+  return "bg-muted-foreground/40"
+}
+
+function formatObservedAt(value: string | null) {
+  if (!value) {
+    return null
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date)
+}
+
 function isRunningAgentsConflict(error: ApiHttpError) {
   const detail = error.detail
   return (
@@ -221,12 +272,21 @@ export function NodeCard({
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
   const linearStateType = task?.linearStateType ?? null
-  const linearStateStale =
+  const linearStateObservedAt = task?.linearStateObservedAt ?? null
+  const linearStateMismatch =
     task !== undefined &&
     linearIssueId !== null &&
     linearStateType !== null &&
     linearStateType.toLowerCase() !==
       linearStateTypeFromTaskState(task.state).toLowerCase()
+  const linearObservedAgeMs = linearStateObservedAt
+    ? now - new Date(linearStateObservedAt).getTime()
+    : null
+  const linearObservedOld =
+    linearObservedAgeMs !== null &&
+    Number.isFinite(linearObservedAgeMs) &&
+    linearObservedAgeMs > 30 * 60 * 1000
+  const linearObservedAtLabel = formatObservedAt(linearStateObservedAt)
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -803,37 +863,69 @@ export function NodeCard({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            className={cn(
-              "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-              "transition-colors duration-200",
-              actionsMenuOpen
-                ? "bg-accent/40"
-                : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
-            )}
-            aria-label={linearPillLabel}
-            onClick={() => {
-              window.open(
-                `/v1/linear/issues/${linearIssueId}/open`,
-                "_blank",
-                "noreferrer",
-              )
-            }}
-          >
-            <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
-              <LinearIcon className="size-3.5 text-muted-foreground" />
-              {linearStateStale ? (
-                <span
-                  className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400 ring-1 ring-background/60"
-                  aria-label="Linear state out of sync"
-                />
-              ) : null}
-            </span>
-            <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
-              {linearPillLabel}
-            </span>
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={(tooltipTriggerProps) => (
+                <button
+                  {...tooltipTriggerProps}
+                  type="button"
+                  className={cn(
+                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+                    "transition-colors duration-200",
+                    actionsMenuOpen
+                      ? "bg-accent/40"
+                      : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
+                  )}
+                  aria-label={linearPillLabel}
+                  onClick={() => {
+                    window.open(
+                      `/v1/linear/issues/${linearIssueId}/open`,
+                      "_blank",
+                      "noreferrer",
+                    )
+                  }}
+                >
+                  <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
+                    <LinearIcon className="size-3.5 text-muted-foreground" />
+                    <span
+                      className={cn(
+                        "absolute right-1 top-1 size-1.5 rounded-full ring-1 ring-background/60",
+                        linearStateDotClass(linearStateType),
+                        linearObservedOld ? "opacity-80 saturate-50" : null,
+                      )}
+                      aria-label={`Linear state: ${linearStateTypeLabel(linearStateType)}`}
+                    />
+                    {linearStateMismatch ? (
+                      <span
+                        className="absolute right-[3px] top-[3px] h-px w-3 rotate-[-45deg] bg-foreground/60"
+                        aria-label="Out of sync with local"
+                      />
+                    ) : null}
+                  </span>
+                  <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
+                    {linearPillLabel}
+                  </span>
+                </button>
+              )}
+            />
+            <TooltipContent side="bottom" sideOffset={10}>
+              <div className="space-y-1">
+                <div className="text-xs">
+                  Linear: {linearStateTypeLabel(linearStateType)}
+                </div>
+                {linearStateMismatch ? (
+                  <div className="text-xs text-muted-foreground">
+                    Out of sync with local
+                  </div>
+                ) : null}
+                {linearObservedAtLabel ? (
+                  <div className="text-xs text-muted-foreground">
+                    Last observed {linearObservedAtLabel}
+                  </div>
+                ) : null}
+              </div>
+            </TooltipContent>
+          </Tooltip>
         </div>
       ) : null}
       {taskId !== null && onRequestRefresh ? (
