@@ -936,6 +936,39 @@
         "title": "IssueDaemonCommandRequest",
         "type": "object"
       },
+      "LinearPushStatsResponse": {
+        "properties": {
+          "blockersSkipped": {
+            "title": "Blockersskipped",
+            "type": "integer"
+          },
+          "blockersUpdated": {
+            "title": "Blockersupdated",
+            "type": "integer"
+          },
+          "docsUpdated": {
+            "title": "Docsupdated",
+            "type": "integer"
+          },
+          "issuesCreated": {
+            "title": "Issuescreated",
+            "type": "integer"
+          },
+          "issuesUpdated": {
+            "title": "Issuesupdated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "issuesCreated",
+          "issuesUpdated",
+          "docsUpdated",
+          "blockersUpdated",
+          "blockersSkipped"
+        ],
+        "title": "LinearPushStatsResponse",
+        "type": "object"
+      },
       "LinearStatusResponse": {
         "properties": {
           "connected": {
@@ -2260,6 +2293,17 @@
             "title": "Id",
             "type": "integer"
           },
+          "linearIdentifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearidentifier"
+          },
           "linearIssueId": {
             "anyOf": [
               {
@@ -2961,7 +3005,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SyncStatsResponse"
+                  "$ref": "#/components/schemas/LinearPushStatsResponse"
                 }
               }
             },

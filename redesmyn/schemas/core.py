@@ -51,6 +51,7 @@ class TaskResponse(ApiResponse):
     authority: TaskAuthority
     state: TaskState
     linear_issue_id: str | None
+    linear_identifier: str | None = None
     github_issue_id: str | None
     local_path: str | None
     merge_ready_at: datetime | None = None
@@ -594,6 +595,14 @@ class SyncStatsResponse(ApiResponse):
     tasks_updated: int
     branches_created: int
     branches_updated: int
+
+
+class LinearPushStatsResponse(ApiResponse):
+    issues_created: int
+    issues_updated: int
+    docs_updated: int
+    blockers_updated: int
+    blockers_skipped: int
 
 
 class TrunkCommitResponse(ApiResponse):
