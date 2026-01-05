@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -11,7 +10,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from redesmyn.db.migrate import head_revision, stamp_revision, upgrade_to_head
+from redesmyn.db.migrate import head_revision, upgrade_to_head
 
 
 def _sqlite_url(db_path: Path) -> str:
@@ -33,15 +32,6 @@ def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def _sqlite_has_table(conn, *, name: str) -> bool:
-    row = (
-        await conn.exec_driver_sql(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", (name,)
-        )
-    ).fetchone()
-    return row is not None
-
-
 class DatabaseNotInitializedError(RuntimeError):
     pass
 
@@ -60,6 +50,13 @@ async def _sqlite_alembic_version(conn) -> str | None:
     return str(value) if value is not None else None
 
 
+async def _sqlite_table_names(conn) -> set[str]:
+    rows = (
+        await conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+    ).fetchall()
+    return {str(row[0]) for row in rows if row and row[0]}
+
+
 async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
     db_path_raw = engine.url.database
     if not db_path_raw:
@@ -76,9 +73,9 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
         upgrade_to_head(db_path=db_path)
         return
 
-    should_stamp_baseline = False
     dialect_name: str | None = None
     has_alembic_version = False
+    has_any_tables = False
     alembic_version: str | None = None
 
     async with engine.begin() as conn:
@@ -95,28 +92,29 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
             # Best-effort: older/unsupported SQLite builds may reject WAL.
             pass
 
-        has_alembic_version = await _sqlite_has_table(conn, name="alembic_version")
-        if not has_alembic_version and await _sqlite_has_table(conn, name="nodes"):
-            if not migrate:
-                raise DatabaseMigrationRequiredError(
-                    "Database is from a pre-Alembic Redesmyn version. Run `rn daemon run` "
-                    "(or `rn dev`) to migrate it."
-                )
-            # Pre-Alembic local DB: apply legacy SQLite migrations so the schema
-            # matches the Alembic baseline before stamping.
-            await _migrate_sqlite(conn)
-            should_stamp_baseline = True
+        tables = await _sqlite_table_names(conn)
+        has_alembic_version = "alembic_version" in tables
+        has_any_tables = bool(tables)
+        if not has_alembic_version and has_any_tables:
+            # Pre-Alembic local DBs are no longer supported. Require manual intervention
+            # so we don't silently drop or corrupt legacy data.
+            raise DatabaseMigrationRequiredError(
+                "Database is missing Alembic metadata (pre-Alembic DBs are unsupported). "
+                f"Delete {db_path} and run `rn init` to recreate it."
+            )
 
         if has_alembic_version:
             alembic_version = await _sqlite_alembic_version(conn)
 
-    if should_stamp_baseline:
-        stamp_revision(db_path=db_path, revision="0001_baseline")
-
     if not migrate:
         if not has_alembic_version:
+            if not has_any_tables:
+                raise DatabaseNotInitializedError(
+                    f"Database not initialized at {db_path}. Run `rn init`."
+                )
             raise DatabaseMigrationRequiredError(
-                "Database is missing Alembic metadata. Run `rn daemon run` (or `rn dev`) to migrate it."
+                "Database is missing Alembic metadata. "
+                f"Delete {db_path} and run `rn init` to recreate it."
             )
         try:
             head = head_revision(db_path=db_path)
@@ -131,13 +129,6 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
 
     # Only upgrade when explicitly requested (typically on `rn daemon run` / `rn dev`).
     upgrade_to_head(db_path=db_path)
-
-
-async def _migrate_sqlite(conn) -> None:
-    result = await conn.exec_driver_sql("PRAGMA table_info(tasks)")
-    existing = {row[1] for row in result.fetchall()}
-    if "merge_ready_at" not in existing:
-        await conn.execute(text("ALTER TABLE tasks ADD COLUMN merge_ready_at DATETIME"))
 
 
 async def async_session(
