@@ -163,7 +163,7 @@ export function computeRepoDaemonStatus(options: {
     kind = "stale"
     label = "Telemetry stale"
   } else if (primaryIsLocal) {
-    label = "Local executor"
+    label = "Local"
   }
 
   return {

@@ -57,7 +57,7 @@ test("computeRepoDaemonStatus: local executor counts as fresh", () => {
   const status = computeRepoDaemonStatus({ repoExecutor, daemons, nowMs })
   assert.equal(status.telemetryFresh, true)
   assert.equal(status.gitMutationsDisabledReason, null)
-  assert.equal(status.label, "Local executor")
+  assert.equal(status.label, "Local")
 })
 
 test("computeRepoDaemonStatus: no primary disables git actions", () => {
