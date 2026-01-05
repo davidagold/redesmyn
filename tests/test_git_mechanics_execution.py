@@ -61,9 +61,9 @@ async def test_execute_merge_conflict_marks_blocked_and_can_resume(
 
     failed = next(u for u in updates if u.phase == "failed")
     assert failed.blocked is True
-    assert failed.step_index == 1
     assert failed.step.kind == "rebase"
     assert failed.step.branch_name == seeded.child_branch
+    assert plan.steps[failed.step_index] == failed.step
     assert git_has_in_progress_operation(seeded.child_worktree)
 
     with pytest.raises(MergePlanError) as excinfo:
