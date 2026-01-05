@@ -46,7 +46,13 @@ def _write_host_identity(*, ctx: RepoContext, host_key: str) -> None:
     )
 
 
-async def _seed_epic_with_tasks(ctx: RepoContext) -> str:
+@dataclass(frozen=True, slots=True)
+class SeededEpic:
+    id: int
+    slug: str
+
+
+async def _seed_epic_with_tasks(ctx: RepoContext) -> SeededEpic:
     engine = create_engine(ctx.db_path)
     try:
         sessionmaker = create_sessionmaker(engine)
@@ -86,7 +92,7 @@ async def _seed_epic_with_tasks(ctx: RepoContext) -> str:
             )
             session.add(child)
             await session.commit()
-            return epic.slug
+            return SeededEpic(id=epic.id, slug=epic.slug)
     finally:
         await engine.dispose()
 
@@ -111,6 +117,7 @@ class E2EServer:
     base_url: str
     proc: subprocess.Popen[str]
     epic_slug: str
+    epic_id: int
 
     def terminate(self) -> None:
         if self.proc.poll() is not None:
@@ -131,7 +138,7 @@ def e2e_server(tmp_path: Path) -> Iterator[E2EServer]:
     _write_host_identity(ctx=ctx, host_key="e2e-host-key")
 
     asyncio.run(init_repo(ctx, migrate=True))
-    epic_slug = asyncio.run(_seed_epic_with_tasks(ctx))
+    seeded_epic = asyncio.run(_seed_epic_with_tasks(ctx))
 
     port = _pick_free_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -168,17 +175,24 @@ def e2e_server(tmp_path: Path) -> Iterator[E2EServer]:
         stderr=subprocess.STDOUT,
     )
 
-    server = E2EServer(base_url=base_url, proc=proc, epic_slug=epic_slug)
+    server = E2EServer(
+        base_url=base_url,
+        proc=proc,
+        epic_slug=seeded_epic.slug,
+        epic_id=seeded_epic.id,
+    )
     try:
-        _wait_for_api(base_url, timeout_s=20.0)
+        try:
+            _wait_for_api(base_url, timeout_s=20.0)
+        except Exception:
+            server.terminate()
+            output = proc.stdout.read() if proc.stdout is not None else ""
+            raise RuntimeError("e2e server did not become ready:\n" + output) from None
         yield server
     finally:
         server.terminate()
-        output = ""
         if proc.stdout is not None:
-            output = proc.stdout.read()
-        if proc.returncode not in (None, 0, -signal.SIGTERM):
-            raise RuntimeError(f"e2e server exited unexpectedly:\n{output}")
+            proc.stdout.close()
 
 
 @pytest.fixture
@@ -189,3 +203,8 @@ def e2e_base_url(e2e_server: E2EServer) -> str:
 @pytest.fixture
 def e2e_epic_slug(e2e_server: E2EServer) -> str:
     return e2e_server.epic_slug
+
+
+@pytest.fixture
+def e2e_epic_id(e2e_server: E2EServer) -> int:
+    return e2e_server.epic_id
