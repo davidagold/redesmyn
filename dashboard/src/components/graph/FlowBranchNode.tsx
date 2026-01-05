@@ -1,7 +1,7 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
 import { NodeCard } from "@/components/graph/NodeCard"
 import {
-  formatBranchName,
+  displayBranchLabel,
   type AgentSession,
   type GraphNode,
   type MergeRun,
@@ -48,7 +48,8 @@ export function FlowBranchNode({
     onSelectNode,
     onRequestRefresh,
   } = data
-  const branchLabel = formatBranchName(node.branchName ?? "", epicSlug)
+  const { label: branchLabel, provisional: branchLabelProvisional } =
+    displayBranchLabel(node, epicSlug)
 
   return (
     <>
@@ -70,6 +71,7 @@ export function FlowBranchNode({
         blockingMergeRun={blockingMergeRun}
         activity={activity}
         branchLabel={branchLabel}
+        branchLabelProvisional={branchLabelProvisional}
         gitMutationsDisabledReason={gitMutationsDisabledReason ?? null}
         stackProjectionsFresh={stackProjectionsFresh}
         harnessCommand={harnessCommand}
