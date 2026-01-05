@@ -386,7 +386,10 @@ async def ensure_host_row(session: AsyncSession, ctx: RepoContext) -> Host:
 
 
 def tmux_session_name_for_task(*, task_id: int) -> str:
-    return f"rn-a-{task_id}"
+    prefix = os.environ.get("REDESMYN_TMUX_SESSION_PREFIX", "rn-a").strip()
+    if not prefix:
+        prefix = "rn-a"
+    return f"{prefix}-{task_id}"
 
 
 def _parse_harness_command(command: str) -> list[str]:
@@ -1262,7 +1265,7 @@ async def restart_task_agent(
         raise RuntimeError(
             "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
         )
-    _tmux_kill_session(name=tmux_session_name_for_task(task_id=task_id))
+    await stop_task_agent(ctx, task_id=task_id)
     return await start_task_agent(
         ctx,
         task_id=task_id,
