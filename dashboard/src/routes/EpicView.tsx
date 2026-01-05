@@ -1378,7 +1378,7 @@ export function EpicView() {
               </div>
             ) : null}
             <div className="ml-auto flex items-center gap-2">
-              <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-6 flex-row-reverse overflow-hidden rounded-md border border-border/60">
                 {canRunAll ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1429,7 +1429,7 @@ export function EpicView() {
                 )}
                 <div
                   className={
-                    "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
+                    "flex items-stretch justify-end overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
                       ? "max-w-[10rem] opacity-100"
                       : "pointer-events-none max-w-0 opacity-0")
@@ -1444,7 +1444,7 @@ export function EpicView() {
                             variant="outline"
                             size="sm"
                             className={cn(
-                              "h-full rounded-none border-0 border-l leading-none",
+                              "h-full rounded-none border-0 border-r leading-none",
                               triggerProps.className,
                             )}
                             onClick={() => void handleRunSelected()}
@@ -1465,7 +1465,7 @@ export function EpicView() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-full rounded-none border-0 border-l leading-none"
+                      className="h-full rounded-none border-0 border-r leading-none"
                       disabledReason={
                         runAction !== null || bulkAction !== null
                           ? "Action in progress"
@@ -1485,7 +1485,7 @@ export function EpicView() {
                 </div>
               </div>
 
-              <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-6 flex-row-reverse overflow-hidden rounded-md border border-border/60">
                 {canStopAll ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1534,7 +1534,7 @@ export function EpicView() {
                 )}
                 <div
                   className={
-                    "flex items-stretch overflow-hidden transition-[max-width,opacity] duration-200 " +
+                    "flex items-stretch justify-end overflow-hidden transition-[max-width,opacity] duration-200 " +
                     (showSelectedActions
                       ? "max-w-[10rem] opacity-100"
                       : "pointer-events-none max-w-0 opacity-0")
@@ -1549,7 +1549,7 @@ export function EpicView() {
                             variant="outline"
                             size="sm"
                             className={cn(
-                              "h-full rounded-none border-0 border-l leading-none",
+                              "h-full rounded-none border-0 border-r leading-none",
                               triggerProps.className,
                             )}
                             onClick={() => void handleStopSelected()}
@@ -1570,7 +1570,7 @@ export function EpicView() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-full rounded-none border-0 border-l leading-none"
+                      className="h-full rounded-none border-0 border-r leading-none"
                       disabledReason={
                         runAction !== null || bulkAction !== null
                           ? "Action in progress"
