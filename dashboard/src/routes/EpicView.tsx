@@ -1211,6 +1211,25 @@ export function EpicView() {
       {selectedEpic && runSummary ? (
         <div className="border-b px-4 py-2">
           <div className="flex flex-wrap items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger
+                render={(triggerProps) => (
+                  <Button
+                    {...triggerProps}
+                    variant="ghost"
+                    size="sm"
+                    className={cn("h-6", triggerProps.className)}
+                    onClick={() => setConfigOpen((open) => !open)}
+                  >
+                    <Settings2 />
+                    Configure
+                  </Button>
+                )}
+              />
+              <TooltipContent side="bottom" align="center" sideOffset={10}>
+                Configure harness and agent prelude
+              </TooltipContent>
+            </Tooltip>
             {runBuckets ? (
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 <Button
@@ -1358,27 +1377,7 @@ export function EpicView() {
                 )}
               </div>
             ) : null}
-            <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger
-                  render={(triggerProps) => (
-                    <Button
-                      {...triggerProps}
-                      variant="ghost"
-                      size="sm"
-                      className={cn("h-6", triggerProps.className)}
-                      onClick={() => setConfigOpen((open) => !open)}
-                    >
-                      <Settings2 />
-                      Configure
-                    </Button>
-                  )}
-                />
-                <TooltipContent side="bottom" align="center" sideOffset={10}>
-                  Configure harness and agent prelude
-                </TooltipContent>
-              </Tooltip>
-
+            <div className="ml-auto flex items-center gap-2">
               <div className="flex h-6 overflow-hidden rounded-md border border-border/60">
                 {canRunAll ? (
                   <Tooltip>
@@ -1588,27 +1587,27 @@ export function EpicView() {
                   )}
                 </div>
               </div>
+              {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
+              {bulkAction ? (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2
+                    className={
+                      "h-3 w-3 animate-spin " +
+                      (bulkAction.kind === "stop"
+                        ? "text-destructive"
+                        : "text-emerald-400")
+                    }
+                  />
+                  {bulkAction.kind === "stop" ? "Stopping" : "Starting"}{" "}
+                  {bulkAction.completed}/{bulkAction.total}
+                  {bulkAction.failed > 0
+                    ? ` (${bulkAction.failed} failed)`
+                    : null}
+                </div>
+              ) : runNotice ? (
+                <div className="text-xs text-muted-foreground">{runNotice}</div>
+              ) : null}
             </div>
-            {/* TODO: Reintroduce after refining Run UX. (See CopyRunCommandButton.) */}
-            {bulkAction ? (
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Loader2
-                  className={
-                    "h-3 w-3 animate-spin " +
-                    (bulkAction.kind === "stop"
-                      ? "text-destructive"
-                      : "text-emerald-400")
-                  }
-                />
-                {bulkAction.kind === "stop" ? "Stopping" : "Starting"}{" "}
-                {bulkAction.completed}/{bulkAction.total}
-                {bulkAction.failed > 0
-                  ? ` (${bulkAction.failed} failed)`
-                  : null}
-              </div>
-            ) : runNotice ? (
-              <div className="text-xs text-muted-foreground">{runNotice}</div>
-            ) : null}
           </div>
 
           {runCommand ? (
