@@ -4868,24 +4868,25 @@ def main() -> None:
         configure_logging(state_dir=ctx.state_dir)
 
     try:
-        typer.main.get_command(app).main(
+        result = typer.main.get_command(app).main(
             args=sys.argv[1:],
             prog_name="rn",
             standalone_mode=False,
         )
+        raise SystemExit(result if isinstance(result, int) else 0)
     except BrokenPipeError:
-        raise typer.Exit(141) from None
+        raise SystemExit(141) from None
     except click.Abort:
         typer.echo("", err=True)
-        raise typer.Exit(1) from None
+        raise SystemExit(1) from None
     except KeyboardInterrupt:
         typer.echo("", err=True)
-        raise typer.Exit(130) from None
+        raise SystemExit(130) from None
     except (typer.Exit, click.exceptions.Exit) as e:
-        raise typer.Exit(e.exit_code) from None
+        raise SystemExit(e.exit_code) from None
     except click.ClickException as e:
         e.show()
-        raise typer.Exit(e.exit_code) from None
+        raise SystemExit(e.exit_code) from None
     except Exception as e:
         if _DEBUG or os.environ.get("REDESMYN_DEBUG") in {"1", "true", "TRUE"}:
             raise
@@ -4903,4 +4904,4 @@ def main() -> None:
         lines.append("hint: re-run with --debug for a full traceback")
         for line in lines:
             typer.echo(line, err=True)
-        raise typer.Exit(1) from None
+        raise SystemExit(1) from None
