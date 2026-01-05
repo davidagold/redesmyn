@@ -8,6 +8,7 @@ Create Date: 2026-01-05
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 from alembic import op
 import sqlalchemy as sa
@@ -72,11 +73,12 @@ def upgrade() -> None:
             release_raw = _json_loads(row.get("release"))
             if not isinstance(release_raw, dict):
                 continue
-            if release_raw.get("type") != "acks":
+            release = cast(dict[str, Any], release_raw)
+            if release.get("type") != "acks":
                 continue
-            if "required_task_ids" in release_raw:
+            if "required_task_ids" in release:
                 continue
-            required_agent_ids = release_raw.pop("required_agent_ids", None)
+            required_agent_ids = release.pop("required_agent_ids", None)
             if not isinstance(required_agent_ids, list):
                 continue
             required_task_ids: list[int] = []
@@ -87,10 +89,10 @@ def upgrade() -> None:
                 if task_id is None:
                     continue
                 required_task_ids.append(task_id)
-            release_raw["required_task_ids"] = required_task_ids
+            release["required_task_ids"] = required_task_ids
             conn.execute(
                 sa.text("UPDATE blocks SET release = :release WHERE id = :id"),
-                {"id": block_id, "release": json.dumps(release_raw)},
+                {"id": block_id, "release": json.dumps(release)},
             )
 
     # 2) Migrate block_acks: agent_id -> task_id.
@@ -363,11 +365,12 @@ def downgrade() -> None:
             release_raw = _json_loads(row.get("release"))
             if not isinstance(release_raw, dict):
                 continue
-            if release_raw.get("type") != "acks":
+            release = cast(dict[str, Any], release_raw)
+            if release.get("type") != "acks":
                 continue
-            if "required_agent_ids" in release_raw:
+            if "required_agent_ids" in release:
                 continue
-            required_task_ids = release_raw.pop("required_task_ids", None)
+            required_task_ids = release.pop("required_task_ids", None)
             if not isinstance(required_task_ids, list):
                 continue
             agent_ids: list[int] = []
@@ -380,10 +383,10 @@ def downgrade() -> None:
                 ).scalar()
                 if isinstance(agent_id, int):
                     agent_ids.append(agent_id)
-            release_raw["required_agent_ids"] = agent_ids
+            release["required_agent_ids"] = agent_ids
             conn.execute(
                 sa.text("UPDATE blocks SET release = :release WHERE id = :id"),
-                {"id": block_id, "release": json.dumps(release_raw)},
+                {"id": block_id, "release": json.dumps(release)},
             )
 
     # Restore agent_sessions agent_id/agent_config_id and allow nullable task_id.
