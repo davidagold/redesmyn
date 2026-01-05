@@ -132,7 +132,7 @@ async def maybe_push_task_merge_ready_to_linear(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     task_id: int,
-    timeout_s: float = 3.0,
+    timeout_s: float = 15.0,
 ) -> None:
     async def _run() -> None:
         async with sessionmaker() as session:
@@ -189,7 +189,7 @@ async def maybe_push_task_merge_ready_to_linear(
     except asyncio.TimeoutError:
         logger.info(
             "linear.automation.push_merge_ready.timeout",
-            extra={"task_id": task_id},
+            extra={"task_id": task_id, "timeout_s": timeout_s},
         )
     except LinearApiError as exc:
         logger.info(
