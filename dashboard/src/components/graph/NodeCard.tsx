@@ -1044,27 +1044,14 @@ export function NodeCard({
       ) : null}
       <CardContent className="flex h-full flex-col gap-2 p-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <Tooltip>
-            <TooltipTrigger
-              render={(triggerProps) => (
-                <div
-                  {...triggerProps}
-                  className={cn(
-                    "min-w-0 truncate font-mono text-xs leading-none text-muted-foreground",
-                    branchLabelProvisional ? "opacity-60" : null,
-                    triggerProps.className,
-                  )}
-                >
-                  {branchLabel}
-                </div>
-              )}
-            />
-            <TooltipContent side="bottom" sideOffset={10}>
-              {branchLabelProvisional
-                ? `Branch not created yet: ${branchLabel}`
-                : (node.branchName ?? branchLabel)}
-            </TooltipContent>
-          </Tooltip>
+          <div
+            className={cn(
+              "min-w-0 truncate font-mono text-xs leading-none text-muted-foreground",
+              branchLabelProvisional ? "opacity-60" : null,
+            )}
+          >
+            {branchLabel}
+          </div>
           <div className="flex items-center gap-1">
             {quickActions ? (
               <div
