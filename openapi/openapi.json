@@ -2275,6 +2275,29 @@
             ],
             "title": "Linearissueid"
           },
+          "linearStateObservedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearstateobservedat"
+          },
+          "linearStateType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearstatetype"
+          },
           "localPath": {
             "anyOf": [
               {

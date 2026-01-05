@@ -102,6 +102,19 @@ type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | R
 
 const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
 
+function linearStateTypeFromTaskState(state: Task["state"]) {
+  switch (state) {
+    case "todo":
+      return "unstarted"
+    case "in_progress":
+      return "started"
+    case "blocked":
+      return "blocked"
+    case "done":
+      return "completed"
+  }
+}
+
 function isRunningAgentsConflict(error: ApiHttpError) {
   const detail = error.detail
   return (
@@ -207,6 +220,13 @@ export function NodeCard({
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
+  const linearStateType = task?.linearStateType ?? null
+  const linearStateStale =
+    task !== undefined &&
+    linearIssueId !== null &&
+    linearStateType !== null &&
+    linearStateType.toLowerCase() !==
+      linearStateTypeFromTaskState(task.state).toLowerCase()
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -801,8 +821,14 @@ export function NodeCard({
               )
             }}
           >
-            <span className="inline-flex size-6 shrink-0 items-center justify-center">
+            <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
               <LinearIcon className="size-3.5 text-muted-foreground" />
+              {linearStateStale ? (
+                <span
+                  className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-400 ring-1 ring-background/60"
+                  aria-label="Linear state out of sync"
+                />
+              ) : null}
             </span>
             <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
               {linearPillLabel}
