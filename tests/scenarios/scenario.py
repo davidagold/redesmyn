@@ -66,6 +66,7 @@ class ScenarioRepo:
         run_git(repo_root, ["config", "commit.gpgsign", "false"])
 
         (repo_root / "README.md").write_text("test repo\n", encoding="utf-8")
+        (repo_root / ".gitignore").write_text(".redesmyn/\n", encoding="utf-8")
         run_git(repo_root, ["add", "-A"])
         run_git(repo_root, ["commit", "-m", "init"])
 
