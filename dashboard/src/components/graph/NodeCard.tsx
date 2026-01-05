@@ -814,7 +814,7 @@ export function NodeCard({
               "transition-[max-width,background-color] duration-200",
               isSelected || actionsMenuOpen
                 ? "max-w-48"
-                : "max-w-6 group-hover:max-w-48 group-focus-within:max-w-48",
+                : "max-w-[26px] group-hover:max-w-48 group-focus-within:max-w-48",
             )}
             aria-label={linearPillLabel}
             onClick={() => {
