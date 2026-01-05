@@ -5,7 +5,7 @@
 ```yaml
 id: T-3
 epic: harness-interface-v0
-stacked_on: T-1
+stacked_on: T-7
 branch:
   suggested: rn/harness-interface-v0/T-3-codex-harness
 ```
