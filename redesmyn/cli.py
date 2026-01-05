@@ -1694,6 +1694,18 @@ async def _sync_from_local(
                     if updated:
                         updated_task_ids.add(task.id)
 
+                task_by_path[doc.path] = task
+
+                for ref in (meta.id, linear_identifier, linear_issue_id):
+                    if not ref:
+                        continue
+                    existing_ref = task_by_ref.get(ref)
+                    if existing_ref is not None and existing_ref.id != task.id:
+                        raise typer.BadParameter(
+                            f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
+                        )
+                    task_by_ref[ref] = task
+
                 if not create_branches:
                     continue
 
@@ -1726,41 +1738,26 @@ async def _sync_from_local(
                     if task.id not in created_task_ids:
                         updated_task_ids.add(task.id)
 
-                task_by_path[doc.path] = task
-
-                for ref in (meta.id, linear_identifier, linear_issue_id):
-                    if not ref:
-                        continue
-                    existing_ref = task_by_ref.get(ref)
-                    if existing_ref is not None and existing_ref.id != task.id:
-                        raise typer.BadParameter(
-                            f"Ambiguous task ref {ref!r}; matches multiple tasks in docs (v0)"
-                        )
-                    task_by_ref[ref] = task
-
-            if create_branches:
-                for doc in task_docs:
-                    task = task_by_path.get(doc.path)
-                    if task is None:
-                        continue
-                    parent_ref = doc.metadata.stacked_on
-                    if not parent_ref:
-                        if task.parent_task_id is not None:
-                            task.parent_task_id = None
-                            stats.branches_updated += 1
-                            if task.id not in created_task_ids:
-                                updated_task_ids.add(task.id)
-                        continue
-                    parent_task = task_by_ref.get(parent_ref)
-                    if parent_task is None:
-                        raise typer.BadParameter(
-                            f"Unknown stacked_on ref {parent_ref!r} in {doc.path}"
-                        )
-                    if task.parent_task_id != parent_task.id:
-                        task.parent_task_id = parent_task.id
-                        stats.branches_updated += 1
+            for doc in task_docs:
+                task = task_by_path.get(doc.path)
+                if task is None:
+                    continue
+                parent_ref = doc.metadata.stacked_on
+                if not parent_ref:
+                    if task.parent_task_id is not None:
+                        task.parent_task_id = None
                         if task.id not in created_task_ids:
                             updated_task_ids.add(task.id)
+                    continue
+                parent_task = task_by_ref.get(parent_ref)
+                if parent_task is None:
+                    raise typer.BadParameter(
+                        f"Unknown stacked_on ref {parent_ref!r} in {doc.path}"
+                    )
+                if task.parent_task_id != parent_task.id:
+                    task.parent_task_id = parent_task.id
+                    if task.id not in created_task_ids:
+                        updated_task_ids.add(task.id)
 
             stats.tasks_updated = len(updated_task_ids)
             await session.commit()
