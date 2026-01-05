@@ -1,4 +1,4 @@
-# T-1 Harness interface + capabilities + GenericHarness
+# T-1 Agent interface + capabilities + GenericAgent
 
 ## Metadata
 
@@ -7,30 +7,30 @@ id: T-1
 epic: harness-interface-v0
 stacked_on: T-8
 branch:
-  suggested: rn/harness-interface-v0/T-1-harness-interface
+  suggested: rn/harness-interface-v0/T-1-agent-interface
 ```
 
 ## Problem
 
-We have a working local-first agent runtime (tmux-backed sessions, attach metadata, prelude sending, etc.), but “harness integration” is still implicit:
+We have a working local-first session runtime (tmux-backed sessions, attach metadata, prelude sending, etc.), but “agent program integration” is still implicit:
 
 - We can start a process and capture logs/output.
-- We cannot reliably know **when the harness is ready for input** or when it has **completed its turn**.
-- We cannot expose a stable contract for harness-specific improvements (conflict auto-assist, structured status, etc.) without baking assumptions into the generic runner.
+- We cannot reliably know **when the agent is ready for input** or when it has **completed its turn**.
+- We cannot expose a stable contract for agent-specific improvements (conflict auto-assist, structured status, etc.) without baking assumptions into the generic runner.
 
-We need an explicit **Harness interface** that:
+We need an explicit **Agent interface** (semantics/interpreter) that:
 
-- separates *terminal/session IO* from *harness semantics*
-- can be implemented by harness-specific interface implementations (Codex, Claude Code)
+- separates *terminal/session IO* from *agent semantics*
+- can be implemented by agent-specific interface implementations (Codex, Claude Code)
 - supports a “generic fallback” mode for arbitrary commands
 
 ## Goal
 
-Define a minimal, strongly typed v0 harness interface, including:
+Define a minimal, strongly typed v0 agent interface, including:
 
 - a semantic status model (agent turn + readiness)
 - an explicit capability declaration
-- a GenericHarness interface implementation that supports any command with only baseline capabilities
+- a GenericAgent interface implementation that supports any command with only baseline capabilities
 
 This interface should be used for publishing status updates and for issuing higher-level commands (e.g. “send message”) that are safe to offer in the UI.
 
@@ -41,36 +41,36 @@ The goal is to ground the v0 interface in what we can actually detect reliably, 
 
 ## Key design principles
 
-### 1) Separate concerns: transport vs harness
+### 1) Separate concerns: transport vs agent semantics
 
 - **Session transport** (tmux/pty/process):
   - starts/stops the process
   - sends keystrokes/text
   - captures output/logs
   - provides attach/log pointers
-- **Harness interface implementation**:
+- **Agent interface implementation** (interpreter):
   - interprets output/state into semantic events (“idle”, “thinking”, “turn complete”, “needs input”)
   - declares which advanced features are supported
   - provides higher-level operations when safe (e.g. “send message”, “interrupt”)
 
-The harness implementation may *consume* session output and may request that text be sent, but it should not own the session transport.
+The agent implementation may *consume* session output and may request that text be sent, but it should not own the session transport.
 
 ### 2) Capabilities are explicit (runtime)
 
 We need runtime introspection for both UI and server logic (especially across daemon ↔ control plane boundaries).
 Capabilities should be a small, explicit data structure; do not rely on “method presence”.
 
-### 3) GenericHarness exists so “any process” is still usable
+### 3) GenericAgent exists so “any process” is still usable
 
 Users must be able to run arbitrary commands.
-If the harness kind is unknown (or user chooses Generic), we still provide:
+If the agent kind is unknown (or user chooses Generic), we still provide:
 
 - start/stop/restart
 - attach
 - log capture
 - best-effort “send raw text” (if running inside an interactive session), *but* without semantics like “turn complete”.
 
-Advanced features (like conflict auto-assist) must only be enabled when the selected harness advertises the required capabilities.
+Advanced features (like conflict auto-assist) must only be enabled when the selected agent advertises the required capabilities.
 
 ## Proposed v0 contract (shape, not final names)
 
@@ -79,7 +79,7 @@ Advanced features (like conflict auto-assist) must only be enabled when the sele
 We need a small vocabulary that is stable:
 
 - `AgentTurnState` (example):
-  - `unknown` (GenericHarness / insufficient signals)
+  - `unknown` (GenericAgent / insufficient signals)
   - `ready` (safe to send input)
   - `busy` (actively working)
   - `blocked` (waiting for user; or needs attention)
@@ -90,11 +90,11 @@ Events should be emitted as structured messages (daemon → control plane → UI
 - “turn started”
 - “turn completed”
 - “ready for input” / “not ready”
-- optionally: “notification received” (harness-specific)
+- optionally: “notification received” (agent-specific)
 
 ### 2) Capability declaration
 
-A minimal v0 `HarnessCapabilities` should include:
+A minimal v0 `AgentCapabilities` should include:
 
 - `can_detect_ready_for_input`
 - `can_detect_turn_complete`
@@ -104,7 +104,7 @@ A minimal v0 `HarnessCapabilities` should include:
 
 ### 3) Implementation lifecycle
 
-The harness implementation needs hooks to:
+The agent implementation needs hooks to:
 
 - initialize for a session
 - consume new output (stream or polled)
@@ -114,7 +114,7 @@ Keep this minimal; avoid an over-engineered plugin framework.
 
 ## Acceptance criteria
 
-- There is a strongly typed harness interface and capability model usable from both local and daemon execution paths.
-- GenericHarness implementation exists and supports arbitrary commands without assuming harness-specific semantics.
+- There is a strongly typed agent interface and capability model usable from both local and daemon execution paths.
+- GenericAgent implementation exists and supports arbitrary commands without assuming agent-specific semantics.
 - Status published to the UI can represent “turn complete” vs “unknown” distinctly (even if Generic remains “unknown”).
 - The interface is designed so Codex and Claude Code implementations can be added without changing callers.

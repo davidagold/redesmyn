@@ -30,22 +30,22 @@ We already have much of the information needed to help:
 
 But we lack one crucial capability:
 
-- knowing when the harness is ready to receive the remediation message
+- knowing when the agent is ready to receive the remediation message
 - knowing when the agent has completed its turn, so resuming is safe and intentional
 
 ## Goal
 
-Enable an automated “conflict assist” loop when the selected harness supports it:
+Enable an automated “conflict assist” loop when the selected agent kind supports it:
 
 1) On merge/restack blocked by conflict:
    - send remediation message to the agent automatically (best-effort)
 2) Before resuming:
    - require **repo validation**: conflict truly resolved / git state unblocked
-   - require **harness validation**: agent has completed its turn (turn complete)
+   - require **agent validation**: agent has completed its turn (turn complete)
 3) If both are satisfied:
    - automatically resume the merge run
 
-If the harness cannot provide the needed capabilities, the behavior should remain manual (current UI).
+If the selected agent kind cannot provide the needed capabilities, the behavior should remain manual (current UI).
 
 ## Requirements
 
@@ -54,7 +54,7 @@ If the harness cannot provide the needed capabilities, the behavior should remai
 Auto-resume may happen only if:
 
 - repo executor validates the blocked worktree is unblocked and safe to continue, AND
-- harness implementation reports “turn complete” for the remediation turn
+- agent interface implementation reports “turn complete” for the remediation turn
 
 If either is not satisfied:
 
@@ -65,7 +65,7 @@ If either is not satisfied:
 
 The remediation message delivery should:
 
-- be queued and retried when the harness reports “ready for input”
+- be queued and retried when the agent reports “ready for input”
 - include a timeout; if delivery cannot be confirmed, fall back to manual flow with guidance
 
 ### 3) UI behavior

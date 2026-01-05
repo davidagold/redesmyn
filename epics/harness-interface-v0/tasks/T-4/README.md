@@ -1,4 +1,4 @@
-# T-4 Claude Code harness interface implementation (turn detection + capabilities)
+# T-4 Claude Code agent interface implementation (turn detection + capabilities)
 
 ## Metadata
 
@@ -7,13 +7,13 @@ id: T-4
 epic: harness-interface-v0
 stacked_on: T-7
 branch:
-  suggested: rn/harness-interface-v0/T-4-claude-code-harness
+  suggested: rn/harness-interface-v0/T-4-claude-code-agent
 ```
 
 ## Problem
 
 Claude Code has different runtime behavior and output patterns than Codex.
-We need a harness implementation that can:
+We need an agent implementation that can:
 
 - detect turn completion / readiness (when possible)
 - provide correct capability gating
@@ -21,7 +21,7 @@ We need a harness implementation that can:
 
 ## Goal
 
-Implement a Claude Code harness interface implementation with parity to Codex goals, within what Claude Code can reliably signal.
+Implement a Claude Code agent interface implementation with parity to Codex goals, within what Claude Code can reliably signal.
 
 ## Notes / implementation guidance
 

@@ -1,4 +1,4 @@
-# T-6 Harness doctor + capabilities surface (UI + CLI)
+# T-6 Agent doctor + capabilities surface (UI + CLI)
 
 ## Metadata
 
@@ -7,25 +7,25 @@ id: T-6
 epic: harness-interface-v0
 stacked_on: T-2
 branch:
-  suggested: rn/harness-interface-v0/T-6-harness-doctor
+  suggested: rn/harness-interface-v0/T-6-agent-doctor
 ```
 
 ## Problem
 
-When advanced harness features fail, users need to understand:
+When advanced agent features fail, users need to understand:
 
-- which harness is in use
+- which agent kind is in use
 - which capabilities are available
 - why a feature (like conflict auto-assist) is disabled
 
-Today, “harness” mostly looks like a command string; capability visibility is low.
+Today, the “agent” mostly looks like a command string; capability visibility is low.
 
 ## Goal
 
-Add a “doctor” surface and a capabilities summary that makes harness integration legible:
+Add a “doctor” surface and a capabilities summary that makes agent integration legible:
 
-- UI: show selected/inferred harness kind and capabilities; explain why features are unavailable.
-- CLI: provide a command to report harness kind + capabilities for a task (and for a command string).
+- UI: show selected/inferred agent kind and capabilities; explain why features are unavailable.
+- CLI: provide a command to report agent kind + capabilities for a task (and for a command string).
 
 ## Requirements
 
@@ -33,20 +33,20 @@ Add a “doctor” surface and a capabilities summary that makes harness integra
 
 In Configure (and/or agent details):
 
-- show “Harness: Auto/Codex/Claude/Generic”
-- show a concise capability list (or badges) derived from the harness implementation
+- show “Agent: Auto/Codex/Claude/Generic”
+- show a concise capability list (or badges) derived from the agent implementation
 - use this to gate advanced actions, with clear copy (no stack traces / noisy internals)
 
 ### 2) CLI: doctor command
 
 Provide a simple CLI surface (name TBD):
 
-- `rn harness doctor --command "<cmd>"`
-- `rn harness doctor --task <id>`
+- `rn agent doctor --command "<cmd>"`
+- `rn agent doctor --task <id>`
 
 It should print:
 
-- inferred/selected harness kind
+- inferred/selected agent kind
 - capabilities
 - any degraded-mode warnings (e.g. “cannot detect turn complete; conflict assist disabled”)
 

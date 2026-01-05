@@ -1,4 +1,4 @@
-# T-3 Codex harness interface implementation (turn detection + capabilities)
+# T-3 Codex agent interface implementation (turn detection + capabilities)
 
 ## Metadata
 
@@ -7,7 +7,7 @@ id: T-3
 epic: harness-interface-v0
 stacked_on: T-7
 branch:
-  suggested: rn/harness-interface-v0/T-3-codex-harness
+  suggested: rn/harness-interface-v0/T-3-codex-agent
 ```
 
 ## Problem
@@ -21,7 +21,7 @@ We want to leverage these signals to implement:
 
 ## Goal
 
-Implement a Codex-specific harness interface implementation that:
+Implement a Codex-specific agent interface implementation that:
 
 - reliably detects “turn complete” (within reasonable heuristics and explicit timeouts)
 - exposes explicit capabilities so callers can gate advanced features
