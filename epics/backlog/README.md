@@ -21,3 +21,4 @@ Maintain a small, curated set of “next” improvements that unblock dogfooding
 - T-1 Rebase: update worktree-bound branch refs
 - T-2 Git query fastpath when a primary executor is available
 - T-3 Linear: recover from 401 “not authenticated” in server API
+- T-4 Multi-repo DB + server scoping (design + UX)
