@@ -300,6 +300,7 @@ class Task(Base):
         nullable=False,
     )
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    linear_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
     github_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
     merge_ready_at: Mapped[datetime | None] = mapped_column(

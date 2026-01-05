@@ -1670,6 +1670,7 @@ async def _sync_from_local(
                         else TaskSource.Local,
                         state=TaskState.Todo,
                         linear_issue_id=linear_issue_id,
+                        linear_identifier=linear_identifier,
                         local_path=rel_path,
                     )
                     session.add(task)
@@ -1690,6 +1691,12 @@ async def _sync_from_local(
                     if linear_issue_id and task.linear_issue_id != linear_issue_id:
                         task.linear_issue_id = linear_issue_id
                         task.source = TaskSource.Linear
+                        updated = True
+                    if (
+                        linear_identifier
+                        and task.linear_identifier != linear_identifier
+                    ):
+                        task.linear_identifier = linear_identifier
                         updated = True
                     if updated:
                         updated_task_ids.add(task.id)

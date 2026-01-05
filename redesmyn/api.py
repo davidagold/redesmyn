@@ -54,12 +54,6 @@ from redesmyn.db import (
 )
 from redesmyn.db.models import HostCapabilities
 from redesmyn.docs.loader import DocLoadError, load_epic_doc
-from redesmyn.docs.markdown import (
-    MarkdownSectionError,
-    extract_fenced_block_after_heading,
-    parse_yaml_block,
-)
-from redesmyn.docs.metadata import TaskMetadata
 from redesmyn.domain.enums import BlockPolicy, CommandState, MergeRunStatus
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
@@ -628,7 +622,9 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
         except Exception:
             trunk = None
 
-    task_responses = [_task_response(task) for task in tasks]
+    task_responses = [
+        TaskResponse.model_validate(task, from_attributes=True) for task in tasks
+    ]
 
     repo_executor_status = (
         await app.state.repo_executor.get_status(
@@ -752,28 +748,6 @@ async def _require_task(session: AsyncSession, *, task_id: int) -> Task:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
-
-
-def _linear_identifier_from_task_markdown(markdown: str | None) -> str | None:
-    if not markdown:
-        return None
-
-    try:
-        block = extract_fenced_block_after_heading(
-            markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
-        )
-        raw = parse_yaml_block(block.content)
-        meta = TaskMetadata.model_validate(raw)
-    except (MarkdownSectionError, ValueError):
-        return None
-
-    return meta.linear.identifier if meta.linear else None
-
-
-def _task_response(task: Task) -> TaskResponse:
-    response = TaskResponse.model_validate(task, from_attributes=True)
-    response.linear_identifier = _linear_identifier_from_task_markdown(task.body)
-    return response
 
 
 async def _require_current_repo(session: AsyncSession, *, app: App) -> Repository:
@@ -1342,7 +1316,7 @@ async def set_task_merge_ready(
         task.merge_ready_at = datetime.now(UTC) if request.ready else None
         await session.commit()
         await session.refresh(task)
-        return _task_response(task)
+        return TaskResponse.model_validate(task, from_attributes=True)
 
 
 @v1.post("/tasks/{task_id}/merge", response_model=TaskMergeResponse)
