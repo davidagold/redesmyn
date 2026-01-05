@@ -71,7 +71,7 @@ export function ConnectionsCluster({
 
   const tooltipSummary = useMemo(
     () =>
-      `Repo executor: ${repoDaemonStatus.label}. Linear: ${linearLabel(linearStatus)}.`,
+      `Executor: ${repoDaemonStatus.label}. Linear: ${linearLabel(linearStatus)}.`,
     [linearStatus, repoDaemonStatus.label],
   )
 

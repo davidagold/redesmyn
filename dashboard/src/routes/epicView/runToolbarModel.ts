@@ -24,7 +24,7 @@ export type RunToolbarSummary = {
   running: number
   blocked: number
   failed: number
-  outOfSync: number | null
+  outOfSync: number
 }
 
 export type RunToolbarBuckets = {
@@ -79,7 +79,7 @@ export function computeRunToolbarModel(options: {
   let running = 0
   let blocked = 0
   let failed = 0
-  let outOfSync: number | null = options.stackProjectionsFresh ? 0 : null
+  let outOfSync = 0
 
   const bucketEligible = new Set<number>()
   const bucketRunning = new Set<number>()
@@ -95,7 +95,7 @@ export function computeRunToolbarModel(options: {
       continue
     }
 
-    if (options.stackProjectionsFresh && task.stackInSync === false) {
+    if (task.stackInSync === false) {
       bucketOutOfSync.add(task.id)
     }
 
@@ -108,8 +108,8 @@ export function computeRunToolbarModel(options: {
     eligible += 1
     bucketEligible.add(task.id)
 
-    if (options.stackProjectionsFresh && task.stackInSync === false) {
-      outOfSync = (outOfSync ?? 0) + 1
+    if (task.stackInSync === false) {
+      outOfSync += 1
     }
 
     const session = options.agentSessionsByNodeId.get(task.id) ?? null

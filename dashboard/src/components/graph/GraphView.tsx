@@ -6,6 +6,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useSetTaskMergeReadyMutation } from "@/api/mutations"
+import { computeGitMutationsDisabledReason } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
 import {
   Position,
@@ -162,21 +163,7 @@ export function GraphView({
   const fitSuppressedRef = useRef(false)
 
   const gitMutationsDisabledReason = useMemo(() => {
-    const executor = repoExecutor ?? null
-    if (!executor) {
-      return null
-    }
-    const attached = executor.attachedHostKeys ?? []
-    const primary = executor.primaryHostKey ?? null
-    if (!primary) {
-      return attached.length > 0
-        ? "No primary repo executor. Acquire a primary executor lease."
-        : "No repo executor attached. Start a daemon and attach this repo."
-    }
-    if (!attached.includes(primary)) {
-      return `Primary executor ${primary} is not attached.`
-    }
-    return null
+    return computeGitMutationsDisabledReason(repoExecutor)
   }, [repoExecutor])
 
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(

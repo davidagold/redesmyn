@@ -847,36 +847,7 @@ export function EpicView() {
                     {runSummary.failed}
                   </span>
                 </Button>
-                {runSummary.outOfSync === null ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={(triggerProps) => (
-                        <Button
-                          {...triggerProps}
-                          variant="ghost"
-                          size="sm"
-                          className={cn(
-                            "h-full rounded-none border-0 border-l px-1.5 leading-none",
-                            triggerProps.className,
-                          )}
-                          disabledReason="Telemetry stale; sync status unknown"
-                        >
-                          <span className="truncate">Out of sync</span>
-                          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
-                            —
-                          </span>
-                        </Button>
-                      )}
-                    />
-                    <TooltipContent
-                      side="bottom"
-                      align="center"
-                      showArrow={false}
-                    >
-                      Telemetry is stale, so sync projections are unknown.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : runSummary.outOfSync > 0 ? (
+                {runSummary.outOfSync > 0 ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={(triggerProps) => (
@@ -896,7 +867,14 @@ export function EpicView() {
                             selectBucketNodes(runBuckets.outOfSync)
                           }
                         >
-                          <span className="truncate">Out of sync</span>
+                          <span className="truncate">
+                            Out of sync
+                            {stackProjectionsFresh ? null : (
+                              <span className="ml-1 text-[0.625rem] text-muted-foreground/70">
+                                stale
+                              </span>
+                            )}
+                          </span>
                           <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
                             {runSummary.outOfSync}
                           </span>
@@ -908,8 +886,50 @@ export function EpicView() {
                       align="center"
                       showArrow={false}
                     >
-                      Tasks whose branch is out of sync with its effective
-                      upstream (ignores merged ancestors).
+                      <div className="max-w-xs space-y-1">
+                        <div>
+                          Tasks whose branch is out of sync with its effective
+                          upstream (ignores merged ancestors).
+                        </div>
+                        {stackProjectionsFresh ? null : (
+                          <div>Telemetry is stale, so sync projections may be stale.</div>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : !stackProjectionsFresh ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-full rounded-none border-0 border-l px-1.5 leading-none",
+                            triggerProps.className,
+                          )}
+                          onClick={() => selectBucketNodes(runBuckets.outOfSync)}
+                          disabledReason="No tasks to select"
+                        >
+                          <span className="truncate">
+                            Out of sync
+                            <span className="ml-1 text-[0.625rem] text-muted-foreground/70">
+                              stale
+                            </span>
+                          </span>
+                          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-200/90">
+                            {runSummary.outOfSync}
+                          </span>
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent
+                      side="bottom"
+                      align="center"
+                      showArrow={false}
+                    >
+                      Telemetry is stale, so sync projections may be stale.
                     </TooltipContent>
                   </Tooltip>
                 ) : (

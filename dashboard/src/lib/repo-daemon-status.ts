@@ -2,6 +2,29 @@ import type { DaemonPresence, EpicGraph, Host } from "@/api"
 
 export const DEFAULT_TELEMETRY_STALE_MS = 90_000
 
+export function computeGitMutationsDisabledReason(
+  repoExecutor: EpicGraph["repoExecutor"] | null | undefined,
+): string | null {
+  if (!repoExecutor) {
+    return null
+  }
+
+  const attachedHostKeys = repoExecutor.attachedHostKeys ?? []
+  const primaryHostKey = repoExecutor.primaryHostKey ?? null
+
+  if (!primaryHostKey) {
+    return attachedHostKeys.length > 0
+      ? "Merge/restack is disabled because no executor currently holds the primary lease for this repo."
+      : "No executor is attached to this repo. Start a daemon in this repo to enable merge/restack."
+  }
+
+  if (!attachedHostKeys.includes(primaryHostKey)) {
+    return "Merge/restack is disabled because the primary executor is not attached to this repo."
+  }
+
+  return null
+}
+
 export type RepoDaemonHost = {
   hostKey: string
   displayName: string
@@ -75,7 +98,7 @@ export function computeRepoDaemonStatus(options: {
   if (!repoExecutor) {
     return {
       kind: "unknown",
-      label: "Daemon",
+      label: "Executor",
       gitMutationsDisabledReason: null,
       telemetryFresh: false,
       primaryHostKey: null,
@@ -121,13 +144,8 @@ export function computeRepoDaemonStatus(options: {
     }
   }
 
-  const gitMutationsDisabledReason = !primaryHostKey
-    ? attachedHostKeys.length > 0
-      ? "No primary repo executor. Acquire a primary executor lease."
-      : "No repo executor attached. Start a daemon and attach this repo."
-    : !primaryAttached
-      ? `Primary executor ${primaryHostKey} is not attached.`
-      : null
+  const gitMutationsDisabledReason =
+    computeGitMutationsDisabledReason(repoExecutor)
 
   const relevantHostKeys = uniqueHostKeys([...attachedHostKeys, primaryHostKey])
   const repoHosts: RepoDaemonHost[] = relevantHostKeys.map((hostKey) => {
@@ -150,15 +168,15 @@ export function computeRepoDaemonStatus(options: {
   })
 
   let kind: RepoDaemonStatus["kind"] = "ok"
-  let label = "Daemon online"
+  let label = "Executor online"
 
   if (gitMutationsDisabledReason) {
     kind = attachedHostKeys.length > 0 ? "degraded" : "offline"
     label = !primaryHostKey
       ? attachedHostKeys.length > 0
         ? "No primary executor"
-        : "Daemon offline"
-      : "Primary offline"
+        : "Executor offline"
+      : "Primary not attached"
   } else if (!telemetryFresh && !primaryIsLocal) {
     kind = "stale"
     label = "Telemetry stale"

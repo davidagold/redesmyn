@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -10,10 +10,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { RepoDaemonStatus } from "@/lib/repo-daemon-status"
-import { Copy } from "lucide-react"
 
 type HostDotInput = {
   connected: boolean
@@ -90,7 +88,6 @@ export function RepoDaemonStatusChip(props: {
     buttonClassName,
   } = props
   const nowMs = Date.now()
-  const [notice, setNotice] = useState<string | null>(null)
 
   const primaryHost = useMemo(() => {
     if (!status.primaryHostKey) {
@@ -113,9 +110,11 @@ export function RepoDaemonStatusChip(props: {
     [status.hosts],
   )
 
+  const primaryAttached = primaryHost?.isAttached ?? false
+
   const tooltipSummary = useMemo(() => {
     if (status.kind === "unknown") {
-      return "Daemon status unavailable."
+      return "Executor status unavailable."
     }
     if (status.kind === "stale") {
       return primaryLastSeen
@@ -123,37 +122,22 @@ export function RepoDaemonStatusChip(props: {
         : "Telemetry stale."
     }
     if (status.primaryIsLocal) {
-      return "Local repo executor active."
+      return "Local executor active."
     }
-    if (status.primaryHostKey && status.primaryConnected) {
-      return primaryLastSeen
-        ? `Daemon online (last seen ${primaryLastSeen.label}).`
-        : "Daemon online."
+    if (status.kind === "ok") {
+      return "Executor online."
     }
-    if (status.primaryHostKey && !status.primaryConnected) {
-      return "Primary executor not attached."
+    if (status.kind === "offline") {
+      return "No executor attached."
     }
-    if (status.hosts.some((host) => host.isAttached)) {
-      return "Repo executor attached (no primary)."
+    if (status.kind === "degraded") {
+      return status.label
     }
-    return "No repo executor attached."
-  }, [
-    primaryLastSeen,
-    status.hosts,
-    status.kind,
-    status.primaryConnected,
-    status.primaryHostKey,
-    status.primaryIsLocal,
-  ])
+    return "Executor status unavailable."
+  }, [primaryLastSeen, status.kind, status.label, status.primaryIsLocal])
 
   return (
-    <Popover
-      onOpenChange={(open) => {
-        if (!open) {
-          setNotice(null)
-        }
-      }}
-    >
+    <Popover>
       <Tooltip>
         <TooltipTrigger
           render={(triggerProps) => (
@@ -180,7 +164,7 @@ export function RepoDaemonStatusChip(props: {
                         />
                       ) : null}
                       <span className="hidden sm:inline">{status.label}</span>
-                      <span className="sm:hidden">Daemon</span>
+                      <span className="sm:hidden">Executor</span>
                     </span>
                   </Button>
                 )}
@@ -199,27 +183,28 @@ export function RepoDaemonStatusChip(props: {
         className="w-[22rem] space-y-3"
       >
         <div className="space-y-1">
-          <div className="text-xs font-medium text-foreground">
-            Repo executor
-          </div>
-          {status.primaryHostKey ? (
-            <div className="text-xs text-muted-foreground">
-              <span className="text-foreground/90">
-                {status.primaryDisplayName ?? status.primaryHostKey}
-              </span>{" "}
+          <div className="text-xs font-medium text-foreground">Executor</div>
+          <div className="text-xs text-muted-foreground">
+            <span className="text-muted-foreground/70">
+              Primary executor (lease):
+            </span>{" "}
+            <span className="text-foreground/90">
+              {status.primaryHostKey
+                ? (status.primaryDisplayName ?? status.primaryHostKey)
+                : "none"}
+            </span>{" "}
+            {status.primaryHostKey ? (
               <span className="text-muted-foreground/70">
                 {status.primaryIsLocal
                   ? "(local)"
-                  : status.primaryConnected
+                  : primaryAttached
                     ? "(online)"
-                    : "(offline)"}
+                    : status.primaryConnected
+                      ? "(connected; not attached)"
+                      : "(not attached)"}
               </span>
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">
-              No primary host.
-            </div>
-          )}
+            ) : null}
+          </div>
           {attachedHosts.length > 0 &&
           !(
             attachedHosts.length === 1 &&
@@ -227,17 +212,22 @@ export function RepoDaemonStatusChip(props: {
             attachedHosts[0]?.hostKey === primaryHost.hostKey
           ) ? (
             <div className="text-xs text-muted-foreground">
-              Attached:{" "}
+              Attached executors:{" "}
               <span className="text-foreground/90">
                 {attachedHosts.map((host) => host.displayName).join(", ")}
               </span>
             </div>
           ) : null}
+          <div className="text-xs text-muted-foreground">
+            The primary executor holds the repo lease used for merge/restack.
+            “Attached” means a daemon has this repo attached (it can run
+            repo-scoped commands and report telemetry).
+          </div>
         </div>
 
         {status.hosts.length > 0 ? (
           <div className="space-y-1">
-            <div className="text-xs font-medium text-foreground">Hosts</div>
+            <div className="text-xs font-medium text-foreground">Executors</div>
             <div className="grid gap-1">
               {status.hosts.map((host) => (
                 <div
@@ -265,37 +255,6 @@ export function RepoDaemonStatusChip(props: {
                         attached
                       </span>
                     ) : null}
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <Button
-                            {...triggerProps}
-                            variant="ghost"
-                            size="icon-xs"
-                            className={cn("h-5 w-5", triggerProps.className)}
-                            aria-label="Copy host key"
-                            onClick={() => {
-                              void copyToClipboard(host.hostKey)
-                                .then(() => setNotice("Host key copied"))
-                                .catch((e: unknown) =>
-                                  setNotice(
-                                    e instanceof Error ? e.message : String(e),
-                                  ),
-                                )
-                            }}
-                          >
-                            <Copy className="size-3" />
-                          </Button>
-                        )}
-                      />
-                      <TooltipContent
-                        side="right"
-                        sideOffset={10}
-                        showArrow={false}
-                      >
-                        Copy host key
-                      </TooltipContent>
-                    </Tooltip>
                   </div>
                 </div>
               ))}
@@ -304,10 +263,26 @@ export function RepoDaemonStatusChip(props: {
         ) : null}
 
         <div className="space-y-1">
+          <div className="text-xs font-medium text-foreground">Git actions</div>
+          <div className="text-xs text-muted-foreground">
+            {status.gitMutationsDisabledReason ? (
+              <>
+                <span className="text-foreground/90">Disabled.</span>{" "}
+                {status.gitMutationsDisabledReason}
+              </>
+            ) : (
+              <span className="text-muted-foreground">Enabled.</span>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-1">
           <div className="text-xs font-medium text-foreground">Telemetry</div>
           {status.primaryIsLocal ? (
             <div className="text-xs text-muted-foreground">Fresh (local)</div>
-          ) : status.primaryHostKey && status.primaryConnected ? (
+          ) : status.primaryHostKey &&
+            primaryAttached &&
+            status.primaryConnected ? (
             <div className="text-xs text-muted-foreground">
               {status.telemetryFresh ? "Fresh" : "Stale"}
               {primaryLastSeen ? (
@@ -320,9 +295,9 @@ export function RepoDaemonStatusChip(props: {
                 <> (last seen unknown)</>
               )}
             </div>
-          ) : status.primaryHostKey ? (
+          ) : status.primaryHostKey && primaryAttached ? (
             <div className="text-xs text-muted-foreground">
-              Offline (primary not attached)
+              Attached (offline)
             </div>
           ) : (
             <div className="text-xs text-muted-foreground">Unavailable</div>
@@ -330,55 +305,21 @@ export function RepoDaemonStatusChip(props: {
 
           {status.telemetryFresh ? null : (
             <div className="text-xs text-muted-foreground">
-              Sync projections (like “out of sync with upstream”) may be
-              unavailable.
+              Sync projections stay visible, but may be stale.
             </div>
           )}
         </div>
 
-        {status.gitMutationsDisabledReason ? (
-          <div className="rounded-md border border-border/60 bg-background/30 p-2 text-xs text-muted-foreground">
-            {status.gitMutationsDisabledReason}
-          </div>
-        ) : null}
-
         <div className="space-y-2">
-          <div className="text-xs font-medium text-foreground">Commands</div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void copyToClipboard(startCommand)
-                  .then(() => setNotice("Start command copied"))
-                  .catch((e: unknown) =>
-                    setNotice(e instanceof Error ? e.message : String(e)),
-                  )
-              }}
-            >
-              Copy start
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void copyToClipboard("rn dev")
-                  .then(() => setNotice("`rn dev` copied"))
-                  .catch((e: unknown) =>
-                    setNotice(e instanceof Error ? e.message : String(e)),
-                  )
-              }}
-            >
-              Copy dev
-            </Button>
+          <div className="text-xs font-medium text-foreground">
+            Troubleshooting
           </div>
-          {notice ? (
-            <div className="text-xs text-muted-foreground">{notice}</div>
-          ) : null}
           <div className="text-xs text-muted-foreground">
-            If things look wrong: run{" "}
-            <span className="font-mono text-foreground/80">rn status</span>,
-            then restart the daemon.
+            If no executor is attached, start one with{" "}
+            <span className="font-mono text-foreground/80">{startCommand}</span>
+            . If things look wrong, run{" "}
+            <span className="font-mono text-foreground/80">rn status</span> then
+            restart the daemon.
           </div>
         </div>
       </PopoverContent>

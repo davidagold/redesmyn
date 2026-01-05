@@ -73,7 +73,10 @@ test("computeRepoDaemonStatus: no primary disables git actions", () => {
     nowMs: Date.parse("2026-01-04T00:00:00Z"),
   })
   assert.equal(status.kind, "degraded")
-  assert.equal(status.gitMutationsDisabledReason?.includes("No primary"), true)
+  assert.equal(
+    status.gitMutationsDisabledReason?.includes("primary lease"),
+    true,
+  )
 })
 
 test("computeRepoDaemonStatus: primary not attached disables git actions", () => {
@@ -90,7 +93,7 @@ test("computeRepoDaemonStatus: primary not attached disables git actions", () =>
   })
   assert.equal(status.kind, "offline")
   assert.equal(
-    status.gitMutationsDisabledReason?.includes("is not attached"),
+    status.gitMutationsDisabledReason?.includes("not attached"),
     true,
   )
 })

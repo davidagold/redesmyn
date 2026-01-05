@@ -215,7 +215,7 @@ export function TaskCard({
   const resumeMergeRunMutation = useResumeMergeRunMutation()
 
   const now = Date.now()
-  const stackInSync = stackProjectionsFresh ? (node.stackInSync ?? null) : null
+  const stackInSync = node.stackInSync ?? null
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunOperation = mergeRun?.operation ?? "merge"
@@ -783,6 +783,11 @@ export function TaskCard({
     gitAttentionTooltipLines.push(
       "Branch is out of sync with its effective upstream (ignores merged ancestors).",
     )
+    if (!stackProjectionsFresh) {
+      gitAttentionTooltipLines.push(
+        "Sync projection may be stale (telemetry stale).",
+      )
+    }
   }
 
   const mergeAttentionIcon = mergeRunBlocked ? (
