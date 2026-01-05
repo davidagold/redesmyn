@@ -2520,6 +2520,15 @@
           "ready": {
             "title": "Ready",
             "type": "boolean"
+          },
+          "scope": {
+            "default": "task",
+            "enum": [
+              "task",
+              "spine"
+            ],
+            "title": "Scope",
+            "type": "string"
           }
         },
         "required": [

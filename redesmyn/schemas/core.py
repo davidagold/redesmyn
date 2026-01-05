@@ -248,6 +248,7 @@ class TaskAgentBulkActionResponse(ApiResponse):
 
 class TaskMergeReadyRequest(ApiRequest):
     ready: bool
+    scope: Literal["task", "spine"] = "task"
 
 
 class TaskMergeRequest(ApiRequest):

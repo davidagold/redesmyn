@@ -23,6 +23,7 @@ from redesmyn.repo import (
     git_status_porcelain,
     git_worktree_path_for_branch,
 )
+from redesmyn.task_spine import resolve_spine_task_ids, split_merged_spine_prefix
 
 MergeCascadeScope = Literal["descendants", "spine"]
 MergeRestackMode = Literal["strict", "merge_then_restack"]
@@ -188,34 +189,6 @@ async def _load_task_node_epic(
     return task, epic
 
 
-def _compute_spine_task_ids(
-    *, tasks_by_id: dict[int, Task], leaf_task_id: int
-) -> list[int]:
-    spine: list[int] = []
-    cursor: int | None = leaf_task_id
-    while cursor is not None:
-        spine.append(cursor)
-        task = tasks_by_id.get(cursor)
-        if task is None:
-            break
-        cursor = task.parent_task_id
-    spine.reverse()
-    return spine
-
-
-def _split_merged_spine_prefix(
-    *, tasks_by_id: dict[int, Task], spine_task_ids: Sequence[int]
-) -> tuple[list[int], list[int]]:
-    merged: list[int] = []
-    for task_id in spine_task_ids:
-        task = tasks_by_id.get(task_id)
-        if task is None or task.state != TaskState.Done:
-            break
-        merged.append(task_id)
-    active = list(spine_task_ids[len(merged) :])
-    return merged, active
-
-
 def _compute_descendants(
     *, children_by_parent: dict[int | None, list[int]], start_task_ids: Sequence[int]
 ) -> set[int]:
@@ -274,11 +247,13 @@ async def build_merge_cascade_plan(
         for value in children_by_parent.values():
             value.sort()
 
-        spine_task_ids = _compute_spine_task_ids(
+        spine_task_ids, spine_warnings = resolve_spine_task_ids(
             tasks_by_id=tasks_by_id,
             leaf_task_id=task.id,
         )
-        merged_spine_task_ids, active_spine_task_ids = _split_merged_spine_prefix(
+        if spine_warnings:
+            raise MergePlanError("; ".join(spine_warnings))
+        merged_spine_task_ids, active_spine_task_ids = split_merged_spine_prefix(
             tasks_by_id=tasks_by_id,
             spine_task_ids=spine_task_ids,
         )
@@ -654,10 +629,12 @@ async def build_restack_plan(
         for value in children_by_parent.values():
             value.sort()
 
-        spine_task_ids = _compute_spine_task_ids(
+        spine_task_ids, spine_warnings = resolve_spine_task_ids(
             tasks_by_id=tasks_by_id,
             leaf_task_id=task.id,
         )
+        if spine_warnings:
+            raise MergePlanError("; ".join(spine_warnings))
 
         start_task_ids: list[int]
         if scope == "spine":

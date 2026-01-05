@@ -98,6 +98,7 @@ from redesmyn.repo_executor import (
     RepoExecutorTarget,
     make_repo_executor,
 )
+from redesmyn.task_spine import resolve_spine_task_ids, split_merged_spine_prefix
 from redesmyn.runner_backend import (
     RunnerBackend,
     RunnerBackendError,
@@ -1485,12 +1486,53 @@ async def set_task_merge_ready(
         task = await session.get(Task, task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if request.ready and not task.branch_name:
-            raise HTTPException(
-                status_code=400,
-                detail="Task has no branch; create a branch before marking merge-ready.",
-            )
-        task.merge_ready_at = datetime.now(UTC) if request.ready else None
+        if request.ready:
+            if not task.branch_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Task has no branch; create a branch before marking merge-ready."
+                    ),
+                )
+
+            now = datetime.now(UTC)
+
+            if request.scope == "spine":
+                tasks = list(
+                    await session.scalars(
+                        select(Task).where(Task.epic_id == task.epic_id)
+                    )
+                )
+                tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+
+                spine_task_ids, spine_warnings = resolve_spine_task_ids(
+                    tasks_by_id=tasks_by_id,
+                    leaf_task_id=task.id,
+                )
+                if spine_warnings:
+                    log.warning(
+                        "merge_ready.spine_resolution_failed",
+                        task_id=task.id,
+                        warnings=spine_warnings,
+                    )
+                    spine_task_ids = [task.id]
+
+                _merged, active_spine_task_ids = split_merged_spine_prefix(
+                    tasks_by_id=tasks_by_id,
+                    spine_task_ids=spine_task_ids,
+                )
+
+                for spine_task_id in active_spine_task_ids:
+                    spine_task = tasks_by_id.get(spine_task_id)
+                    if spine_task is None or not spine_task.branch_name:
+                        continue
+                    if spine_task.merge_ready_at is None:
+                        spine_task.merge_ready_at = now
+
+            if task.merge_ready_at is None:
+                task.merge_ready_at = now
+        else:
+            task.merge_ready_at = None
         await session.commit()
         await session.refresh(task)
         if request.ready:

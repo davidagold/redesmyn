@@ -21,7 +21,11 @@ from redesmyn.domain.enums import TaskState
 
 from tests.helpers.ws import JsonQueueWebSocket
 from tests.scenarios.scenario import Scenario
-from tests.scenarios.variants import seed_merged_parent, seed_running_agent
+from tests.scenarios.variants import (
+    seed_merged_parent,
+    seed_running_agent,
+    seed_three_task_chain_in_progress,
+)
 
 
 @pytest.mark.integration
@@ -218,6 +222,51 @@ async def test_db_enforces_merge_ready_requires_branch_check_constraint(
         with pytest.raises(IntegrityError):
             await session.commit()
         await session.rollback()
+
+
+@pytest.mark.integration
+async def test_mark_merge_ready_scope_spine_marks_unmerged_ancestors(
+    scenario: Scenario,
+) -> None:
+    seeded = await seed_three_task_chain_in_progress(scenario)
+
+    response = await scenario.app.client.post(
+        f"/v1/tasks/{seeded.grandchild_task_id}/merge-ready",
+        json={"ready": True, "scope": "spine"},
+    )
+    assert response.status_code == 200, response.text
+
+    async with scenario.db.session() as session:
+        parent = await session.get(Task, seeded.parent_task_id)
+        child = await session.get(Task, seeded.child_task_id)
+        grandchild = await session.get(Task, seeded.grandchild_task_id)
+
+        assert parent is not None
+        assert child is not None
+        assert grandchild is not None
+
+        assert parent.merge_ready_at is not None
+        assert child.merge_ready_at is not None
+        assert grandchild.merge_ready_at is not None
+
+    response = await scenario.app.client.post(
+        f"/v1/tasks/{seeded.grandchild_task_id}/merge-ready",
+        json={"ready": False, "scope": "spine"},
+    )
+    assert response.status_code == 200, response.text
+
+    async with scenario.db.session() as session:
+        parent = await session.get(Task, seeded.parent_task_id)
+        child = await session.get(Task, seeded.child_task_id)
+        grandchild = await session.get(Task, seeded.grandchild_task_id)
+
+        assert parent is not None
+        assert child is not None
+        assert grandchild is not None
+
+        assert parent.merge_ready_at is not None
+        assert child.merge_ready_at is not None
+        assert grandchild.merge_ready_at is None
 
 
 @pytest.mark.integration
