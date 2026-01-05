@@ -5,27 +5,26 @@ import tempfile
 from pathlib import Path
 
 from alembic import command
-from alembic.config import Config
 from alembic.script import ScriptDirectory
+
+from redesmyn.db.migrate import alembic_config_for_db
 
 
 def main() -> int:
-    cfg = Config("alembic.ini")
-    script = ScriptDirectory.from_config(cfg)
-
-    heads = script.get_heads()
-    if len(heads) != 1:
-        joined = ", ".join(heads) if heads else "(none)"
-        print(
-            "error: alembic has multiple heads (rebase/migration conflict likely): "
-            f"{joined}",
-            file=sys.stderr,
-        )
-        return 2
-
     with tempfile.TemporaryDirectory(prefix="redesmyn-migrations-") as tmpdir:
         db_path = Path(tmpdir) / "test.sqlite3"
-        cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+        cfg = alembic_config_for_db(db_path)
+        script = ScriptDirectory.from_config(cfg)
+
+        heads = script.get_heads()
+        if len(heads) != 1:
+            joined = ", ".join(heads) if heads else "(none)"
+            print(
+                "error: alembic has multiple heads (rebase/migration conflict likely): "
+                f"{joined}",
+                file=sys.stderr,
+            )
+            return 2
 
         try:
             command.upgrade(cfg, "head")
