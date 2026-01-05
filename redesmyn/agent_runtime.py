@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -487,6 +488,18 @@ def harness_profile_id_for_definition(
     return f"{slugify(kind)}/sha256-{digest}"
 
 
+_TASK_TITLE_ID_RE = re.compile(r"^(T-\d+)\b")
+
+
+def _default_branch_name_for_task(*, epic_slug: str, task: Task) -> str:
+    identifier = task.linear_identifier
+    if not identifier:
+        match = _TASK_TITLE_ID_RE.match(task.title.strip())
+        identifier = match.group(1) if match else f"task-{task.id}"
+    short = slugify(task.title, fallback="task")[:60].strip("-") or "task"
+    return f"rn/{epic_slug}/{identifier}-{short}"
+
+
 async def ensure_task_worktree(
     session: AsyncSession,
     ctx: RepoContext,
@@ -495,7 +508,18 @@ async def ensure_task_worktree(
     epic: Epic,
 ) -> Path:
     if task.branch_name is None:
-        raise RuntimeError("Task has no branch backing; sync docs to create branches")
+        branch = _default_branch_name_for_task(epic_slug=epic.slug, task=task)
+        existing = await session.scalar(
+            select(Task).where(
+                Task.epic_id == epic.id,
+                Task.branch_name == branch,
+                Task.id != task.id,
+            )
+        )
+        if existing is not None:
+            branch = f"{branch}-{task.id}"
+        task.branch_name = branch
+        await session.flush()
 
     if task.worktree_path:
         path = Path(task.worktree_path)
@@ -726,10 +750,6 @@ async def _load_task_and_epic(
     task = await session.get(Task, task_id)
     if task is None:
         raise RuntimeError(f"Unknown task id: {task_id}")
-    if task.branch_name is None:
-        raise RuntimeError(
-            "Task has no branch backing; sync docs to create branches first"
-        )
 
     epic = await session.get(Epic, task.epic_id)
     if epic is None:
