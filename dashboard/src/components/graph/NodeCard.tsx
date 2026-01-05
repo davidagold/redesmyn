@@ -814,7 +814,7 @@ export function NodeCard({
               "transition-[max-width,background-color] duration-200",
               isSelected || actionsMenuOpen
                 ? "max-w-48"
-                : "max-w-7 group-hover:max-w-48 group-focus-within:max-w-48",
+                : "max-w-6 group-hover:max-w-48 group-focus-within:max-w-48",
             )}
             aria-label={linearPillLabel}
             onClick={() => {
@@ -825,15 +825,15 @@ export function NodeCard({
               )
             }}
           >
-            <span className="inline-flex size-6 items-center justify-center">
+            <span className="inline-flex size-6 shrink-0 items-center justify-center">
               <LinearIcon className="size-3.5 text-muted-foreground" />
             </span>
             <span
               className={cn(
-                "pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground transition-opacity duration-150",
+                "min-w-0 font-mono text-[0.625rem] leading-none text-muted-foreground transition-opacity duration-150",
                 isSelected || actionsMenuOpen
-                  ? "opacity-100"
-                  : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                  ? "pr-2 opacity-100"
+                  : "pr-0 opacity-0 group-hover:pr-2 group-hover:opacity-100 group-focus-within:pr-2 group-focus-within:opacity-100",
               )}
             >
               {linearPillLabel}
