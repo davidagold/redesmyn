@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,7 +28,7 @@ from redesmyn.integrations.linear_credentials import (
 from redesmyn.integrations.linear_state import linear_state_type_from_task_state
 from redesmyn.settings import load_settings
 
-logger = logging.getLogger("redesmyn.integrations.linear_automation")
+log = structlog.get_logger("redesmyn.integrations.linear_automation")
 
 
 async def maybe_push_task_state_to_linear(
@@ -98,32 +98,27 @@ async def maybe_push_task_state_to_linear(
     try:
         await asyncio.wait_for(_run(), timeout=timeout_s)
     except asyncio.TimeoutError:
-        logger.info(
+        log.info(
             "linear.automation.push_state.timeout",
-            extra={
-                "task_id": task_id,
-                "desired_state": desired_task_state,
-            },
+            task_id=task_id,
+            desired_state=str(desired_task_state),
+            timeout_s=timeout_s,
         )
     except LinearApiError as exc:
-        logger.info(
+        log.info(
             "linear.automation.push_state.failed",
-            extra={
-                "task_id": task_id,
-                "desired_state": desired_task_state,
-                "code": exc.code,
-                "status_code": exc.status_code,
-                "operation": exc.operation,
-            },
+            task_id=task_id,
+            desired_state=str(desired_task_state),
+            code=exc.code,
+            status_code=exc.status_code,
+            operation=exc.operation,
         )
     except Exception as exc:
-        logger.info(
+        log.info(
             "linear.automation.push_state.failed",
-            extra={
-                "task_id": task_id,
-                "desired_state": desired_task_state,
-                "error": str(exc),
-            },
+            task_id=task_id,
+            desired_state=str(desired_task_state),
+            error=str(exc),
         )
 
 
@@ -132,26 +127,49 @@ async def maybe_push_task_merge_ready_to_linear(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     task_id: int,
-    timeout_s: float = 15.0,
+    timeout_s: float = 90.0,
 ) -> None:
+    step = "init"
+
     async def _run() -> None:
+        nonlocal step
+
         async with sessionmaker() as session:
+            step = "load_task"
             task = await session.get(Task, task_id)
             if (
                 task is None
                 or task.merge_ready_at is None
                 or task.linear_issue_id is None
             ):
+                log.info(
+                    "linear.automation.push_merge_ready.skipped",
+                    task_id=task_id,
+                    reason="missing_task_merge_ready_or_linear_issue",
+                )
                 return
+            step = "load_epic"
             epic = await session.get(Epic, task.epic_id)
             if epic is None:
+                log.info(
+                    "linear.automation.push_merge_ready.skipped",
+                    task_id=task_id,
+                    reason="missing_epic",
+                )
                 return
 
+            step = "require_credentials"
             creds = await _maybe_require_fresh_linear_credentials(ctx, session=session)
             if creds is None:
+                log.info(
+                    "linear.automation.push_merge_ready.skipped",
+                    task_id=task_id,
+                    reason="missing_credentials",
+                )
                 return
 
             client = LinearClient(access_token=creds.access_token)
+            step = "fetch_issue"
             issue = await fetch_issue(client, issue_id=task.linear_issue_id)
 
             observed_at = datetime.now(UTC)
@@ -159,22 +177,37 @@ async def maybe_push_task_merge_ready_to_linear(
             task.linear_state_observed_at = observed_at
             await _safe_commit(session)
 
+            step = "fetch_label"
             label = await fetch_label_by_name(client, label_name=epic.slug)
             if label is None or label.id not in issue.label_ids:
+                log.info(
+                    "linear.automation.push_merge_ready.skipped",
+                    task_id=task_id,
+                    reason="epic_label_missing_from_issue",
+                    epic_slug=epic.slug,
+                )
                 return
 
+            step = "resolve_team_id"
             team_id = issue.team_id or await fetch_issue_team_id(
                 client, issue_id=issue.id
             )
             if not team_id:
+                log.info(
+                    "linear.automation.push_merge_ready.skipped",
+                    task_id=task_id,
+                    reason="missing_team_id",
+                )
                 return
 
             # Best-effort mapping: treat merge-ready as "started" and pick the
             # last started-state in the workflow as a reasonable "ready/review"
             # approximation when teams have multiple started states.
+            step = "resolve_state_id"
             state_id = await resolve_team_state_id(
                 client, team_id=team_id, state_type="started", pick="last"
             )
+            step = "update_issue_state"
             updated = await update_issue_state(
                 client,
                 issue_id=issue.id,
@@ -185,26 +218,32 @@ async def maybe_push_task_merge_ready_to_linear(
             await _safe_commit(session)
 
     try:
+        log.info(
+            "linear.automation.push_merge_ready.started",
+            task_id=task_id,
+            timeout_s=timeout_s,
+        )
         await asyncio.wait_for(_run(), timeout=timeout_s)
     except asyncio.TimeoutError:
-        logger.info(
+        log.info(
             "linear.automation.push_merge_ready.timeout",
-            extra={"task_id": task_id, "timeout_s": timeout_s},
+            task_id=task_id,
+            timeout_s=timeout_s,
+            step=step,
         )
     except LinearApiError as exc:
-        logger.info(
+        log.info(
             "linear.automation.push_merge_ready.failed",
-            extra={
-                "task_id": task_id,
-                "code": exc.code,
-                "status_code": exc.status_code,
-                "operation": exc.operation,
-            },
+            task_id=task_id,
+            code=exc.code,
+            status_code=exc.status_code,
+            operation=exc.operation,
         )
     except Exception as exc:
-        logger.info(
+        log.info(
             "linear.automation.push_merge_ready.failed",
-            extra={"task_id": task_id, "error": str(exc)},
+            task_id=task_id,
+            error=str(exc),
         )
 
 
