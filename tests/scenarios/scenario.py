@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import subprocess
-from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
@@ -13,12 +11,12 @@ from typing import Any
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from starlette.websockets import WebSocketState
 
 from redesmyn.api import App
 from redesmyn.context import RepoContext
 from redesmyn.db import create_engine, create_sessionmaker
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
+from tests.helpers.ws import JsonQueueWebSocket
 
 
 class GitError(RuntimeError):
@@ -160,28 +158,11 @@ class ScenarioApp:
         await self._lifespan.__aexit__(None, None, None)
 
 
-class _FakeWebSocket:
-    client_state = WebSocketState.CONNECTED
-
-    def __init__(self, *, max_payloads: int = 64) -> None:
-        self._payloads = deque(maxlen=max_payloads)
-        self.sent_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-    @property
-    def payloads(self) -> list[dict[str, Any]]:
-        return list(self._payloads)
-
-    async def send_json(self, payload: dict[str, Any]) -> None:
-        json.dumps(payload)
-        self._payloads.append(payload)
-        self.sent_queue.put_nowait(payload)
-
-
 @dataclass(frozen=True, slots=True)
 class ScenarioDaemonConnection:
     registry: DaemonConnectionRegistry
     host_key: str
-    websocket: _FakeWebSocket
+    websocket: JsonQueueWebSocket
     sender_task: asyncio.Task[None]
 
     async def recv(self, *, timeout_s: float = 1.0) -> dict[str, Any]:
@@ -220,7 +201,7 @@ class ScenarioDaemon:
         capabilities: dict[str, Any] | None = None,
         display_name: str | None = None,
     ) -> ScenarioDaemonConnection:
-        websocket = _FakeWebSocket()
+        websocket = JsonQueueWebSocket()
         queue = await self.registry.register(
             host_key,
             websocket,  # type: ignore[arg-type]
