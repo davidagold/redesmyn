@@ -32,6 +32,7 @@ dev = [
   "pytest-asyncio>=0.23",
   "pytest-timeout>=2.3",
   "pytest-xdist>=3.6",
+  "playwright>=1.41",
 ]
 
 [tool.uv]
@@ -42,11 +43,12 @@ include = ["redesmyn*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--strict-markers --tb=short -ra"
+addopts = "--strict-markers --tb=short -ra -m 'not e2e'"
 asyncio_mode = "auto"
 timeout = 30
 timeout_method = "thread"
 markers = [
   "integration: exercises app + db + git",
   "unit: pure-ish helper tests",
+  "e2e: browser-based end-to-end tests",
 ]
