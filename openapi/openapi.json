@@ -3,11 +3,11 @@
     "schemas": {
       "AckReleaseResponse": {
         "properties": {
-          "requiredAgentIds": {
+          "requiredTaskIds": {
             "items": {
               "type": "integer"
             },
-            "title": "Requiredagentids",
+            "title": "Requiredtaskids",
             "type": "array"
           },
           "type": {
@@ -18,19 +18,15 @@
           }
         },
         "required": [
-          "requiredAgentIds"
+          "requiredTaskIds"
         ],
         "title": "AckReleaseResponse",
         "type": "object"
       },
       "AgentSessionResponse": {
         "properties": {
-          "agentId": {
-            "title": "Agentid",
-            "type": "integer"
-          },
-          "agentName": {
-            "title": "Agentname",
+          "agentLabel": {
+            "title": "Agentlabel",
             "type": "string"
           },
           "endedAt": {
@@ -86,22 +82,14 @@
             "$ref": "#/components/schemas/AgentStatus"
           },
           "taskId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Taskid"
+            "title": "Taskid",
+            "type": "integer"
           }
         },
         "required": [
           "id",
-          "agentId",
-          "agentName",
           "taskId",
+          "agentLabel",
           "status"
         ],
         "title": "AgentSessionResponse",
@@ -1906,12 +1894,8 @@
       },
       "TaskAgentStartResponse": {
         "properties": {
-          "agentId": {
-            "title": "Agentid",
-            "type": "integer"
-          },
-          "agentName": {
-            "title": "Agentname",
+          "agentLabel": {
+            "title": "Agentlabel",
             "type": "string"
           },
           "agentSessionId": {
@@ -1981,9 +1965,8 @@
         },
         "required": [
           "taskId",
-          "agentId",
           "agentSessionId",
-          "agentName",
+          "agentLabel",
           "agentStatus",
           "harnessProfileId",
           "attach",
@@ -1995,18 +1978,7 @@
       },
       "TaskAgentStopResponse": {
         "properties": {
-          "agentId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agentid"
-          },
-          "agentName": {
+          "agentLabel": {
             "anyOf": [
               {
                 "type": "string"
@@ -2015,7 +1987,7 @@
                 "type": "null"
               }
             ],
-            "title": "Agentname"
+            "title": "Agentlabel"
           },
           "agentStatus": {
             "anyOf": [
@@ -2038,8 +2010,7 @@
         },
         "required": [
           "taskId",
-          "agentId",
-          "agentName",
+          "agentLabel",
           "agentStatus",
           "stopped"
         ],
@@ -2233,17 +2204,6 @@
       },
       "TaskResponse": {
         "properties": {
-          "agentId": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agentid"
-          },
           "authority": {
             "$ref": "#/components/schemas/TaskAuthority"
           },
@@ -2403,7 +2363,6 @@
           "epicId",
           "branchName",
           "parentTaskId",
-          "agentId",
           "worktreePath",
           "githubPrId",
           "title",

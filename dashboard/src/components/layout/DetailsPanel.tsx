@@ -559,9 +559,9 @@ function AgentActions({
 
   const taskId = task.id
   const hasAgent = agentSession !== null
-  const agentName = useMemo(
-    () => agentSession?.agentName ?? "No agent",
-    [agentSession?.agentName],
+  const agentLabel = useMemo(
+    () => agentSession?.agentLabel ?? "No agent",
+    [agentSession?.agentLabel],
   )
   const statusLabel = agentSession?.status ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
@@ -815,7 +815,7 @@ function AgentActions({
         <div className={"min-w-0 " + (isRunning ? "pr-28" : "")}>
           <div className="flex flex-wrap items-center gap-2">
             <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
-              {agentName}
+              {agentLabel}
             </div>
             <AgentStatusBadge status={statusLabel} />
             {harnessKind ? (

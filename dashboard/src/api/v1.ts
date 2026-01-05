@@ -437,8 +437,8 @@ export interface components {
   schemas: {
     /** AckReleaseResponse */
     AckReleaseResponse: {
-      /** Requiredagentids */
-      requiredAgentIds: number[]
+      /** Requiredtaskids */
+      requiredTaskIds: number[]
       /**
        * @description discriminator enum property added by openapi-typescript
        * @enum {string}
@@ -447,10 +447,8 @@ export interface components {
     }
     /** AgentSessionResponse */
     AgentSessionResponse: {
-      /** Agentid */
-      agentId: number
-      /** Agentname */
-      agentName: string
+      /** Agentlabel */
+      agentLabel: string
       /** Endedat */
       endedAt?: string | null
       /** Harnessprofileid */
@@ -462,7 +460,7 @@ export interface components {
       startedAt?: string | null
       status: components["schemas"]["AgentStatus"]
       /** Taskid */
-      taskId: number | null
+      taskId: number
     }
     /**
      * AgentStatus
@@ -1100,10 +1098,8 @@ export interface components {
     }
     /** TaskAgentStartResponse */
     TaskAgentStartResponse: {
-      /** Agentid */
-      agentId: number
-      /** Agentname */
-      agentName: string
+      /** Agentlabel */
+      agentLabel: string
       /** Agentsessionid */
       agentSessionId: number
       agentStatus: components["schemas"]["AgentStatus"]
@@ -1129,10 +1125,8 @@ export interface components {
     }
     /** TaskAgentStopResponse */
     TaskAgentStopResponse: {
-      /** Agentid */
-      agentId: number | null
-      /** Agentname */
-      agentName: string | null
+      /** Agentlabel */
+      agentLabel: string | null
       agentStatus: components["schemas"]["AgentStatus"] | null
       /** Stopped */
       stopped: boolean
@@ -1222,8 +1216,6 @@ export interface components {
     }
     /** TaskResponse */
     TaskResponse: {
-      /** Agentid */
-      agentId: number | null
       authority: components["schemas"]["TaskAuthority"]
       /** Branchname */
       branchName: string | null
