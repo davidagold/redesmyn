@@ -1976,7 +1976,10 @@ async def ui_event_stream(websocket: WebSocket) -> None:
                     for row in rows:
                         event = EventResponse.model_validate(row, from_attributes=True)
                         await websocket.send_json(
-                            {"type": "event", "event": event.model_dump(by_alias=True)}
+                            {
+                                "type": "event",
+                                "event": event.model_dump(by_alias=True, mode="json"),
+                            }
                         )
                 continue
     except WebSocketDisconnect:

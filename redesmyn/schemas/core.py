@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from redesmyn.domain.enums import (
     AgentStatus,
@@ -469,6 +469,43 @@ class EventResponse(ApiResponse):
     event_type: str
     data: EventDataResponse
     created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _shape_event_data(cls, value: Any) -> Any:
+        # Events are stored as (event_type, data) pairs, where `data` is a free-form
+        # JSON payload. API/websocket consumers expect a discriminated `data.type`
+        # to drive typed decoding; for legacy/non-schema'd events, we wrap the raw
+        # payload as `unknown`.
+        if not isinstance(value, dict):
+            value = {
+                "id": getattr(value, "id", None),
+                "event_type": getattr(value, "event_type", None),
+                "data": getattr(value, "data", None),
+                "created_at": getattr(value, "created_at", None),
+            }
+
+        event_type = value.get("event_type")
+        data = value.get("data")
+        if not isinstance(data, dict):
+            return value
+        if "type" in data:
+            return value
+
+        event_type_str = event_type if isinstance(event_type, str) else ""
+        candidate = {"type": event_type_str, **data} if event_type_str else data
+        adapter = TypeAdapter(EventDataResponse)
+        try:
+            adapter.validate_python(candidate)
+        except ValidationError:
+            value["data"] = {
+                "type": "unknown",
+                "event_type": event_type_str or "unknown",
+                "data": data,
+            }
+        else:
+            value["data"] = candidate
+        return value
 
 
 class RepoKeyResponse(ApiResponse):
