@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useEffect, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -101,27 +101,6 @@ interface RestackAllowRunningPrompt {
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
 
 const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
-
-function extractLinearIdentifier(readme: string | null | undefined) {
-  if (!readme) {
-    return null
-  }
-
-  const normalized = readme.replaceAll("\r\n", "\n")
-  const match = normalized.match(/(^|\n)\s*linear:\s*\n([\s\S]*?)(\n\S|$)/)
-  if (!match) {
-    return null
-  }
-
-  const linearBlock = match[2] ?? ""
-  const identifierMatch = linearBlock.match(/^\s*identifier:\s*(.+?)\s*$/m)
-  const rawIdentifier = identifierMatch?.[1]?.split("#")[0]?.trim() ?? ""
-  if (!rawIdentifier) {
-    return null
-  }
-
-  return rawIdentifier.replace(/^['"]|['"]$/g, "")
-}
 
 function isRunningAgentsConflict(error: ApiHttpError) {
   const detail = error.detail
@@ -226,10 +205,7 @@ export function NodeCard({
   const gitDisabledReason = gitMutationsDisabledReason ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
   const linearIssueId = task?.linearIssueId ?? null
-  const linearIdentifier = useMemo(
-    () => extractLinearIdentifier(task?.readme),
-    [task?.readme],
-  )
+  const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
 
   const [pendingAction, setPendingAction] =

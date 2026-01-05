@@ -766,6 +766,19 @@ export interface components {
       /** Workspace Id */
       workspace_id?: string | null
     }
+    /** LinearPushStatsResponse */
+    LinearPushStatsResponse: {
+      /** Blockersskipped */
+      blockersSkipped: number
+      /** Blockersupdated */
+      blockersUpdated: number
+      /** Docsupdated */
+      docsUpdated: number
+      /** Issuescreated */
+      issuesCreated: number
+      /** Issuesupdated */
+      issuesUpdated: number
+    }
     /** LinearStatusResponse */
     LinearStatusResponse: {
       /** Connected */
@@ -1227,6 +1240,8 @@ export interface components {
       githubPrId: string | null
       /** Id */
       id: number
+      /** Linearidentifier */
+      linearIdentifier?: string | null
       /** Linearissueid */
       linearIssueId: string | null
       /** Localpath */
@@ -1589,7 +1604,7 @@ export interface operations {
           [name: string]: unknown
         }
         content: {
-          "application/json": components["schemas"]["SyncStatsResponse"]
+          "application/json": components["schemas"]["LinearPushStatsResponse"]
         }
       }
       /** @description Validation Error */

@@ -6,6 +6,7 @@ import {
   postLinearLogout,
   postSyncFromLinear,
   postSyncToLinear,
+  type LinearPushStats,
   type SyncStats,
 } from "@/api"
 import { useLinearStatus } from "@/hooks/useLinearStatus"
@@ -34,8 +35,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function formatStats(stats: SyncStats) {
+function formatSyncStats(stats: SyncStats) {
   return `tasks +${stats.tasksCreated}/~${stats.tasksUpdated}, branches +${stats.branchesCreated}/~${stats.branchesUpdated}`
+}
+
+function formatPushStats(stats: LinearPushStats) {
+  return `issues +${stats.issuesCreated}/~${stats.issuesUpdated}, docs ~${stats.docsUpdated}, blockers ~${stats.blockersUpdated} (skipped ${stats.blockersSkipped})`
 }
 
 interface LinearSyncMenuButtonProps {
@@ -181,7 +186,7 @@ export function LinearSyncMenuButton({
       }
       setNotice({
         kind: "success",
-        message: `Synced from Linear: ${formatStats(stats)}`,
+        message: `Synced from Linear: ${formatSyncStats(stats)}`,
       })
     } catch (e) {
       setNotice({
@@ -205,7 +210,7 @@ export function LinearSyncMenuButton({
       }
       setNotice({
         kind: "success",
-        message: `Synced to Linear: ${formatStats(stats)}`,
+        message: `Synced to Linear: ${formatPushStats(stats)}`,
       })
     } catch (e) {
       setNotice({

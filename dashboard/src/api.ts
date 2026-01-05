@@ -10,6 +10,7 @@ export type DaemonPresence = components["schemas"]["DaemonPresenceResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type LinearStatus = components["schemas"]["LinearStatusResponse"]
 export type SyncStats = components["schemas"]["SyncStatsResponse"]
+export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
   prelude?: string | null
@@ -188,7 +189,7 @@ export async function postSyncFromLinear(epic: string): Promise<SyncStats> {
   return response.json() as Promise<SyncStats>
 }
 
-export async function postSyncToLinear(epic: string): Promise<SyncStats> {
+export async function postSyncToLinear(epic: string): Promise<LinearPushStats> {
   const response = await fetch(`/v1/epics/${epic}/sync/to/linear`, {
     method: "POST",
     headers: { Accept: "application/json" },
@@ -196,7 +197,7 @@ export async function postSyncToLinear(epic: string): Promise<SyncStats> {
   if (!response.ok) {
     throw await apiError(response)
   }
-  return response.json() as Promise<SyncStats>
+  return response.json() as Promise<LinearPushStats>
 }
 
 export async function setTaskMergeReady(
