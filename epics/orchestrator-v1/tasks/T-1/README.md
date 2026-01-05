@@ -1,5 +1,15 @@
 # T-1 Conversation continuity + resume tokens (Codex-first)
 
+## Metadata
+
+```yaml
+id: T-1
+epic: orchestrator-v1
+stacked_on:
+branch:
+  suggested: rn/orchestrator-v1/T-1-resume-tokens
+```
+
 ## Context
 
 In v0 dogfooding, we frequently **restart** agent runners (e.g. when changing sandbox rules, runner wrapper behavior, or tmux lifecycle). Today, a restart effectively loses the in-harness conversation context unless the user manually resumes it.
@@ -38,4 +48,3 @@ If we later decide to persist a continuation token (harness-specific), it should
 - The UI and CLI can “resume” a prior harness session in a way that is explicit and user-controlled (Codex-first).
 - The system makes continuity boundaries clear: what persists automatically vs what does not.
 - Documentation in the epic explains the tradeoffs and the chosen approach.
-
