@@ -195,7 +195,7 @@ This section captures the v0 plan as revised by the goals in this thread.
 
 ## 7) Task map (v0)
 
-- `epics/harness-interface-v0/tasks/T-0/README.md`: Terminology + model alignment (“Agent program” vs session/transport/driver); sets direction for T-1/T-7.
+- `epics/harness-interface-v0/tasks/T-8/README.md`: Terminology + model alignment (“Agent program” vs session/transport/driver); sets direction for T-1/T-7.
 - `epics/harness-interface-v0/tasks/T-1/README.md`: Harness interface + capability model + GenericHarness (baseline).
 - `epics/harness-interface-v0/tasks/T-7/README.md`: AgentDriver (output → semantic status) plumbing shared by all harness/agent-program implementations.
 - `epics/harness-interface-v0/tasks/T-2/README.md`: Harness identification (infer from command) + user override (UI/CLI/data model).
