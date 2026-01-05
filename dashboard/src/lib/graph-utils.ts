@@ -11,6 +11,21 @@ export type BranchLabel = {
   provisional: boolean
 }
 
+export type SpineResolution = {
+  spineTaskIds: number[]
+  warnings: string[]
+}
+
+export type SpineSplit = {
+  merged: number[]
+  active: number[]
+}
+
+export type ActiveMergeSpineResult = {
+  activeSpineTaskIds: number[]
+  warnings: string[]
+}
+
 export function formatBranchName(
   branchName: string,
   epicSlug?: string | null,
@@ -74,6 +89,78 @@ export function buildTasksMap(tasks: Task[]): Map<number, Task> {
     map.set(task.id, task)
   }
   return map
+}
+
+export function resolveSpineTaskIds(
+  tasksById: Map<number, Task>,
+  leafTaskId: number,
+): SpineResolution {
+  const warnings: string[] = []
+  const visited = new Set<number>()
+
+  const spineLeafToRoot: number[] = [leafTaskId]
+  visited.add(leafTaskId)
+
+  let cursor = leafTaskId
+  while (true) {
+    const task = tasksById.get(cursor)
+    if (!task) {
+      warnings.push(`Could not resolve merge spine: task ${cursor} missing.`)
+      return { spineTaskIds: [leafTaskId], warnings }
+    }
+
+    const parentId = task.parentTaskId ?? null
+    if (parentId === null) {
+      break
+    }
+
+    if (visited.has(parentId)) {
+      warnings.push("Could not resolve merge spine: detected a cycle.")
+      return { spineTaskIds: [leafTaskId], warnings }
+    }
+
+    if (!tasksById.has(parentId)) {
+      warnings.push(
+        `Could not resolve merge spine: missing parent task ${parentId}.`,
+      )
+      return { spineTaskIds: [leafTaskId], warnings }
+    }
+
+    spineLeafToRoot.push(parentId)
+    visited.add(parentId)
+    cursor = parentId
+  }
+
+  spineLeafToRoot.reverse()
+  return { spineTaskIds: spineLeafToRoot, warnings }
+}
+
+export function splitMergedSpinePrefix(
+  tasksById: Map<number, Task>,
+  spineTaskIds: number[],
+): SpineSplit {
+  const merged: number[] = []
+  for (const taskId of spineTaskIds) {
+    const task = tasksById.get(taskId)
+    if (!task || task.state !== "done") {
+      break
+    }
+    merged.push(taskId)
+  }
+  const active = spineTaskIds.slice(merged.length)
+  return { merged, active }
+}
+
+export function computeActiveMergeSpineTaskIds(
+  tasksById: Map<number, Task>,
+  leafTaskId: number,
+): ActiveMergeSpineResult {
+  const { spineTaskIds, warnings } = resolveSpineTaskIds(tasksById, leafTaskId)
+  if (warnings.length > 0) {
+    return { activeSpineTaskIds: [leafTaskId], warnings }
+  }
+  const { active } = splitMergedSpinePrefix(tasksById, spineTaskIds)
+  return { activeSpineTaskIds: active, warnings }
 }
 
 export function buildAgentSessionsByNodeId(

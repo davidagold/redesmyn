@@ -32,6 +32,7 @@ import { queryKeys } from "@/api/queryKeys"
 type SetTaskMergeReadyVariables = {
   taskId: number
   ready: boolean
+  scope?: "task" | "spine"
 }
 
 type StopTaskAgentVariables = {
@@ -87,7 +88,9 @@ export function useSetTaskMergeReadyMutation() {
 
   return useMutation({
     mutationFn: async (variables: SetTaskMergeReadyVariables) => {
-      return setTaskMergeReady(variables.taskId, variables.ready)
+      return setTaskMergeReady(variables.taskId, variables.ready, {
+        scope: variables.scope,
+      })
     },
     onMutate: async (variables) => {
       const now = new Date().toISOString()
@@ -137,7 +140,14 @@ export function useSetTaskMergeReadyMutation() {
         queryClient.setQueryData(entry.key, entry.value)
       }
     },
-    onSuccess: (task) => {
+    onSuccess: (task, variables) => {
+      if (variables.scope === "spine" && variables.ready) {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.epicGraph(task.epicId),
+        })
+        return
+      }
+
       queryClient.setQueryData<EpicGraph>(
         queryKeys.epicGraph(task.epicId),
         (graph) => (graph ? updateTaskInGraph(graph, task) : graph),

@@ -1249,6 +1249,7 @@ export function EpicView() {
             open={!!selectedTask || !!selectedEdge}
             node={selectedTask}
             task={selectedTask}
+            tasksById={tasksById}
             agentSession={
               selectedTask
                 ? (agentSessionsByNodeId.get(selectedTask.id) ?? null)

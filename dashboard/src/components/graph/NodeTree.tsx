@@ -47,6 +47,7 @@ export function NodeTree({
             <TaskCard
               node={node}
               task={task}
+              tasksById={tasksById}
               agentSession={agentSession}
               branchLabel={branchLabel}
               branchLabelProvisional={branchLabelProvisional}

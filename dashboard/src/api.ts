@@ -233,10 +233,11 @@ export async function postSyncToLinear(epic: string): Promise<LinearPushStats> {
 export async function setTaskMergeReady(
   taskId: number,
   ready: boolean,
+  options?: { scope?: "task" | "spine" },
 ): Promise<Task> {
   return requestJson(`/v1/tasks/${taskId}/merge-ready`, {
     method: "POST",
-    body: { ready },
+    body: { ready, ...(options?.scope ? { scope: options.scope } : {}) },
   })
 }
 

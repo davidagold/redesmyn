@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -15,7 +15,13 @@ import {
 } from "@/api/mutations"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
-import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
+import {
+  computeActiveMergeSpineTaskIds,
+  type AgentSession,
+  type GraphNode,
+  type MergeRun,
+  type Task,
+} from "@/lib/graph-utils"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
 import {
   isRunningAgentsConflict,
@@ -40,6 +46,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Switch } from "@/components/ui/switch"
+import {
+  recordMergeReadySpineConfirmResult,
+  shouldShowMergeReadySpineConfirm,
+} from "@/lib/session-flags"
+import {
   ChevronDown,
   ChevronUp,
   ChevronRight,
@@ -61,6 +81,7 @@ import {
 interface TaskCardProps {
   node: GraphNode
   task?: Task
+  tasksById: Map<number, Task>
   agentSession?: AgentSession
   mergeRun?: MergeRun
   blockingMergeRun?: MergeRun
@@ -193,6 +214,7 @@ function agentStatusTooltip(
 export function TaskCard({
   node,
   task,
+  tasksById,
   mergeRun,
   blockingMergeRun,
   agentSession,
@@ -307,6 +329,21 @@ export function TaskCard({
     useState<AllowRunningPrompt | null>(null)
   const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
   const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
+  const [mergeReadyConfirmOpen, setMergeReadyConfirmOpen] = useState(false)
+  const [mergeReadyConfirmCount, setMergeReadyConfirmCount] = useState(0)
+  const [mergeReadyConfirmDontAskAgain, setMergeReadyConfirmDontAskAgain] =
+    useState(false)
+  const [mergeReadySpineNotice, setMergeReadySpineNotice] = useState<
+    string | null
+  >(null)
+
+  useEffect(() => {
+    if (!mergeReadySpineNotice) {
+      return
+    }
+    const id = window.setTimeout(() => setMergeReadySpineNotice(null), 2_000)
+    return () => window.clearTimeout(id)
+  }, [mergeReadySpineNotice])
 
   useEffect(() => {
     if (!blockingMergeRunBlockedRebase) {
@@ -349,6 +386,34 @@ export function TaskCard({
   const agentStatus = agentSession?.status ?? null
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
+  const mergeReadyActiveSpineTaskCount = useMemo(() => {
+    if (taskId === null) {
+      return 0
+    }
+    const { activeSpineTaskIds, warnings } = computeActiveMergeSpineTaskIds(
+      tasksById,
+      taskId,
+    )
+    if (warnings.length > 0) {
+      return 1
+    }
+
+    let count = 0
+    for (const spineTaskId of activeSpineTaskIds) {
+      const spineTask = tasksById.get(spineTaskId) ?? null
+      if (!spineTask || spineTask.state === "done") {
+        continue
+      }
+      if (!spineTask.branchName) {
+        continue
+      }
+      if (spineTask.mergeReadyAt) {
+        continue
+      }
+      count += 1
+    }
+    return Math.max(count, 1)
+  }, [taskId, tasksById])
 
   const quickActionsEnabled =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -431,7 +496,7 @@ export function TaskCard({
     }
   }
 
-  async function handleToggleMergeReady(next: boolean) {
+  async function commitMergeReady(next: boolean, scope?: "task" | "spine") {
     if (taskId === null) {
       return
     }
@@ -444,12 +509,37 @@ export function TaskCard({
     setPendingMerge("ready")
     clearActionError()
     try {
-      await setMergeReadyMutation.mutateAsync({ taskId, ready: next })
+      await setMergeReadyMutation.mutateAsync({ taskId, ready: next, scope })
     } catch (e) {
       setActionErrorFromException("Set merge readiness", e)
     } finally {
       setPendingMerge(null)
     }
+  }
+
+  async function handleToggleMergeReady(next: boolean) {
+    if (!next) {
+      await commitMergeReady(false, "task")
+      return
+    }
+    if (taskId === null) {
+      return
+    }
+
+    const { warnings } = computeActiveMergeSpineTaskIds(tasksById, taskId)
+    if (warnings.length > 0) {
+      setMergeReadySpineNotice(warnings[0] ?? "Could not resolve merge spine.")
+      await commitMergeReady(true, "task")
+      return
+    }
+
+    if (shouldShowMergeReadySpineConfirm(mergeReadyActiveSpineTaskCount)) {
+      setMergeReadyConfirmCount(mergeReadyActiveSpineTaskCount)
+      setMergeReadyConfirmOpen(true)
+      return
+    }
+
+    await commitMergeReady(true, "spine")
   }
 
   async function handleMerge({ cascade }: { cascade: boolean }) {
@@ -983,22 +1073,35 @@ export function TaskCard({
                 </TooltipContent>
               </Tooltip>
               <DropdownMenuSeparator />
-              <DropdownMenuCheckboxItem
-                checked={mergeReady}
-                disabled={
-                  !canMerge ||
-                  pendingMerge !== null ||
-                  canResumeMerge ||
-                  (!task?.branchName && !mergeReady)
-                }
-                closeOnClick={false}
-                onClick={(e) => e.stopPropagation()}
-                onCheckedChange={(checked) =>
-                  void handleToggleMergeReady(checked)
-                }
-              >
-                Ready to merge
-              </DropdownMenuCheckboxItem>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuCheckboxItem
+                      {...triggerProps}
+                      checked={mergeReady}
+                      disabled={
+                        !canMerge ||
+                        pendingMerge !== null ||
+                        canResumeMerge ||
+                        (!task?.branchName && !mergeReady)
+                      }
+                      closeOnClick={false}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        triggerProps.onClick?.(e)
+                      }}
+                      onCheckedChange={(checked) =>
+                        void handleToggleMergeReady(checked)
+                      }
+                    >
+                      Ready to merge
+                    </DropdownMenuCheckboxItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  Marks this task + unmerged ancestors ready to merge.
+                </TooltipContent>
+              </Tooltip>
               <DropdownMenuSeparator />
               {canResumeMerge ? (
                 <>
@@ -1218,12 +1321,40 @@ export function TaskCard({
       </CardContent>
       {actionError ||
       shouldShowResumeButton ||
-      blockingMergeRunBlockedRebase ? (
+      blockingMergeRunBlockedRebase ||
+      mergeReadySpineNotice ? (
         <div
           className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-full space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
+          {mergeReadySpineNotice ? (
+            <Alert variant="amber" className="gap-2 shadow-lg">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AlertTriangle className="size-3.5 text-amber-400" />
+                  <div className="text-xs font-medium text-foreground">
+                    Merge spine warning
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Dismiss warning"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setMergeReadySpineNotice(null)
+                  }}
+                >
+                  <X className="size-3" />
+                </Button>
+              </div>
+              <div className="text-xs text-foreground/80">
+                {mergeReadySpineNotice}
+              </div>
+            </Alert>
+          ) : null}
           {actionError ? (
             <Alert variant="destructive" className="gap-2 shadow-lg">
               <div className="flex items-start justify-between gap-2">
@@ -1562,6 +1693,66 @@ export function TaskCard({
         }}
         onProceed={() => void confirmAllowRunning()}
       />
+      <AlertDialog
+        open={mergeReadyConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setMergeReadyConfirmOpen(false)
+          }
+        }}
+      >
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark merge-ready spine?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark{" "}
+              <span className="font-medium text-foreground/90">
+                {mergeReadyConfirmCount}
+              </span>{" "}
+              task{mergeReadyConfirmCount === 1 ? "" : "s"} ready to merge.
+              <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
+                <div className="text-xs text-muted-foreground">
+                  Don&apos;t ask again (this session)
+                </div>
+                <Switch
+                  checked={mergeReadyConfirmDontAskAgain}
+                  onCheckedChange={setMergeReadyConfirmDontAskAgain}
+                />
+              </div>
+              {mergeReadySpineNotice ? (
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {mergeReadySpineNotice}
+                </div>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button
+              variant="outline"
+              disabledReason={pendingMerge !== null ? "Action in progress" : null}
+              onClick={(e) => {
+                e.preventDefault()
+                setMergeReadyConfirmOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <AlertDialogAction
+              disabledReason={pendingMerge !== null ? "Action in progress" : null}
+              onClick={(e) => {
+                e.preventDefault()
+                recordMergeReadySpineConfirmResult({
+                  suppressFuture: mergeReadyConfirmDontAskAgain,
+                })
+                setMergeReadyConfirmOpen(false)
+                void commitMergeReady(true, "spine")
+              }}
+            >
+              Mark ready
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }

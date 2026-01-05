@@ -11,6 +11,7 @@ import {
 export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
   task?: Task
+  tasksById: Map<number, Task>
   mergeRun?: MergeRun
   blockingMergeRun?: MergeRun
   agentSession?: AgentSession
@@ -32,6 +33,7 @@ export function FlowBranchNode({
   const {
     node,
     task,
+    tasksById,
     mergeRun,
     blockingMergeRun,
     agentSession,
@@ -61,6 +63,7 @@ export function FlowBranchNode({
       <TaskCard
         node={node}
         task={task}
+        tasksById={tasksById}
         agentSession={agentSession}
         mergeRun={mergeRun}
         blockingMergeRun={blockingMergeRun}

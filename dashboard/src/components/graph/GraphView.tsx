@@ -318,7 +318,7 @@ export function GraphView({
     try {
       const results = await Promise.allSettled(
         tasksToMark.map((taskId) =>
-          setMergeReady.mutateAsync({ taskId, ready: true }),
+          setMergeReady.mutateAsync({ taskId, ready: true, scope: "spine" }),
         ),
       )
 
