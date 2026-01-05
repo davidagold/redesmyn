@@ -8,8 +8,8 @@ stacked_on: T-5
 node:
   branch: rn/linear-integration/T-6-t-6-linear-automation-push-local-status-linear-sync-indicato
 linear:
-  issue_id:
-  identifier:
+  issue_id: b4e4b9bc-9357-4f67-86d5-df5abacdb4be
+  identifier: RED-16
 ```
 
 ## Brief (local)
