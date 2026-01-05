@@ -11,6 +11,7 @@
 - Leverage existing types to keep code simple (avoid overly defensive type-guards / `getattr`-style access when strong typing is available).
 - Be thoughtful about design and architecture: favor simple, maintainable, composable building blocks and avoid very long functions; when a function has multiple distinct steps, split into helpers whose names document the flow and act as single sources of truth.
 - When writing tests, follow `tests/README.md`.
+- Keep Alembic migrations linear on `main`: before merging a branch that adds migrations, rebase/renumber so the new revision points at the current single head (avoid adding Alembic merge revisions except as a last resort).
 
 ## Data Model Conventions
 
