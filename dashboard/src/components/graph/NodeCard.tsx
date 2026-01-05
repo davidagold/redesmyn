@@ -289,10 +289,10 @@ export function NodeCard({
 
     const normalized = linearStateType?.trim().toLowerCase() ?? ""
     if (normalized === "unstarted") {
-      return "border-muted-foreground/60 border-dashed"
+      return "border-foreground/10 border-dashed"
     }
     if (normalized === "started") {
-      return "border-muted-foreground/60"
+      return "border-foreground/10"
     }
     if (normalized === "blocked") {
       return "border-amber-400/80"
