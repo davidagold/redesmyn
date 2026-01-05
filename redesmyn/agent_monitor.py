@@ -4,7 +4,6 @@ import asyncio
 import os
 import subprocess
 import shlex
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import desc, select
