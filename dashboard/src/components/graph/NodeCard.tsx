@@ -1072,7 +1072,6 @@ export function NodeCard({
         <div className="text-sm font-medium leading-tight">
           {task?.title ?? "—"}
         </div>
-
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
           {agentSession ? (
             <div className="flex flex-wrap items-end justify-start gap-2">
@@ -1175,27 +1174,16 @@ export function NodeCard({
                   </Tooltip>
                 </div>
 
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <div
-                        {...triggerProps}
-                        className={cn(
-                          "break-words text-xs text-foreground/80",
-                          actionErrorExpanded
-                            ? "whitespace-pre-wrap"
-                            : "line-clamp-2",
-                          triggerProps.className,
-                        )}
-                      >
-                        {actionError.summary}
-                      </div>
-                    )}
-                  />
-                  <TooltipContent side="top" sideOffset={8}>
-                    {actionError.summary}
-                  </TooltipContent>
-                </Tooltip>
+                <div
+                  className={cn(
+                    "break-words text-xs text-foreground/80",
+                    actionErrorExpanded
+                      ? "whitespace-pre-wrap"
+                      : "line-clamp-2",
+                  )}
+                >
+                  {actionError.summary}
+                </div>
 
                 {mergeRunBlockedRebase ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
