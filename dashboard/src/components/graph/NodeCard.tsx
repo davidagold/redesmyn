@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentProps } from "react"
+import { useEffect, useRef, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -273,6 +273,21 @@ export function NodeCard({
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
+  const mergeReadyRequestInFlightRef = useRef(false)
+  const mergeReadyRefreshTimersRef = useRef<number[]>([])
+
+  function clearMergeReadyRefreshTimers() {
+    for (const timer of mergeReadyRefreshTimersRef.current) {
+      window.clearTimeout(timer)
+    }
+    mergeReadyRefreshTimersRef.current = []
+  }
+
+  useEffect(() => {
+    return () => {
+      clearMergeReadyRefreshTimers()
+    }
+  }, [])
   const expectedLinearStateType =
     task === undefined
       ? null
@@ -475,10 +490,15 @@ export function NodeCard({
     if (next && !task?.branchName) {
       return
     }
+    if (mergeReadyRequestInFlightRef.current) {
+      return
+    }
     const previous = mergeReady
     setPendingMerge("ready")
     setMergeReady(next)
     clearActionError()
+    clearMergeReadyRefreshTimers()
+    mergeReadyRequestInFlightRef.current = true
     try {
       await setTaskMergeReady(taskId, next)
       if (actionsMenuOpen) {
@@ -486,10 +506,19 @@ export function NodeCard({
       } else {
         onRequestRefresh()
       }
+      if (next) {
+        mergeReadyRefreshTimersRef.current.push(
+          window.setTimeout(() => onRequestRefresh(), 1250),
+        )
+        mergeReadyRefreshTimersRef.current.push(
+          window.setTimeout(() => onRequestRefresh(), 3500),
+        )
+      }
     } catch (e) {
       setMergeReady(previous)
       setActionErrorFromException("Set merge readiness", e)
     } finally {
+      mergeReadyRequestInFlightRef.current = false
       setPendingMerge(null)
     }
   }

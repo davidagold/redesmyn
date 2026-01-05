@@ -128,7 +128,6 @@ async def maybe_push_task_merge_ready_to_linear(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     task_id: int,
-    timeout_s: float = 15.0,
 ) -> None:
     step = "init"
 
@@ -231,7 +230,6 @@ async def maybe_push_task_merge_ready_to_linear(
     log.info(
         "linear.automation.push_merge_ready.started",
         task_id=task_id,
-        timeout_s=timeout_s,
     )
     try:
         await _run()
