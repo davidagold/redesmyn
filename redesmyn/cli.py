@@ -1767,12 +1767,12 @@ async def _sync_from_local(
                         f"Ambiguous branch {branch!r}; assigned to multiple tasks ({existing.id} and {task.id})"
                     )
 
+                _maybe_rename_task_worktree_branch(task=task, desired_branch=branch)
                 if task.branch_name != branch:
                     if task.branch_name is None and branch is not None:
                         stats.branches_created += 1
                     else:
                         stats.branches_updated += 1
-                    _maybe_rename_task_worktree_branch(task=task, desired_branch=branch)
                     task.branch_name = branch
                     if task.id not in created_task_ids:
                         updated_task_ids.add(task.id)

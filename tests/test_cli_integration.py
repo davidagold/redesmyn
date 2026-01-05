@@ -141,6 +141,54 @@ def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
 
 
 @pytest.mark.integration
+def test_sync_from_local_repairs_worktree_branch_mismatch_without_db_change(
+    tmp_path: Path,
+) -> None:
+    repo = ScenarioRepo.init(tmp_path)
+    epic_slug = "cli-epic"
+    write_docs(
+        repo_root=repo.repo_root,
+        epic_slug=epic_slug,
+        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+    )
+    repo.git(["add", "-A"], cwd=repo.repo_root)
+    repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
+
+    init_proc = run_rn(repo.repo_root, ["init"])
+    assert init_proc.returncode == 0, init_proc.stderr
+
+    proc = run_rn(repo.repo_root, ["sync", "--from", "local"])
+    assert proc.returncode == 0, proc.stderr
+
+    epic_db_path = db_path(repo.repo_root)
+    task = db_task_row(
+        epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
+    )
+    assert task.branch_name == "task-1"
+
+    shell_proc = run_rn(repo.repo_root, ["shell", "--task-id", str(task.id), "--print"])
+    assert shell_proc.returncode == 0, shell_proc.stderr
+    worktree_path = Path(shell_proc.stdout.strip())
+
+    repo.git(["branch", "-m", "mismatched"], cwd=worktree_path)
+    assert (
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+        == "mismatched"
+    )
+
+    proc2 = run_rn(repo.repo_root, ["sync", "--from", "local"])
+    assert proc2.returncode == 0, proc2.stderr
+
+    task2 = db_task_row(
+        epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
+    )
+    assert task2.branch_name == "task-1"
+    assert (
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path) == "task-1"
+    )
+
+
+@pytest.mark.integration
 def test_shell_no_create_errors_when_worktree_missing(tmp_path: Path) -> None:
     repo = ScenarioRepo.init(tmp_path)
     epic_slug = "cli-epic"
