@@ -46,6 +46,10 @@ async def maybe_push_task_state_to_linear(
         return
 
     async def _run() -> None:
+        issue_id = task.linear_issue_id
+        if issue_id is None:
+            return
+
         creds = await _maybe_require_fresh_linear_credentials(ctx, session=session)
         if creds is None:
             return
@@ -55,7 +59,7 @@ async def maybe_push_task_state_to_linear(
         if label is None:
             return
 
-        issue = await fetch_issue(client, issue_id=task.linear_issue_id)
+        issue = await fetch_issue(client, issue_id=issue_id)
         if label.id not in issue.label_ids:
             return
 

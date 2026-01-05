@@ -580,6 +580,10 @@ async def ensure_task_worktree(
         base_ref = base_task.branch_name
         break
 
+    branch_name = task.branch_name
+    if branch_name is None:
+        raise RuntimeError("Task branch_name missing after allocation")
+
     existing_path = find_existing_worktree_path_for_branch(
         ctx.repo_root, branch=branch_name
     )
