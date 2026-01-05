@@ -6,6 +6,16 @@ This file is the canonical “control doc” for the **Harness Interface v0** ep
 
 You were looking for **successor** (or “replacement epic”) rather than “supersessor”.
 
+## Glossary (v0)
+
+- **Agent**: the interactive program being driven (Codex, Claude Code, a generic CLI).
+- **Agent session**: a single run instance of the agent for a task (attach/log pointers + runtime status).
+- **Transport**: tmux/pty/process IO (send text/interrupt, collect output/logs).
+- **Interpreter**: consumes output and produces semantic state (ready/turn complete) + capability declaration.
+- **Driver**: long-running loop that owns an interpreter for a session, persists/broadcasts semantic status, and issues safe high-level operations via transport.
+
+Rationale: the UI and workflows are session-first; the DB `Agent` identity object is legacy/internal; and “harness” reads as a test/process harness, so v0 reserves “transport/runtime” for tmux/pty concerns and uses “Agent” for program semantics.
+
 ## Metadata
 
 ```yaml
