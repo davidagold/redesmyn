@@ -19,7 +19,7 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -539,12 +539,27 @@ async def _append_event(
     session.add(event)
     await session.commit()
     await session.refresh(event)
-    return EventResponse.model_validate(event, from_attributes=True)
+    raw_data = event.data if isinstance(event.data, dict) else {}
+    payload_dict: dict[str, Any] = {
+        "id": event.id,
+        "event_type": event.event_type,
+        "created_at": event.created_at,
+        "data": {**raw_data, "type": event.event_type},
+    }
+    try:
+        return EventResponse.model_validate(payload_dict)
+    except ValidationError:
+        payload_dict["data"] = {
+            "type": "unknown",
+            "event_type": event.event_type,
+            "data": raw_data,
+        }
+        return EventResponse.model_validate(payload_dict)
 
 
 async def _broadcast_event(app: App, event: EventResponse) -> None:
     await app.state.event_hub.publish(
-        {"type": "event", "event": event.model_dump(by_alias=True)}
+        {"type": "event", "event": event.model_dump(by_alias=True, mode="json")}
     )
 
 
@@ -557,6 +572,20 @@ def create_app(*, settings: RedesmynSettings | None = None) -> App:
     app.include_router(root)
     app.include_router(v1)
     return app
+
+
+def _utc_aware(value: datetime) -> datetime:
+    # SQLite commonly returns naive datetimes even when columns are declared
+    # timezone-aware; treat naive DB values as UTC for comparisons.
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def _should_update_last_seen(
+    *, last_seen_at: datetime | None, now: datetime, min_interval: timedelta
+) -> bool:
+    if last_seen_at is None:
+        return True
+    return (now - _utc_aware(last_seen_at)) >= min_interval
 
 
 @v1.get("/epics", response_model=list[EpicResponse])
@@ -2120,9 +2149,10 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         host = await session.scalar(
                             select(Host).where(Host.host_key == host_key)
                         )
-                        if host is not None and (
-                            host.last_seen_at is None
-                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        if host is not None and _should_update_last_seen(
+                            last_seen_at=host.last_seen_at,
+                            now=now,
+                            min_interval=timedelta(seconds=30),
                         ):
                             host.last_seen_at = now
                             await session.commit()
@@ -2140,9 +2170,10 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         host = await session.scalar(
                             select(Host).where(Host.host_key == host_key)
                         )
-                        if host is not None and (
-                            host.last_seen_at is None
-                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        if host is not None and _should_update_last_seen(
+                            last_seen_at=host.last_seen_at,
+                            now=now,
+                            min_interval=timedelta(seconds=30),
                         ):
                             host.last_seen_at = now
 
@@ -2194,9 +2225,10 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                         host = await session.scalar(
                             select(Host).where(Host.host_key == host_key)
                         )
-                        if host is not None and (
-                            host.last_seen_at is None
-                            or (now - host.last_seen_at) >= timedelta(seconds=30)
+                        if host is not None and _should_update_last_seen(
+                            last_seen_at=host.last_seen_at,
+                            now=now,
+                            min_interval=timedelta(seconds=30),
                         ):
                             host.last_seen_at = now
                             await session.commit()
