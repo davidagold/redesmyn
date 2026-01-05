@@ -281,6 +281,12 @@ export function NodeCard({
         : mergeReady
           ? "started"
           : linearStateTypeFromTaskState(task.state)
+  const linearStateMatches =
+    task !== undefined &&
+    linearIssueId !== null &&
+    linearStateType !== null &&
+    expectedLinearStateType !== null &&
+    linearStateType.toLowerCase() === expectedLinearStateType.toLowerCase()
   const linearStateMismatch =
     task !== undefined &&
     linearIssueId !== null &&
@@ -291,7 +297,7 @@ export function NodeCard({
     if (task?.state === "done") {
       return "border-green-950/80"
     }
-    if (mergeReady && !linearStateMismatch) {
+    if (mergeReady && linearStateMatches) {
       return "border-emerald-400/70"
     }
 
@@ -891,6 +897,7 @@ export function NodeCard({
                       : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
                     linearPillBorderClass,
                     linearObservedOld ? "border-opacity-70" : null,
+                    linearStateMismatch ? "ring-1 ring-amber-300/25" : null,
                   )}
                   aria-label={linearPillLabel}
                   onClick={() => {
@@ -903,12 +910,6 @@ export function NodeCard({
                 >
                   <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
                     <LinearIcon className="size-3.5 text-muted-foreground" />
-                    {linearStateMismatch ? (
-                      <span
-                        className="absolute left-1 top-1 h-px w-5 rotate-[-45deg] bg-foreground/60"
-                        aria-label="Out of sync with local"
-                      />
-                    ) : null}
                   </span>
                   <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
                     {linearPillLabel}
