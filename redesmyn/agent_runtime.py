@@ -492,13 +492,13 @@ def harness_profile_id_for_definition(
 _TASK_TITLE_ID_RE = re.compile(r"^(T-\d+)\b")
 
 
-class _TaskBranchNameInput(Protocol):
+class _BranchNameTask(Protocol):
     id: int
     title: str
     linear_identifier: str | None
 
 
-def _default_branch_name_for_task(*, epic_slug: str, task: _TaskBranchNameInput) -> str:
+def _default_branch_name_for_task(*, epic_slug: str, task: _BranchNameTask) -> str:
     identifier = task.linear_identifier
     if not identifier:
         match = _TASK_TITLE_ID_RE.match(task.title.strip())
