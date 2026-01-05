@@ -876,7 +876,7 @@ export function NodeCard({
                   {...tooltipTriggerProps}
                   type="button"
                   className={cn(
-                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border-2 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
                     "transition-colors duration-200",
                     actionsMenuOpen
                       ? "bg-accent/40"
