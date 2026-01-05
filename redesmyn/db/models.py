@@ -24,6 +24,11 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, composite, mapped_column
 
+from redesmyn.agent_interface.v0 import (
+    AgentCapabilities,
+    AgentSemanticStatus,
+    ExternalSessionNone,
+)
 from redesmyn.domain.enums import (
     AgentStatus,
     BlockMode,
@@ -43,6 +48,18 @@ class Base(DeclarativeBase):
 
 # SQLite uses JSON; Postgres uses JSONB via variant.
 JSON_TYPE = JSON().with_variant(JSONB, "postgresql")
+
+
+def _default_agent_capabilities() -> dict[str, Any]:
+    return AgentCapabilities(can_send_text=True).model_dump(mode="python")
+
+
+def _default_agent_status() -> dict[str, Any]:
+    return AgentSemanticStatus().model_dump(mode="python")
+
+
+def _default_external_session_ref() -> dict[str, Any]:
+    return ExternalSessionNone().model_dump(mode="python")
 
 
 def _enum_type(enum_cls: type[StrEnum], name: str) -> SAEnum:
@@ -361,6 +378,21 @@ class AgentSession(Base):
     resolved_profile: Mapped[dict[str, Any] | None] = mapped_column(
         JSON_TYPE,
         nullable=True,  # Pydantic: HarnessProfileDefinition
+    )
+    agent_capabilities: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: AgentCapabilities
+        default=_default_agent_capabilities,
+    )
+    agent_status: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: AgentSemanticStatus
+        default=_default_agent_status,
+    )
+    external_session_ref: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: ExternalSessionRef
+        default=_default_external_session_ref,
     )
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

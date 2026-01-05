@@ -7,6 +7,7 @@ from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from redesmyn.domain.enums import (
     AgentStatus,
+    AgentTurnState,
     BlockMode,
     BlockPolicy,
     CommandState,
@@ -61,6 +62,45 @@ class TaskResponse(ApiResponse):
     updated_at: datetime
 
 
+class AgentCapabilitiesResponse(ApiResponse):
+    can_detect_ready_for_input: bool = False
+    can_detect_turn_complete: bool = False
+    can_send_text: bool = False
+    can_interrupt: bool = False
+    can_receive_notifications: bool = False
+    can_resume_by_id: bool = False
+    can_continue_in_cwd: bool = False
+    can_stream_semantic_events: bool = False
+
+
+class AgentSemanticStatusResponse(ApiResponse):
+    turn_state: AgentTurnState = AgentTurnState.Unknown
+    detail: str | None = None
+
+
+class ExternalSessionNoneResponse(ApiResponse):
+    type: Literal["none"] = "none"
+
+
+class ExternalSessionCodexResponse(ApiResponse):
+    type: Literal["codex_thread"] = "codex_thread"
+    thread_id: str
+    turn_id: str | None = None
+
+
+class ExternalSessionClaudeResponse(ApiResponse):
+    type: Literal["claude_session"] = "claude_session"
+    session_id: str
+
+
+ExternalSessionRefResponse = Annotated[
+    ExternalSessionNoneResponse
+    | ExternalSessionCodexResponse
+    | ExternalSessionClaudeResponse,
+    Field(discriminator="type"),
+]
+
+
 class AgentSessionResponse(ApiResponse):
     id: int
     task_id: int
@@ -68,6 +108,9 @@ class AgentSessionResponse(ApiResponse):
     status: AgentStatus
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None
+    agent_capabilities: AgentCapabilitiesResponse
+    agent_status: AgentSemanticStatusResponse
+    external_session_ref: ExternalSessionRefResponse
     started_at: datetime | None = None
     ended_at: datetime | None = None
 

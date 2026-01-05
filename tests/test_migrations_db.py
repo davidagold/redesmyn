@@ -130,6 +130,9 @@ def test_migrations_remove_db_agent_construct(tmp_path: Path) -> None:
     assert session_cols["host_id"]["nullable"] is True
     assert session_cols["harness_profile_id"]["nullable"] is True
     assert session_cols["resolved_profile"]["nullable"] is True
+    assert session_cols["agent_capabilities"]["nullable"] is False
+    assert session_cols["agent_status"]["nullable"] is False
+    assert session_cols["external_session_ref"]["nullable"] is False
 
     with engine.begin() as conn:
         # 0014 should have preserved the session row and filled task_id.

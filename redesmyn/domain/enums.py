@@ -29,6 +29,14 @@ class AgentStatus(StrEnum):
     Error = "error"
 
 
+class AgentTurnState(StrEnum):
+    Unknown = "unknown"
+    Ready = "ready"
+    Busy = "busy"
+    Blocked = "blocked"
+    Completed = "completed"
+
+
 class HarnessProfileSource(StrEnum):
     Builtin = "builtin"
     User = "user"

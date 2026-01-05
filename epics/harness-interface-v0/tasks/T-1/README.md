@@ -1,4 +1,4 @@
-# T-1 Agent interface + capabilities + GenericAgent
+# T-1 Agent interface + capabilities + ShellAgent
 
 ## Metadata
 
@@ -30,7 +30,7 @@ Define a minimal, strongly typed v0 agent interface, including:
 
 - a semantic status model (agent turn + readiness)
 - an explicit capability declaration
-- a GenericAgent interface implementation that supports any command with only baseline capabilities
+- a ShellAgent interface implementation that supports any command with only baseline capabilities
 
 This interface should be used for publishing status updates and for issuing higher-level commands (e.g. “send message”) that are safe to offer in the UI.
 
@@ -60,7 +60,7 @@ The agent implementation may *consume* session output and may request that text 
 We need runtime introspection for both UI and server logic (especially across daemon ↔ control plane boundaries).
 Capabilities should be a small, explicit data structure; do not rely on “method presence”.
 
-### 3) GenericAgent exists so “any process” is still usable
+### 3) ShellAgent exists so “any process” is still usable
 
 Users must be able to run arbitrary commands.
 If the agent kind is unknown (or user chooses Generic), we still provide:
@@ -79,7 +79,7 @@ Advanced features (like conflict auto-assist) must only be enabled when the sele
 We need a small vocabulary that is stable:
 
 - `AgentTurnState` (example):
-  - `unknown` (GenericAgent / insufficient signals)
+- `unknown` (ShellAgent / insufficient signals)
   - `ready` (safe to send input)
   - `busy` (actively working)
   - `blocked` (waiting for user; or needs attention)
@@ -136,6 +136,6 @@ Keep this minimal; avoid an over-engineered plugin framework.
 ## Acceptance criteria
 
 - There is a strongly typed agent interface and capability model usable from both local and daemon execution paths.
-- GenericAgent implementation exists and supports arbitrary commands without assuming agent-specific semantics.
+- ShellAgent implementation exists and supports arbitrary commands without assuming agent-specific semantics.
 - Status published to the UI can represent “turn complete” vs “unknown” distinctly (even if Generic remains “unknown”).
 - The interface is designed so Codex and Claude Code implementations can be added without changing callers.

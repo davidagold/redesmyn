@@ -95,6 +95,8 @@ from redesmyn.runner_backend import (
 from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.schemas.core import (
     ApiStatusResponse,
+    AgentCapabilitiesResponse,
+    AgentSemanticStatusResponse,
     AgentSessionResponse,
     AttachInfoResponse,
     BlockScopeResponse,
@@ -109,6 +111,7 @@ from redesmyn.schemas.core import (
     HarnessProfileUpsertRequest,
     HostResponse,
     HostUpsertRequest,
+    ExternalSessionRefResponse,
     LinearStatusResponse,
     LinearPushStatsResponse,
     MergeRunResumeRequest,
@@ -685,6 +688,15 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         resolved_profile=TypeAdapter(
                             HarnessProfileDefinitionResponse | None
                         ).validate_python(session_row.resolved_profile),
+                        agent_capabilities=TypeAdapter(
+                            AgentCapabilitiesResponse
+                        ).validate_python(session_row.agent_capabilities),
+                        agent_status=TypeAdapter(
+                            AgentSemanticStatusResponse
+                        ).validate_python(session_row.agent_status),
+                        external_session_ref=TypeAdapter(
+                            ExternalSessionRefResponse
+                        ).validate_python(session_row.external_session_ref),
                         started_at=session_row.started_at,
                         ended_at=session_row.ended_at,
                     )
