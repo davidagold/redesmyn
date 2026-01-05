@@ -5,6 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { setTaskMergeReady } from "@/api"
 import { cn } from "@/lib/utils"
 import {
   Position,
@@ -278,6 +279,7 @@ export function GraphView({
   const [viewportAnimation, setViewportAnimation] =
     useState<ViewportAnimation | null>(null)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
+  const [bulkMergeReadyPending, setBulkMergeReadyPending] = useState(false)
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
   const [selectionBarVisible, setSelectionBarVisible] = useState(false)
   const selectionBarHideTimerRef = useRef<number | null>(null)
@@ -466,6 +468,77 @@ export function GraphView({
 
     return [...taskIds].sort((a, b) => a - b)
   }, [agentSessionsByNodeId, nodesById, selectedNodeIds, tasksById])
+
+  const selectedMergeReadyTaskIds = useMemo(() => {
+    const taskIds = new Set<number>()
+
+    for (const selectedNodeId of selectedNodeIds) {
+      const task = tasksById.get(selectedNodeId) ?? null
+      if (!task || task.state === "done") {
+        continue
+      }
+      if (task.mergeReadyAt) {
+        continue
+      }
+      taskIds.add(task.id)
+    }
+
+    return [...taskIds].sort((a, b) => a - b)
+  }, [selectedNodeIds, tasksById])
+
+  const markReadyDisabledReason = useMemo(() => {
+    if (bulkMergeReadyPending) {
+      return "Saving…"
+    }
+    if (selectedMergeReadyTaskIds.length === 0) {
+      return "No selected tasks need marking ready"
+    }
+    return null
+  }, [bulkMergeReadyPending, selectedMergeReadyTaskIds.length])
+
+  async function handleBulkMarkReady() {
+    if (markReadyDisabledReason) {
+      return
+    }
+
+    setBulkMergeReadyPending(true)
+    setSelectionNotice(null)
+    const tasksToMark = selectedMergeReadyTaskIds
+    const selectedCount = selectedNodeIds.size
+
+    try {
+      const results = await Promise.allSettled(
+        tasksToMark.map((taskId) => setTaskMergeReady(taskId, true)),
+      )
+
+      const failures: PromiseRejectedResult[] = []
+      for (const result of results) {
+        if (result.status === "rejected") {
+          failures.push(result)
+        }
+      }
+
+      if (failures.length > 0) {
+        const first = failures[0]?.reason
+        const message = first instanceof Error ? first.message : String(first)
+        const succeeded = tasksToMark.length - failures.length
+        setSelectionNotice(
+          succeeded > 0
+            ? `Marked ${succeeded}/${tasksToMark.length} ready; ${failures.length} failed: ${message}`
+            : `Mark Ready failed (${failures.length}/${tasksToMark.length}): ${message}`,
+        )
+      } else {
+        setSelectionNotice(
+          tasksToMark.length === selectedCount
+            ? `Marked ${tasksToMark.length} ready`
+            : `Marked ${tasksToMark.length} of ${selectedCount} selected ready`,
+        )
+      }
+    } finally {
+      setBulkMergeReadyPending(false)
+      onRequestRefresh?.()
+    }
+  }
 
   const trunkMarks = useMemo(() => {
     if (!trunk || !trunk.baseSha) {
@@ -1452,6 +1525,40 @@ export function GraphView({
                     <TooltipContent side="bottom" sideOffset={10}>
                       Copy a tmux command to attach (sequentially) to running
                       selected agents
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {markReadyDisabledReason ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-none border-0 border-l border-border/60"
+                    onClick={() => void handleBulkMarkReady()}
+                    disabledReason={markReadyDisabledReason}
+                  >
+                    Mark Ready
+                  </Button>
+                ) : (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <Button
+                          {...triggerProps}
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "rounded-none border-0 border-l border-border/60",
+                            triggerProps.className,
+                          )}
+                          onClick={() => void handleBulkMarkReady()}
+                        >
+                          Mark Ready
+                        </Button>
+                      )}
+                    />
+                    <TooltipContent side="bottom" sideOffset={10}>
+                      Mark {selectedMergeReadyTaskIds.length} of{" "}
+                      {selectedNodeIds.size} selected task(s) as ready to merge
                     </TooltipContent>
                   </Tooltip>
                 )}
