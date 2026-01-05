@@ -20,6 +20,37 @@ export function formatBranchName(
     : branchName
 }
 
+function _slugifyBranchSegment(raw: string): string {
+  const collapsed = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return collapsed
+}
+
+export function displayBranchLabel(
+  node: GraphNode,
+  epicSlug?: string | null,
+): { label: string provisional: boolean } {
+  if (node.branchName) {
+    return {
+      label: formatBranchName(node.branchName, epicSlug),
+      provisional: false,
+    }
+  }
+
+  const title = node.title ?? ""
+  const prefixMatch = title.match(/^(T-\\d+)\\s+(.*)$/)
+  const identifier = prefixMatch?.[1] ?? `task-${node.id}`
+  const titleRemainder = (prefixMatch?.[2] ?? title).trim()
+  const slug = _slugifyBranchSegment(titleRemainder)
+  const short = (slug.slice(0, 60).replace(/-+$/g, "") || "task").trim()
+
+  return { label: `${identifier}-${short}`, provisional: true }
+}
+
 export function makeEdgeId(fromNodeId: number, toNodeId: number): string {
   return `edge:${fromNodeId}:${toNodeId}`
 }

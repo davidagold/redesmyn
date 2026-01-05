@@ -1,6 +1,6 @@
 import { NodeCard } from "./NodeCard"
 import {
-  formatBranchName,
+  displayBranchLabel,
   type AgentSession,
   type GraphNode,
   type Task,
@@ -38,7 +38,8 @@ export function NodeTree({
       {nodes.map((node) => {
         const agentSession = agentSessionsByNodeId.get(node.id) ?? undefined
         const task = tasksById.get(node.id) ?? undefined
-        const branchLabel = formatBranchName(node.branchName ?? "", epicSlug)
+        const { label: branchLabel, provisional: branchLabelProvisional } =
+          displayBranchLabel(node, epicSlug)
         const children = childrenByParent.get(node.id) ?? []
 
         return (
@@ -48,6 +49,7 @@ export function NodeTree({
               task={task}
               agentSession={agentSession}
               branchLabel={branchLabel}
+              branchLabelProvisional={branchLabelProvisional}
               harnessCommand={harnessCommand}
               detach={detach}
               stackProjectionsFresh={stackProjectionsFresh}

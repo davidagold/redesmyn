@@ -66,6 +66,7 @@ interface NodeCardProps {
   blockingMergeRun?: MergeRun
   activity?: NodeActivity
   branchLabel: string
+  branchLabelProvisional?: boolean
   gitMutationsDisabledReason?: string | null
   stackProjectionsFresh: boolean
   harnessCommand: string
@@ -175,6 +176,7 @@ export function NodeCard({
   agentSession,
   activity,
   branchLabel,
+  branchLabelProvisional = false,
   gitMutationsDisabledReason,
   stackProjectionsFresh,
   harnessCommand,
@@ -975,6 +977,7 @@ export function NodeCard({
                   {...triggerProps}
                   className={cn(
                     "min-w-0 truncate font-mono text-xs leading-none text-muted-foreground",
+                    branchLabelProvisional ? "opacity-60" : null,
                     triggerProps.className,
                   )}
                 >
@@ -983,7 +986,9 @@ export function NodeCard({
               )}
             />
             <TooltipContent side="bottom" sideOffset={10}>
-              {node.branchName ?? branchLabel}
+              {branchLabelProvisional
+                ? `Branch not created yet: ${branchLabel}`
+                : (node.branchName ?? branchLabel)}
             </TooltipContent>
           </Tooltip>
           <div className="flex items-center gap-1">
