@@ -1,7 +1,7 @@
 """Remove DB Agent construct.
 
-Revision ID: 0014_remove_db_agent_construct
-Revises: 0013_tasks_merge_ready_requires_branch
+Revision ID: 0015_remove_db_agent_construct
+Revises: 0014_task_linear_state_cache
 Create Date: 2026-01-05
 """
 
@@ -12,8 +12,8 @@ import json
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0014_remove_db_agent_construct"
-down_revision = "0013_tasks_merge_ready_requires_branch"
+revision = "0015_remove_db_agent_construct"
+down_revision = "0014_task_linear_state_cache"
 branch_labels = None
 depends_on = None
 
