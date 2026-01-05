@@ -58,3 +58,8 @@ Exact flow can be adjusted, but it should cover wiring across:
 
 - One Playwright test runs locally with a single command (documented in this task).
 - The test is stable (no flaky sleeps; use waits for explicit conditions).
+
+## Running locally
+
+- Build prerequisites (once): `just install`
+- Run the E2E test: `just e2e`

@@ -31,6 +31,13 @@ check:
 test:
     uv run pytest
 
+e2e:
+    uv sync
+    @cd dashboard && if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || ! cmp -s package-lock.json node_modules/.package-lock.json; then npm ci && cp package-lock.json node_modules/.package-lock.json; fi
+    @if [ ! -d dashboard/dist ]; then cd dashboard && npm run build; fi
+    uv run playwright install chromium
+    uv run pytest -m e2e -o addopts="--strict-markers --tb=short -ra"
+
 run flags="":
     @if [[ "{{flags}}" == "--local" ]]; then \
       rn server run & server_pid=$$!; \

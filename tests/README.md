@@ -70,6 +70,7 @@ Avoid unit tests for behavior that is already well-covered by integration tests.
 - `uv run pytest`
 - Integration only: `uv run pytest -m integration`
 - Unit only: `uv run pytest -m unit`
+- E2E (Playwright): `just e2e` (or `uv run pytest -m e2e -o addopts="--strict-markers --tb=short -ra"`)
 
 When `pytest-xdist` is available, tests should also pass with:
 - `uv run pytest -n auto`
