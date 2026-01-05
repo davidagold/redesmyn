@@ -20,6 +20,13 @@ Add a single Playwright test that proves the full system stays wired:
 
 This is intentionally “thin” in v0: one high-value path, kept stable and low-flake.
 
+## Marker / execution model (pytest strict markers)
+
+This repo uses `--strict-markers`. The implementer should add a dedicated marker (e.g. `e2e`) and ensure Playwright tests run under that marker:
+
+- add `e2e: browser-based end-to-end tests` to pytest markers (e.g. in `pyproject.toml`)
+- the default test run should be able to exclude e2e when desired (e.g. CI splits)
+
 ## Constraints
 
 - The test should be robust: explicit readiness checks and timeouts.
@@ -36,13 +43,18 @@ Exact flow can be adjusted, but it should cover wiring across:
 4. Trigger a lightweight action that exercises a real API call and UI update (e.g., open git actions menu, or start an agent if safe in test mode).
 5. Assert that expected UI elements appear and no fatal errors occur.
 
+## Proposed tests (names + intent)
+
+- `test_ui_happy_path_loads_graph_and_opens_task_details()`
+  - Assert: dashboard loads, graph renders at least one task card, details panel opens, and a trivial action (menu open / refresh) succeeds.
+
 ## Deliverables
 
 - Playwright config and a single test file.
 - Minimal helper scripts to run the system under test reliably (ports, env vars, cleanup).
+  - Prefer one command that starts the backend in a deterministic “test mode” (fixed port, isolated DB/state dir).
 
 ## Acceptance Criteria
 
 - One Playwright test runs locally with a single command (documented in this task).
 - The test is stable (no flaky sleeps; use waits for explicit conditions).
-

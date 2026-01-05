@@ -63,6 +63,8 @@ v0 should include coverage at each layer:
 
 We intentionally keep the Playwright footprint small in v0; most behavioral coverage should remain in backend integration tests.
 
+Note: this repo uses pytest `--strict-markers`. If we add Playwright tests, they should run under an explicit marker (e.g. `e2e`) and be runnable separately from the default suite.
+
 ## 4) What we want to validate (core behaviors)
 
 These are the “must not break” behaviors to cover across tasks:
@@ -76,12 +78,15 @@ These are the “must not break” behaviors to cover across tasks:
   - validation and status transitions are correct
   - error surfaces are consistent (e.g., 409 for running agents, 503 guidance when canonical executor missing)
   - 500s include request ids and are logged
+- **Event/WS payload robustness**:
+  - event payloads remain JSON-serializable (regression guard for datetime serialization issues)
 - **Daemon / WS runtime**:
   - command enqueue/delivery, presence/attachment, event ordering invariants
 - **Projections**:
   - graph/projection output reflects repo + events correctly
 - **CLI integration**:
   - `rn sync` and `rn shell` behaviors match expectations
+  - `rn merge` / `rn restack` plan + confirmation behavior is correct
 - **UI wiring**:
   - a minimal end-to-end UI flow succeeds (Playwright happy path)
 
@@ -103,4 +108,3 @@ The implementation is split by domain so multiple agents can work independently.
 Many existing task docs in this repo include a “Brief (local)” section because `rn sync` can generate that heading as a stable, human-owned section (never overwritten by sync).
 
 For this epic, **do not treat “Brief” as a brevity constraint**: write as much detail as needed to make tasks implementable without extra context.
-
