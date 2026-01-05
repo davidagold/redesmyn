@@ -42,7 +42,6 @@ class TaskResponse(ApiResponse):
     branch_name: str | None
     parent_task_id: int | None
     stack_in_sync: bool | None = None
-    agent_id: int | None
     worktree_path: str | None
     github_pr_id: str | None
     title: str
@@ -59,18 +58,10 @@ class TaskResponse(ApiResponse):
     updated_at: datetime
 
 
-class AgentResponse(ApiResponse):
-    id: int
-    display_name: str
-    current_session_id: int | None = None
-    created_at: datetime
-
-
 class AgentSessionResponse(ApiResponse):
     id: int
-    agent_id: int
-    agent_name: str
-    task_id: int | None
+    task_id: int
+    agent_label: str
     status: AgentStatus
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None
@@ -148,9 +139,8 @@ class TaskAgentRestartRequest(ApiResponse):
 
 class TaskAgentStartResponse(ApiResponse):
     task_id: int
-    agent_id: int
     agent_session_id: int
-    agent_name: str
+    agent_label: str
     agent_status: AgentStatus
     harness_profile_id: str
     attach: AttachInfoResponse
@@ -162,8 +152,7 @@ class TaskAgentStartResponse(ApiResponse):
 
 class TaskAgentStopResponse(ApiResponse):
     task_id: int
-    agent_id: int | None
-    agent_name: str | None
+    agent_label: str | None
     agent_status: AgentStatus | None
     stopped: bool
 
@@ -296,7 +285,6 @@ class HarnessProfileUpsertRequest(ApiResponse):
 class CommandResponse(ApiResponse):
     id: int
     command_type: str
-    target_agent_id: int | None
     target_task_id: int | None
     payload: dict[str, Any]
     state: CommandState
@@ -321,7 +309,7 @@ class CommandReleaseResponse(ApiResponse):
 
 class AckReleaseResponse(ApiResponse):
     type: Literal["acks"] = "acks"
-    required_agent_ids: list[int]
+    required_task_ids: list[int]
 
 
 ReleaseConditionResponse = Annotated[
@@ -351,7 +339,7 @@ class GitCommitEventDataResponse(ApiResponse):
     author_email: str | None = None
     authored_at: str | None = None
     subject: str | None = None
-    agent_id: int | None = None
+    agent_session_id: int | None = None
 
 
 class WorktreeHealthEventDataResponse(ApiResponse):
@@ -363,13 +351,6 @@ class WorktreeHealthEventDataResponse(ApiResponse):
     current_branch: str | None = None
     dirty: bool | None = None
     branch_mismatch: bool | None = None
-
-
-class TaskAgentSetEventDataResponse(ApiResponse):
-    type: Literal["task.agent_set"] = "task.agent_set"
-    task_id: int
-    agent_id: int | None
-    previous_agent_id: int | None
 
 
 class BlockSetEventDataResponse(ApiResponse):
@@ -390,9 +371,10 @@ class BlockClearedEventDataResponse(ApiResponse):
 
 class BlockAckEventDataResponse(ApiResponse):
     type: Literal["block.ack"] = "block.ack"
+    block_id: int
+    task_id: int
     scope: dict[str, Any]
     policy: str
-    agent_id: int
 
 
 class TaskAgentRunEventDataResponse(ApiResponse):
@@ -401,7 +383,7 @@ class TaskAgentRunEventDataResponse(ApiResponse):
     task_id: int
     action: Literal["start", "restart"]
     phase: Literal["requested", "started", "failed"]
-    agent_id: int | None = None
+    agent_session_id: int | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
 
@@ -412,7 +394,7 @@ class TaskAgentActionEventDataResponse(ApiResponse):
     task_id: int
     action: Literal["start", "restart", "stop"]
     phase: Literal["requested", "started", "stopped", "failed"]
-    agent_id: int | None = None
+    agent_session_id: int | None = None
     stopped: bool | None = None
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
@@ -451,7 +433,6 @@ class UnknownEventDataResponse(ApiResponse):
 EventDataResponse = Annotated[
     GitCommitEventDataResponse
     | WorktreeHealthEventDataResponse
-    | TaskAgentSetEventDataResponse
     | BlockSetEventDataResponse
     | BlockClearedEventDataResponse
     | BlockAckEventDataResponse

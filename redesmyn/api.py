@@ -29,11 +29,11 @@ from starlette.websockets import WebSocketDisconnect
 import typer
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
+from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.agent_monitor import run_agent_monitor
 from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_session_row
 from redesmyn.context import RepoContext, build_repo_context
 from redesmyn.db import (
-    Agent,
     AgentSession,
     Block,
     BlockScope,
@@ -664,26 +664,22 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
         latest_sessions: list[AgentSessionResponse] = []
         if task_ids:
             rows = list(
-                await session.execute(
-                    select(AgentSession, Agent)
-                    .join(Agent, AgentSession.agent_id == Agent.id)
+                await session.scalars(
+                    select(AgentSession)
                     .where(AgentSession.task_id.in_(task_ids))
                     .order_by(desc(AgentSession.id))
                 )
             )
             seen_task_ids: set[int] = set()
-            for session_row, agent_row in rows:
-                if session_row.task_id is None:
-                    continue
+            for session_row in rows:
                 if session_row.task_id in seen_task_ids:
                     continue
                 seen_task_ids.add(session_row.task_id)
                 latest_sessions.append(
                     AgentSessionResponse(
                         id=session_row.id,
-                        agent_id=agent_row.id,
-                        agent_name=agent_row.display_name,
                         task_id=session_row.task_id,
+                        agent_label=agent_label_for_task_id(session_row.task_id),
                         status=session_row.status,
                         harness_profile_id=session_row.harness_profile_id,
                         resolved_profile=TypeAdapter(
@@ -947,14 +943,12 @@ async def start_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    agent_row = result.agent
     session_row = result.agent_session
 
     return TaskAgentStartResponse(
         task_id=task_id,
-        agent_id=agent_row.id,
         agent_session_id=session_row.id,
-        agent_name=agent_row.display_name,
+        agent_label=result.agent_label,
         agent_status=session_row.status,
         harness_profile_id=session_row.harness_profile_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
@@ -974,7 +968,7 @@ async def _emit_task_agent_run_event(
     task_id: int,
     action: str,
     phase: str,
-    agent_id: int | None = None,
+    agent_session_id: int | None = None,
     warnings: list[str] | None = None,
     error: str | None = None,
 ) -> None:
@@ -984,8 +978,8 @@ async def _emit_task_agent_run_event(
         "action": action,
         "phase": phase,
     }
-    if agent_id is not None:
-        payload["agent_id"] = agent_id
+    if agent_session_id is not None:
+        payload["agent_session_id"] = agent_session_id
     if warnings is not None:
         payload["warnings"] = warnings
     if error is not None:
@@ -1009,7 +1003,7 @@ async def _emit_task_agent_action_event(
     task_id: int,
     action: str,
     phase: str,
-    agent_id: int | None = None,
+    agent_session_id: int | None = None,
     stopped: bool | None = None,
     warnings: list[str] | None = None,
     error: str | None = None,
@@ -1020,8 +1014,8 @@ async def _emit_task_agent_action_event(
         "action": action,
         "phase": phase,
     }
-    if agent_id is not None:
-        payload["agent_id"] = agent_id
+    if agent_session_id is not None:
+        payload["agent_session_id"] = agent_session_id
     if stopped is not None:
         payload["stopped"] = stopped
     if warnings is not None:
@@ -1045,7 +1039,13 @@ async def _task_info(
 ) -> tuple[Task, int | None]:
     async with sessionmaker() as session:
         task = await _require_task(session, task_id=task_id)
-        return task, task.agent_id
+        latest_session_id = await session.scalar(
+            select(AgentSession.id)
+            .where(AgentSession.task_id == task.id)
+            .order_by(desc(AgentSession.id))
+            .limit(1)
+        )
+        return task, latest_session_id
 
 
 @overload
@@ -1095,7 +1095,7 @@ async def _perform_task_agent_action(
     - For stop, result is a bool (stopped).
     """
 
-    task, existing_agent_id = await _task_info(sessionmaker, task_id=task_id)
+    task, existing_agent_session_id = await _task_info(sessionmaker, task_id=task_id)
     await _emit_task_agent_action_event(
         sessionmaker=sessionmaker,
         run_id=run_id,
@@ -1119,7 +1119,7 @@ async def _perform_task_agent_action(
                 task_id=task.id,
                 action="start",
                 phase="started",
-                agent_id=result.agent.id,
+                agent_session_id=result.agent_session.id,
                 warnings=warnings,
             )
             return task, result, warnings
@@ -1138,7 +1138,7 @@ async def _perform_task_agent_action(
                 task_id=task.id,
                 action="restart",
                 phase="started",
-                agent_id=result.agent.id,
+                agent_session_id=result.agent_session.id,
                 warnings=warnings,
             )
             return task, result, warnings
@@ -1151,7 +1151,7 @@ async def _perform_task_agent_action(
                 task_id=task.id,
                 action="stop",
                 phase="stopped",
-                agent_id=existing_agent_id,
+                agent_session_id=existing_agent_session_id,
                 stopped=stopped,
             )
             return task, stopped, []
@@ -1164,7 +1164,7 @@ async def _perform_task_agent_action(
             task_id=task.id,
             action=action,
             phase="failed",
-            agent_id=existing_agent_id,
+            agent_session_id=existing_agent_session_id,
             error=str(e),
         )
         raise
@@ -1202,7 +1202,7 @@ async def _run_task_agents_bulk(
                 task_id=task_id,
                 action="start",
                 phase="started",
-                agent_id=result.agent.id,
+                agent_session_id=result.agent_session.id,
                 warnings=list(result.warnings),
             )
         except Exception as e:
@@ -1236,7 +1236,7 @@ async def _run_task_agents_bulk(
                 task_id=task_id,
                 action="restart",
                 phase="started",
-                agent_id=result.agent.id,
+                agent_session_id=result.agent_session.id,
                 warnings=list(result.warnings),
             )
         except Exception as e:
@@ -1359,20 +1359,17 @@ async def stop_task_agent(http_request: Request, task_id: int) -> TaskAgentStopR
 
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        agent = await session.get(Agent, task.agent_id) if task.agent_id else None
         latest_session: AgentSession | None = None
-        if task.agent_id is not None:
-            latest_session = await session.scalar(
-                select(AgentSession)
-                .where(AgentSession.task_id == task_id)
-                .order_by(desc(AgentSession.id))
-                .limit(1)
-            )
+        latest_session = await session.scalar(
+            select(AgentSession)
+            .where(AgentSession.task_id == task_id)
+            .order_by(desc(AgentSession.id))
+            .limit(1)
+        )
 
     return TaskAgentStopResponse(
         task_id=task_id,
-        agent_id=None if agent is None else agent.id,
-        agent_name=None if agent is None else agent.display_name,
+        agent_label=agent_label_for_task_id(task_id) if latest_session else None,
         agent_status=None if latest_session is None else latest_session.status,
         stopped=stopped,
     )
@@ -1402,14 +1399,12 @@ async def restart_task_agent(
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    agent_row = result.agent
     session_row = result.agent_session
 
     return TaskAgentStartResponse(
         task_id=task_id,
-        agent_id=agent_row.id,
         agent_session_id=session_row.id,
-        agent_name=agent_row.display_name,
+        agent_label=result.agent_label,
         agent_status=session_row.status,
         harness_profile_id=session_row.harness_profile_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
@@ -1618,16 +1613,13 @@ async def task_agent_logs(
     app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        task = await _require_task(session, task_id=task_id)
-        agent = await session.get(Agent, task.agent_id) if task.agent_id else None
-        agent_session: AgentSession | None = None
-        if agent is not None:
-            agent_session = await session.scalar(
-                select(AgentSession)
-                .where(AgentSession.task_id == task_id)
-                .order_by(desc(AgentSession.id))
-                .limit(1)
-            )
+        await _require_task(session, task_id=task_id)
+        agent_session: AgentSession | None = await session.scalar(
+            select(AgentSession)
+            .where(AgentSession.task_id == task_id)
+            .order_by(desc(AgentSession.id))
+            .limit(1)
+        )
 
     if agent_session is None:
         raise HTTPException(status_code=404, detail="No agent session for this task")

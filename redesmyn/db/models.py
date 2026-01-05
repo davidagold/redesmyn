@@ -70,7 +70,7 @@ class GitCommitEventData(BaseModel):
     author_email: str | None = None
     authored_at: str | None = None
     subject: str | None = None
-    agent_id: int | None = None
+    agent_session_id: int | None = None
 
 
 class WorktreeHealthEventData(BaseModel):
@@ -159,7 +159,7 @@ class CommandRelease(BaseModel):
 
 class AckRelease(BaseModel):
     type: Literal["acks"] = "acks"
-    required_agent_ids: list[int]
+    required_task_ids: list[int]
 
 
 ReleaseCondition = Annotated[
@@ -277,9 +277,6 @@ class Task(Base):
     parent_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True, index=True
     )
-    agent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("agents.id"), nullable=True, index=True
-    )
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
     github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
     stack_in_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -325,77 +322,12 @@ class Task(Base):
     )
 
 
-class Agent(Base):
-    __tablename__ = "agents"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    display_name: Mapped[str] = mapped_column(String, nullable=False)
-
-    # NOTE: The `agents` table predates AgentSession and still contains legacy
-    # "latest run" fields (status/attach/etc). These remain in the SQLite schema
-    # (and Alembic baseline) for now, so we must provide defaults when creating
-    # new agents or inserts will fail under NOT NULL constraints.
-    status: Mapped[AgentStatus] = mapped_column(
-        _enum_type(AgentStatus, "agent_status"),
-        default=AgentStatus.Stopped,
-        nullable=False,
-    )
-    attach: Mapped[dict[str, Any]] = mapped_column(
-        JSON_TYPE,
-        default=lambda: {"type": "none"},
-        nullable=False,  # Pydantic: AttachInfo
-    )
-
-    # Best-effort pointer to the currently running session (if any). Intentionally
-    # not a foreign key to avoid circular FK constraints (SQLite).
-    current_session_id: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, index=True
-    )
-    last_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-
-
-class AgentConfig(Base):
-    __tablename__ = "agent_configs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    agent_id: Mapped[int] = mapped_column(
-        ForeignKey("agents.id"), nullable=False, index=True, unique=True
-    )
-    harness_profile_id: Mapped[str | None] = mapped_column(
-        ForeignKey("harness_profiles.id"), nullable=True, index=True
-    )
-    definition: Mapped[dict[str, Any]] = mapped_column(
-        JSON_TYPE,
-        nullable=False,  # Pydantic: HarnessProfileDefinition
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
-
-
 class AgentSession(Base):
     __tablename__ = "agent_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    agent_id: Mapped[int] = mapped_column(
-        ForeignKey("agents.id"), nullable=False, index=True
-    )
-    agent_config_id: Mapped[int | None] = mapped_column(
-        ForeignKey("agent_configs.id"), nullable=True, index=True
-    )
-    task_id: Mapped[int | None] = mapped_column(
-        ForeignKey("tasks.id"), nullable=True, index=True
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("tasks.id"), nullable=False, index=True
     )
 
     status: Mapped[AgentStatus] = mapped_column(
@@ -507,9 +439,6 @@ class Command(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     command_type: Mapped[str] = mapped_column(String, nullable=False)
-    target_agent_id: Mapped[int | None] = mapped_column(
-        ForeignKey("agents.id"), nullable=True, index=True
-    )
     target_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True, index=True
     )
@@ -577,7 +506,7 @@ class BlockAck(Base):
     __tablename__ = "block_acks"
 
     block_id: Mapped[int] = mapped_column(ForeignKey("blocks.id"), primary_key=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
     acked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

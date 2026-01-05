@@ -38,90 +38,75 @@ def test_migrations_apply_cleanly_and_match_orm_tables(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
-def test_migrations_relax_legacy_agent_sessions_schema(tmp_path: Path) -> None:
+def test_migrations_remove_db_agent_construct(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite3"
-    _upgrade_to_revision(db_path, "0005_git_projections_tables")
+    _upgrade_to_revision(db_path, "0013_tasks_merge_ready_requires_branch")
 
     engine = create_engine(f"sqlite:///{db_path}")
     with engine.begin() as conn:
-        # Seed rows for FK targets used by the rebuilt schema.
+        # Seed minimal rows needed to exercise the data migration.
         conn.execute(
             text(
-                "INSERT INTO hosts (host_key, display_name, capabilities) "
-                "VALUES (:host_key, :display_name, :capabilities)"
+                "INSERT INTO repositories (workspace_id, repo_id, repo_root, default_branch) "
+                "VALUES (:workspace_id, :repo_id, :repo_root, :default_branch)"
             ),
             {
-                "host_key": "test-host-key",
-                "display_name": "Test Host",
-                "capabilities": "{}",
+                "workspace_id": "default",
+                "repo_id": "test",
+                "repo_root": "/tmp/test",
+                "default_branch": "main",
             },
         )
+        repo_id = int(conn.execute(text("SELECT id FROM repositories")).scalar_one())
         conn.execute(
             text(
-                "INSERT INTO harness_profiles "
-                "(id, kind, source, display_name, definition) "
-                "VALUES (:id, :kind, :source, :display_name, :definition)"
+                "INSERT INTO epics (repository_id, name, slug, root_branch) "
+                "VALUES (:repository_id, :name, :slug, :root_branch)"
             ),
             {
-                "id": "hp1",
-                "kind": "local",
-                "source": "builtin",
-                "display_name": "Test Harness",
-                "definition": '{"argv":["true"]}',
+                "repository_id": repo_id,
+                "name": "Test Epic",
+                "slug": "test-epic",
+                "root_branch": "main",
             },
         )
-        conn.execute(
+        epic_id = int(conn.execute(text("SELECT id FROM epics")).scalar_one())
+
+        insert_agent = conn.execute(
             text(
-                "INSERT INTO agents "
-                "(display_name, status, host_id, harness_profile_id, attach) "
-                "VALUES (:display_name, :status, :host_id, :harness_profile_id, :attach)"
+                "INSERT INTO agents (display_name, status, attach) "
+                "VALUES (:display_name, :status, :attach)"
             ),
             {
                 "display_name": "Agent 1",
                 "status": "stopped",
-                "host_id": 1,
-                "harness_profile_id": "hp1",
                 "attach": '{"type":"none"}',
             },
         )
-
-        # Simulate a legacy agent_sessions table with overly strict NOT NULL columns.
-        conn.exec_driver_sql(
-            """
-            CREATE TABLE agent_sessions (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              agent_id INTEGER NOT NULL,
-              node_id INTEGER NULL,
-              status TEXT NOT NULL,
-              host_id INTEGER NOT NULL,
-              harness_profile_id TEXT NOT NULL,
-              cwd_path TEXT NULL,
-              pid INTEGER NULL,
-              attach TEXT NOT NULL,
-              resolved_profile TEXT NOT NULL,
-              exit_code INTEGER NULL,
-              started_at DATETIME NULL,
-              ended_at DATETIME NULL,
-              created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP)
-            )
-            """
-        )
+        agent_id = int(insert_agent.lastrowid)
         conn.execute(
             text(
-                "INSERT INTO agent_sessions "
-                "(agent_id, node_id, status, host_id, harness_profile_id, attach, resolved_profile, ended_at) "
-                "VALUES (:agent_id, :node_id, :status, :host_id, :harness_profile_id, :attach, :resolved_profile, :ended_at)"
+                "INSERT INTO tasks (epic_id, title, agent_id, source, authority, state) "
+                "VALUES (:epic_id, :title, :agent_id, :source, :authority, :state)"
             ),
             {
-                "agent_id": 1,
-                "node_id": None,
-                "status": "stopped",
-                "host_id": 1,
-                "harness_profile_id": "hp1",
-                "attach": '{"type":"none"}',
-                "resolved_profile": "{}",
-                "ended_at": "2026-01-01 00:00:00",
+                "epic_id": epic_id,
+                "title": "Task 1",
+                "agent_id": agent_id,
+                "source": "local",
+                "authority": "local",
+                "state": "todo",
             },
+        )
+        task_id = int(conn.execute(text("SELECT id FROM tasks")).scalar_one())
+
+        # Create an agent session without task_id; 0014 should backfill it from tasks.agent_id.
+        conn.execute(
+            text(
+                "INSERT INTO agent_sessions (agent_id, task_id, status, attach) "
+                "VALUES (:agent_id, NULL, :status, :attach)"
+            ),
+            {"agent_id": agent_id, "status": "stopped", "attach": '{"type":"none"}'},
         )
 
     engine.dispose()
@@ -132,22 +117,35 @@ def test_migrations_relax_legacy_agent_sessions_schema(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{db_path}")
     inspector = inspect(engine)
 
-    cols = {col["name"]: col for col in inspector.get_columns("agent_sessions")}
-    assert cols["host_id"]["nullable"] is True
-    assert cols["harness_profile_id"]["nullable"] is True
-    assert cols["resolved_profile"]["nullable"] is True
+    assert "agents" not in set(inspector.get_table_names())
+    assert "agent_configs" not in set(inspector.get_table_names())
 
-    created_default = cols["created_at"].get("default")
-    assert created_default and "CURRENT_TIMESTAMP" in str(created_default).upper()
+    task_cols = {col["name"] for col in inspector.get_columns("tasks")}
+    assert "agent_id" not in task_cols
+
+    session_cols = {col["name"]: col for col in inspector.get_columns("agent_sessions")}
+    assert "agent_id" not in session_cols
+    assert "agent_config_id" not in session_cols
+    assert session_cols["task_id"]["nullable"] is False
+    assert session_cols["host_id"]["nullable"] is True
+    assert session_cols["harness_profile_id"]["nullable"] is True
+    assert session_cols["resolved_profile"]["nullable"] is True
 
     with engine.begin() as conn:
+        # 0014 should have preserved the session row and filled task_id.
+        row = conn.execute(
+            text("SELECT task_id FROM agent_sessions ORDER BY id LIMIT 1")
+        ).fetchone()
+        assert row and int(row[0]) == task_id
+
+        created_default = session_cols["created_at"].get("default")
+        assert created_default and "CURRENT_TIMESTAMP" in str(created_default).upper()
+
+        # New schema requires task_id, but host/profile fields remain nullable.
         conn.execute(
             text(
-                "INSERT INTO agent_sessions (agent_id, status, attach) "
-                "VALUES (:agent_id, :status, :attach)"
+                "INSERT INTO agent_sessions (task_id, status, attach, ended_at) "
+                "VALUES (:task_id, :status, :attach, CURRENT_TIMESTAMP)"
             ),
-            {"agent_id": 1, "status": "stopped", "attach": '{"type":"none"}'},
+            {"task_id": task_id, "status": "stopped", "attach": '{"type":"none"}'},
         )
-
-        count = conn.execute(text("SELECT COUNT(1) FROM agent_sessions")).scalar_one()
-        assert int(count) == 2

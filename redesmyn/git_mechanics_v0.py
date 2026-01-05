@@ -7,8 +7,9 @@ from typing import Awaitable, Callable, Literal, Sequence
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, AgentSession, Epic, Task
+from redesmyn.db import AgentSession, Epic, Task
 from redesmyn.domain.enums import AgentStatus, TaskState
 from redesmyn.repo import (
     GitCommandError,
@@ -33,8 +34,8 @@ class MergePlanError(RuntimeError):
 class RunningAgentInfo:
     task_id: int
     branch_name: str
-    agent_id: int
-    agent_name: str
+    agent_session_id: int
+    agent_label: str
     agent_status: AgentStatus
 
 
@@ -411,17 +412,14 @@ async def build_merge_cascade_plan(
         if plan_task_ids:
             rows = list(
                 await session.execute(
-                    select(AgentSession, Agent)
-                    .join(Agent, AgentSession.agent_id == Agent.id)
+                    select(AgentSession)
                     .where(AgentSession.task_id.in_(plan_task_ids))
                     .order_by(desc(AgentSession.id))
                 )
             )
             seen_task_ids: set[int] = set()
-            for agent_session, agent in rows:
+            for (agent_session,) in rows:
                 task_id = agent_session.task_id
-                if task_id is None:
-                    continue
                 if task_id in seen_task_ids:
                     continue
                 seen_task_ids.add(task_id)
@@ -430,14 +428,16 @@ async def build_merge_cascade_plan(
                     AgentStatus.Blocked,
                 }:
                     continue
+                if agent_session.ended_at is not None:
+                    continue
                 task_row = tasks_by_id.get(task_id)
                 running_agents.append(
                     RunningAgentInfo(
                         task_id=task_id,
                         branch_name=(task_row.branch_name if task_row else "unknown")
                         or "unknown",
-                        agent_id=agent.id,
-                        agent_name=agent.display_name,
+                        agent_session_id=agent_session.id,
+                        agent_label=agent_label_for_task_id(task_id),
                         agent_status=agent_session.status,
                     )
                 )
@@ -752,16 +752,15 @@ async def build_restack_plan(
         if plan_task_ids:
             rows = list(
                 await session.execute(
-                    select(AgentSession, Agent)
-                    .join(Agent, AgentSession.agent_id == Agent.id)
+                    select(AgentSession)
                     .where(AgentSession.task_id.in_(plan_task_ids))
                     .order_by(desc(AgentSession.id))
                 )
             )
             seen_task_ids: set[int] = set()
-            for agent_session, agent in rows:
+            for (agent_session,) in rows:
                 candidate = agent_session.task_id
-                if candidate is None or candidate in seen_task_ids:
+                if candidate in seen_task_ids:
                     continue
                 seen_task_ids.add(candidate)
                 if agent_session.status not in {
@@ -769,14 +768,16 @@ async def build_restack_plan(
                     AgentStatus.Blocked,
                 }:
                     continue
+                if agent_session.ended_at is not None:
+                    continue
                 task_row = tasks_by_id.get(candidate)
                 running_agents.append(
                     RunningAgentInfo(
                         task_id=candidate,
                         branch_name=(task_row.branch_name if task_row else "unknown")
                         or "unknown",
-                        agent_id=agent.id,
-                        agent_name=agent.display_name,
+                        agent_session_id=agent_session.id,
+                        agent_label=agent_label_for_task_id(candidate),
                         agent_status=agent_session.status,
                     )
                 )
@@ -856,9 +857,7 @@ def format_running_agents_confirmation(
 ) -> str:
     lines = ["This operation affects running tasks/agents:"]
     for info in agents:
-        label = f"{info.branch_name} ({info.agent_name}, {info.agent_status})"
-        if info.task_id is not None:
-            label = f"T-{info.task_id} {label}"
+        label = f"T-{info.task_id} {info.branch_name} ({info.agent_label}, {info.agent_status})"
         lines.append(f"- {label}")
     lines.append("")
     lines.append("Proceed anyway?")
@@ -870,9 +869,7 @@ def format_running_agents_warning(
 ) -> str:
     lines = ["This operation affects running tasks/agents:"]
     for info in agents:
-        label = f"{info.branch_name} ({info.agent_name}, {info.agent_status})"
-        if info.task_id is not None:
-            label = f"T-{info.task_id} {label}"
+        label = f"T-{info.task_id} {info.branch_name} ({info.agent_label}, {info.agent_status})"
         lines.append(f"- {label}")
     return "\n".join(lines)
 

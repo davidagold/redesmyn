@@ -448,7 +448,7 @@ class DaemonRuntime:
             epics = []
 
         tasks: list[TaskResponse] = []
-        active_agent_id_by_task_id: dict[int, int] = {}
+        active_agent_session_id_by_task_id: dict[int, int] = {}
         upstream_by_task_id: dict[int, str | None] = {}
 
         for epic in epics:
@@ -457,13 +457,12 @@ class DaemonRuntime:
             tasks_by_id = {t.id: t for t in graph.tasks}
 
             for session in graph.agent_sessions:
-                if session.task_id is None:
-                    continue
+                task_id = session.task_id
                 if (
                     session.status in {AgentStatus.Running, AgentStatus.Blocked}
                     and session.ended_at is None
                 ):
-                    active_agent_id_by_task_id[session.task_id] = session.agent_id
+                    active_agent_session_id_by_task_id[task_id] = session.id
 
             for task in graph.tasks:
                 if task.parent_task_id is None:
@@ -482,7 +481,7 @@ class DaemonRuntime:
             tasks,
             self._observer_state,
             emit_baseline=emit_baseline,
-            active_agent_id_by_task_id=active_agent_id_by_task_id,
+            active_agent_session_id_by_task_id=active_agent_session_id_by_task_id,
         )
         for event in events:
             await self._send_event(

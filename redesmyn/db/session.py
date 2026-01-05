@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
-import json
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -13,9 +12,6 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from redesmyn.db.migrate import head_revision, stamp_revision, upgrade_to_head
-from redesmyn.db.migrations.sqlite.agent_status_stopped import (
-    migrate_agent_status_to_stopped,
-)
 
 
 def _sqlite_url(db_path: Path) -> str:
@@ -138,164 +134,10 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
 
 
 async def _migrate_sqlite(conn) -> None:
-    result = await conn.exec_driver_sql("PRAGMA table_info(agents)")
-    existing = {row[1] for row in result.fetchall()}
-
-    if "current_session_id" not in existing:
-        await conn.execute(
-            text("ALTER TABLE agents ADD COLUMN current_session_id INTEGER")
-        )
-
-    await migrate_agent_status_to_stopped(conn)
-    await _backfill_agent_sessions_from_legacy_agents(conn)
-
     result = await conn.exec_driver_sql("PRAGMA table_info(tasks)")
     existing = {row[1] for row in result.fetchall()}
     if "merge_ready_at" not in existing:
         await conn.execute(text("ALTER TABLE tasks ADD COLUMN merge_ready_at DATETIME"))
-
-
-async def _backfill_agent_sessions_from_legacy_agents(conn) -> None:
-    # Best-effort: if upgrading a local DB that used the pre-T-8 `agents` table as
-    # the "latest run", populate `agent_configs` + `agent_sessions` once so
-    # restart/log UX keeps working without manual intervention.
-    agent_sessions_count = (
-        await conn.exec_driver_sql("SELECT COUNT(1) FROM agent_sessions")
-    ).fetchone()
-    if agent_sessions_count and agent_sessions_count[0]:
-        return
-
-    agent_cols = (await conn.exec_driver_sql("PRAGMA table_info(agents)")).fetchall()
-    columns = {row[1] for row in agent_cols if row and row[1]}
-    legacy_cols = {
-        "status",
-        "host_id",
-        "harness_profile_id",
-        "cwd_path",
-        "pid",
-        "attach",
-        "resolved_profile",
-        "exit_code",
-        "started_at",
-        "ended_at",
-    }
-    if not (columns & legacy_cols):
-        return
-
-    select_cols = ["id", "display_name", *(sorted(columns & legacy_cols))]
-    quoted = ", ".join(f'"{c}"' for c in select_cols)
-    rows = (await conn.exec_driver_sql(f"SELECT {quoted} FROM agents")).fetchall()
-    if not rows:
-        return
-
-    col_index = {name: idx for idx, name in enumerate(select_cols)}
-
-    def get(row, key: str):
-        idx = col_index.get(key)
-        if idx is None:
-            return None
-        return row[idx]
-
-    for row in rows:
-        agent_id = get(row, "id")
-        if not isinstance(agent_id, int):
-            continue
-
-        resolved_profile_raw = get(row, "resolved_profile")
-        started_at = get(row, "started_at")
-        ended_at = get(row, "ended_at")
-
-        has_run_evidence = (
-            resolved_profile_raw is not None
-            or started_at is not None
-            or ended_at is not None
-        )
-        if not has_run_evidence:
-            continue
-
-        harness_profile_id = get(row, "harness_profile_id")
-        host_id = get(row, "host_id")
-        cwd_path = get(row, "cwd_path")
-        pid = get(row, "pid")
-        attach_raw = get(row, "attach") or '{"type":"none"}'
-        exit_code = get(row, "exit_code")
-        status = get(row, "status") or "stopped"
-        if status == "idle":
-            status = "stopped"
-
-        try:
-            resolved_profile = (
-                json.loads(resolved_profile_raw)
-                if isinstance(resolved_profile_raw, str)
-                else resolved_profile_raw
-            )
-        except Exception:
-            resolved_profile = None
-
-        try:
-            attach = (
-                json.loads(attach_raw) if isinstance(attach_raw, str) else attach_raw
-            )
-        except Exception:
-            attach = {"type": "none"}
-
-        node_row = (
-            await conn.exec_driver_sql(
-                "SELECT id, primary_task_id FROM nodes WHERE agent_id = ? ORDER BY id LIMIT 1",
-                (agent_id,),
-            )
-        ).fetchone()
-        task_id = node_row[1] if node_row else None
-
-        agent_config_id = None
-        if resolved_profile is not None:
-            existing_config = (
-                await conn.exec_driver_sql(
-                    "SELECT id FROM agent_configs WHERE agent_id = ? LIMIT 1",
-                    (agent_id,),
-                )
-            ).fetchone()
-            if existing_config:
-                agent_config_id = existing_config[0]
-            else:
-                await conn.exec_driver_sql(
-                    "INSERT INTO agent_configs (agent_id, harness_profile_id, definition) VALUES (?, ?, ?)",
-                    (agent_id, harness_profile_id, json.dumps(resolved_profile)),
-                )
-                agent_config_id = (
-                    await conn.exec_driver_sql("SELECT last_insert_rowid()")
-                ).fetchone()[0]
-
-        await conn.exec_driver_sql(
-            "INSERT INTO agent_sessions "
-            "(agent_id, agent_config_id, task_id, status, host_id, harness_profile_id, cwd_path, pid, attach, resolved_profile, exit_code, started_at, ended_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                agent_id,
-                agent_config_id,
-                task_id,
-                status,
-                host_id,
-                harness_profile_id,
-                cwd_path,
-                pid,
-                json.dumps(attach),
-                json.dumps(resolved_profile) if resolved_profile is not None else None,
-                exit_code,
-                started_at,
-                ended_at,
-            ),
-        )
-        agent_session_id = (
-            await conn.exec_driver_sql("SELECT last_insert_rowid()")
-        ).fetchone()[0]
-
-        is_active = status in {"running", "blocked"} and ended_at is None
-        if is_active:
-            await conn.exec_driver_sql(
-                "UPDATE agents SET current_session_id = ? WHERE id = ?",
-                (agent_session_id, agent_id),
-            )
 
 
 async def async_session(

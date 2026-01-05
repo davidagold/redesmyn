@@ -6,7 +6,6 @@ import pytest
 from sqlalchemy import select
 
 from redesmyn.db import (
-    Agent,
     AgentSession,
     GitTrunkTimelineByInstance,
     MergeRun,
@@ -43,22 +42,15 @@ async def test_epic_graph_includes_agent_session_overlay_fields(
     seeded = await seed_merged_parent(scenario)
 
     async with scenario.db.session() as session:
-        agent_1 = Agent(display_name="agent-1", status=AgentStatus.Running)
-        agent_2 = Agent(display_name="agent-2", status=AgentStatus.Error)
-        session.add_all([agent_1, agent_2])
-        await session.flush()
-
         session.add_all(
             [
                 AgentSession(
-                    agent_id=agent_1.id,
                     task_id=seeded.child_task_id,
                     status=AgentStatus.Running,
                     started_at=datetime.now(UTC),
                     ended_at=datetime.now(UTC),
                 ),
                 AgentSession(
-                    agent_id=agent_2.id,
                     task_id=seeded.child_task_id,
                     status=AgentStatus.Error,
                     started_at=datetime.now(UTC),
@@ -75,7 +67,7 @@ async def test_epic_graph_includes_agent_session_overlay_fields(
     latest = graph.agent_sessions[0]
     assert latest.task_id == seeded.child_task_id
     assert latest.status == AgentStatus.Error
-    assert latest.agent_name == "agent-2"
+    assert latest.agent_label == f"a-{seeded.child_task_id}"
 
 
 @pytest.mark.integration

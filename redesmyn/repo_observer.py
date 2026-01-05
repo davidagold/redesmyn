@@ -267,12 +267,12 @@ async def observe_once(
             )
         )
         for sess in sessions:
-            if sess.task_id is None or sess.task_id in latest_session_by_task_id:
+            if sess.task_id in latest_session_by_task_id:
                 continue
             latest_session_by_task_id[sess.task_id] = sess
 
-    active_agent_id_by_task_id: dict[int, int] = {
-        task_id: sess.agent_id
+    active_agent_session_id_by_task_id: dict[int, int] = {
+        task_id: sess.id
         for task_id, sess in latest_session_by_task_id.items()
         if sess.status in {AgentStatus.Running, AgentStatus.Blocked}
         and sess.ended_at is None
@@ -326,7 +326,7 @@ async def observe_once(
             author_email=summary.author_email if summary else None,
             authored_at=summary.authored_at if summary else None,
             subject=summary.subject if summary else None,
-            agent_id=active_agent_id_by_task_id.get(task.id),
+            agent_session_id=active_agent_session_id_by_task_id.get(task.id),
         )
         payload = {
             **data.model_dump(mode="python"),
@@ -532,7 +532,7 @@ def observe_repo(
     state: RepoObserverState,
     *,
     emit_baseline: bool,
-    active_agent_id_by_task_id: dict[int, int],
+    active_agent_session_id_by_task_id: dict[int, int],
     now: datetime | None = None,
 ) -> list[RepoObserverEvent]:
     created_at = now or datetime.now(UTC)
@@ -571,7 +571,7 @@ def observe_repo(
             author_email=summary.author_email if summary else None,
             authored_at=summary.authored_at if summary else None,
             subject=summary.subject if summary else None,
-            agent_id=active_agent_id_by_task_id.get(task.id),
+            agent_session_id=active_agent_session_id_by_task_id.get(task.id),
         )
         events.append(
             RepoObserverEvent(

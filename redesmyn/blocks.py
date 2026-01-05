@@ -226,7 +226,7 @@ async def list_blocks(
         await engine.dispose()
 
 
-async def ack_block(ctx: RepoContext, *, block_id: int, agent_id: int) -> Block | None:
+async def ack_block(ctx: RepoContext, *, block_id: int, task_id: int) -> Block | None:
     _ensure_initialized(ctx)
 
     engine = create_engine(ctx.db_path)
@@ -240,14 +240,19 @@ async def ack_block(ctx: RepoContext, *, block_id: int, agent_id: int) -> Block 
             session.add(
                 BlockAck(
                     block_id=block_id,
-                    agent_id=agent_id,
+                    task_id=task_id,
                     acked_at=datetime.now(UTC),
                 )
             )
             session.add(
                 Event(
                     event_type="block.ack",
-                    data={"block_id": block_id, "agent_id": agent_id},
+                    data={
+                        "block_id": block_id,
+                        "task_id": task_id,
+                        "scope": block.scope.to_dict(),
+                        "policy": block.policy.value,
+                    },
                     created_at=datetime.now(UTC),
                 )
             )
@@ -258,10 +263,10 @@ async def ack_block(ctx: RepoContext, *, block_id: int, agent_id: int) -> Block 
 
             release = AckRelease.model_validate(block.release)
             acked = await session.scalars(
-                select(BlockAck.agent_id).where(BlockAck.block_id == block_id)
+                select(BlockAck.task_id).where(BlockAck.block_id == block_id)
             )
             acked_ids = set(acked)
-            if set(release.required_agent_ids).issubset(acked_ids):
+            if set(release.required_task_ids).issubset(acked_ids):
                 block.cleared_at = datetime.now(UTC)
                 block.cleared_reason = "acks_satisfied"
                 session.add(

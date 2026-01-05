@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import shlex
 from dataclasses import dataclass
@@ -10,7 +11,10 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Agent, AgentSession, Task
+from pydantic import TypeAdapter
+
+from redesmyn.db import AgentSession, Task
+from redesmyn.db.models import AttachInfo
 from redesmyn.db.models import AttachTmux
 from redesmyn.domain.enums import AgentStatus
 from redesmyn.agent_runtime import (
@@ -18,12 +22,6 @@ from redesmyn.agent_runtime import (
     has_tmux,
     tmux_session_name_for_task,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class AgentLivenessRow:
-    task: Task
-    agent: Agent
 
 
 def _read_tmux_sessions(*, timeout_s: float) -> set[str]:
@@ -50,18 +48,17 @@ def _tmux_pipe_to_log(*, session_name: str, log_path: str, timeout_s: float) -> 
     )
 
 
-async def _load_liveness_rows(session: AsyncSession) -> list[AgentLivenessRow]:
-    rows = list(
-        await session.execute(
-            select(Task, Agent)
-            .join(Agent, Task.agent_id == Agent.id)
-            .where(
-                Task.agent_id.is_not(None),
-            )
-            .order_by(Task.id)
-        )
-    )
-    return [AgentLivenessRow(task=task, agent=agent) for task, agent in rows]
+def _task_id_from_tmux_session(name: str) -> int | None:
+    prefix = os.environ.get("REDESMYN_TMUX_SESSION_PREFIX", "rn-a").strip()
+    if not prefix:
+        prefix = "rn-a"
+    marker = prefix + "-"
+    if not name.startswith(marker):
+        return None
+    suffix = name.removeprefix(marker)
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
 
 
 async def observe_agents_once(
@@ -74,93 +71,99 @@ async def observe_agents_once(
         return 0
 
     sessions = _read_tmux_sessions(timeout_s=timeout_s)
+    running_task_ids = {
+        task_id
+        for name in sessions
+        if (task_id := _task_id_from_tmux_session(name)) is not None
+    }
     now = datetime.now(UTC)
     updated = 0
 
-    for row in await _load_liveness_rows(session):
-        task_id = row.task.id
+    tasks_by_id: dict[int, Task] = {}
+    if running_task_ids:
+        tasks = list(
+            await session.scalars(select(Task).where(Task.id.in_(running_task_ids)))
+        )
+        tasks_by_id = {t.id: t for t in tasks}
 
+    active_sessions = list(
+        await session.scalars(
+            select(AgentSession)
+            .where(AgentSession.status.in_([AgentStatus.Running, AgentStatus.Blocked]))
+            .where(AgentSession.ended_at.is_(None))
+            .order_by(desc(AgentSession.id))
+        )
+    )
+    active_session_by_task_id: dict[int, AgentSession] = {}
+    for agent_session in active_sessions:
+        if agent_session.task_id in active_session_by_task_id:
+            continue
+        active_session_by_task_id[agent_session.task_id] = agent_session
+
+    for task_id in running_task_ids:
+        if task_id not in tasks_by_id:
+            continue
         tmux_name = tmux_session_name_for_task(task_id=task_id)
-        is_running = tmux_name in sessions
-        agent = row.agent
-        agent_session: AgentSession | None = None
-        if agent.current_session_id is not None:
-            agent_session = await session.get(AgentSession, agent.current_session_id)
-            if agent_session is not None and agent_session.ended_at is not None:
-                agent_session = None
-
-        if agent_session is None:
-            agent_session = await session.scalar(
-                select(AgentSession)
-                .where(AgentSession.agent_id == agent.id)
-                .where(AgentSession.task_id == task_id)
-                .order_by(desc(AgentSession.id))
-                .limit(1)
-            )
-
-        if is_running:
-            changed = False
-            if agent_session is None:
-                agent_session = AgentSession(
-                    agent_id=agent.id,
-                    agent_config_id=None,
-                    task_id=task_id,
-                    status=AgentStatus.Running,
-                    started_at=now,
-                    ended_at=None,
-                )
-                session.add(agent_session)
-                await session.flush()
-                agent.current_session_id = agent_session.id
-                changed = True
-            else:
-                if agent_session.status not in {
-                    AgentStatus.Running,
-                    AgentStatus.Blocked,
-                }:
-                    agent_session.status = AgentStatus.Running
-                    changed = True
-                if agent_session.started_at is None:
-                    agent_session.started_at = now
-                    changed = True
-                if agent_session.ended_at is not None:
-                    agent_session.ended_at = None
-                    changed = True
-                if agent.current_session_id != agent_session.id:
-                    agent.current_session_id = agent_session.id
-                    changed = True
-
-            log_path = agent_session_log_path(
-                ctx, agent_id=agent.id, session_id=agent_session.id
-            )
-            attach = AttachTmux(
-                session=tmux_name,
-                socket_path=None,
-                log_path=str(log_path),
-            )
-            attach_dict = attach.model_dump(mode="python")
-            if agent_session.attach != attach_dict:
-                agent_session.attach = attach_dict
-                changed = True
-
-            _tmux_pipe_to_log(
-                session_name=tmux_name,
-                log_path=str(log_path),
-                timeout_s=timeout_s,
-            )
-            if changed:
-                updated += 1
+        if tmux_name not in sessions:
             continue
 
-        if (
-            agent_session is not None
-            and agent_session.status in {AgentStatus.Running, AgentStatus.Blocked}
-            and agent_session.ended_at is None
-        ):
-            agent_session.status = AgentStatus.Error
-            agent_session.ended_at = now
-            agent.current_session_id = None
+        agent_session = active_session_by_task_id.get(task_id)
+        changed = False
+        if agent_session is None:
+            agent_session = AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                started_at=now,
+                ended_at=None,
+            )
+            session.add(agent_session)
+            await session.flush()
+            changed = True
+        else:
+            if agent_session.status not in {AgentStatus.Running, AgentStatus.Blocked}:
+                agent_session.status = AgentStatus.Running
+                changed = True
+            if agent_session.started_at is None:
+                agent_session.started_at = now
+                changed = True
+            if agent_session.ended_at is not None:
+                agent_session.ended_at = None
+                changed = True
+
+        existing_attach = TypeAdapter(AttachInfo).validate_python(agent_session.attach)
+        existing_log_path = (
+            existing_attach.log_path
+            if isinstance(existing_attach, AttachTmux)
+            else None
+        )
+        log_path = existing_log_path or str(
+            agent_session_log_path(ctx, task_id=task_id, session_id=agent_session.id)
+        )
+        attach = AttachTmux(
+            session=tmux_name,
+            socket_path=None,
+            log_path=log_path,
+        )
+        attach_dict = attach.model_dump(mode="python")
+        if agent_session.attach != attach_dict:
+            agent_session.attach = attach_dict
+            changed = True
+
+        _tmux_pipe_to_log(
+            session_name=tmux_name,
+            log_path=log_path,
+            timeout_s=timeout_s,
+        )
+        if changed:
             updated += 1
+
+    for task_id, agent_session in active_session_by_task_id.items():
+        tmux_name = tmux_session_name_for_task(task_id=task_id)
+        if tmux_name in sessions:
+            continue
+        agent_session.status = AgentStatus.Error
+        agent_session.ended_at = now
+        updated += 1
 
     if updated:
         await session.commit()

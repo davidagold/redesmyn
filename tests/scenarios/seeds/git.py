@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from redesmyn.db import Agent, AgentSession, Epic, MergeRun, Repository, Task
+from redesmyn.db import AgentSession, Epic, MergeRun, Repository, Task
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus, TaskState
 
 from tests.scenarios.scenario import Scenario
@@ -144,12 +144,8 @@ async def seed_merged_parent(scenario: Scenario) -> SeededSpine:
 async def seed_running_agent(scenario: Scenario) -> SeededSpine:
     seeded = await seed_merged_parent(scenario)
     async with scenario.db.session() as session:
-        agent = Agent(display_name="test-agent", status=AgentStatus.Running)
-        session.add(agent)
-        await session.flush()
         session.add(
             AgentSession(
-                agent_id=agent.id,
                 task_id=seeded.child_task_id,
                 status=AgentStatus.Running,
             )

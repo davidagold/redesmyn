@@ -43,7 +43,6 @@ from redesmyn.blocks import (
 )
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
-    Agent,
     DatabaseMigrationRequiredError,
     DatabaseNotInitializedError,
     Epic,
@@ -3751,62 +3750,6 @@ def task_list(
 app.add_typer(task_app, name="task")
 
 
-@agent_app.command("register")
-def agent_register(
-    name: str = typer.Option(..., "--name", help="Agent display name."),
-) -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> Agent:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                agent = Agent(display_name=name)
-                session.add(agent)
-                await session.commit()
-                await session.refresh(agent)
-                return agent
-        finally:
-            await engine.dispose()
-
-    agent = asyncio.run(_run())
-    typer.echo(f"Agent: {agent.id} {agent.display_name}")
-
-
-@agent_app.command("list")
-def agent_list() -> None:
-    try:
-        ctx = get_repo_context()
-        _ensure_initialized(ctx)
-    except (NotAGitRepositoryError, NotInitializedError) as e:
-        typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(2)
-
-    async def _run() -> list[Agent]:
-        engine = create_engine(ctx.db_path)
-        try:
-            sessionmaker = create_sessionmaker(engine)
-            async with sessionmaker() as session:
-                rows = await session.scalars(select(Agent).order_by(Agent.id))
-                return list(rows)
-        finally:
-            await engine.dispose()
-
-    agents = asyncio.run(_run())
-    if not agents:
-        typer.echo("No agents.")
-        return
-    for a in agents:
-        current = a.current_session_id if a.current_session_id is not None else "-"
-        typer.echo(f"{a.id}: {a.display_name} current_session={current}")
-
-
 @agent_app.command("start")
 def agent_start(
     task_id: int = typer.Option(..., "--task", help="Task id."),
@@ -3863,7 +3806,7 @@ def agent_start(
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
 
-    typer.echo(f"Attach:  rn attach --task {task_id}")
+    typer.echo(f"Attach:  rn agent attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
     typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
@@ -3916,7 +3859,7 @@ def agent_restart(
     typer.echo(f"Restarted: agent a-{task_id} (attach={result.attach.type})")
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
-    typer.echo(f"Attach:  rn attach --task {task_id}")
+    typer.echo(f"Attach:  rn agent attach --task {task_id}")
     typer.echo(f"Logs:    rn agent logs --task {task_id}")
     typer.echo(f"Worktree: rn shell --task-id {task_id}")
 
