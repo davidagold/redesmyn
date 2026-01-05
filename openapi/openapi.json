@@ -2275,6 +2275,17 @@
             ],
             "title": "Linearissueid"
           },
+          "linearStateName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearstatename"
+          },
           "linearStateObservedAt": {
             "anyOf": [
               {

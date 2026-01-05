@@ -1236,10 +1236,10 @@ export interface components {
       linearIdentifier?: string | null
       /** Linearissueid */
       linearIssueId: string | null
-      /** Linearstateobservedat */
-      linearStateObservedAt?: string | null
       /** Linearstatename */
       linearStateName?: string | null
+      /** Linearstateobservedat */
+      linearStateObservedAt?: string | null
       /** Linearstatetype */
       linearStateType?: string | null
       /** Localpath */
