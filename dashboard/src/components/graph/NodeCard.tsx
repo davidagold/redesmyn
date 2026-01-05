@@ -1073,27 +1073,6 @@ export function NodeCard({
           {task?.title ?? "—"}
         </div>
 
-        {actionError ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={(triggerProps) => (
-                <div
-                  {...triggerProps}
-                  className={cn(
-                    "truncate text-xs text-destructive",
-                    triggerProps.className,
-                  )}
-                >
-                  {actionError.summary}
-                </div>
-              )}
-            />
-            <TooltipContent side="bottom" sideOffset={10}>
-              {actionError.summary}
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
           {agentSession ? (
             <div className="flex flex-wrap items-end justify-start gap-2">
