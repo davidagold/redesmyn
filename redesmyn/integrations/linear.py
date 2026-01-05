@@ -689,6 +689,15 @@ mutation IssueUpdate(
 }
 """
 
+ISSUE_UPDATE_STATE_MUTATION = """
+mutation IssueUpdateState($id: String!, $stateId: String!) {
+  issueUpdate(id: $id, input: { stateId: $stateId }) {
+    success
+    issue { id identifier title description state { type } }
+  }
+}
+"""
+
 ISSUE_UPDATE_LABELS_MUTATION = """
 mutation IssueUpdateLabels($id: String!, $labelIds: [String!]) {
   issueUpdate(id: $id, input: { labelIds: $labelIds }) {
@@ -1460,6 +1469,30 @@ async def update_issue(
             "title": title,
             "description": description,
             "projectMilestoneId": project_milestone_id,
+            "stateId": state_id,
+        },
+    )
+    payload = data.get("issueUpdate")
+    if not isinstance(payload, dict):
+        raise ValueError("Linear: missing issueUpdate")
+    payload_dict = cast(dict[str, Any], payload)
+    issue = payload_dict.get("issue")
+    parsed = _parse_issue(issue)
+    if parsed is None:
+        raise ValueError("Linear: invalid issueUpdate response")
+    return parsed
+
+
+async def update_issue_state(
+    client: LinearClient,
+    *,
+    issue_id: str,
+    state_id: str,
+) -> LinearIssue:
+    data = await client.graphql(
+        ISSUE_UPDATE_STATE_MUTATION,
+        variables={
+            "id": issue_id,
             "stateId": state_id,
         },
     )

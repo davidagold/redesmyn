@@ -11,6 +11,7 @@ from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.context import RepoContext
 from redesmyn.db import AgentSession, Epic, Task
 from redesmyn.domain.enums import AgentStatus, TaskState
+from redesmyn.integrations.linear_automation import maybe_push_task_state_to_linear
 from redesmyn.repo import (
     GitCommandError,
     current_branch,
@@ -607,6 +608,18 @@ async def execute_merge_cascade_plan(
                 task_row.merge_ready_at = None
 
         await session.commit()
+        epic_row = await session.get(Epic, plan.epic_id)
+        if epic_row is None:
+            return
+        for task_row in rows:
+            await maybe_push_task_state_to_linear(
+                ctx,
+                session=session,
+                task=task_row,
+                epic=epic_row,
+                desired_task_state=TaskState.Done,
+                timeout_s=2.0,
+            )
 
 
 async def build_restack_plan(

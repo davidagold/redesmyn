@@ -299,6 +299,12 @@ class Task(Base):
     )
     linear_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     linear_identifier: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Cache of the last observed Linear issue state type for the linked issue
+    # (e.g. "started", "completed"). Used for lightweight sync indicators.
+    linear_state_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    linear_state_observed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     github_issue_id: Mapped[str | None] = mapped_column(String, nullable=True)
     local_path: Mapped[str | None] = mapped_column(String, nullable=True)
     merge_ready_at: Mapped[datetime | None] = mapped_column(

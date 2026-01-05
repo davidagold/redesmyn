@@ -104,6 +104,10 @@ from redesmyn.integrations.linear_credentials import (
     default_linear_credential_store,
     is_expiring_soon,
 )
+from redesmyn.integrations.linear_state import (
+    linear_state_type_from_task_state,
+    task_state_from_linear_state_type,
+)
 from redesmyn.integrations.linear_write_defaults import (
     ensure_linear_write_defaults,
     load_linear_write_defaults,
@@ -2149,9 +2153,39 @@ async def _sync_from_linear(
         )
         target_readme.write_text(markdown, encoding="utf-8")
 
-    return await _sync_from_local(
+    stats = await _sync_from_local(
         ctx, epic=epic_row.slug, create_branches=create_branches
     )
+
+    issue_state_type_by_id = {issue.id: issue.state_type for issue in issues}
+    if issue_state_type_by_id:
+        observed_at = datetime.now(UTC)
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                rows = list(
+                    await session.scalars(
+                        select(Task).where(
+                            Task.epic_id == epic_row.id,
+                            Task.linear_issue_id.in_(
+                                list(issue_state_type_by_id.keys())
+                            ),
+                        )
+                    )
+                )
+                for task_row in rows:
+                    if not task_row.linear_issue_id:
+                        continue
+                    task_row.linear_state_type = issue_state_type_by_id.get(
+                        task_row.linear_issue_id
+                    )
+                    task_row.linear_state_observed_at = observed_at
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+    return stats
 
 
 def _extract_markdown_section(markdown: str, *, heading: str) -> str | None:
@@ -2185,19 +2219,6 @@ def _extract_markdown_section(markdown: str, *, heading: str) -> str | None:
 
     content = "\n".join(body).strip()
     return content or None
-
-
-def _linear_state_type_from_task_state(state: TaskState) -> str:
-    match state:
-        case TaskState.Todo:
-            return "unstarted"
-        case TaskState.InProgress:
-            return "started"
-        case TaskState.Blocked:
-            return "blocked"
-        case TaskState.Done:
-            return "completed"
-    return "unstarted"
 
 
 def _looks_like_uuid(value: str) -> bool:
@@ -2580,7 +2601,7 @@ async def _sync_to_linear(
                         doc.markdown, heading="Brief (local)"
                     )
                     task_state = task_row.state if task_row.state else TaskState.Todo
-                    desired_state_type = _linear_state_type_from_task_state(task_state)
+                    desired_state_type = linear_state_type_from_task_state(task_state)
 
                     existing: LinearIssue | None = None
                     if issue_id:
@@ -2949,7 +2970,7 @@ async def _sync_to_linear(
                 brief = _extract_markdown_section(doc.markdown, heading="Brief (local)")
 
                 task_state = task_row.state if task_row.state else TaskState.Todo
-                state_type = _linear_state_type_from_task_state(task_state)
+                state_type = linear_state_type_from_task_state(task_state)
 
                 if issue_id:
                     try:
@@ -3039,6 +3060,8 @@ async def _sync_to_linear(
                     task_row.linear_issue_id = issue.id
                 if task_row.linear_identifier != issue.identifier:
                     task_row.linear_identifier = issue.identifier
+                task_row.linear_state_type = issue.state_type
+                task_row.linear_state_observed_at = datetime.now(UTC)
 
                 markdown = readme.read_text(encoding="utf-8")
                 existing_meta = _load_metadata_dict(markdown)
@@ -4465,16 +4488,9 @@ def linear_milestones(
 
 
 def _task_state_from_linear(state_type: str | None) -> TaskState:
-    if state_type is None:
-        return TaskState.Todo
-    normalized = state_type.lower()
-    if normalized in {"started", "in_progress"}:
-        return TaskState.InProgress
-    if normalized in {"completed", "canceled"}:
-        return TaskState.Done
-    if normalized == "blocked":
-        return TaskState.Blocked
-    return TaskState.Todo
+    # Back-compat wrapper for older call sites; prefer
+    # task_state_from_linear_state_type in new code.
+    return task_state_from_linear_state_type(state_type)
 
 
 @linear_app.command("import")
@@ -4592,6 +4608,7 @@ def linear_import(
                     )
 
                 task_by_issue_id: dict[str, Task] = {}
+                observed_at = datetime.now(UTC)
                 for issue in issues_sorted:
                     task = await session.scalar(
                         select(Task).where(
@@ -4616,6 +4633,9 @@ def linear_import(
                         task.title = title
                         task.body = issue.description
                         task.state = _task_state_from_linear(issue.state_type)
+
+                    task.linear_state_type = issue.state_type
+                    task.linear_state_observed_at = observed_at
 
                     task_by_issue_id[issue.id] = task
 

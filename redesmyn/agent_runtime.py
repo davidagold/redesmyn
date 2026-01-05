@@ -39,6 +39,7 @@ from redesmyn.db.models import (
 )
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.domain.enums import AgentStatus, HarnessProfileSource, TaskState
+from redesmyn.integrations.linear_automation import maybe_push_task_state_to_linear
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
     GitCommandError,
@@ -812,6 +813,8 @@ async def start_task_agent(
                 )
                 agent_session.status = AgentStatus.Running
                 agent_session.host_id = host.id
+                if task.state != TaskState.Done:
+                    task.state = TaskState.InProgress
 
                 log_path = agent_session_log_path(
                     ctx, task_id=task.id, session_id=agent_session.id
@@ -829,6 +832,13 @@ async def start_task_agent(
                 agent_session.attach = attach.model_dump(mode="python")
                 await session.commit()
                 await session.refresh(agent_session)
+                await maybe_push_task_state_to_linear(
+                    ctx,
+                    session=session,
+                    task=task,
+                    epic=epic,
+                    desired_task_state=TaskState.InProgress,
+                )
                 return StartAgentResult(
                     agent_label=agent_label,
                     agent_session=agent_session,
@@ -1049,6 +1059,8 @@ async def start_task_agent(
 
             now = datetime.now(UTC)
             agent_session.status = AgentStatus.Running
+            if task.state != TaskState.Done:
+                task.state = TaskState.InProgress
 
             await session.commit()
             await session.refresh(agent_session)
@@ -1082,6 +1094,13 @@ async def start_task_agent(
                     )
             except RuntimeError as e:
                 warnings.append(f"Failed to send agent prelude: {e}")
+            await maybe_push_task_state_to_linear(
+                ctx,
+                session=session,
+                task=task,
+                epic=epic,
+                desired_task_state=TaskState.InProgress,
+            )
             return StartAgentResult(
                 agent_label=agent_label,
                 agent_session=agent_session,
