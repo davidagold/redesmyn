@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.db import Agent, AgentSession, Epic, MergeRun, Repository, Task
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus, TaskState
@@ -22,6 +23,45 @@ class SeededSpine:
     child_branch: str
     parent_worktree: Path
     child_worktree: Path
+
+
+@dataclass(frozen=True, slots=True)
+class SeededSpineWithDescendant:
+    epic_id: int
+    parent_task_id: int
+    child_task_id: int
+    descendant_task_id: int
+    parent_branch: str
+    child_branch: str
+    descendant_branch: str
+    parent_worktree: Path
+    child_worktree: Path
+    descendant_worktree: Path
+
+
+@dataclass(frozen=True, slots=True)
+class SeededThreeTaskChain:
+    epic_id: int
+    parent_task_id: int
+    child_task_id: int
+    grandchild_task_id: int
+    parent_branch: str
+    child_branch: str
+    grandchild_branch: str
+    parent_worktree: Path
+    child_worktree: Path
+    grandchild_worktree: Path
+
+
+async def _require_repository_row(
+    session: AsyncSession, scenario: Scenario
+) -> Repository:
+    repo_row = await session.scalar(
+        select(Repository).where(Repository.repo_root == str(scenario.ctx.repo_root))
+    )
+    if repo_row is None:
+        raise RuntimeError("Scenario repository row missing")
+    return repo_row
 
 
 async def seed_merged_parent(scenario: Scenario) -> SeededSpine:
@@ -48,13 +88,7 @@ async def seed_merged_parent(scenario: Scenario) -> SeededSpine:
     )
 
     async with scenario.db.session() as session:
-        repo_row = await session.scalar(
-            select(Repository).where(
-                Repository.repo_root == str(scenario.ctx.repo_root)
-            )
-        )
-        if repo_row is None:
-            raise RuntimeError("Scenario repository row missing")
+        repo_row = await _require_repository_row(session, scenario)
 
         epic = Epic(
             repository_id=repo_row.id,
@@ -151,3 +185,270 @@ async def seed_conflicted_merge_run(scenario: Scenario) -> SeededSpine:
         session.add(run)
         await session.commit()
     return seeded
+
+
+async def seed_active_spine_with_descendant_worktree(
+    scenario: Scenario, *, descendant_state: TaskState = TaskState.Todo
+) -> SeededSpineWithDescendant:
+    repo = scenario.repo
+
+    parent_branch = "task-parent"
+    child_branch = "task-child"
+    descendant_branch = "task-descendant"
+
+    parent_wt = repo.create_worktree(branch_name=parent_branch)
+    repo.commit_file(
+        worktree_path=parent_wt,
+        relpath="parent.txt",
+        content="parent\n",
+        message="parent change",
+    )
+
+    child_wt = repo.create_worktree(branch_name=child_branch, from_ref=parent_branch)
+    repo.commit_file(
+        worktree_path=child_wt,
+        relpath="child.txt",
+        content="child\n",
+        message="child change",
+    )
+
+    descendant_wt = repo.create_worktree(
+        branch_name=descendant_branch, from_ref=child_branch
+    )
+    repo.commit_file(
+        worktree_path=descendant_wt,
+        relpath="descendant.txt",
+        content="descendant\n",
+        message="descendant change",
+    )
+
+    async with scenario.db.session() as session:
+        repo_row = await _require_repository_row(session, scenario)
+        epic = Epic(
+            repository_id=repo_row.id,
+            name="Test Epic",
+            slug="test-epic",
+            root_branch="main",
+        )
+        session.add(epic)
+        await session.flush()
+
+        parent = Task(
+            epic_id=epic.id,
+            title="Parent",
+            branch_name=parent_branch,
+            worktree_path=str(parent_wt),
+            state=TaskState.InProgress,
+            merge_ready_at=datetime.now(UTC),
+        )
+        session.add(parent)
+        await session.flush()
+
+        child = Task(
+            epic_id=epic.id,
+            title="Child",
+            branch_name=child_branch,
+            worktree_path=str(child_wt),
+            parent_task_id=parent.id,
+            state=TaskState.InProgress,
+            merge_ready_at=datetime.now(UTC),
+        )
+        session.add(child)
+        await session.flush()
+
+        descendant = Task(
+            epic_id=epic.id,
+            title="Descendant",
+            branch_name=descendant_branch,
+            worktree_path=str(descendant_wt),
+            parent_task_id=child.id,
+            state=descendant_state,
+        )
+        session.add(descendant)
+        await session.commit()
+
+        return SeededSpineWithDescendant(
+            epic_id=epic.id,
+            parent_task_id=parent.id,
+            child_task_id=child.id,
+            descendant_task_id=descendant.id,
+            parent_branch=parent_branch,
+            child_branch=child_branch,
+            descendant_branch=descendant_branch,
+            parent_worktree=parent_wt,
+            child_worktree=child_wt,
+            descendant_worktree=descendant_wt,
+        )
+
+
+async def seed_three_task_chain_in_progress(scenario: Scenario) -> SeededThreeTaskChain:
+    repo = scenario.repo
+
+    parent_branch = "task-parent"
+    child_branch = "task-child"
+    grandchild_branch = "task-grandchild"
+
+    parent_wt = repo.create_worktree(branch_name=parent_branch)
+    repo.commit_file(
+        worktree_path=parent_wt,
+        relpath="parent.txt",
+        content="parent\n",
+        message="parent change",
+    )
+
+    child_wt = repo.create_worktree(branch_name=child_branch, from_ref=parent_branch)
+    repo.commit_file(
+        worktree_path=child_wt,
+        relpath="child.txt",
+        content="child\n",
+        message="child change",
+    )
+
+    grandchild_wt = repo.create_worktree(
+        branch_name=grandchild_branch, from_ref=child_branch
+    )
+    repo.commit_file(
+        worktree_path=grandchild_wt,
+        relpath="grandchild.txt",
+        content="grandchild\n",
+        message="grandchild change",
+    )
+
+    async with scenario.db.session() as session:
+        repo_row = await _require_repository_row(session, scenario)
+        epic = Epic(
+            repository_id=repo_row.id,
+            name="Test Epic",
+            slug="test-epic",
+            root_branch="main",
+        )
+        session.add(epic)
+        await session.flush()
+
+        parent = Task(
+            epic_id=epic.id,
+            title="Parent",
+            branch_name=parent_branch,
+            worktree_path=str(parent_wt),
+            state=TaskState.InProgress,
+        )
+        session.add(parent)
+        await session.flush()
+
+        child = Task(
+            epic_id=epic.id,
+            title="Child",
+            branch_name=child_branch,
+            worktree_path=str(child_wt),
+            parent_task_id=parent.id,
+            state=TaskState.InProgress,
+        )
+        session.add(child)
+        await session.flush()
+
+        grandchild = Task(
+            epic_id=epic.id,
+            title="Grandchild",
+            branch_name=grandchild_branch,
+            worktree_path=str(grandchild_wt),
+            parent_task_id=child.id,
+            state=TaskState.InProgress,
+        )
+        session.add(grandchild)
+        await session.commit()
+
+        return SeededThreeTaskChain(
+            epic_id=epic.id,
+            parent_task_id=parent.id,
+            child_task_id=child.id,
+            grandchild_task_id=grandchild.id,
+            parent_branch=parent_branch,
+            child_branch=child_branch,
+            grandchild_branch=grandchild_branch,
+            parent_worktree=parent_wt,
+            child_worktree=child_wt,
+            grandchild_worktree=grandchild_wt,
+        )
+
+
+async def seed_active_spine_with_mid_plan_rebase_conflict(
+    scenario: Scenario,
+) -> SeededSpine:
+    repo = scenario.repo
+
+    repo.commit_file(
+        worktree_path=scenario.ctx.repo_root,
+        relpath="conflict.txt",
+        content="base\n",
+        message="base conflict seed",
+    )
+
+    parent_branch = "task-parent"
+    child_branch = "task-child"
+
+    parent_wt = repo.create_worktree(branch_name=parent_branch, from_ref="main")
+    repo.commit_file(
+        worktree_path=parent_wt,
+        relpath="conflict.txt",
+        content="parent-1\n",
+        message="parent conflict 1",
+    )
+
+    child_wt = repo.create_worktree(branch_name=child_branch, from_ref=parent_branch)
+    repo.commit_file(
+        worktree_path=child_wt,
+        relpath="conflict.txt",
+        content="child\n",
+        message="child conflict",
+    )
+
+    repo.commit_file(
+        worktree_path=parent_wt,
+        relpath="conflict.txt",
+        content="parent-2\n",
+        message="parent conflict 2",
+    )
+
+    async with scenario.db.session() as session:
+        repo_row = await _require_repository_row(session, scenario)
+        epic = Epic(
+            repository_id=repo_row.id,
+            name="Test Epic",
+            slug="test-epic",
+            root_branch="main",
+        )
+        session.add(epic)
+        await session.flush()
+
+        parent = Task(
+            epic_id=epic.id,
+            title="Parent",
+            branch_name=parent_branch,
+            worktree_path=str(parent_wt),
+            state=TaskState.InProgress,
+            merge_ready_at=datetime.now(UTC),
+        )
+        session.add(parent)
+        await session.flush()
+
+        child = Task(
+            epic_id=epic.id,
+            title="Child",
+            branch_name=child_branch,
+            worktree_path=str(child_wt),
+            parent_task_id=parent.id,
+            state=TaskState.InProgress,
+            merge_ready_at=datetime.now(UTC),
+        )
+        session.add(child)
+        await session.commit()
+
+        return SeededSpine(
+            epic_id=epic.id,
+            parent_task_id=parent.id,
+            child_task_id=child.id,
+            parent_branch=parent_branch,
+            child_branch=child_branch,
+            parent_worktree=parent_wt,
+            child_worktree=child_wt,
+        )
