@@ -49,3 +49,4 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 - `epics/ui-v0/tasks/T-5/README.md`: Remove redundant inline error text from task cards (dedupe with callout).
 - `epics/ui-v0/tasks/T-6/README.md`: Remove tooltip that duplicates error details already shown in the callout.
 - `epics/ui-v0/tasks/T-7/README.md`: Repo executor panel polish (copy buttons, terminology, telemetry/projections messaging).
+- `epics/ui-v0/tasks/T-8/README.md`: Simplify graph interactions (remove on-select viewport movement and diagonalization behavior).
