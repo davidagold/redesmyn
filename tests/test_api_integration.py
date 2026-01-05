@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from starlette.websockets import WebSocketState
 
 from redesmyn.agent_runtime import has_tmux, tmux_session_name_for_task
 from redesmyn.api import _append_event, _broadcast_event
@@ -15,22 +13,9 @@ from redesmyn.db import MergeRun
 from redesmyn.domain.enums import AgentStatus
 from redesmyn.domain.enums import MergeRunStatus
 
+from tests.helpers.ws import JsonQueueWebSocket
 from tests.scenarios.scenario import Scenario
 from tests.scenarios.variants import seed_merged_parent, seed_running_agent
-
-
-class _JsonCapturingWebSocket:
-    client_state = WebSocketState.CONNECTED
-
-    def __init__(self) -> None:
-        self.sent: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-
-    async def accept(self) -> None:  # pragma: no cover - part of WS interface
-        return
-
-    async def send_json(self, payload: dict[str, object]) -> None:
-        json.dumps(payload)
-        await self.sent.put(payload)
 
 
 @pytest.mark.integration
@@ -53,7 +38,7 @@ async def test_unhandled_exception_returns_500_with_request_id_header_and_detail
 @pytest.mark.integration
 async def test_event_payloads_are_json_serializable(scenario: Scenario) -> None:
     app = scenario.app.app
-    websocket = _JsonCapturingWebSocket()
+    websocket = JsonQueueWebSocket()
 
     send_queue = await app.state.event_hub.connect(websocket)  # type: ignore[arg-type]
     sender_task = asyncio.create_task(
@@ -64,7 +49,7 @@ async def test_event_payloads_are_json_serializable(scenario: Scenario) -> None:
             event = await _append_event(session, event_type="test.event", data={})
         await _broadcast_event(app, event)
 
-        payload = await asyncio.wait_for(websocket.sent.get(), timeout=1.0)
+        payload = await asyncio.wait_for(websocket.sent_queue.get(), timeout=1.0)
         assert payload.get("type") == "event"
     finally:
         sender_task.cancel()

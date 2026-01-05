@@ -26,6 +26,9 @@ class JsonQueueWebSocket:
     def payloads(self) -> list[dict[str, Any]]:
         return list(self._payloads)
 
+    async def accept(self) -> None:  # pragma: no cover - interface parity
+        return
+
     async def send_json(self, payload: dict[str, Any]) -> None:
         json.dumps(payload)
         self._payloads.append(payload)
