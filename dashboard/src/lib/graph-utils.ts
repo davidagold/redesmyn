@@ -46,9 +46,18 @@ export function displayBranchLabel(
   }
 
   const title = node.title ?? ""
-  const prefixMatch = title.match(/^(T-\\d+)\\s+(.*)$/)
+  const prefixMatch = title.match(/^(T-\d+)\s+(.*)$/)
   const identifier = prefixMatch?.[1] ?? `task-${node.id}`
-  const titleRemainder = (prefixMatch?.[2] ?? title).trim()
+  const titleRemainderRaw = (prefixMatch?.[2] ?? title).trim()
+  const titleRemainderSansParens = titleRemainderRaw
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  const firstSegment = titleRemainderSansParens.split("+")[0]?.trim() ?? ""
+  const titleRemainder = firstSegment
+    .replace(/\bimplementation\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim()
   const slug = _slugifyBranchSegment(titleRemainder)
   const short = (slug.slice(0, 60).replace(/-+$/g, "") || "task").trim()
 

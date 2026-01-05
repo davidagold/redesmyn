@@ -499,7 +499,24 @@ def _default_branch_name_for_task(*, epic_slug: str, task: Task) -> str:
     if not identifier:
         match = _TASK_TITLE_ID_RE.match(task.title.strip())
         identifier = match.group(1) if match else f"task-{task.id}"
-    short = slugify(task.title, fallback="task")[:60].strip("-") or "task"
+
+    title = (task.title or "").strip()
+    title_remainder = title
+    if identifier and title.startswith(identifier):
+        title_remainder = title[len(identifier) :].strip()
+    if title_remainder.startswith("-"):
+        title_remainder = title_remainder[1:].strip()
+
+    # Prefer a concise "task abbreviation" (similar to the UI branch label):
+    # - drop parenthetical detail
+    # - take the first '+'-separated segment
+    # - drop common boilerplate suffixes
+    title_remainder = re.sub(r"\([^)]*\)", " ", title_remainder).strip()
+    title_remainder = title_remainder.split("+", 1)[0].strip()
+    title_remainder = re.sub(r"\bimplementation\b", "", title_remainder, flags=re.I)
+    title_remainder = re.sub(r"\s+", " ", title_remainder).strip()
+
+    short = slugify(title_remainder or title, fallback="task")[:60].strip("-") or "task"
     return f"rn/{epic_slug}/{identifier}-{short}"
 
 
