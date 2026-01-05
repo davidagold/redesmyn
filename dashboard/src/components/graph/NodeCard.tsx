@@ -864,7 +864,7 @@ export function NodeCard({
       {linearIssueId ? (
         <div
           className={cn(
-            "nodrag nopan absolute left-2 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)]",
+            "nodrag nopan absolute left-0 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)]",
           )}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
