@@ -89,6 +89,15 @@ def branch_exists(repo_root: Path, branch_name: str) -> bool:
     return proc.returncode == 0
 
 
+def git_rename_current_branch(worktree_path: Path, *, new_name: str) -> None:
+    if not new_name or new_name == "HEAD":
+        raise ValueError(f"Invalid branch name: {new_name!r}")
+    proc = _run_git(["branch", "-m", new_name], cwd=worktree_path)
+    if proc.returncode != 0:
+        output = (proc.stdout + "\n" + proc.stderr).strip()
+        raise GitCommandError(output or f"git branch -m {new_name} failed")
+
+
 def git_merge_base(repo_root: Path, ref_a: str, ref_b: str) -> str | None:
     proc = _run_git(["merge-base", ref_a, ref_b], cwd=repo_root)
     if proc.returncode != 0:

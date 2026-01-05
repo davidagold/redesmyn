@@ -87,6 +87,60 @@ def test_shell_print_outputs_worktree_path_and_exits_zero(tmp_path: Path) -> Non
 
 
 @pytest.mark.integration
+def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
+    tmp_path: Path,
+) -> None:
+    repo = ScenarioRepo.init(tmp_path)
+    epic_slug = "cli-epic"
+    write_docs(
+        repo_root=repo.repo_root,
+        epic_slug=epic_slug,
+        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+    )
+    repo.git(["add", "-A"], cwd=repo.repo_root)
+    repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
+
+    init_proc = run_rn(repo.repo_root, ["init"])
+    assert init_proc.returncode == 0, init_proc.stderr
+
+    proc = run_rn(repo.repo_root, ["sync", "--from", "local"])
+    assert proc.returncode == 0, proc.stderr
+
+    epic_db_path = db_path(repo.repo_root)
+    task = db_task_row(
+        epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
+    )
+    task_id = task.id
+
+    shell_proc = run_rn(repo.repo_root, ["shell", "--task-id", str(task_id), "--print"])
+    assert shell_proc.returncode == 0, shell_proc.stderr
+    worktree_path = Path(shell_proc.stdout.strip())
+    assert (
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path) == "task-1"
+    )
+
+    write_docs(
+        repo_root=repo.repo_root,
+        epic_slug=epic_slug,
+        tasks=[TaskSpec(task_id="T-1", title="Renamed Task", branch=None)],
+    )
+    repo.git(["add", "-A"], cwd=repo.repo_root)
+    repo.git(["commit", "-m", "rename task"], cwd=repo.repo_root)
+
+    proc2 = run_rn(repo.repo_root, ["sync", "--from", "local"])
+    assert proc2.returncode == 0, proc2.stderr
+
+    updated = db_task_row(
+        epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
+    )
+    assert updated.branch_name == "rn/cli-epic/T-1-renamed-task"
+    assert (
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+        == updated.branch_name
+    )
+
+
+@pytest.mark.integration
 def test_shell_no_create_errors_when_worktree_missing(tmp_path: Path) -> None:
     repo = ScenarioRepo.init(tmp_path)
     epic_slug = "cli-epic"

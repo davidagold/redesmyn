@@ -130,7 +130,9 @@ from redesmyn.repo_identity import compute_repo_id
 from redesmyn.repo import (
     GitCommandError,
     NotAGitRepositoryError,
+    branch_exists,
     current_branch,
+    git_rename_current_branch,
     git_worktree_add,
 )
 from redesmyn.git_mechanics_v0 import (
@@ -1634,6 +1636,35 @@ async def _sync_from_local(
             task_by_ref: dict[str, Task] = {}
             task_by_path: dict[Path, Task] = {}
 
+            def _maybe_rename_task_worktree_branch(
+                *, task: Task, desired_branch: str
+            ) -> None:
+                if not task.worktree_path:
+                    return
+                worktree_path = Path(task.worktree_path)
+                if not worktree_path.exists():
+                    return
+
+                current = current_branch(cwd=worktree_path)
+                if current == desired_branch:
+                    return
+                if current == "HEAD":
+                    raise typer.BadParameter(
+                        f"Task {task.id} worktree is not on a branch (detached HEAD): {worktree_path}"
+                    )
+                if branch_exists(ctx.repo_root, desired_branch):
+                    raise typer.BadParameter(
+                        "Cannot rename task worktree branch; target branch already exists: "
+                        f"{desired_branch!r} (task {task.id}, worktree {worktree_path})"
+                    )
+
+                try:
+                    git_rename_current_branch(worktree_path, new_name=desired_branch)
+                except GitCommandError as e:
+                    raise typer.BadParameter(
+                        f"Failed to rename task {task.id} worktree branch {current!r} -> {desired_branch!r}: {e}"
+                    ) from e
+
             for doc in task_docs:
                 if doc.title is None:
                     raise typer.BadParameter(f"Task doc missing title (H1): {doc.path}")
@@ -1741,6 +1772,7 @@ async def _sync_from_local(
                         stats.branches_created += 1
                     else:
                         stats.branches_updated += 1
+                    _maybe_rename_task_worktree_branch(task=task, desired_branch=branch)
                     task.branch_name = branch
                     if task.id not in created_task_ids:
                         updated_task_ids.add(task.id)
