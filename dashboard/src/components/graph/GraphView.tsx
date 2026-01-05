@@ -12,10 +12,8 @@ import {
   ReactFlow,
   type DefaultEdgeOptions,
   type Edge,
-  type ReactFlowInstance,
 } from "@xyflow/react"
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -37,12 +35,8 @@ import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
 import { RoundedSmoothStepEdge } from "./RoundedSmoothStepEdge"
 import {
-  DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
-  GRAPH_FIT_MAX_ZOOM,
-  GRAPH_FIT_MIN_ZOOM,
-  GRAPH_FIT_PADDING_PX,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
   GRAPH_PADDING,
@@ -75,7 +69,6 @@ interface GraphViewProps {
   selectedEdgeId: string | null
   focusMode: boolean
   epicSlug?: string | null
-  routeEpicSlug?: string | null
   onSelectNode: (nodeId: number, options: { additive: boolean }) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
@@ -86,10 +79,7 @@ const TRUNK_NODE_ID = "trunk"
 type GraphFlowNode = FlowBranchNodeType | TrunkNodeType
 
 const POSITION_EPSILON_PX = 0.25
-const VIEWPORT_EPSILON_PX = 0.5
-const VIEWPORT_EPSILON_ZOOM = 0.001
 const HANDLE_SIZE_PX = 8
-const DEFAULT_TRUNK_TITLE_MARGIN_PX = 80
 
 type TrunkMark = {
   type: "commit" | "base" | "connector" | "ellipsis"
@@ -113,25 +103,6 @@ type TrunkLayout = {
   baseOffset: number
   commitSpacing: number
   commitPadding: number
-}
-
-interface Viewport {
-  x: number
-  y: number
-  zoom: number
-}
-
-interface ViewportAnimation {
-  id: number
-  to: Viewport
-  duration: number
-}
-
-interface GraphBounds {
-  minX: number
-  minY: number
-  maxX: number
-  maxY: number
 }
 
 function positionsMatch(
@@ -159,75 +130,6 @@ function positionsMatch(
   return true
 }
 
-function viewportMatches(current: Viewport, next: Viewport) {
-  return (
-    Math.abs(current.x - next.x) <= VIEWPORT_EPSILON_PX &&
-    Math.abs(current.y - next.y) <= VIEWPORT_EPSILON_PX &&
-    Math.abs(current.zoom - next.zoom) <= VIEWPORT_EPSILON_ZOOM
-  )
-}
-
-function computeGraphBounds(
-  positions: Map<number, FlowPosition>,
-  trunkLayout: TrunkLayout | null,
-) {
-  if (!positions.size && !trunkLayout) {
-    return null
-  }
-  let minX = Number.POSITIVE_INFINITY
-  let minY = Number.POSITIVE_INFINITY
-  let maxX = Number.NEGATIVE_INFINITY
-  let maxY = Number.NEGATIVE_INFINITY
-
-  for (const pos of positions.values()) {
-    minX = Math.min(minX, pos.x)
-    minY = Math.min(minY, pos.y)
-    maxX = Math.max(maxX, pos.x + GRAPH_NODE_WIDTH)
-    maxY = Math.max(maxY, pos.y + GRAPH_NODE_HEIGHT)
-  }
-
-  if (trunkLayout) {
-    minX = trunkLayout.x
-    minY = trunkLayout.y
-    maxX = Math.max(maxX, trunkLayout.x + trunkLayout.width)
-    maxY = Math.max(maxY, trunkLayout.y + trunkLayout.height)
-  }
-
-  return { minX, minY, maxX, maxY }
-}
-
-function computeDefaultViewport(
-  bounds: GraphBounds,
-  rect: DOMRect,
-  reserveWidth: number,
-) {
-  const padding = GRAPH_FIT_PADDING_PX
-  const leftPadding = padding + DEFAULT_TRUNK_TITLE_MARGIN_PX
-  const rightPadding = padding
-  const visibleWidth = Math.max(1, rect.width - reserveWidth)
-  const visibleHeight = Math.max(1, rect.height)
-  const boundsWidth = Math.max(1, bounds.maxX - bounds.minX)
-  const boundsHeight = Math.max(1, bounds.maxY - bounds.minY)
-
-  const fitZoom = Math.min(
-    (visibleWidth - leftPadding - rightPadding) / boundsWidth,
-    (visibleHeight - padding * 2) / boundsHeight,
-  )
-  const zoom = Math.min(
-    GRAPH_FIT_MAX_ZOOM,
-    Math.max(GRAPH_FIT_MIN_ZOOM, fitZoom),
-  )
-
-  const centerY = (bounds.minY + bounds.maxY) / 2
-  const visibleCenterY = visibleHeight / 2
-
-  return {
-    x: leftPadding - bounds.minX * zoom,
-    y: visibleCenterY - centerY * zoom,
-    zoom,
-  }
-}
-
 export function GraphView({
   rootNodes,
   childrenByParent,
@@ -244,23 +146,14 @@ export function GraphView({
   selectedEdgeId,
   focusMode,
   epicSlug,
-  routeEpicSlug = null,
   onSelectNode,
   onSelectEdge,
   onClearSelection,
 }: GraphViewProps) {
   const setMergeReady = useSetTaskMergeReadyMutation()
-  const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
-  const containerRef = useRef<HTMLDivElement | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
-  const [layoutVersion, setLayoutVersion] = useState(0)
-  const didInitialFitRef = useRef(false)
-  const epicEnteredAtRef = useRef(performance.now())
-  const viewportAnimationIdRef = useRef(0)
-  const [viewportAnimation, setViewportAnimation] =
-    useState<ViewportAnimation | null>(null)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [bulkMergeReadyPending, setBulkMergeReadyPending] = useState(false)
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
@@ -311,34 +204,6 @@ export function GraphView({
       }
     }
   }, [])
-
-  const queueViewportAnimation = useCallback(
-    (nextViewport: Viewport, duration: number) => {
-      if (!flow) {
-        return
-      }
-      const currentViewport = flow.getViewport()
-      if (viewportMatches(currentViewport, nextViewport)) {
-        return
-      }
-      setViewportAnimation((current) => {
-        if (
-          current &&
-          current.duration === duration &&
-          viewportMatches(current.to, nextViewport)
-        ) {
-          return current
-        }
-        viewportAnimationIdRef.current += 1
-        return {
-          id: viewportAnimationIdRef.current,
-          to: nextViewport,
-          duration,
-        }
-      })
-    },
-    [flow],
-  )
 
   const nodesById = useMemo(() => {
     const map = new Map<number, GraphNode>()
@@ -631,12 +496,10 @@ export function GraphView({
         })
         if (!cancelled) {
           setElkPositions(positions)
-          setLayoutVersion((v) => v + 1)
         }
       } catch {
         if (!cancelled) {
           setElkPositions(null)
-          setLayoutVersion((v) => v + 1)
         }
       }
     })()
@@ -682,16 +545,7 @@ export function GraphView({
     return positions.size > 0 ? positions : null
   }, [basePositions, childrenByParent, focusMode, nodesById, selectedNodeId])
 
-  const hasSelection = selectedNodeIds.size > 0 || selectedEdgeId !== null
-  const hasSelectionRef = useRef(hasSelection)
-
   useEffect(() => {
-    hasSelectionRef.current = hasSelection
-  }, [hasSelection])
-
-  useEffect(() => {
-    didInitialFitRef.current = false
-    epicEnteredAtRef.current = performance.now()
     setElkPositions(null)
   }, [epicSlug])
 
@@ -717,29 +571,13 @@ export function GraphView({
       from.size > 0 &&
       to.size > 0 &&
       GRAPH_LAYOUT_ANIMATION_MS > 0
-    const shouldSetPositionsImmediately =
-      !positionsAreSame && !canAnimatePositions
-    const canAnimateViewport = Boolean(flow && viewportAnimation)
 
-    if (!canAnimatePositions && !canAnimateViewport) {
-      if (shouldSetPositionsImmediately) {
+    if (!canAnimatePositions) {
+      if (!positionsAreSame) {
         setPositions(to)
       }
       return
     }
-
-    if (shouldSetPositionsImmediately) {
-      setPositions(to)
-    }
-
-    const viewportRequest = viewportAnimation
-    const fromViewport = canAnimateViewport && flow ? flow.getViewport() : null
-    const toViewport = canAnimateViewport ? (viewportRequest?.to ?? null) : null
-    const viewportDuration =
-      canAnimatePositions && viewportRequest
-        ? GRAPH_LAYOUT_ANIMATION_MS
-        : (viewportRequest?.duration ?? 0)
-    const requestId = viewportRequest?.id
 
     let frame: number | null = null
     const startedAt = performance.now()
@@ -750,55 +588,26 @@ export function GraphView({
 
     function step(now: number) {
       const elapsed = now - startedAt
-      let positionsDone = true
-      let viewportDone = true
+      const t = Math.min(1, elapsed / GRAPH_LAYOUT_ANIMATION_MS)
+      const eased = easeOutCubic(t)
+      const next = new Map<number, FlowPosition>()
 
-      if (canAnimatePositions) {
-        const t = Math.min(1, elapsed / GRAPH_LAYOUT_ANIMATION_MS)
-        const eased = easeOutCubic(t)
-        const next = new Map<number, FlowPosition>()
-
-        for (const [nodeId, target] of to) {
-          const start = from.get(nodeId) ?? target
-          next.set(nodeId, {
-            x: start.x + (target.x - start.x) * eased,
-            y: start.y + (target.y - start.y) * eased,
-          })
-        }
-
-        setPositions(next)
-        positionsDone = t >= 1
+      for (const [nodeId, target] of to) {
+        const start = from.get(nodeId) ?? target
+        next.set(nodeId, {
+          x: start.x + (target.x - start.x) * eased,
+          y: start.y + (target.y - start.y) * eased,
+        })
       }
 
-      if (canAnimateViewport && fromViewport && toViewport && flow) {
-        const t =
-          viewportDuration > 0 ? Math.min(1, elapsed / viewportDuration) : 1
-        const eased = easeOutCubic(t)
-        flow.setViewport(
-          {
-            x: fromViewport.x + (toViewport.x - fromViewport.x) * eased,
-            y: fromViewport.y + (toViewport.y - fromViewport.y) * eased,
-            zoom:
-              fromViewport.zoom + (toViewport.zoom - fromViewport.zoom) * eased,
-          },
-          { duration: 0 },
-        )
-        viewportDone = t >= 1
-      }
+      setPositions(next)
 
-      if (!positionsDone || !viewportDone) {
+      if (t < 1) {
         frame = requestAnimationFrame(step)
         return
       }
 
-      if (canAnimateViewport && requestId !== undefined) {
-        setViewportAnimation((current) =>
-          current?.id === requestId ? null : current,
-        )
-      }
-      if (canAnimatePositions) {
-        setPositions(to)
-      }
+      setPositions(to)
     }
 
     frame = requestAnimationFrame(step)
@@ -807,7 +616,7 @@ export function GraphView({
         cancelAnimationFrame(frame)
       }
     }
-  }, [flow, targetPositions, viewportAnimation])
+  }, [targetPositions])
 
   const selectedEdgeNodeIds = useMemo(() => {
     if (!selectedEdgeId || !selectedEdgeId.startsWith("edge:")) {
@@ -1039,91 +848,6 @@ export function GraphView({
     return mapped
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
-  useEffect(() => {
-    if (!flow || !nodes.length) {
-      return
-    }
-
-    if (didInitialFitRef.current || hasSelectionRef.current) {
-      return
-    }
-
-    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
-      return
-    }
-
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      return
-    }
-    const bounds = computeGraphBounds(targetPositions, trunkLayout)
-    if (!bounds) {
-      return
-    }
-    const nextViewport = computeDefaultViewport(
-      bounds,
-      rect,
-      DETAILS_PANEL_WIDTH_PX,
-    )
-    queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
-    didInitialFitRef.current = true
-  }, [
-    flow,
-    epicSlug,
-    layoutVersion,
-    nodes.length,
-    queueViewportAnimation,
-    routeEpicSlug,
-    targetPositions,
-    trunkLayout,
-  ])
-
-  useEffect(() => {
-    if (!flow || !nodes.length) {
-      return
-    }
-    if (!elkPositions) {
-      return
-    }
-    if (!didInitialFitRef.current || hasSelectionRef.current) {
-      return
-    }
-    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
-      return
-    }
-    if (performance.now() - epicEnteredAtRef.current > 1_500) {
-      return
-    }
-
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      return
-    }
-    const bounds = computeGraphBounds(targetPositions, trunkLayout)
-    if (!bounds) {
-      return
-    }
-
-    const nextViewport = computeDefaultViewport(
-      bounds,
-      rect,
-      DETAILS_PANEL_WIDTH_PX,
-    )
-    const currentViewport = flow.getViewport()
-    if (currentViewport.zoom > nextViewport.zoom + 0.05) {
-      queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
-    }
-  }, [
-    elkPositions,
-    epicSlug,
-    flow,
-    nodes.length,
-    queueViewportAnimation,
-    routeEpicSlug,
-    targetPositions,
-    trunkLayout,
-  ])
-
   const selectionBarTargetVisible = selectedNodeIds.size > 1
 
   useEffect(() => {
@@ -1150,7 +874,7 @@ export function GraphView({
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
       <DotGrid />
-      <div ref={containerRef} className="relative h-full">
+      <div className="relative h-full">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -1161,7 +885,6 @@ export function GraphView({
           }}
           nodesDraggable={false}
           nodesConnectable={false}
-          onInit={setFlow}
           onPaneClick={onClearSelection}
           onEdgeClick={(e, edge) => {
             if (!edge.id.startsWith("edge:")) {

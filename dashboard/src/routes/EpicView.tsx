@@ -1205,7 +1205,6 @@ export function EpicView() {
             selectedEdgeId={selectedEdgeId}
             focusMode={focusMode}
             epicSlug={graph.epic.slug}
-            routeEpicSlug={epicSlug}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}
             onClearSelection={handleClearSelection}
