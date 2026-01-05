@@ -149,6 +149,10 @@ from redesmyn.repo_executor_leases import (
     expire_primary_if_owner,
     get_primary_host_key,
 )
+from redesmyn.db.sqlite_lock import (
+    is_sqlite_database_locked_error,
+    sqlite_lock_backoff_s,
+)
 from redesmyn.repo_identity import RepoKey
 from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
@@ -185,10 +189,20 @@ def _app_from_websocket(websocket: WebSocket) -> App:
 
 def _spawn_background_task(
     app: App, coro: Coroutine[Any, Any, object], *, name: str
-) -> None:
+) -> asyncio.Task[object]:
     task = asyncio.create_task(coro, name=name)
     app.state.background_tasks.add(task)
-    task.add_done_callback(app.state.background_tasks.discard)
+
+    def _done(t: asyncio.Task[object]) -> None:
+        app.state.background_tasks.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.error("background_task.failed", task=name, error=str(exc))
+
+    task.add_done_callback(_done)
+    return task
 
 
 class DashboardStaticFiles(StaticFiles):
@@ -241,7 +255,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     app.state.background_tasks = set()
     maybe_mount_dashboard(app, ctx.worktree_root)
 
-    lease_refresh_task: asyncio.Task[None] | None = None
+    lease_refresh_task: asyncio.Task[object] | None = None
     if settings.runner_mode == "local":
         identity = load_or_create_host_identity(ctx)
         app.state.local_host_key = identity.host_key
@@ -266,33 +280,63 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
             )
             if repo is not None:
                 repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
-                await acquire_or_refresh_primary(
-                    session, repo_key, host_key=identity.host_key
-                )
-            await session.commit()
-
-        async def _refresh_local_lease() -> None:
-            while True:
-                await asyncio.sleep(20)
-                async with app.state.sessionmaker() as session:
-                    repo = await session.scalar(
-                        select(Repository).where(
-                            Repository.repo_root == str(ctx.repo_root)
-                        )
-                    )
-                    if repo is None:
-                        continue
+                try:
                     await acquire_or_refresh_primary(
-                        session,
-                        RepoKey(
-                            workspace_id=repo.workspace_id,
-                            repo_id=repo.repo_id,
-                        ),
-                        host_key=identity.host_key,
+                        session, repo_key, host_key=identity.host_key
                     )
                     await session.commit()
+                except Exception as e:
+                    if is_sqlite_database_locked_error(e):
+                        log.warning("lease.acquire.db_locked", error=str(e))
+                        await session.rollback()
+                    else:
+                        raise
+            else:
+                await session.commit()
 
-        lease_refresh_task = asyncio.create_task(_refresh_local_lease())
+        async def _refresh_local_lease() -> None:
+            attempt = 0
+            while True:
+                await asyncio.sleep(
+                    20 if attempt == 0 else sqlite_lock_backoff_s(attempt)
+                )
+                try:
+                    async with app.state.sessionmaker() as session:
+                        repo = await session.scalar(
+                            select(Repository).where(
+                                Repository.repo_root == str(ctx.repo_root)
+                            )
+                        )
+                        if repo is None:
+                            attempt = 0
+                            continue
+                        await acquire_or_refresh_primary(
+                            session,
+                            RepoKey(
+                                workspace_id=repo.workspace_id,
+                                repo_id=repo.repo_id,
+                            ),
+                            host_key=identity.host_key,
+                        )
+                        await session.commit()
+                    attempt = 0
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    if is_sqlite_database_locked_error(e):
+                        log.warning(
+                            "lease.refresh.db_locked",
+                            attempt=attempt,
+                            error=str(e),
+                        )
+                        attempt += 1
+                        continue
+                    log.exception("lease.refresh.failed")
+                    attempt = 0
+
+        lease_refresh_task = _spawn_background_task(
+            app, _refresh_local_lease(), name="lease_refresh_local"
+        )
 
     app.state.repo_executor = make_repo_executor(
         runner_mode=settings.runner_mode,
@@ -302,8 +346,8 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         daemon_connections=app.state.daemon_connections,
     )
 
-    observer_task: asyncio.Task[None] | None = None
-    agent_monitor_task: asyncio.Task[None] | None = None
+    observer_task: asyncio.Task[object] | None = None
+    agent_monitor_task: asyncio.Task[object] | None = None
     env_no_observer = os.environ.get("REDESMYN_NO_OBSERVER") in {"1", "true", "TRUE"}
     env_no_agent_monitor = os.environ.get("REDESMYN_NO_AGENT_MONITOR") in {
         "1",
@@ -314,23 +358,27 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     enable_agent_monitor = settings.enable_agent_monitor and not env_no_agent_monitor
 
     if settings.runner_mode == "local" and enable_repo_observer:
-        observer_task = asyncio.create_task(
+        observer_task = _spawn_background_task(
+            app,
             run_repo_observer(
                 ctx,
                 interval_s=1.0,
                 emit_baseline=False,
                 once=False,
-            )
+            ),
+            name="repo_observer",
         )
 
     if settings.runner_mode == "local" and enable_agent_monitor:
-        agent_monitor_task = asyncio.create_task(
+        agent_monitor_task = _spawn_background_task(
+            app,
             run_agent_monitor(
                 ctx,
                 app.state.sessionmaker,
                 interval_s=1.0,
                 once=False,
-            )
+            ),
+            name="agent_monitor",
         )
 
     yield
@@ -555,11 +603,18 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                 and app.state.runner_mode == "local"
                 and app.state.local_host_key is not None
             ):
-                if await acquire_or_refresh_primary(
-                    session, repo_key, host_key=app.state.local_host_key, now=now
-                ):
-                    await session.commit()
-                    primary_host_key = app.state.local_host_key
+                try:
+                    if await acquire_or_refresh_primary(
+                        session, repo_key, host_key=app.state.local_host_key, now=now
+                    ):
+                        await session.commit()
+                        primary_host_key = app.state.local_host_key
+                except Exception as e:
+                    if is_sqlite_database_locked_error(e):
+                        log.warning("lease.acquire_on_demand.db_locked", error=str(e))
+                        await session.rollback()
+                    else:
+                        raise
 
         tasks = list(
             await session.scalars(
@@ -784,11 +839,18 @@ async def _resolve_repo_executor_target(
         and app.state.runner_mode == "local"
         and app.state.local_host_key is not None
     ):
-        if await acquire_or_refresh_primary(
-            session, repo_key, host_key=app.state.local_host_key
-        ):
-            await session.commit()
-            primary = app.state.local_host_key
+        try:
+            if await acquire_or_refresh_primary(
+                session, repo_key, host_key=app.state.local_host_key
+            ):
+                await session.commit()
+                primary = app.state.local_host_key
+        except Exception as e:
+            if is_sqlite_database_locked_error(e):
+                log.warning("lease.acquire_on_demand.db_locked", error=str(e))
+                await session.rollback()
+            else:
+                raise
     target_host_key = requested_host_key or primary
     if target_host_key is None:
         if requested_host_key is None:
