@@ -16,9 +16,9 @@ from redesmyn.integrations.linear import (
     LinearClient,
     fetch_issue,
     fetch_issue_team_id,
-    fetch_label_by_name,
     refresh_access_token,
     resolve_team_state_id,
+    resolve_team_state_id_from_states,
     update_issue_state,
 )
 from redesmyn.integrations.linear_credentials import (
@@ -64,29 +64,45 @@ async def maybe_push_task_state_to_linear(
             issue = await fetch_issue(client, issue_id=issue_id)
 
             observed_at = datetime.now(UTC)
-            task.linear_state_type = issue.state_type
-            task.linear_state_name = issue.state_name
-            task.linear_state_observed_at = observed_at
-            await _safe_commit(session)
-
-            label = await fetch_label_by_name(client, label_name=epic.slug)
-            if label is None or label.id not in issue.label_ids:
+            has_epic_label = any(
+                name.strip().lower() == epic.slug.lower()
+                for name in issue.label_names
+                if name.strip()
+            )
+            if not has_epic_label:
+                task.linear_state_type = issue.state_type
+                task.linear_state_name = issue.state_name
+                task.linear_state_observed_at = observed_at
+                await _safe_commit(session)
                 return
 
             desired_state_type = linear_state_type_from_task_state(desired_task_state)
             current_state = (issue.state_type or "").strip().lower()
             if current_state == desired_state_type.strip().lower():
+                task.linear_state_type = issue.state_type
+                task.linear_state_name = issue.state_name
+                task.linear_state_observed_at = observed_at
+                await _safe_commit(session)
                 return
 
             team_id = issue.team_id or await fetch_issue_team_id(
                 client, issue_id=issue.id
             )
             if not team_id:
+                task.linear_state_type = issue.state_type
+                task.linear_state_name = issue.state_name
+                task.linear_state_observed_at = observed_at
+                await _safe_commit(session)
                 return
 
-            state_id = await resolve_team_state_id(
-                client, team_id=team_id, state_type=desired_state_type
-            )
+            if issue.team_states:
+                state_id = resolve_team_state_id_from_states(
+                    issue.team_states, state_type=desired_state_type
+                )
+            else:
+                state_id = await resolve_team_state_id(
+                    client, team_id=team_id, state_type=desired_state_type
+                )
             updated = await update_issue_state(
                 client,
                 issue_id=issue.id,
@@ -95,7 +111,7 @@ async def maybe_push_task_state_to_linear(
 
             task.linear_state_type = updated.state_type
             task.linear_state_name = updated.state_name
-            task.linear_state_observed_at = observed_at
+            task.linear_state_observed_at = datetime.now(UTC)
             await _safe_commit(session)
 
     try:
@@ -175,9 +191,12 @@ async def maybe_push_task_merge_ready_to_linear(
             issue = await fetch_issue(client, issue_id=task.linear_issue_id)
             observed_at = datetime.now(UTC)
 
-            step = "fetch_label"
-            label = await fetch_label_by_name(client, label_name=epic.slug)
-            if label is None or label.id not in issue.label_ids:
+            has_epic_label = any(
+                name.strip().lower() == epic.slug.lower()
+                for name in issue.label_names
+                if name.strip()
+            )
+            if not has_epic_label:
                 task.linear_state_type = issue.state_type
                 task.linear_state_name = issue.state_name
                 task.linear_state_observed_at = observed_at
@@ -210,9 +229,14 @@ async def maybe_push_task_merge_ready_to_linear(
             # last started-state in the workflow as a reasonable "ready/review"
             # approximation when teams have multiple started states.
             step = "resolve_state_id"
-            state_id = await resolve_team_state_id(
-                client, team_id=team_id, state_type="started", pick="last"
-            )
+            if issue.team_states:
+                state_id = resolve_team_state_id_from_states(
+                    issue.team_states, state_type="started", pick="last"
+                )
+            else:
+                state_id = await resolve_team_state_id(
+                    client, team_id=team_id, state_type="started", pick="last"
+                )
             step = "update_issue_state"
             updated = await update_issue_state(
                 client,

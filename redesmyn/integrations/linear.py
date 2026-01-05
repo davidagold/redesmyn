@@ -5,6 +5,8 @@ import hashlib
 import logging
 import re
 import secrets
+import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from datetime import timedelta
@@ -23,6 +25,8 @@ logger = logging.getLogger("redesmyn.integrations.linear")
 _GRAPHQL_OPERATION_RE = re.compile(r"^\s*(query|mutation)\s+(?P<name>[A-Za-z0-9_]+)\b")
 
 _shared_graphql_client: httpx.AsyncClient | None = None
+_team_state_id_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
+_TEAM_STATE_ID_CACHE_TTL_S = 10 * 60
 
 
 def _graphql_http_client() -> httpx.AsyncClient:
@@ -71,6 +75,8 @@ class LinearIssue:
     state_name: str | None = None
     team_id: str | None = None
     label_ids: tuple[str, ...] = ()
+    label_names: tuple[str, ...] = ()
+    team_states: tuple["LinearWorkflowState", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -724,8 +730,14 @@ query Issue($id: String!) {
     title
     description
     labelIds
+    labels(first: 50) { nodes { name } }
     state { type name }
-    team { id }
+    team {
+      id
+      states(first: 100) {
+        nodes { id name type position }
+      }
+    }
   }
 }
 """
@@ -837,6 +849,37 @@ def _parse_issue(node: object) -> LinearIssue | None:
     if isinstance(raw_label_ids, list):
         label_ids = tuple(v for v in raw_label_ids if isinstance(v, str) and v)
 
+    label_names: tuple[str, ...] = ()
+    raw_labels = node_dict.get("labels")
+    if isinstance(raw_labels, dict):
+        labels_dict = cast(dict[str, Any], raw_labels)
+        nodes = labels_dict.get("nodes")
+        if isinstance(nodes, list):
+            names: list[str] = []
+            for item in nodes:
+                if not isinstance(item, dict):
+                    continue
+                name = cast(dict[str, Any], item).get("name")
+                if isinstance(name, str) and name.strip():
+                    names.append(name)
+            label_names = tuple(names)
+
+    team_states: tuple[LinearWorkflowState, ...] = ()
+    raw_team_states = None
+    if isinstance(team, dict):
+        team_dict = cast(dict[str, Any], team)
+        raw_team_states = team_dict.get("states")
+    if isinstance(raw_team_states, dict):
+        states_dict = cast(dict[str, Any], raw_team_states)
+        nodes = states_dict.get("nodes")
+        if isinstance(nodes, list):
+            states: list[LinearWorkflowState] = []
+            for item in nodes:
+                state = _parse_workflow_state(item)
+                if state is not None:
+                    states.append(state)
+            team_states = tuple(states)
+
     if (
         not isinstance(issue_id, str)
         or not isinstance(identifier, str)
@@ -853,6 +896,8 @@ def _parse_issue(node: object) -> LinearIssue | None:
         state_name=state_name,
         team_id=team_id,
         label_ids=label_ids,
+        label_names=label_names,
+        team_states=team_states,
     )
 
 
@@ -1554,15 +1599,13 @@ async def fetch_team_states(
     return states
 
 
-async def resolve_team_state_id(
-    client: LinearClient,
+def resolve_team_state_id_from_states(
+    states: Sequence[LinearWorkflowState],
     *,
-    team_id: str,
     state_type: str,
     pick: Literal["first", "last"] = "first",
 ) -> str:
     normalized = state_type.lower().strip()
-    states = await fetch_team_states(client, team_id=team_id)
     candidates = [s for s in states if s.type.lower() == normalized]
     if not candidates:
         raise ValueError(f"Linear: no workflow state found for type={state_type!r}")
@@ -1576,6 +1619,31 @@ async def resolve_team_state_id(
 
     ordered = sorted(candidates, key=_rank)
     return ordered[0].id if pick == "first" else ordered[-1].id
+
+
+async def resolve_team_state_id(
+    client: LinearClient,
+    *,
+    team_id: str,
+    state_type: str,
+    pick: Literal["first", "last"] = "first",
+) -> str:
+    normalized = state_type.lower().strip()
+    cache_key = (team_id, normalized, pick)
+    now = time.monotonic()
+    cached = _team_state_id_cache.get(cache_key)
+    if cached is not None:
+        state_id, expires_at = cached
+        if expires_at > now:
+            return state_id
+        _team_state_id_cache.pop(cache_key, None)
+
+    states = await fetch_team_states(client, team_id=team_id)
+    state_id = resolve_team_state_id_from_states(
+        states, state_type=state_type, pick=pick
+    )
+    _team_state_id_cache[cache_key] = (state_id, now + _TEAM_STATE_ID_CACHE_TTL_S)
+    return state_id
 
 
 async def fetch_issue_blocker_relations(
