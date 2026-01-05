@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -37,6 +38,10 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _unique_suffix() -> str:
+    return uuid4().hex[:8]
+
+
 def _write_host_identity(*, ctx: RepoContext, host_key: str) -> None:
     host_identity_path(ctx).write_text(
         HostIdentity(host_key=host_key, display_name="Redesmyn E2E").model_dump_json(
@@ -53,6 +58,7 @@ class SeededEpic:
 
 
 async def _seed_epic_with_tasks(ctx: RepoContext) -> SeededEpic:
+    suffix = _unique_suffix()
     engine = create_engine(ctx.db_path)
     try:
         sessionmaker = create_sessionmaker(engine)
@@ -66,7 +72,7 @@ async def _seed_epic_with_tasks(ctx: RepoContext) -> SeededEpic:
             epic = Epic(
                 repository_id=repo.id,
                 name="E2E Epic",
-                slug="e2e-epic",
+                slug=f"e2e-epic-{suffix}",
                 root_branch=repo.default_branch,
             )
             session.add(epic)
@@ -76,7 +82,7 @@ async def _seed_epic_with_tasks(ctx: RepoContext) -> SeededEpic:
                 epic_id=epic.id,
                 title="Parent task",
                 body="# Parent task\n\nThis is seeded test data.\n",
-                branch_name="e2e-parent",
+                branch_name=f"e2e-parent-{suffix}",
                 state=TaskState.Done,
             )
             session.add(parent)
@@ -86,7 +92,7 @@ async def _seed_epic_with_tasks(ctx: RepoContext) -> SeededEpic:
                 epic_id=epic.id,
                 title="Child task",
                 body="# Child task\n\nThis is seeded test data.\n",
-                branch_name="e2e-child",
+                branch_name=f"e2e-child-{suffix}",
                 parent_task_id=parent.id,
                 state=TaskState.InProgress,
             )
