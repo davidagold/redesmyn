@@ -17,7 +17,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -41,7 +40,6 @@ import {
   DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
-  GRAPH_SELECTION_ANIMATION_MS,
   GRAPH_FIT_MAX_ZOOM,
   GRAPH_FIT_MIN_ZOOM,
   GRAPH_FIT_PADDING_PX,
@@ -59,7 +57,7 @@ import {
 } from "./graphConfig"
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
-import { applySelectionLens, computeSelectionLens } from "./selectionLens"
+import { computeNodeSpan } from "./nodeSpan"
 
 interface GraphViewProps {
   rootNodes: GraphNode[]
@@ -614,49 +612,8 @@ export function GraphView({
     return Math.max(GRAPH_PADDING, desired)
   }, [trunkMetrics.baseOffset])
 
-  const focusPositions = useMemo(() => {
-    if (!focusMode || selectedNodeId === null) {
-      return null
-    }
-
-    const path: GraphNode[] = []
-    const visited = new Set<number>()
-    let currentId: number | null = selectedNodeId
-
-    while (currentId !== null && !visited.has(currentId)) {
-      visited.add(currentId)
-      const node: GraphNode | null = nodesById.get(currentId) ?? null
-      if (!node) {
-        break
-      }
-      path.push(node)
-      currentId = node.parentTaskId ?? null
-    }
-
-    if (!path.length) {
-      return null
-    }
-
-    path.reverse()
-    const positions = new Map<number, FlowPosition>()
-    const xOffset = 40
-    const yOffset = 40
-    const xStep = 360
-    const yStep = 180
-
-    for (let i = 0; i < path.length; i += 1) {
-      const node = path[i]
-      positions.set(node.id, {
-        x: xOffset + i * xStep,
-        y: yOffset + i * yStep,
-      })
-    }
-
-    return positions
-  }, [focusMode, nodesById, selectedNodeId])
-
   useEffect(() => {
-    if (focusPositions || !graphNodes.length) {
+    if (!graphNodes.length) {
       setElkPositions(null)
       return
     }
@@ -687,18 +644,9 @@ export function GraphView({
     return () => {
       cancelled = true
     }
-  }, [
-    childrenByParent,
-    focusPositions,
-    graphNodes,
-    layoutAnchorY,
-    trunkColumnWidth,
-  ])
+  }, [childrenByParent, graphNodes, layoutAnchorY, trunkColumnWidth])
 
   const basePositions = useMemo(() => {
-    if (focusPositions) {
-      return focusPositions
-    }
     if (elkPositions) {
       return elkPositions
     }
@@ -711,15 +659,31 @@ export function GraphView({
   }, [
     childrenByParent,
     elkPositions,
-    focusPositions,
     rootNodes,
     layoutAnchorY,
     trunkColumnWidth,
   ])
 
+  const focusPositions = useMemo(() => {
+    if (!focusMode || selectedNodeId === null) {
+      return null
+    }
+    const span = computeNodeSpan(selectedNodeId, nodesById, childrenByParent)
+    if (!span) {
+      return null
+    }
+    const positions = new Map<number, FlowPosition>()
+    for (const nodeId of span.focusPath) {
+      const pos = basePositions.get(nodeId)
+      if (pos) {
+        positions.set(nodeId, pos)
+      }
+    }
+    return positions.size > 0 ? positions : null
+  }, [basePositions, childrenByParent, focusMode, nodesById, selectedNodeId])
+
   const hasSelection = selectedNodeIds.size > 0 || selectedEdgeId !== null
   const hasSelectionRef = useRef(hasSelection)
-  const previousHasSelectionRef = useRef(hasSelection)
 
   useEffect(() => {
     hasSelectionRef.current = hasSelection
@@ -731,50 +695,10 @@ export function GraphView({
     setElkPositions(null)
   }, [epicSlug])
 
-  const selectionLensRef = useRef<{
-    key: string
-    lens: ReturnType<typeof computeSelectionLens>
-    nodesById: Map<number, GraphNode>
-    childrenByParent: Map<number | null, GraphNode[]>
-  } | null>(null)
-
-  const rawSelectionLens = useMemo(() => {
-    if (selectedNodeId === null || focusPositions) {
-      return null
-    }
-    return computeSelectionLens(selectedNodeId, nodesById, childrenByParent)
-  }, [childrenByParent, focusPositions, nodesById, selectedNodeId])
-
-  const selectionLens = useMemo(() => {
-    if (!rawSelectionLens) {
-      selectionLensRef.current = null
-      return null
-    }
-    const key = `${rawSelectionLens.focusRootId}:${rawSelectionLens.focusEndId}`
-    const cached = selectionLensRef.current
-    if (
-      cached &&
-      cached.key === key &&
-      cached.nodesById === nodesById &&
-      cached.childrenByParent === childrenByParent
-    ) {
-      return cached.lens
-    }
-    selectionLensRef.current = {
-      key,
-      lens: rawSelectionLens,
-      nodesById,
-      childrenByParent,
-    }
-    return rawSelectionLens
-  }, [childrenByParent, nodesById, rawSelectionLens])
-
-  const targetPositions = useMemo(() => {
-    if (!selectionLens) {
-      return basePositions
-    }
-    return applySelectionLens(basePositions, selectionLens, childrenByParent)
-  }, [basePositions, childrenByParent, selectionLens])
+  const targetPositions = useMemo(
+    () => focusPositions ?? basePositions,
+    [basePositions, focusPositions],
+  )
 
   const [positions, setPositions] =
     useState<Map<number, FlowPosition>>(targetPositions)
@@ -1114,130 +1038,6 @@ export function GraphView({
     }
     return mapped
   }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
-
-  useLayoutEffect(() => {
-    const wasSelected = previousHasSelectionRef.current
-    previousHasSelectionRef.current = hasSelection
-
-    if (!flow || nodes.length === 0) {
-      return
-    }
-
-    if (routeEpicSlug && epicSlug && routeEpicSlug !== epicSlug) {
-      return
-    }
-
-    if (wasSelected && !hasSelection) {
-      const rect = containerRef.current?.getBoundingClientRect()
-      if (!rect || rect.width <= 0 || rect.height <= 0) {
-        return
-      }
-      const bounds = computeGraphBounds(targetPositions, trunkLayout)
-      if (!bounds) {
-        return
-      }
-      const nextViewport = computeDefaultViewport(
-        bounds,
-        rect,
-        DETAILS_PANEL_WIDTH_PX,
-      )
-      queueViewportAnimation(nextViewport, GRAPH_LAYOUT_ANIMATION_MS)
-    }
-  }, [
-    epicSlug,
-    flow,
-    hasSelection,
-    nodes.length,
-    queueViewportAnimation,
-    routeEpicSlug,
-    targetPositions,
-    trunkLayout,
-  ])
-
-  useLayoutEffect(() => {
-    if (!flow || selectedNodeId === null || focusPositions) {
-      return
-    }
-
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      return
-    }
-
-    const branchNodeIds = selectionLens?.focusPath ?? [selectedNodeId]
-    let minX = Number.POSITIVE_INFINITY
-    let minY = Number.POSITIVE_INFINITY
-    let maxX = Number.NEGATIVE_INFINITY
-    let maxY = Number.NEGATIVE_INFINITY
-
-    for (const nodeId of branchNodeIds) {
-      const pos = targetPositions.get(nodeId)
-      if (!pos) {
-        continue
-      }
-      minX = Math.min(minX, pos.x)
-      minY = Math.min(minY, pos.y)
-      maxX = Math.max(maxX, pos.x + GRAPH_NODE_WIDTH)
-      maxY = Math.max(maxY, pos.y + GRAPH_NODE_HEIGHT)
-    }
-
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
-      return
-    }
-
-    const padding = GRAPH_FIT_PADDING_PX
-    const visibleWidth = Math.max(
-      1,
-      rect.width - DETAILS_PANEL_WIDTH_PX - padding * 2,
-    )
-    const visibleHeight = Math.max(1, rect.height - padding * 2)
-    const boundsWidth = Math.max(1, maxX - minX)
-    const boundsHeight = Math.max(1, maxY - minY)
-
-    const fitZoom = Math.min(
-      visibleWidth / boundsWidth,
-      visibleHeight / boundsHeight,
-    )
-    const zoom = Math.min(
-      GRAPH_FIT_MAX_ZOOM,
-      Math.max(GRAPH_FIT_MIN_ZOOM, fitZoom),
-    )
-
-    const centerX = (minX + maxX) / 2
-    const centerY = (minY + maxY) / 2
-    const visibleCenterX = (rect.width - DETAILS_PANEL_WIDTH_PX) / 2
-    const visibleCenterY = rect.height / 2
-
-    const desiredTrunkScreenX =
-      GRAPH_FIT_PADDING_PX + DEFAULT_TRUNK_TITLE_MARGIN_PX
-    const trunkWorldX = trunkLayout?.x ?? GRAPH_PADDING
-    const trunkAnchorX = desiredTrunkScreenX - trunkWorldX * zoom
-
-    const xMin = padding - minX * zoom
-    const xMax = rect.width - DETAILS_PANEL_WIDTH_PX - padding - maxX * zoom
-    const x =
-      xMin <= xMax
-        ? Math.min(xMax, Math.max(xMin, trunkAnchorX))
-        : visibleCenterX - centerX * zoom
-
-    const yMin = padding - minY * zoom
-    const yMax = rect.height - padding - maxY * zoom
-    const y =
-      yMin <= yMax
-        ? Math.min(yMax, Math.max(yMin, visibleCenterY - centerY * zoom))
-        : visibleCenterY - centerY * zoom
-
-    const nextViewport = { x, y, zoom }
-    queueViewportAnimation(nextViewport, GRAPH_SELECTION_ANIMATION_MS)
-  }, [
-    flow,
-    focusPositions,
-    selectedNodeId,
-    selectionLens,
-    queueViewportAnimation,
-    targetPositions,
-    trunkLayout,
-  ])
 
   useEffect(() => {
     if (!flow || !nodes.length) {

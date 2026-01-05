@@ -1,5 +1,4 @@
 export const GRAPH_LAYOUT_ANIMATION_MS = 260
-export const GRAPH_SELECTION_ANIMATION_MS = 180
 export const GRAPH_EDGE_STYLE_ANIMATION_MS = 150
 export const GRAPH_EDGE_BORDER_RADIUS = 29
 
@@ -20,11 +19,6 @@ export const DETAILS_PANEL_WIDTH_PX = 32 * 16
 export const GRAPH_FIT_PADDING_PX = 72
 export const GRAPH_FIT_MIN_ZOOM = 0.55
 export const GRAPH_FIT_MAX_ZOOM = 1.2
-
-export const DIAGONAL_BIAS_SLOPE = 0.22
-
-export const SELECTION_LENS_CORRIDOR_PADDING_PX = 72
-export const SELECTION_LENS_CORRIDOR_GAP_PX = 56
 
 /**
  * Commit-string LOD is tied to zoom to keep large graphs responsive.
