@@ -15,7 +15,7 @@ from redesmyn.domain.enums import MergeRunStatus
 
 from tests.helpers.ws import InProcessWebSocket
 from tests.scenarios.scenario import Scenario
-from tests.scenarios.variants import seed_merged_parent
+from tests.scenarios.seeds.git import seed_merged_parent
 
 
 async def _recv_until_type(

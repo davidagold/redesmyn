@@ -19,7 +19,7 @@ from tests.scenarios.scenario import (
     ScenarioDaemon,
     ScenarioRepo,
 )
-from tests.scenarios.variants import (
+from tests.scenarios.seeds.git import (
     seed_conflicted_merge_run,
     seed_merged_parent,
     seed_running_agent,
