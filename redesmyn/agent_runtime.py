@@ -838,9 +838,8 @@ async def start_task_agent(
                 await session.refresh(agent_session)
                 await maybe_push_task_state_to_linear(
                     ctx,
-                    session=session,
-                    task=task,
-                    epic=epic,
+                    sessionmaker=sessionmaker,
+                    task_id=task.id,
                     desired_task_state=TaskState.InProgress,
                 )
                 return StartAgentResult(
@@ -1100,9 +1099,8 @@ async def start_task_agent(
                 warnings.append(f"Failed to send agent prelude: {e}")
             await maybe_push_task_state_to_linear(
                 ctx,
-                session=session,
-                task=task,
-                epic=epic,
+                sessionmaker=sessionmaker,
+                task_id=task.id,
                 desired_task_state=TaskState.InProgress,
             )
             return StartAgentResult(

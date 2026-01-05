@@ -608,15 +608,11 @@ async def execute_merge_cascade_plan(
                 task_row.merge_ready_at = None
 
         await session.commit()
-        epic_row = await session.get(Epic, plan.epic_id)
-        if epic_row is None:
-            return
         for task_row in rows:
             await maybe_push_task_state_to_linear(
                 ctx,
-                session=session,
-                task=task_row,
-                epic=epic_row,
+                sessionmaker=sessionmaker,
+                task_id=task_row.id,
                 desired_task_state=TaskState.Done,
                 timeout_s=2.0,
             )
