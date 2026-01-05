@@ -799,7 +799,7 @@ export function NodeCard({
       {linearIssueId ? (
         <div
           className={cn(
-            "nodrag nopan absolute left-0 top-2.5 z-40 -translate-x-[calc(100%+8px)] transition-opacity",
+            "nodrag nopan absolute left-2 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)] transition-opacity",
             isSelected || actionsMenuOpen
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -810,7 +810,7 @@ export function NodeCard({
           <button
             type="button"
             className={cn(
-              "group/linear inline-flex max-w-7 items-center overflow-hidden rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur transition-[max-width,background-color] duration-200 hover:max-w-48 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              "group/linear inline-flex h-6 max-w-7 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur transition-[max-width,background-color] duration-200 hover:max-w-48 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
             )}
             aria-label={linearPillLabel}
             onClick={() => {
@@ -824,7 +824,7 @@ export function NodeCard({
             <span className="inline-flex size-6 items-center justify-center">
               <LinearIcon className="size-3.5 text-muted-foreground" />
             </span>
-            <span className="pr-2 font-mono text-[0.625rem] text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/linear:opacity-100">
+            <span className="pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/linear:opacity-100">
               {linearPillLabel}
             </span>
           </button>
