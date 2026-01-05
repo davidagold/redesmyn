@@ -44,13 +44,13 @@ So, this epic is the successor for the unfinished harness-centric tasks from `ag
 
 ## 2) Current state (what exists today)
 
-This section is a snapshot of how harness integration currently works in `main`.
+This section describes how harness integration currently works in `main`.
 
 ### 2.0 Executive summary
 
 We already have a working “harness” system, but the contract is implicit and spread across the server, CLI, UI, and local runner implementation:
 
-- The **server** (and CLI) orchestrate agent lifecycle and store `Agent`/`AgentSession` state in the DB.
+- The **server** (and CLI) orchestrate agent session lifecycle and store `AgentSession` state in the DB (task-anchored; no persistent DB `Agent` identity).
 - The **executor** is effectively “local host” today (`LocalRunnerBackend`); the remote backend exists but is not yet a real implementation.
 - A “harness profile” is stored in `harness_profiles` and snapshotted onto sessions, but we don’t yet treat this as a stable, versioned **interface**.
 
@@ -64,8 +64,9 @@ Hubs of harness-related state:
   - `source` (`builtin`/`user`)
   - `display_name`
   - `definition` (JSON)
-- `Agent` / `AgentConfig` / `AgentSession`:
-  - configs point at a `harness_profile_id` and store the resolved harness definition for a run
+- `AgentSession` (`agent_sessions` table; ORM: `redesmyn/db/models.py`):
+  - sessions are **task-anchored** (`task_id`) and are the canonical runtime record for “agent state”
+  - there is no persistent logical DB `Agent` identity (labels are derived from `task_id`, e.g. `a-<task_id>`)
   - sessions snapshot `harness_profile_id`, `resolved_profile`, `attach`, `cwd_path`, and `prelude_rendered`
   - sessions also carry `started_at` / `ended_at` timestamps (derived from lifecycle)
 
@@ -89,7 +90,7 @@ Definition + normalization are in `redesmyn/orchestration_config.py`.
 
 The harness process model is currently:
 
-- **tmux-first**: agents are started in a stable tmux session per task (`rn-a-<task_id>`).
+- **tmux-first**: agent sessions are started in a stable tmux session per task (`rn-a-<task_id>`).
 - A harness command is treated as a shell-like string, parsed to `argv`, and launched in the task worktree.
 - A git “shim” can be injected onto `PATH` so `git` resolves to a wrapper that runs `rn git …` (best-effort enforcement).
 - A prelude message can be rendered (with placeholders) and sent into the tmux session after startup.
@@ -111,7 +112,7 @@ Key implementation files:
 
 - CLI:
   - harness defaults and prelude behavior are configured via `.redesmyn/config.toml` (`rn config set harness.*`)
-  - starting/restarting agents accepts a harness command + optional one-time prelude override
+  - starting/restarting agent sessions accepts a harness command + optional one-time prelude override
 - API:
   - `/v1/tasks/{task_id}/agent/start|restart|stop`
   - `/v1/harness-profiles` list/upsert
