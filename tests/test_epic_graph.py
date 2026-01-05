@@ -26,7 +26,7 @@ async def test_epic_graph_includes_expected_task_nodes_and_parent_links(
 ) -> None:
     seeded = await seed_merged_parent(scenario)
 
-    response = await scenario.app.client.get("/v1/epics/test-epic/graph")
+    response = await scenario.app.client.get(f"/v1/epics/{seeded.epic_id}/graph")
     assert response.status_code == 200
     graph = EpicGraphResponse.model_validate(response.json())
 
@@ -67,7 +67,7 @@ async def test_epic_graph_includes_agent_session_overlay_fields(
         )
         await session.commit()
 
-    response = await scenario.app.client.get("/v1/epics/test-epic/graph")
+    response = await scenario.app.client.get(f"/v1/epics/{seeded.epic_id}/graph")
     assert response.status_code == 200
     graph = EpicGraphResponse.model_validate(response.json())
 
@@ -119,7 +119,7 @@ async def test_epic_graph_includes_merge_run_overlay_fields(
         )
         await session.commit()
 
-    response = await scenario.app.client.get("/v1/epics/test-epic/graph")
+    response = await scenario.app.client.get(f"/v1/epics/{seeded.epic_id}/graph")
     assert response.status_code == 200
     graph = EpicGraphResponse.model_validate(response.json())
 
@@ -174,7 +174,7 @@ async def test_epic_graph_includes_trunk_timeline_when_available(
         )
         await session.commit()
 
-    response = await scenario.app.client.get("/v1/epics/test-epic/graph")
+    response = await scenario.app.client.get(f"/v1/epics/{seeded.epic_id}/graph")
     assert response.status_code == 200
     graph = EpicGraphResponse.model_validate(response.json())
 
