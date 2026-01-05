@@ -24,7 +24,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { SlidePanel } from "@/components/ui/slide-panel"
-import { LinearSyncMenuButton } from "@/components/linear/LinearSyncMenuButton"
 import {
   Tooltip,
   TooltipContent,
@@ -115,8 +114,6 @@ interface DetailsPanelProps {
   agentSession?: AgentSession | null
   onRequestRefresh?: () => void
   edge?: EdgeSelection | null
-  epicSlug?: string | null
-  onSynced?: () => Promise<void> | void
 }
 
 function MergeRunDetails({
@@ -1093,8 +1090,6 @@ export function DetailsPanel({
   agentSession,
   onRequestRefresh,
   edge,
-  epicSlug,
-  onSynced,
 }: DetailsPanelProps) {
   const selectionKey = edge
     ? `edge:${edge.id}`
@@ -1123,16 +1118,6 @@ export function DetailsPanel({
   return (
     <SlidePanel open={open}>
       <div className="p-3">
-        {task && epicSlug ? (
-          <div className="flex items-center justify-end pb-2">
-            <LinearSyncMenuButton
-              epicSlug={epicSlug}
-              variant="task"
-              task={task}
-              onSynced={onSynced}
-            />
-          </div>
-        ) : null}
         <div id={floatingActionsPortalId} />
         <Accordion
           key={selectionKey}

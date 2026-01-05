@@ -2032,8 +2032,6 @@ export function EpicView() {
             mergeRun={selectedMergeRun}
             onRequestRefresh={scheduleGraphRefresh}
             edge={selectedEdge}
-            epicSlug={epicSlug ?? null}
-            onSynced={handleRefresh}
           />
         </div>
       ) : (
