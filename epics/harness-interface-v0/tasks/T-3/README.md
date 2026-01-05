@@ -42,6 +42,19 @@ The v0 implementation can use a layered strategy:
    - idle/quiet windows with a stable prompt state
 3) Always include timeouts and “unknown” states (avoid wedging merge runs forever).
 
+### Concrete findings (Jan 2026)
+
+- Codex non-interactive mode supports a structured JSONL stream (`codex exec --json`) that includes:
+  - `thread.started` with `thread_id` (session identifier),
+  - `turn.started` / `turn.completed` with a per-turn `turn_id`.
+- Codex notifications (“agent turn complete”) include `thread-id` (session identifier) and `turn-id` (turn identifier).
+
+Implications for this task:
+
+- Treat Codex `thread_id` as the external resume handle for the Redesmyn session.
+- Prefer mapping `turn.*` events into `turn_state` transitions when available; avoid heuristics when the structured stream is present.
+- Keep heuristics as a fallback for tmux-first interactive sessions (where structured output may not be available or enabled).
+
 ## Acceptance criteria
 
 - Codex sessions produce `turn_complete` events in the common case.

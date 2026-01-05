@@ -35,6 +35,19 @@ Use the same layered approach:
 - heuristics as fallback
 - timeouts + “unknown” states as a safe failure mode
 
+### Concrete findings (Jan 2026)
+
+- Claude Code “print mode” supports JSON output (`--output-format json` / `stream-json`) that includes a `session_id`.
+- Claude Code supports resuming:
+  - by explicit session id (`--resume <id>`), and/or
+  - “continue” semantics scoped to the working directory (`--continue`).
+
+Implications for this task:
+
+- Persist the Claude `session_id` as the external resume handle for the Redesmyn session.
+- Model “resume by id” and “continue in cwd” as separate capabilities (the UI/CLI should only offer what is supported).
+- Prefer structured stream parsing when available; keep heuristics as a fallback for purely interactive tmux-first sessions.
+
 ## Acceptance criteria
 
 - Claude Code sessions produce `turn_complete` events in the common case.

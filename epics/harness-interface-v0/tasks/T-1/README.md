@@ -92,6 +92,25 @@ Events should be emitted as structured messages (daemon → control plane → UI
 - “ready for input” / “not ready”
 - optionally: “notification received” (agent-specific)
 
+### 1.1) External session handles (resume)
+
+We need a place to store the agent program’s own “session identifier” when available.
+This is distinct from Redesmyn’s `AgentSession.id` (DB primary key) and is used to resume a conversation in a new process.
+
+Key findings (Jan 2026):
+
+- **Codex**: `thread_id` is the session identifier; `turn_id` is a per-turn identifier.
+- **Claude Code**: JSON output includes a `session_id`, and the CLI supports resuming by id (and/or “continue in cwd”).
+
+The v0 interface should provide a typed way to surface this (examples, not final names):
+
+- `AgentExternalSessionRef`:
+  - `kind` (`codex_thread` | `claude_session` | `unknown`)
+  - `id` (string)
+  - optional `turn_id` (string; informational only)
+
+This should be persisted on `AgentSession` (or adjacent session-scoped state) so the UI/CLI can offer “resume” affordances when supported.
+
 ### 2) Capability declaration
 
 A minimal v0 `AgentCapabilities` should include:
@@ -101,6 +120,8 @@ A minimal v0 `AgentCapabilities` should include:
 - `can_send_text`
 - `can_interrupt` (optional)
 - `can_receive_notifications` (optional)
+- `can_resume_by_id` (optional; depends on agent kind)
+- `can_continue_in_cwd` (optional; depends on agent kind)
 
 ### 3) Implementation lifecycle
 

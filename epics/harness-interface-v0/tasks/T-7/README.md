@@ -73,6 +73,22 @@ In local runner mode, AgentDriver must supervise tmux-backed sessions:
 - Persist semantic status updates to the session (capabilities + `turn_state` + detail).
 - Update/broadcast only on changes (edge-triggered); avoid noisy DB writes.
 
+### 3.1) Persist external session identifiers (resume handles)
+
+AgentDriver should persist the agent program’s own “resume handle” when available (session-scoped).
+
+Key findings (Jan 2026):
+
+- **Codex**: `thread_id` is the session identifier; use it as the resume handle.
+- **Claude Code**: JSON output includes a `session_id`; use it as the resume handle (and treat “continue in cwd” as a separate capability).
+
+This needs to be modeled so “attach” (tmux) and “resume” (new process) can coexist:
+
+- tmux-backed interactive sessions: `attach` is present; external resume handle may be absent.
+- programmatic/streaming sessions: external resume handle is present; `attach` may be `none`.
+
+### 4) Emit session/agent status events
+
 ### 4) Emit session/agent status events
 
 - Emit events for significant transitions:
@@ -96,6 +112,8 @@ Add tests that cover (using monkeypatch/fakes for tmux + transport):
 - **Semantic status persistence**
   - consumes new output via cursoring,
   - persists semantic status changes to the DB only when it changes.
+- **External session id persistence**
+  - when the interpreter reports a Codex `thread_id` or Claude `session_id`, AgentDriver persists it on the session (and does not thrash it on every tick).
 - **Kill-switch behavior**
   - loop is disabled in tests when the flag/env var is set (mirrors current `enable_agent_monitor` usage).
 

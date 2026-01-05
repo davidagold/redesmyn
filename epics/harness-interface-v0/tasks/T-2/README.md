@@ -51,6 +51,7 @@ Inference should be:
 
 - deterministic and explainable
 - tolerant of wrappers (e.g. `uv run codex`, `npx claude`, etc.) if feasible
+- tolerant of common subcommands that appear in programmatic runs (e.g. `codex exec …`, `claude -p …`)
 
 ### 2) User override
 
@@ -60,6 +61,15 @@ Provide a way for the user to override the inferred agent kind:
 - CLI: optional flag on start/restart (and/or config) to set agent kind explicitly
 
 When overridden, the selected agent kind must be persisted as part of the task/session config so restarts behave predictably.
+
+### 2.1) Interaction with external “resume handles”
+
+Key findings (Jan 2026):
+
+- Codex uses `thread_id` as its session identifier (resume handle).
+- Claude Code JSON output includes a `session_id`.
+
+If an `AgentSession` already has a persisted external resume handle, treat that as strong evidence of the agent kind (and avoid “flapping” between kinds on restart unless the user explicitly overrides).
 
 ### 3) Capability-driven feature gating
 

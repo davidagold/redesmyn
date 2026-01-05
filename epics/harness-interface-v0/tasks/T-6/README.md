@@ -36,6 +36,7 @@ In Configure (and/or agent details):
 - show “Agent: Auto/Codex/Claude/Generic”
 - show a concise capability list (or badges) derived from the agent implementation
 - use this to gate advanced actions, with clear copy (no stack traces / noisy internals)
+- if available, show “Resume handle” (agent program session identifier) separately from “Attach” (tmux)
 
 ### 2) CLI: doctor command
 
@@ -49,6 +50,10 @@ It should print:
 - inferred/selected agent kind
 - capabilities
 - any degraded-mode warnings (e.g. “cannot detect turn complete; conflict assist disabled”)
+- external resume handle (if present), and whether it supports:
+  - resume by id
+  - continue in cwd
+  - interactive attach
 
 ## Acceptance criteria
 
