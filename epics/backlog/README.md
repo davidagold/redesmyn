@@ -19,4 +19,4 @@ Maintain a small, curated set of “next” improvements that unblock dogfooding
 ## 2) Tasks (initial)
 
 - T-1 Rebase: update worktree-bound branch refs
-
+- T-2 Git query fastpath when a primary executor is available

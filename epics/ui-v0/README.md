@@ -43,4 +43,5 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 ## 3) Task map
 
 - `epics/ui-v0/tasks/T-1/README.md`: “Ready to merge” convenience behavior (auto-ready unmerged ancestors on the spine).
-
+- `epics/ui-v0/tasks/T-2/README.md`: Modernize query management (TanStack Query, event-driven invalidation, responsive UI updates).
+- `epics/ui-v0/tasks/T-3/README.md`: Frontend refactor for v0 (decompose large components, share patterns, reduce duplication).
