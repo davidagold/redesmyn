@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
@@ -494,7 +494,13 @@ def harness_profile_id_for_definition(
 _TASK_TITLE_ID_RE = re.compile(r"^(T-\d+)\b")
 
 
-def _default_branch_name_for_task(*, epic_slug: str, task: Task) -> str:
+class _TaskBranchNameInput(Protocol):
+    id: int
+    title: str
+    linear_identifier: str | None
+
+
+def _default_branch_name_for_task(*, epic_slug: str, task: _TaskBranchNameInput) -> str:
     identifier = task.linear_identifier
     if not identifier:
         match = _TASK_TITLE_ID_RE.match(task.title.strip())
