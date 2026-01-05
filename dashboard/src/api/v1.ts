@@ -445,12 +445,66 @@ export interface components {
        */
       type: "acks"
     }
+    /** AgentCapabilitiesResponse */
+    AgentCapabilitiesResponse: {
+      /**
+       * Cancontinueincwd
+       * @default false
+       */
+      canContinueInCwd: boolean
+      /**
+       * Candetectreadyforinput
+       * @default false
+       */
+      canDetectReadyForInput: boolean
+      /**
+       * Candetectturncomplete
+       * @default false
+       */
+      canDetectTurnComplete: boolean
+      /**
+       * Caninterrupt
+       * @default false
+       */
+      canInterrupt: boolean
+      /**
+       * Canreceivenotifications
+       * @default false
+       */
+      canReceiveNotifications: boolean
+      /**
+       * Canresumebyid
+       * @default false
+       */
+      canResumeById: boolean
+      /**
+       * Cansendtext
+       * @default false
+       */
+      canSendText: boolean
+      /**
+       * Canstreamsemanticevents
+       * @default false
+       */
+      canStreamSemanticEvents: boolean
+    }
+    /** AgentSemanticStatusResponse */
+    AgentSemanticStatusResponse: {
+      /** Detail */
+      detail?: string | null
+      /** @default unknown */
+      turnState: components["schemas"]["AgentTurnState"]
+    }
     /** AgentSessionResponse */
     AgentSessionResponse: {
+      agentCapabilities: components["schemas"]["AgentCapabilitiesResponse"]
       /** Agentlabel */
       agentLabel: string
+      agentStatus: components["schemas"]["AgentSemanticStatusResponse"]
       /** Endedat */
       endedAt?: string | null
+      /** Externalsessionref */
+      externalSessionRef: components["schemas"]["ExternalSessionNoneResponse"] | components["schemas"]["ExternalSessionCodexResponse"] | components["schemas"]["ExternalSessionClaudeResponse"]
       /** Harnessprofileid */
       harnessProfileId?: string | null
       /** Id */
@@ -467,6 +521,11 @@ export interface components {
      * @enum {string}
      */
     AgentStatus: "stopped" | "running" | "blocked" | "error"
+    /**
+     * AgentTurnState
+     * @enum {string}
+     */
+    AgentTurnState: "unknown" | "ready" | "busy" | "blocked" | "completed"
     /** ApiStatusResponse */
     ApiStatusResponse: {
       block: components["schemas"]["BlockStatusResponse"] | null
@@ -649,6 +708,36 @@ export interface components {
       rootBranch: string
       /** Slug */
       slug: string
+    }
+    /** ExternalSessionClaudeResponse */
+    ExternalSessionClaudeResponse: {
+      /** Sessionid */
+      sessionId: string
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "claude_session"
+    }
+    /** ExternalSessionCodexResponse */
+    ExternalSessionCodexResponse: {
+      /** Threadid */
+      threadId: string
+      /** Turnid */
+      turnId?: string | null
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "codex_thread"
+    }
+    /** ExternalSessionNoneResponse */
+    ExternalSessionNoneResponse: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      type: "none"
     }
     /** HTTPValidationError */
     HTTPValidationError: {

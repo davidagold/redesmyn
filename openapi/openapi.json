@@ -23,11 +23,84 @@
         "title": "AckReleaseResponse",
         "type": "object"
       },
+      "AgentCapabilitiesResponse": {
+        "properties": {
+          "canContinueInCwd": {
+            "default": false,
+            "title": "Cancontinueincwd",
+            "type": "boolean"
+          },
+          "canDetectReadyForInput": {
+            "default": false,
+            "title": "Candetectreadyforinput",
+            "type": "boolean"
+          },
+          "canDetectTurnComplete": {
+            "default": false,
+            "title": "Candetectturncomplete",
+            "type": "boolean"
+          },
+          "canInterrupt": {
+            "default": false,
+            "title": "Caninterrupt",
+            "type": "boolean"
+          },
+          "canReceiveNotifications": {
+            "default": false,
+            "title": "Canreceivenotifications",
+            "type": "boolean"
+          },
+          "canResumeById": {
+            "default": false,
+            "title": "Canresumebyid",
+            "type": "boolean"
+          },
+          "canSendText": {
+            "default": false,
+            "title": "Cansendtext",
+            "type": "boolean"
+          },
+          "canStreamSemanticEvents": {
+            "default": false,
+            "title": "Canstreamsemanticevents",
+            "type": "boolean"
+          }
+        },
+        "title": "AgentCapabilitiesResponse",
+        "type": "object"
+      },
+      "AgentSemanticStatusResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "turnState": {
+            "$ref": "#/components/schemas/AgentTurnState",
+            "default": "unknown"
+          }
+        },
+        "title": "AgentSemanticStatusResponse",
+        "type": "object"
+      },
       "AgentSessionResponse": {
         "properties": {
+          "agentCapabilities": {
+            "$ref": "#/components/schemas/AgentCapabilitiesResponse"
+          },
           "agentLabel": {
             "title": "Agentlabel",
             "type": "string"
+          },
+          "agentStatus": {
+            "$ref": "#/components/schemas/AgentSemanticStatusResponse"
           },
           "endedAt": {
             "anyOf": [
@@ -40,6 +113,28 @@
               }
             ],
             "title": "Endedat"
+          },
+          "externalSessionRef": {
+            "discriminator": {
+              "mapping": {
+                "claude_session": "#/components/schemas/ExternalSessionClaudeResponse",
+                "codex_thread": "#/components/schemas/ExternalSessionCodexResponse",
+                "none": "#/components/schemas/ExternalSessionNoneResponse"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExternalSessionNoneResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ExternalSessionCodexResponse"
+              },
+              {
+                "$ref": "#/components/schemas/ExternalSessionClaudeResponse"
+              }
+            ],
+            "title": "Externalsessionref"
           },
           "harnessProfileId": {
             "anyOf": [
@@ -90,7 +185,10 @@
           "id",
           "taskId",
           "agentLabel",
-          "status"
+          "status",
+          "agentCapabilities",
+          "agentStatus",
+          "externalSessionRef"
         ],
         "title": "AgentSessionResponse",
         "type": "object"
@@ -103,6 +201,17 @@
           "error"
         ],
         "title": "AgentStatus",
+        "type": "string"
+      },
+      "AgentTurnState": {
+        "enum": [
+          "unknown",
+          "ready",
+          "busy",
+          "blocked",
+          "completed"
+        ],
+        "title": "AgentTurnState",
         "type": "string"
       },
       "ApiStatusResponse": {
@@ -640,6 +749,67 @@
           "createdAt"
         ],
         "title": "EpicResponse",
+        "type": "object"
+      },
+      "ExternalSessionClaudeResponse": {
+        "properties": {
+          "sessionId": {
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "type": {
+            "const": "claude_session",
+            "default": "claude_session",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "title": "ExternalSessionClaudeResponse",
+        "type": "object"
+      },
+      "ExternalSessionCodexResponse": {
+        "properties": {
+          "threadId": {
+            "title": "Threadid",
+            "type": "string"
+          },
+          "turnId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnid"
+          },
+          "type": {
+            "const": "codex_thread",
+            "default": "codex_thread",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "title": "ExternalSessionCodexResponse",
+        "type": "object"
+      },
+      "ExternalSessionNoneResponse": {
+        "properties": {
+          "type": {
+            "const": "none",
+            "default": "none",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "ExternalSessionNoneResponse",
         "type": "object"
       },
       "HTTPValidationError": {
