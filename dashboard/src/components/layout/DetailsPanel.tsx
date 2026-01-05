@@ -167,18 +167,22 @@ function MergeRunDetails({
   }, [panelOpen, showCallout])
 
   const calloutTone =
-    mergeRun.status === "blocked" || mergeRun.status === "failed"
-      ? "destructive"
-      : mergeRun.status === "resumable"
-        ? "emerald"
-        : "default"
+    mergeRun.status === "blocked"
+      ? "amber"
+      : mergeRun.status === "failed"
+        ? "destructive"
+        : mergeRun.status === "resumable"
+          ? "emerald"
+          : "default"
 
   const calloutClasses =
     calloutTone === "destructive"
       ? "border border-destructive/25 bg-destructive/10 ring-destructive/10"
-      : calloutTone === "emerald"
-        ? "border border-emerald-400/25 bg-emerald-400/10 ring-emerald-400/10"
-        : "border border-border/60 bg-background/30 ring-border/10"
+      : calloutTone === "amber"
+        ? "border border-amber-400/25 bg-amber-400/10 ring-amber-400/10"
+        : calloutTone === "emerald"
+          ? "border border-emerald-400/25 bg-emerald-400/10 ring-emerald-400/10"
+          : "border border-border/60 bg-background/30 ring-border/10"
 
   const calloutTitle =
     // When a descendant rebase conflicts, the merge run is blocked in the restack portion.
@@ -198,6 +202,8 @@ function MergeRunDetails({
   const calloutIcon =
     mergeRun.status === "resumable" ? (
       <Play className="size-3.5 text-emerald-400" />
+    ) : mergeRun.status === "blocked" ? (
+      <AlertTriangle className="size-3.5 text-amber-300/80" />
     ) : (
       <AlertTriangle className="size-3.5 text-destructive" />
     )
@@ -206,11 +212,13 @@ function MergeRunDetails({
   const agentNote = remediation?.message ?? null
 
   const statusBadgeClasses =
-    mergeRun.status === "blocked" || mergeRun.status === "failed"
-      ? "border-destructive/25 bg-destructive/10 text-destructive"
-      : mergeRun.status === "resumable"
-        ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
-        : "border-border/60 bg-background/30 text-muted-foreground"
+    mergeRun.status === "blocked"
+      ? "border-amber-400/25 bg-amber-400/10 text-amber-200/90"
+      : mergeRun.status === "failed"
+        ? "border-destructive/25 bg-destructive/10 text-destructive"
+        : mergeRun.status === "resumable"
+          ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
+          : "border-border/60 bg-background/30 text-muted-foreground"
 
   async function handleResumeMerge(allowRunning: boolean) {
     if (!onRequestRefresh) {
