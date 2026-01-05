@@ -206,6 +206,16 @@ def _spawn_background_task(
 
 
 class DashboardStaticFiles(StaticFiles):
+    async def __call__(self, scope, receive, send) -> None:  # type: ignore[override]
+        # Starlette's StaticFiles asserts scope["type"] == "http". Since we mount
+        # the dashboard at "/", a stray websocket request to an unknown path can
+        # otherwise trigger an AssertionError and produce noisy logs.
+        if scope.get("type") != "http":
+            if scope.get("type") == "websocket":
+                await send({"type": "websocket.close", "code": 1000})
+            return
+        await super().__call__(scope, receive, send)
+
     async def get_response(self, path: str, scope) -> Response:  # type: ignore[override]
         try:
             return await super().get_response(path, scope)
