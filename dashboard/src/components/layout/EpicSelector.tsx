@@ -27,7 +27,7 @@ export function EpicSelector({
     <div className="relative">
       <Button
         variant="ghost"
-        className="w-fit gap-1 -ml-2"
+        className="w-fit gap-1"
         onClick={onMenuToggle}
         aria-expanded={menuOpen}
         disabledReason={!epics.length ? "No epics available" : null}

@@ -1378,7 +1378,7 @@ export function EpicView() {
               </div>
             ) : null}
             <div className="ml-auto flex items-center gap-2">
-              <div className="flex h-6 flex-row-reverse overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-7 flex-row-reverse overflow-hidden rounded-md border border-border/60">
                 {canRunAll ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1386,7 +1386,6 @@ export function EpicView() {
                         <Button
                           {...triggerProps}
                           variant="outline"
-                          size="sm"
                           className={cn(
                             "h-full rounded-none border-0 leading-none",
                             triggerProps.className,
@@ -1409,7 +1408,6 @@ export function EpicView() {
                 ) : (
                   <Button
                     variant="outline"
-                    size="sm"
                     className="h-full rounded-none border-0 leading-none"
                     disabledReason={
                       runAction !== null || bulkAction !== null
@@ -1442,7 +1440,6 @@ export function EpicView() {
                           <Button
                             {...triggerProps}
                             variant="outline"
-                            size="sm"
                             className={cn(
                               "h-full rounded-none border-0 border-r leading-none",
                               triggerProps.className,
@@ -1464,7 +1461,6 @@ export function EpicView() {
                   ) : (
                     <Button
                       variant="outline"
-                      size="sm"
                       className="h-full rounded-none border-0 border-r leading-none"
                       disabledReason={
                         runAction !== null || bulkAction !== null
@@ -1485,7 +1481,7 @@ export function EpicView() {
                 </div>
               </div>
 
-              <div className="flex h-6 flex-row-reverse overflow-hidden rounded-md border border-border/60">
+              <div className="flex h-7 flex-row-reverse overflow-hidden rounded-md border border-border/60">
                 {canStopAll ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1493,7 +1489,6 @@ export function EpicView() {
                         <Button
                           {...triggerProps}
                           variant="outline"
-                          size="sm"
                           className={cn(
                             "h-full rounded-none border-0 leading-none",
                             triggerProps.className,
@@ -1516,7 +1511,6 @@ export function EpicView() {
                 ) : (
                   <Button
                     variant="outline"
-                    size="sm"
                     className="h-full rounded-none border-0 leading-none"
                     disabledReason={
                       runAction !== null || bulkAction !== null
@@ -1547,7 +1541,6 @@ export function EpicView() {
                           <Button
                             {...triggerProps}
                             variant="outline"
-                            size="sm"
                             className={cn(
                               "h-full rounded-none border-0 border-r leading-none",
                               triggerProps.className,
@@ -1569,7 +1562,6 @@ export function EpicView() {
                   ) : (
                     <Button
                       variant="outline"
-                      size="sm"
                       className="h-full rounded-none border-0 border-r leading-none"
                       disabledReason={
                         runAction !== null || bulkAction !== null
