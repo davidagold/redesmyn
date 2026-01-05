@@ -231,6 +231,8 @@ export function NodeCard({
     [task?.readme],
   )
   const linearPillLabel = linearIdentifier ?? "Open in Linear"
+  const hasGithubLink = Boolean(task?.githubIssueId || task?.githubPrId)
+  const showExpandedLinearPill = !hasGithubLink
 
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
@@ -810,7 +812,10 @@ export function NodeCard({
           <button
             type="button"
             className={cn(
-              "group/linear inline-flex h-6 max-w-7 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur transition-[max-width,background-color] duration-200 hover:max-w-48 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              "group/linear inline-flex h-6 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 bg-accent/40 shadow-sm backdrop-blur hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              showExpandedLinearPill
+                ? "max-w-48 transition-colors duration-200"
+                : "max-w-7 transition-[max-width,background-color] duration-200 hover:max-w-48",
             )}
             aria-label={linearPillLabel}
             onClick={() => {
@@ -824,7 +829,14 @@ export function NodeCard({
             <span className="inline-flex size-6 items-center justify-center">
               <LinearIcon className="size-3.5 text-muted-foreground" />
             </span>
-            <span className="pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/linear:opacity-100">
+            <span
+              className={cn(
+                "pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground transition-opacity duration-150",
+                showExpandedLinearPill
+                  ? "opacity-100"
+                  : "opacity-0 group-hover/linear:opacity-100",
+              )}
+            >
               {linearPillLabel}
             </span>
           </button>
