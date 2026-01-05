@@ -45,3 +45,7 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 - `epics/ui-v0/tasks/T-1/README.md`: “Ready to merge” convenience behavior (auto-ready unmerged ancestors on the spine).
 - `epics/ui-v0/tasks/T-2/README.md`: Modernize query management (TanStack Query, event-driven invalidation, responsive UI updates).
 - `epics/ui-v0/tasks/T-3/README.md`: Frontend refactor for v0 (decompose large components, share patterns, reduce duplication).
+- `epics/ui-v0/tasks/T-4/README.md`: Remove redundant Linear connection button from the Details panel.
+- `epics/ui-v0/tasks/T-5/README.md`: Remove redundant inline error text from task cards (dedupe with callout).
+- `epics/ui-v0/tasks/T-6/README.md`: Remove tooltip that duplicates error details already shown in the callout.
+- `epics/ui-v0/tasks/T-7/README.md`: Repo executor panel polish (copy buttons, terminology, telemetry/projections messaging).
