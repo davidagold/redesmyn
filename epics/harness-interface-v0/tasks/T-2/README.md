@@ -30,7 +30,12 @@ Add a first-class “harness kind” selection mechanism, defaulting to **Auto**
 - Codex
 - Claude Code
 
-This selection drives which harness adapter is used, which capabilities are available, and whether features like conflict auto-assist can be enabled.
+This selection drives which harness implementation is used, which capabilities are available, and whether features like conflict auto-assist can be enabled.
+
+## Research requirement
+
+The implementer should do web research on how these CLIs are invoked in practice (wrappers, subcommands, common installation paths).
+The goal is not perfect detection, but a robust best-effort inference that matches real-world usage patterns.
 
 ## Requirements
 
@@ -73,7 +78,6 @@ Communicate the meaning of selection:
 
 ## Acceptance criteria
 
-- Starting/restarting an agent uses the selected harness adapter (Auto→inferred, override→forced).
+- Starting/restarting an agent uses the selected harness implementation (Auto→inferred, override→forced).
 - Users can change the harness kind when an agent is stopped/errored (safe to change).
 - The UI clearly indicates when advanced features are unavailable because the harness is Generic/unknown.
-

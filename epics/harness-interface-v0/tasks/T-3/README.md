@@ -1,11 +1,11 @@
-# T-3 Codex harness adapter (turn detection + capabilities)
+# T-3 Codex harness interface implementation (turn detection + capabilities)
 
 ## Metadata
 
 ```yaml
 id: T-3
 epic: harness-interface-v0
-stacked_on: T-2
+stacked_on: T-1
 branch:
   suggested: rn/harness-interface-v0/T-3-codex-harness
 ```
@@ -21,13 +21,17 @@ We want to leverage these signals to implement:
 
 ## Goal
 
-Implement a Codex-specific harness adapter that:
+Implement a Codex-specific harness interface implementation that:
 
 - reliably detects “turn complete” (within reasonable heuristics and explicit timeouts)
 - exposes explicit capabilities so callers can gate advanced features
 - publishes semantic status updates to the control plane/UI
 
 ## Notes / implementation guidance
+
+## Research requirement
+
+The implementer should do web research (docs + GitHub if open source) to identify the most reliable signals available for Codex completion/idle detection.
 
 This is intentionally not prescriptive about *how* Codex signals completion.
 The v0 implementation can use a layered strategy:
@@ -41,6 +45,5 @@ The v0 implementation can use a layered strategy:
 ## Acceptance criteria
 
 - Codex sessions produce `turn_complete` events in the common case.
-- The adapter never blocks indefinitely: if signals can’t be determined, it returns to `unknown` with an explicit reason.
+- The implementation never blocks indefinitely: if signals can’t be determined, it returns to `unknown` with an explicit reason.
 - The UI can accurately show when Codex is “done” vs “working” vs “unknown”.
-

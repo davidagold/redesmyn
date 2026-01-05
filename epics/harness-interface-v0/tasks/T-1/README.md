@@ -21,7 +21,7 @@ We have a working local-first agent runtime (tmux-backed sessions, attach metada
 We need an explicit **Harness interface** that:
 
 - separates *terminal/session IO* from *harness semantics*
-- can be implemented by harness-specific adapters (Codex, Claude Code)
+- can be implemented by harness-specific interface implementations (Codex, Claude Code)
 - supports a “generic fallback” mode for arbitrary commands
 
 ## Goal
@@ -30,9 +30,14 @@ Define a minimal, strongly typed v0 harness interface, including:
 
 - a semantic status model (agent turn + readiness)
 - an explicit capability declaration
-- a GenericHarness implementation that supports any command with only baseline capabilities
+- a GenericHarness interface implementation that supports any command with only baseline capabilities
 
 This interface should be used for publishing status updates and for issuing higher-level commands (e.g. “send message”) that are safe to offer in the UI.
+
+## Research requirement
+
+The implementer should do web research (docs + GitHub if open source) before finalizing the design.
+The goal is to ground the v0 interface in what we can actually detect reliably, and to avoid coupling to brittle assumptions.
 
 ## Key design principles
 
@@ -43,12 +48,12 @@ This interface should be used for publishing status updates and for issuing high
   - sends keystrokes/text
   - captures output/logs
   - provides attach/log pointers
-- **Harness adapter**:
+- **Harness interface implementation**:
   - interprets output/state into semantic events (“idle”, “thinking”, “turn complete”, “needs input”)
   - declares which advanced features are supported
   - provides higher-level operations when safe (e.g. “send message”, “interrupt”)
 
-The harness adapter may *consume* session output and may request that text be sent, but it should not own the session transport.
+The harness implementation may *consume* session output and may request that text be sent, but it should not own the session transport.
 
 ### 2) Capabilities are explicit (runtime)
 
@@ -97,9 +102,9 @@ A minimal v0 `HarnessCapabilities` should include:
 - `can_interrupt` (optional)
 - `can_receive_notifications` (optional)
 
-### 3) Adapter lifecycle
+### 3) Implementation lifecycle
 
-The harness adapter needs hooks to:
+The harness implementation needs hooks to:
 
 - initialize for a session
 - consume new output (stream or polled)
@@ -110,7 +115,6 @@ Keep this minimal; avoid an over-engineered plugin framework.
 ## Acceptance criteria
 
 - There is a strongly typed harness interface and capability model usable from both local and daemon execution paths.
-- GenericHarness exists and supports arbitrary commands without assuming harness-specific semantics.
+- GenericHarness implementation exists and supports arbitrary commands without assuming harness-specific semantics.
 - Status published to the UI can represent “turn complete” vs “unknown” distinctly (even if Generic remains “unknown”).
 - The interface is designed so Codex and Claude Code implementations can be added without changing callers.
-

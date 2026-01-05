@@ -34,7 +34,7 @@ Add a “doctor” surface and a capabilities summary that makes harness integra
 In Configure (and/or agent details):
 
 - show “Harness: Auto/Codex/Claude/Generic”
-- show a concise capability list (or badges) derived from the adapter
+- show a concise capability list (or badges) derived from the harness implementation
 - use this to gate advanced actions, with clear copy (no stack traces / noisy internals)
 
 ### 2) CLI: doctor command
@@ -54,4 +54,3 @@ It should print:
 
 - Users can tell, from UI/CLI, whether conflict auto-assist is expected to work and why/why not.
 - The output is concise and actionable (avoid walls of text by default; allow `--verbose` later if needed).
-

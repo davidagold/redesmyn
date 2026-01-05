@@ -6,6 +6,9 @@
 id: T-5
 epic: harness-interface-v0
 stacked_on: T-3
+must_land_after:
+  - T-2
+  - T-4
 branch:
   suggested: rn/harness-interface-v0/T-5-conflict-auto-assist
 ```
@@ -51,7 +54,7 @@ If the harness cannot provide the needed capabilities, the behavior should remai
 Auto-resume may happen only if:
 
 - repo executor validates the blocked worktree is unblocked and safe to continue, AND
-- harness adapter reports “turn complete” for the remediation turn
+- harness implementation reports “turn complete” for the remediation turn
 
 If either is not satisfied:
 
@@ -83,4 +86,3 @@ In the task details (merge run callout):
 - For Codex/Claude Code (when enabled), conflicts trigger an automatic remediation message delivery.
 - Auto-resume only triggers when both repo state is clean and the agent’s turn completed.
 - The system never wedges indefinitely; it times out to a clear manual fallback state.
-

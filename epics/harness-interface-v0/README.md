@@ -197,8 +197,8 @@ This section captures the v0 plan as revised by the goals in this thread.
 
 - `epics/harness-interface-v0/tasks/T-1/README.md`: Harness interface + capability model + GenericHarness (baseline).
 - `epics/harness-interface-v0/tasks/T-2/README.md`: Harness identification (infer from command) + user override (UI/CLI/data model).
-- `epics/harness-interface-v0/tasks/T-3/README.md`: Codex harness adapter (turn/idle detection + capabilities).
-- `epics/harness-interface-v0/tasks/T-4/README.md`: Claude Code harness adapter (turn/idle detection + capabilities).
+- `epics/harness-interface-v0/tasks/T-3/README.md`: Codex harness interface implementation (turn/idle detection + capabilities).
+- `epics/harness-interface-v0/tasks/T-4/README.md`: Claude Code harness interface implementation (turn/idle detection + capabilities).
 - `epics/harness-interface-v0/tasks/T-5/README.md`: Conflict auto-assist + gated auto-resume (requires repo clean + agent turn complete).
 - `epics/harness-interface-v0/tasks/T-6/README.md`: Harness doctor + capabilities surface (UI + CLI).
 
