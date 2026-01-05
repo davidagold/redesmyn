@@ -8,7 +8,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import quote, urlencode
 
 import httpx
@@ -1541,7 +1541,11 @@ async def fetch_team_states(
 
 
 async def resolve_team_state_id(
-    client: LinearClient, *, team_id: str, state_type: str
+    client: LinearClient,
+    *,
+    team_id: str,
+    state_type: str,
+    pick: Literal["first", "last"] = "first",
 ) -> str:
     normalized = state_type.lower().strip()
     states = await fetch_team_states(client, team_id=team_id)
@@ -1550,10 +1554,14 @@ async def resolve_team_state_id(
         raise ValueError(f"Linear: no workflow state found for type={state_type!r}")
 
     def _rank(state: LinearWorkflowState) -> tuple[float, str]:
-        pos = state.position if state.position is not None else float("inf")
+        if state.position is None:
+            pos = float("inf") if pick == "first" else float("-inf")
+        else:
+            pos = state.position
         return (pos, state.id)
 
-    return sorted(candidates, key=_rank)[0].id
+    ordered = sorted(candidates, key=_rank)
+    return ordered[0].id if pick == "first" else ordered[-1].id
 
 
 async def fetch_issue_blocker_relations(

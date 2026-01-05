@@ -256,12 +256,6 @@ export function NodeCard({
   const linearPillLabel = linearIdentifier ?? "Linear"
   const linearStateType = task?.linearStateType ?? null
   const linearStateObservedAt = task?.linearStateObservedAt ?? null
-  const linearStateMismatch =
-    task !== undefined &&
-    linearIssueId !== null &&
-    linearStateType !== null &&
-    linearStateType.toLowerCase() !==
-      linearStateTypeFromTaskState(task.state).toLowerCase()
   const linearObservedAgeMs = linearStateObservedAt
     ? now - new Date(linearStateObservedAt).getTime()
     : null
@@ -279,6 +273,20 @@ export function NodeCard({
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
+  const expectedLinearStateType =
+    task === undefined
+      ? null
+      : task.state === "done"
+        ? "completed"
+        : mergeReady
+          ? "started"
+          : linearStateTypeFromTaskState(task.state)
+  const linearStateMismatch =
+    task !== undefined &&
+    linearIssueId !== null &&
+    linearStateType !== null &&
+    expectedLinearStateType !== null &&
+    linearStateType.toLowerCase() !== expectedLinearStateType.toLowerCase()
   const linearPillBorderClass = (() => {
     if (task?.state === "done") {
       return "border-green-950/80"

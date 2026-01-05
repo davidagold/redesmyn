@@ -1437,6 +1437,20 @@ async def set_task_merge_ready(
         task.merge_ready_at = datetime.now(UTC) if request.ready else None
         await session.commit()
         await session.refresh(task)
+        if request.ready:
+            from redesmyn.integrations.linear_automation import (
+                maybe_push_task_merge_ready_to_linear,
+            )
+
+            _spawn_background_task(
+                app,
+                maybe_push_task_merge_ready_to_linear(
+                    app.state.ctx,
+                    sessionmaker=sessionmaker,
+                    task_id=task_id,
+                ),
+                name=f"linear:merge_ready:{task_id}",
+            )
         return TaskResponse.model_validate(task, from_attributes=True)
 
 

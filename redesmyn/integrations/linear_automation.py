@@ -127,6 +127,87 @@ async def maybe_push_task_state_to_linear(
         )
 
 
+async def maybe_push_task_merge_ready_to_linear(
+    ctx: RepoContext,
+    *,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    task_id: int,
+    timeout_s: float = 3.0,
+) -> None:
+    async def _run() -> None:
+        async with sessionmaker() as session:
+            task = await session.get(Task, task_id)
+            if (
+                task is None
+                or task.merge_ready_at is None
+                or task.linear_issue_id is None
+            ):
+                return
+            epic = await session.get(Epic, task.epic_id)
+            if epic is None:
+                return
+
+            creds = await _maybe_require_fresh_linear_credentials(ctx, session=session)
+            if creds is None:
+                return
+
+            client = LinearClient(access_token=creds.access_token)
+            issue = await fetch_issue(client, issue_id=task.linear_issue_id)
+
+            observed_at = datetime.now(UTC)
+            task.linear_state_type = issue.state_type
+            task.linear_state_observed_at = observed_at
+            await _safe_commit(session)
+
+            label = await fetch_label_by_name(client, label_name=epic.slug)
+            if label is None or label.id not in issue.label_ids:
+                return
+
+            team_id = issue.team_id or await fetch_issue_team_id(
+                client, issue_id=issue.id
+            )
+            if not team_id:
+                return
+
+            # Best-effort mapping: treat merge-ready as "started" and pick the
+            # last started-state in the workflow as a reasonable "ready/review"
+            # approximation when teams have multiple started states.
+            state_id = await resolve_team_state_id(
+                client, team_id=team_id, state_type="started", pick="last"
+            )
+            updated = await update_issue_state(
+                client,
+                issue_id=issue.id,
+                state_id=state_id,
+            )
+            task.linear_state_type = updated.state_type
+            task.linear_state_observed_at = observed_at
+            await _safe_commit(session)
+
+    try:
+        await asyncio.wait_for(_run(), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        logger.info(
+            "linear.automation.push_merge_ready.timeout",
+            extra={"task_id": task_id},
+        )
+    except LinearApiError as exc:
+        logger.info(
+            "linear.automation.push_merge_ready.failed",
+            extra={
+                "task_id": task_id,
+                "code": exc.code,
+                "status_code": exc.status_code,
+                "operation": exc.operation,
+            },
+        )
+    except Exception as exc:
+        logger.info(
+            "linear.automation.push_merge_ready.failed",
+            extra={"task_id": task_id, "error": str(exc)},
+        )
+
+
 async def _maybe_require_fresh_linear_credentials(
     ctx: RepoContext,
     *,
