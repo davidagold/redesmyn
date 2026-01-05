@@ -372,6 +372,9 @@ export function NodeCard({
     if (taskId === null || !onRequestRefresh) {
       return
     }
+    if (next && !task?.branchName) {
+      return
+    }
     const previous = mergeReady
     setPendingMerge("ready")
     setMergeReady(next)
@@ -876,7 +879,12 @@ export function NodeCard({
               <DropdownMenuSeparator />
               <DropdownMenuCheckboxItem
                 checked={mergeReady}
-                disabled={!canMerge || pendingMerge !== null || canResumeMerge}
+                disabled={
+                  !canMerge ||
+                  pendingMerge !== null ||
+                  canResumeMerge ||
+                  (!task?.branchName && !mergeReady)
+                }
                 closeOnClick={false}
                 onClick={(e) => e.stopPropagation()}
                 onCheckedChange={(checked) =>

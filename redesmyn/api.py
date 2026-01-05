@@ -1424,6 +1424,11 @@ async def set_task_merge_ready(
         task = await session.get(Task, task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        if request.ready and not task.branch_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Task has no branch; create a branch before marking merge-ready.",
+            )
         task.merge_ready_at = datetime.now(UTC) if request.ready else None
         await session.commit()
         await session.refresh(task)

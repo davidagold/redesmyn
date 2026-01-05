@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import (
+    CheckConstraint,
     JSON,
     Boolean,
     DateTime,
@@ -316,6 +317,10 @@ class Task(Base):
         nullable=False,
     )
     __table_args__ = (
+        CheckConstraint(
+            "merge_ready_at IS NULL OR branch_name IS NOT NULL",
+            name="ck_tasks_merge_ready_requires_branch",
+        ),
         UniqueConstraint("epic_id", "branch_name", name="uq_tasks_epic_branch"),
     )
 

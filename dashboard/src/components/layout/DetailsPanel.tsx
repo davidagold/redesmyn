@@ -952,7 +952,9 @@ function AgentActions({
                 ? "Action in progress"
                 : mergeReadyPending
                   ? "Saving…"
-                  : null
+                  : !task.branchName && !mergeReady
+                    ? "Task has no branch"
+                    : null
             }
           />
         </div>

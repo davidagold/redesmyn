@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from redesmyn.agent_runtime import has_tmux, tmux_session_name_for_task
 from redesmyn.api import _append_event, _broadcast_event
 from redesmyn.db import AgentSession
+from redesmyn.db import Epic
 from redesmyn.db import MergeRun
+from redesmyn.db import Repository
+from redesmyn.db import Task
 from redesmyn.domain.enums import AgentStatus
 from redesmyn.domain.enums import MergeRunStatus
+from redesmyn.domain.enums import TaskState
 
 from tests.helpers.ws import JsonQueueWebSocket
 from tests.scenarios.scenario import Scenario
@@ -135,6 +141,83 @@ async def test_canonical_merge_without_primary_executor_returns_503_guidance(
     detail = response.json()["detail"]
     assert isinstance(detail, str)
     assert "Start a daemon and attach this repo" in detail
+
+
+@pytest.mark.integration
+async def test_mark_merge_ready_rejects_tasks_without_branch_returns_400(
+    scenario: Scenario,
+) -> None:
+    async with scenario.db.session() as session:
+        repo_row = await session.scalar(
+            select(Repository).where(
+                Repository.repo_root == str(scenario.ctx.repo_root)
+            )
+        )
+        assert repo_row is not None
+
+        epic = Epic(
+            repository_id=repo_row.id,
+            name="Test Epic",
+            slug=f"test-epic-{uuid4().hex[:8]}",
+            root_branch="main",
+        )
+        session.add(epic)
+        await session.flush()
+
+        task = Task(
+            epic_id=epic.id,
+            title="No branch task",
+            branch_name=None,
+            state=TaskState.InProgress,
+        )
+        session.add(task)
+        await session.commit()
+
+    response = await scenario.app.client.post(
+        f"/v1/tasks/{task.id}/merge-ready",
+        json={"ready": True},
+    )
+    assert response.status_code == 400, response.text
+
+    detail = response.json()["detail"]
+    assert isinstance(detail, str)
+    assert "no branch" in detail.lower()
+
+
+@pytest.mark.integration
+async def test_db_enforces_merge_ready_requires_branch_check_constraint(
+    scenario: Scenario,
+) -> None:
+    async with scenario.db.session() as session:
+        repo_row = await session.scalar(
+            select(Repository).where(
+                Repository.repo_root == str(scenario.ctx.repo_root)
+            )
+        )
+        assert repo_row is not None
+
+        epic = Epic(
+            repository_id=repo_row.id,
+            name="Test Epic",
+            slug=f"test-epic-{uuid4().hex[:8]}",
+            root_branch="main",
+        )
+        session.add(epic)
+        await session.flush()
+
+        session.add(
+            Task(
+                epic_id=epic.id,
+                title="No branch task",
+                branch_name=None,
+                state=TaskState.InProgress,
+                merge_ready_at=datetime.now(UTC),
+            )
+        )
+
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
 
 
 @pytest.mark.integration

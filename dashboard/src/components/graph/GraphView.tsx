@@ -477,6 +477,9 @@ export function GraphView({
       if (!task || task.state === "done") {
         continue
       }
+      if (!task.branchName) {
+        continue
+      }
       if (task.mergeReadyAt) {
         continue
       }
@@ -486,15 +489,44 @@ export function GraphView({
     return [...taskIds].sort((a, b) => a - b)
   }, [selectedNodeIds, tasksById])
 
+  const selectedMergeReadyTaskCounts = useMemo(() => {
+    let selectedNotDoneCount = 0
+    let selectedNotDoneWithBranchCount = 0
+
+    for (const selectedNodeId of selectedNodeIds) {
+      const task = tasksById.get(selectedNodeId) ?? null
+      if (!task || task.state === "done") {
+        continue
+      }
+      selectedNotDoneCount += 1
+      if (task.branchName) {
+        selectedNotDoneWithBranchCount += 1
+      }
+    }
+
+    return { selectedNotDoneCount, selectedNotDoneWithBranchCount }
+  }, [selectedNodeIds, tasksById])
+
   const markReadyDisabledReason = useMemo(() => {
     if (bulkMergeReadyPending) {
       return "Saving…"
     }
     if (selectedMergeReadyTaskIds.length === 0) {
+      if (selectedMergeReadyTaskCounts.selectedNotDoneCount === 0) {
+        return "No eligible selected tasks"
+      }
+      if (selectedMergeReadyTaskCounts.selectedNotDoneWithBranchCount === 0) {
+        return "No selected tasks have branches"
+      }
       return "No selected tasks need marking ready"
     }
     return null
-  }, [bulkMergeReadyPending, selectedMergeReadyTaskIds.length])
+  }, [
+    bulkMergeReadyPending,
+    selectedMergeReadyTaskCounts.selectedNotDoneCount,
+    selectedMergeReadyTaskCounts.selectedNotDoneWithBranchCount,
+    selectedMergeReadyTaskIds.length,
+  ])
 
   async function handleBulkMarkReady() {
     if (markReadyDisabledReason) {

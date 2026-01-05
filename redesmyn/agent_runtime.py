@@ -541,6 +541,10 @@ async def ensure_task_worktree(
         task.branch_name = branch
         await session.flush()
 
+    branch_name = task.branch_name
+    if branch_name is None:
+        raise RuntimeError("Task branch name missing after branch assignment")
+
     if task.worktree_path:
         path = Path(task.worktree_path)
         if path.exists():
@@ -573,28 +577,28 @@ async def ensure_task_worktree(
         break
 
     existing_path = find_existing_worktree_path_for_branch(
-        ctx.repo_root, branch=task.branch_name
+        ctx.repo_root, branch=branch_name
     )
     if existing_path is not None:
         task.worktree_path = str(existing_path)
         await session.flush()
         return existing_path
 
-    worktree_path = default_worktree_path(ctx, branch=task.branch_name)
+    worktree_path = default_worktree_path(ctx, branch=branch_name)
 
     if worktree_path.exists():
         branch = current_branch(cwd=worktree_path)
-        if branch != task.branch_name:
+        if branch != branch_name:
             raise RuntimeError(
                 f"Worktree path already exists but is on {branch!r} "
-                f"(expected {task.branch_name!r}): {worktree_path}"
+                f"(expected {branch_name!r}): {worktree_path}"
             )
     else:
         try:
             git_worktree_add(
                 ctx.repo_root,
                 worktree_path=worktree_path,
-                branch_name=task.branch_name,
+                branch_name=branch_name,
                 base_ref=base_ref,
             )
         except GitCommandError as e:
