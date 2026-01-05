@@ -132,23 +132,6 @@ function linearStateTypeLabel(stateType: string | null) {
   return "Unknown"
 }
 
-function linearStateDotClass(stateType: string | null) {
-  const normalized = stateType?.trim().toLowerCase() ?? ""
-  if (normalized === "started") {
-    return "bg-sky-500"
-  }
-  if (normalized === "blocked") {
-    return "bg-amber-400"
-  }
-  if (normalized === "completed") {
-    return "bg-emerald-500"
-  }
-  if (normalized === "unstarted") {
-    return "bg-muted-foreground/60"
-  }
-  return "bg-muted-foreground/40"
-}
-
 function formatObservedAt(value: string | null) {
   if (!value) {
     return null
@@ -296,6 +279,29 @@ export function NodeCard({
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
+  const linearPillBorderClass = (() => {
+    if (task?.state === "done") {
+      return "border-green-950/80"
+    }
+    if (mergeReady && !linearStateMismatch) {
+      return "border-emerald-400/70"
+    }
+
+    const normalized = linearStateType?.trim().toLowerCase() ?? ""
+    if (normalized === "unstarted") {
+      return "border-muted-foreground/60 border-dashed"
+    }
+    if (normalized === "started") {
+      return "border-muted-foreground/60"
+    }
+    if (normalized === "blocked") {
+      return "border-amber-400/80"
+    }
+    if (normalized === "completed") {
+      return "border-green-950/70"
+    }
+    return "border-border/60"
+  })()
   const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
     useState(false)
   const [actionErrorExpanded, setActionErrorExpanded] = useState(false)
@@ -870,11 +876,13 @@ export function NodeCard({
                   {...tooltipTriggerProps}
                   type="button"
                   className={cn(
-                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border border-border/60 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
                     "transition-colors duration-200",
                     actionsMenuOpen
                       ? "bg-accent/40"
                       : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
+                    linearPillBorderClass,
+                    linearObservedOld ? "border-opacity-70" : null,
                   )}
                   aria-label={linearPillLabel}
                   onClick={() => {
@@ -887,17 +895,9 @@ export function NodeCard({
                 >
                   <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
                     <LinearIcon className="size-3.5 text-muted-foreground" />
-                    <span
-                      className={cn(
-                        "absolute right-1 top-1 size-1.5 rounded-full ring-1 ring-background/60",
-                        linearStateDotClass(linearStateType),
-                        linearObservedOld ? "opacity-80 saturate-50" : null,
-                      )}
-                      aria-label={`Linear state: ${linearStateTypeLabel(linearStateType)}`}
-                    />
                     {linearStateMismatch ? (
                       <span
-                        className="absolute right-[3px] top-[3px] h-px w-3 rotate-[-45deg] bg-foreground/60"
+                        className="absolute left-1 top-1 h-px w-5 rotate-[-45deg] bg-foreground/60"
                         aria-label="Out of sync with local"
                       />
                     ) : null}
