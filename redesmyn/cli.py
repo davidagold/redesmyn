@@ -2158,7 +2158,11 @@ async def _sync_from_linear(
     )
 
     issue_state_type_by_id = {issue.id: issue.state_type for issue in issues}
-    if issue_state_type_by_id:
+    issue_state_name_by_id = {issue.id: issue.state_name for issue in issues}
+    issue_state_issue_ids = sorted(
+        set(issue_state_type_by_id.keys()) | set(issue_state_name_by_id.keys())
+    )
+    if issue_state_issue_ids:
         observed_at = datetime.now(UTC)
         engine = create_engine(ctx.db_path)
         try:
@@ -2168,9 +2172,7 @@ async def _sync_from_linear(
                     await session.scalars(
                         select(Task).where(
                             Task.epic_id == epic_row.id,
-                            Task.linear_issue_id.in_(
-                                list(issue_state_type_by_id.keys())
-                            ),
+                            Task.linear_issue_id.in_(issue_state_issue_ids),
                         )
                     )
                 )
@@ -2178,6 +2180,9 @@ async def _sync_from_linear(
                     if not task_row.linear_issue_id:
                         continue
                     task_row.linear_state_type = issue_state_type_by_id.get(
+                        task_row.linear_issue_id
+                    )
+                    task_row.linear_state_name = issue_state_name_by_id.get(
                         task_row.linear_issue_id
                     )
                     task_row.linear_state_observed_at = observed_at
@@ -3061,6 +3066,7 @@ async def _sync_to_linear(
                 if task_row.linear_identifier != issue.identifier:
                     task_row.linear_identifier = issue.identifier
                 task_row.linear_state_type = issue.state_type
+                task_row.linear_state_name = issue.state_name
                 task_row.linear_state_observed_at = datetime.now(UTC)
 
                 markdown = readme.read_text(encoding="utf-8")
@@ -4635,6 +4641,7 @@ def linear_import(
                         task.state = _task_state_from_linear(issue.state_type)
 
                     task.linear_state_type = issue.state_type
+                    task.linear_state_name = issue.state_name
                     task.linear_state_observed_at = observed_at
 
                     task_by_issue_id[issue.id] = task

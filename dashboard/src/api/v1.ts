@@ -1238,6 +1238,8 @@ export interface components {
       linearIssueId: string | null
       /** Linearstateobservedat */
       linearStateObservedAt?: string | null
+      /** Linearstatename */
+      linearStateName?: string | null
       /** Linearstatetype */
       linearStateType?: string | null
       /** Localpath */

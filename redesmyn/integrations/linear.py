@@ -68,6 +68,7 @@ class LinearIssue:
     title: str
     description: str | None
     state_type: str | None
+    state_name: str | None = None
     team_id: str | None = None
     label_ids: tuple[str, ...] = ()
 
@@ -456,7 +457,7 @@ query ProjectIssues($projectId: ID!, $after: String) {
         identifier
         title
         description
-        state { type }
+        state { type name }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -499,7 +500,7 @@ query ProjectIssuesByLabel($projectId: ID!, $labelName: String!, $after: String)
       identifier
       title
       description
-      state { type }
+      state { type name }
     }
     pageInfo { hasNextPage endCursor }
   }
@@ -672,7 +673,7 @@ mutation IssueCreate(
     stateId: $stateId
   }) {
     success
-    issue { id identifier title description state { type } }
+    issue { id identifier title description state { type name } }
   }
 }
 """
@@ -692,7 +693,7 @@ mutation IssueUpdate(
     stateId: $stateId
   }) {
     success
-    issue { id identifier title description state { type } }
+    issue { id identifier title description state { type name } }
   }
 }
 """
@@ -701,7 +702,7 @@ ISSUE_UPDATE_STATE_MUTATION = """
 mutation IssueUpdateState($id: String!, $stateId: String!) {
   issueUpdate(id: $id, input: { stateId: $stateId }) {
     success
-    issue { id identifier title description state { type } }
+    issue { id identifier title description state { type name } }
   }
 }
 """
@@ -723,7 +724,7 @@ query Issue($id: String!) {
     title
     description
     labelIds
-    state { type }
+    state { type name }
     team { id }
   }
 }
@@ -812,12 +813,16 @@ def _parse_issue(node: object) -> LinearIssue | None:
     title = node_dict.get("title")
     description = node_dict.get("description")
     state_type = None
+    state_name = None
     state = node_dict.get("state")
     if isinstance(state, dict):
         state_dict = cast(dict[str, Any], state)
         st = state_dict.get("type")
         if isinstance(st, str):
             state_type = st
+        sn = state_dict.get("name")
+        if isinstance(sn, str):
+            state_name = sn
 
     team_id: str | None = None
     team = node_dict.get("team")
@@ -845,6 +850,7 @@ def _parse_issue(node: object) -> LinearIssue | None:
         title=title,
         description=description if isinstance(description, str) else None,
         state_type=state_type,
+        state_name=state_name,
         team_id=team_id,
         label_ids=label_ids,
     )

@@ -65,6 +65,7 @@ async def maybe_push_task_state_to_linear(
 
             observed_at = datetime.now(UTC)
             task.linear_state_type = issue.state_type
+            task.linear_state_name = issue.state_name
             task.linear_state_observed_at = observed_at
             await _safe_commit(session)
 
@@ -93,6 +94,7 @@ async def maybe_push_task_state_to_linear(
             )
 
             task.linear_state_type = updated.state_type
+            task.linear_state_name = updated.state_name
             task.linear_state_observed_at = observed_at
             await _safe_commit(session)
 
@@ -177,6 +179,7 @@ async def maybe_push_task_merge_ready_to_linear(
             label = await fetch_label_by_name(client, label_name=epic.slug)
             if label is None or label.id not in issue.label_ids:
                 task.linear_state_type = issue.state_type
+                task.linear_state_name = issue.state_name
                 task.linear_state_observed_at = observed_at
                 await _safe_commit(session)
                 log.info(
@@ -193,6 +196,7 @@ async def maybe_push_task_merge_ready_to_linear(
             )
             if not team_id:
                 task.linear_state_type = issue.state_type
+                task.linear_state_name = issue.state_name
                 task.linear_state_observed_at = observed_at
                 await _safe_commit(session)
                 log.info(
@@ -217,6 +221,7 @@ async def maybe_push_task_merge_ready_to_linear(
             )
             step = "commit"
             task.linear_state_type = updated.state_type
+            task.linear_state_name = updated.state_name
             task.linear_state_observed_at = datetime.now(UTC)
             await _safe_commit(session)
             log.info(

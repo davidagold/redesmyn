@@ -302,6 +302,9 @@ class Task(Base):
     # Cache of the last observed Linear issue state type for the linked issue
     # (e.g. "started", "completed"). Used for lightweight sync indicators.
     linear_state_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Cache of the last observed Linear workflow state name for the linked issue
+    # (e.g. "In Review"). Complements `linear_state_type` for more specific UI.
+    linear_state_name: Mapped[str | None] = mapped_column(String, nullable=True)
     linear_state_observed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

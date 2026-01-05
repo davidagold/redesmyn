@@ -52,6 +52,7 @@ class TaskResponse(ApiResponse):
     linear_issue_id: str | None
     linear_identifier: str | None = None
     linear_state_type: str | None = None
+    linear_state_name: str | None = None
     linear_state_observed_at: datetime | None = None
     github_issue_id: str | None
     local_path: str | None

@@ -115,7 +115,12 @@ function linearStateTypeFromTaskState(state: Task["state"]) {
   }
 }
 
-function linearStateTypeLabel(stateType: string | null) {
+function linearStateLabel(stateName: string | null, stateType: string | null) {
+  const name = stateName?.trim()
+  if (name) {
+    return name
+  }
+
   const normalized = stateType?.trim().toLowerCase() ?? ""
   if (normalized === "unstarted") {
     return "Todo"
@@ -255,6 +260,7 @@ export function NodeCard({
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
   const linearStateType = task?.linearStateType ?? null
+  const linearStateName = task?.linearStateName ?? null
   const linearStateObservedAt = task?.linearStateObservedAt ?? null
   const linearObservedAgeMs = linearStateObservedAt
     ? now - new Date(linearStateObservedAt).getTime()
@@ -949,7 +955,7 @@ export function NodeCard({
             <TooltipContent side="bottom" sideOffset={10}>
               <div className="space-y-1">
                 <div className="text-xs">
-                  Linear: {linearStateTypeLabel(linearStateType)}
+                  Linear: {linearStateLabel(linearStateName, linearStateType)}
                 </div>
                 {linearStateMismatch ? (
                   <div className="text-xs text-muted-foreground">
