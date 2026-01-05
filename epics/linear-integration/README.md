@@ -135,6 +135,7 @@ One shared control pattern at epic + task levels:
 - `epics/linear-integration/tasks/T-3/README.md`: `rn sync --from linear` (label-filtered import + ID allocation + interactive parent selection).
 - `epics/linear-integration/tasks/T-4/README.md`: `rn sync --to linear` (create/update + overwrite semantics + dependency push).
 - `epics/linear-integration/tasks/T-5/README.md`: Dashboard sync button + minimal endpoints/wiring.
+- `epics/linear-integration/tasks/T-6/README.md`: Automation: push local status → Linear + per-task sync indicator.
 
 ## 7) Notes on coordination with other epics
 
