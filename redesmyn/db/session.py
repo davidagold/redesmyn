@@ -21,8 +21,16 @@ from redesmyn.db.migrations.sqlite.agent_status_stopped import (
 def _sqlite_url(db_path: Path) -> str:
     return f"sqlite+aiosqlite:///{db_path}"
 
+
+SQLITE_BUSY_TIMEOUT_S = 30
+
+
 def create_engine(db_path: Path) -> AsyncEngine:
-    return create_async_engine(_sqlite_url(db_path), future=True)
+    return create_async_engine(
+        _sqlite_url(db_path),
+        future=True,
+        connect_args={"timeout": SQLITE_BUSY_TIMEOUT_S},
+    )
 
 
 def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
@@ -83,6 +91,15 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
             # For now, Redesmyn's Alembic config is file-path based (SQLite).
             # If/when we add other dialects, we'll need a different config path.
             return
+
+        # SQLite concurrency: use WAL for better reader/writer behavior and apply
+        # a reasonable sync mode for local-dev durability/performance tradeoffs.
+        try:
+            await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+            await conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+        except Exception:
+            # Best-effort: older/unsupported SQLite builds may reject WAL.
+            pass
 
         has_alembic_version = await _sqlite_has_table(conn, name="alembic_version")
         if not has_alembic_version and await _sqlite_has_table(conn, name="nodes"):
