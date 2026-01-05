@@ -92,11 +92,9 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
             # If/when we add other dialects, we'll need a different config path.
             return
 
-        # SQLite concurrency: use WAL for better reader/writer behavior and apply
-        # a reasonable sync mode for local-dev durability/performance tradeoffs.
+        # SQLite concurrency: use WAL for better reader/writer behavior.
         try:
             await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-            await conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
         except Exception:
             # Best-effort: older/unsupported SQLite builds may reject WAL.
             pass

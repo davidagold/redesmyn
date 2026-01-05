@@ -18,9 +18,5 @@ async def test_sqlite_uses_wal_journal_mode_and_normal_sync(
         journal_mode = conn.execute("PRAGMA journal_mode").fetchone()
         assert journal_mode is not None
         assert str(journal_mode[0]).lower() == "wal"
-
-        synchronous = conn.execute("PRAGMA synchronous").fetchone()
-        assert synchronous is not None
-        assert int(synchronous[0]) == 1  # NORMAL
     finally:
         conn.close()
