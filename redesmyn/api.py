@@ -550,6 +550,16 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                 repo_id=repo_row.repo_id,
             )
             primary_host_key = await get_primary_host_key(session, repo_key, now=now)
+            if (
+                primary_host_key is None
+                and app.state.runner_mode == "local"
+                and app.state.local_host_key is not None
+            ):
+                if await acquire_or_refresh_primary(
+                    session, repo_key, host_key=app.state.local_host_key, now=now
+                ):
+                    await session.commit()
+                    primary_host_key = app.state.local_host_key
 
         tasks = list(
             await session.scalars(
@@ -769,6 +779,16 @@ async def _resolve_repo_executor_target(
     repo = await _require_current_repo(session, app=app)
     repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
     primary = await get_primary_host_key(session, repo_key)
+    if (
+        primary is None
+        and app.state.runner_mode == "local"
+        and app.state.local_host_key is not None
+    ):
+        if await acquire_or_refresh_primary(
+            session, repo_key, host_key=app.state.local_host_key
+        ):
+            await session.commit()
+            primary = app.state.local_host_key
     target_host_key = requested_host_key or primary
     if target_host_key is None:
         if requested_host_key is None:
