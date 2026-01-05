@@ -5,8 +5,7 @@
 ```yaml
 id: T-2
 epic: ui-v0
-stacked_on:
-  - T-1
+stacked_on: T-1
 branch:
   suggested: rn/ui-v0/T-2-query-management
 ```
@@ -113,4 +112,3 @@ Design goals for maintainability:
 - The UI remains correct after a sequence of quick actions (no “looks like it happened but didn’t”).
 - WS events keep relevant UI state fresh without full-page refresh or heavy polling.
 - Query invalidation/refetch does not cause jarring visual jumps; transitions are subtle and intentional.
-

@@ -5,8 +5,7 @@
 ```yaml
 id: T-3
 epic: ui-v0
-stacked_on:
-  - T-2
+stacked_on: T-2
 branch:
   suggested: rn/ui-v0/T-3-frontend-refactor
 ```
@@ -92,4 +91,3 @@ This task should make it easy to implement T-2 (TanStack Query) by:
 - Shared UX patterns (errors, confirmations, action pending states) are consistent across surfaces.
 - Adding a new UI feature requires touching fewer files and less duplicated code.
 - No loss of functionality; existing `just check` remains green.
-

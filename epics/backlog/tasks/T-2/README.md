@@ -6,7 +6,6 @@
 id: T-2
 epic: backlog
 stacked_on:
-  - (none)
 branch:
   suggested: rn/backlog/T-2-git-query-fastpath
 ```
@@ -92,4 +91,3 @@ If the fastpath is complex or doesn’t materially improve UX, we should not pur
   - the UI shows fresher trunk/commit info when a primary executor is local/connected
   - the system still works correctly without an executor (projection fallback)
   - timeouts/failures do not degrade UX with noisy errors
-

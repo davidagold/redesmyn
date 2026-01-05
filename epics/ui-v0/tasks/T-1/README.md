@@ -6,7 +6,6 @@
 id: T-1
 epic: ui-v0
 stacked_on:
-  - (none)
 branch:
   suggested: rn/ui-v0/T-1-ready-to-merge-spine
 ```
@@ -85,4 +84,3 @@ Acceptance should prefer A/B over C unless there is a strong reason to keep the 
 - Merge no longer fails with “spine task(s) not marked ready” in the common “mark leaf ready then merge” flow.
 - UI copy clearly describes what the toggle means (spine-oriented).
 - Implementation is strongly typed and reuses existing merge spine logic where possible (avoid re-implementing graph traversal in multiple places).
-
