@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, Sequence
@@ -608,14 +609,23 @@ async def execute_merge_cascade_plan(
                 task_row.merge_ready_at = None
 
         await session.commit()
-        for task_row in rows:
-            await maybe_push_task_state_to_linear(
-                ctx,
-                sessionmaker=sessionmaker,
-                task_id=task_row.id,
-                desired_task_state=TaskState.Done,
-                timeout_s=2.0,
-            )
+        # Best-effort: push Linear state updates in parallel, but cap
+        # concurrency to avoid hammering Linear during large cascades.
+        semaphore = asyncio.Semaphore(3)
+
+        async def _push_done(*, task_id: int) -> None:
+            async with semaphore:
+                await maybe_push_task_state_to_linear(
+                    ctx,
+                    sessionmaker=sessionmaker,
+                    task_id=task_id,
+                    desired_task_state=TaskState.Done,
+                )
+
+        await asyncio.gather(
+            *[_push_done(task_id=task_row.id) for task_row in rows],
+            return_exceptions=True,
+        )
 
 
 async def build_restack_plan(
