@@ -63,8 +63,9 @@ For user actions that mutate server state (examples):
 
 Implement a mutation hook per action that:
 
-- updates the cache optimistically when safe (e.g. toggles)
+- updates query cache from the mutation response when possible (authoritative, avoids refetch)
 - otherwise triggers invalidation of specific queries
+- uses true optimistic updates only when clearly safe + rollbackable (e.g. simple toggles like “ready to merge”)
 - provides a single place to map “action → affected queries”
 
 ### 3) Event-driven query invalidation / cache updates
@@ -77,6 +78,8 @@ We already have a WS event stream; use it to keep the cache fresh:
 - Add debouncing/batching when multiple events arrive quickly to avoid jitter.
 
 Important: do not create a second state system; the event layer should flow into query cache updates.
+
+Note: for complex async operations (agent lifecycle, merge/restack/resume, bulk actions, linear sync), prefer authoritative updates via WS events and/or mutation responses rather than speculative optimistic state.
 
 ### 4) Smooth transitions for invalidation-driven updates
 
@@ -152,7 +155,8 @@ Prefer:
 ## Notes / design choices
 
 - Prefer “invalidate then refetch” unless a patch update is clearly simpler and less bug-prone.
-- If we keep some local UI state for immediate feedback, it must reconcile with query state without flicker.
+- Prefer authoritative cache updates (mutation response / WS event patches) over speculative optimistic updates.
+- If we keep local UI state for immediate feedback, it must reconcile with query state without flicker.
 - For “optimistic” flows that can fail, ensure the rollback is predictable and communicates failure succinctly.
 
 ## Acceptance Criteria
