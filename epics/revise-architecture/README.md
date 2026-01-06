@@ -388,6 +388,7 @@ Migration note: **current local DB-writing observer → daemon emitting events +
 - `epics/revise-architecture/tasks/T-6/README.md`: Merge `Node` into `Task` (single graph primitive).
 - `epics/revise-architecture/tasks/T-7/README.md`: Remove server git execution and keep git proxying local.
 - `epics/revise-architecture/tasks/T-11/README.md`: Remove `rn git` / `git_proxy`; rely on daemon-side observation for projections.
+- `epics/revise-architecture/tasks/T-12/README.md`: Consolidate overlapping backend mechanisms (reduce surface area).
 - `epics/revise-architecture/tasks/T-8/README.md`: Split agent “identity/config” from “session/run” (`AgentConfig` + `AgentSession`).
 - `epics/revise-architecture/tasks/T-9/README.md`: Repo instances + canonical executor routing (migration).
 
