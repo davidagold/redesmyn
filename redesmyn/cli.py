@@ -62,6 +62,7 @@ from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.metadata import TaskMetadata
 from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
 from redesmyn.domain.enums import (
+    AgentKindSelection,
     BlockPolicy,
     MergeRunStatus,
     TaskAuthority,
@@ -3787,6 +3788,14 @@ def agent_start(
         "--harness",
         help="Harness command (shell-like). Defaults from config.harness.command.",
     ),
+    agent_kind: AgentKindSelection | None = typer.Option(
+        None,
+        "--agent-kind",
+        help=(
+            "Agent kind selection (auto/generic/codex/claude_code). "
+            "Defaults from config.harness.agent_kind."
+        ),
+    ),
     prelude: str | None = typer.Option(
         None,
         "--prelude",
@@ -3815,6 +3824,9 @@ def agent_start(
         )
         raise typer.Exit(2)
     effective_detach = detach if detach is not None else defaults.harness.detach
+    effective_agent_kind = (
+        agent_kind if agent_kind is not None else defaults.harness.agent_kind
+    )
 
     try:
         result = asyncio.run(
@@ -3824,6 +3836,7 @@ def agent_start(
                 harness_command=effective_harness,
                 detach=effective_detach,
                 prelude_override=prelude,
+                agent_kind_selection=effective_agent_kind,
             )
         )
     except RuntimeError as e:
@@ -3847,6 +3860,14 @@ def agent_restart(
         None,
         "--harness",
         help="Harness command (shell-like). Defaults to the last known command for this task.",
+    ),
+    agent_kind: AgentKindSelection | None = typer.Option(
+        None,
+        "--agent-kind",
+        help=(
+            "Agent kind selection (auto/generic/codex/claude_code). "
+            "Defaults to the last known selection for this task."
+        ),
     ),
     prelude: str | None = typer.Option(
         None,
@@ -3879,6 +3900,8 @@ def agent_restart(
                 harness_command=effective_harness,
                 detach=effective_detach,
                 prelude_override=prelude,
+                agent_kind_selection_override=agent_kind,
+                default_agent_kind_selection=defaults.harness.agent_kind,
             )
         )
     except RuntimeError as e:

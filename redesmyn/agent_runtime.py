@@ -18,6 +18,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from redesmyn.agent_kind import resolve_agent_kind
 from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.context import RepoContext
 from redesmyn.host_identity import HostIdentity, load_or_create_host_identity
@@ -38,7 +39,12 @@ from redesmyn.db.models import (
     HostCapabilities,
 )
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
-from redesmyn.domain.enums import AgentStatus, HarnessProfileSource, TaskState
+from redesmyn.domain.enums import (
+    AgentKindSelection,
+    AgentStatus,
+    HarnessProfileSource,
+    TaskState,
+)
 from redesmyn.integrations.linear_automation import maybe_push_task_state_to_linear
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
@@ -792,6 +798,8 @@ async def start_task_agent(
     harness_command: str,
     detach: bool,
     prelude_override: str | None = None,
+    agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
+    external_session_ref_hint: dict[str, Any] | None = None,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -862,6 +870,12 @@ async def start_task_agent(
                 profile_id=profile_id,
                 kind=argv[0],
                 definition=definition,
+            )
+
+            resolved_agent_kind = resolve_agent_kind(
+                agent_kind_selection,
+                argv,
+                external_session_ref_hint=external_session_ref_hint,
             )
 
             parent_task = (
@@ -1005,6 +1019,8 @@ async def start_task_agent(
             agent_session = AgentSession(
                 task_id=task.id,
                 status=AgentStatus.Running,
+                agent_kind_selection=agent_kind_selection,
+                agent_kind=resolved_agent_kind,
                 host_id=host.id,
                 harness_profile_id=profile.id,
                 cwd_path=str(worktree_path),
@@ -1175,8 +1191,12 @@ async def restart_task_agent(
     harness_command: str | None,
     detach: bool,
     prelude_override: str | None = None,
+    agent_kind_selection_override: AgentKindSelection | None = None,
+    default_agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
 ) -> StartAgentResult:
-    if harness_command is None:
+    external_session_ref_hint: dict[str, Any] | None = None
+    agent_kind_selection = agent_kind_selection_override
+    if harness_command is None or agent_kind_selection is None:
         engine = create_engine(ctx.db_path)
         try:
             sessionmaker = create_sessionmaker(engine)
@@ -1186,16 +1206,23 @@ async def restart_task_agent(
                 resolved_profile: dict[str, Any] | None = (
                     None if latest is None else latest.resolved_profile
                 )
-                if resolved_profile is None:
-                    raise RuntimeError(
-                        "No prior agent config found; pass --harness to restart"
+                if latest is not None:
+                    external_session_ref_hint = latest.external_session_ref
+                    if agent_kind_selection is None:
+                        agent_kind_selection = latest.agent_kind_selection
+                if harness_command is None:
+                    if resolved_profile is None:
+                        raise RuntimeError(
+                            "No prior agent config found; pass --harness to restart"
+                        )
+                    definition = TypeAdapter(HarnessProfileDefinition).validate_python(
+                        resolved_profile
                     )
-                definition = TypeAdapter(HarnessProfileDefinition).validate_python(
-                    resolved_profile
-                )
-                harness_command = shlex.join(definition.argv)
+                    harness_command = shlex.join(definition.argv)
         finally:
             await engine.dispose()
+    if agent_kind_selection is None:
+        agent_kind_selection = default_agent_kind_selection
 
     if not detach:
         raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
@@ -1204,12 +1231,16 @@ async def restart_task_agent(
             "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
         )
     await stop_task_agent(ctx, task_id=task_id)
+    if harness_command is None:
+        raise RuntimeError("No harness command available for restart")
     return await start_task_agent(
         ctx,
         task_id=task_id,
         harness_command=harness_command,
         detach=detach,
         prelude_override=prelude_override,
+        agent_kind_selection=agent_kind_selection,
+        external_session_ref_hint=external_session_ref_hint,
     )
 
 

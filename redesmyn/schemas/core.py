@@ -6,6 +6,8 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from redesmyn.domain.enums import (
+    AgentKind,
+    AgentKindSelection,
     AgentStatus,
     AgentSessionRuntimeKind,
     AgentTurnState,
@@ -107,6 +109,8 @@ class AgentSessionResponse(ApiResponse):
     task_id: int
     agent_label: str
     status: AgentStatus
+    agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
+    agent_kind: AgentKind = AgentKind.Generic
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None
     agent_capabilities: AgentCapabilitiesResponse
@@ -174,12 +178,14 @@ AttachInfoResponse = Annotated[
 
 class TaskAgentStartRequest(ApiResponse):
     harness: str
+    agent_kind: AgentKindSelection | None = None
     detach: bool = True
     prelude: str | None = None
 
 
 class TaskAgentRestartRequest(ApiResponse):
     harness: str | None = None
+    agent_kind: AgentKindSelection | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -189,6 +195,8 @@ class TaskAgentStartResponse(ApiResponse):
     agent_session_id: int
     agent_label: str
     agent_status: AgentStatus
+    agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
+    agent_kind: AgentKind = AgentKind.Generic
     harness_profile_id: str
     attach: AttachInfoResponse
     resolved_profile: HarnessProfileDefinitionResponse | None
@@ -209,6 +217,7 @@ class TaskAgentBulkRunRequest(ApiRequest):
     start_task_ids: list[int] = Field(default_factory=list)
     restart_task_ids: list[int] = Field(default_factory=list)
     harness: str | None = None
+    agent_kind: AgentKindSelection | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -227,6 +236,7 @@ class TaskAgentBulkActionRequest(ApiRequest):
     run_id: str | None = None
     actions: list[TaskAgentBulkActionItemRequest] = Field(default_factory=list)
     harness: str | None = None
+    agent_kind: AgentKindSelection | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -456,6 +466,8 @@ class TaskAgentSessionUpdateEventDataResponse(ApiResponse):
     ended_at: datetime | None = None
     attach: AttachInfoResponse
     runtime_kind: AgentSessionRuntimeKind
+    agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
+    agent_kind: AgentKind = AgentKind.Generic
     agent_capabilities: AgentCapabilitiesResponse
     agent_semantic_status: AgentSemanticStatusResponse
     external_session_ref: ExternalSessionRefResponse
@@ -619,6 +631,7 @@ class OrchestrationFleetDefaultsResponse(ApiResponse):
 
 class OrchestrationHarnessDefaultsResponse(ApiResponse):
     command: str | None = None
+    agent_kind: AgentKindSelection = AgentKindSelection.Auto
     detach: bool = True
     prelude: str | None = None
     built_in_prelude_template: str
@@ -640,6 +653,7 @@ class OrchestrationDefaultsResponse(ApiResponse):
 
 class OrchestrationHarnessDefaultsUpdateRequest(ApiRequest):
     command: str | None = None
+    agent_kind: AgentKindSelection | None = None
     detach: bool | None = None
     prelude: str | None = None
     send_prelude: bool | None = None

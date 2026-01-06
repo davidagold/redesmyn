@@ -30,6 +30,8 @@ from redesmyn.agent_interface.v0 import (
     ExternalSessionNone,
 )
 from redesmyn.domain.enums import (
+    AgentKind,
+    AgentKindSelection,
     AgentStatus,
     BlockMode,
     BlockPolicy,
@@ -359,6 +361,16 @@ class AgentSession(Base):
     status: Mapped[AgentStatus] = mapped_column(
         _enum_type(AgentStatus, "agent_session_status"),
         default=AgentStatus.Stopped,
+        nullable=False,
+    )
+    agent_kind_selection: Mapped[AgentKindSelection] = mapped_column(
+        _enum_type(AgentKindSelection, "agent_kind_selection"),
+        default=AgentKindSelection.Auto,
+        nullable=False,
+    )
+    agent_kind: Mapped[AgentKind] = mapped_column(
+        _enum_type(AgentKind, "agent_kind"),
+        default=AgentKind.Generic,
         nullable=False,
     )
 

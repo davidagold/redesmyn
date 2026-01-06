@@ -52,3 +52,6 @@ markers = [
   "unit: pure-ish helper tests",
   "e2e: browser-based end-to-end tests",
 ]
+
+[tool.ty.src]
+exclude = ["redesmyn/db/alembic/versions/0018_fix_agent_session_json_defaults.py"]

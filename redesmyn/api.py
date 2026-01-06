@@ -54,7 +54,12 @@ from redesmyn.db import (
 )
 from redesmyn.db.models import HostCapabilities
 from redesmyn.docs.loader import DocLoadError, load_epic_doc
-from redesmyn.domain.enums import BlockPolicy, CommandState, MergeRunStatus
+from redesmyn.domain.enums import (
+    AgentKindSelection,
+    BlockPolicy,
+    CommandState,
+    MergeRunStatus,
+)
 from redesmyn.event_stream import run_event_stream
 from redesmyn.integrations.linear import (
     LinearClient,
@@ -685,6 +690,8 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         task_id=session_row.task_id,
                         agent_label=agent_label_for_task_id(session_row.task_id),
                         status=session_row.status,
+                        agent_kind_selection=session_row.agent_kind_selection,
+                        agent_kind=session_row.agent_kind,
                         harness_profile_id=session_row.harness_profile_id,
                         resolved_profile=TypeAdapter(
                             HarnessProfileDefinitionResponse | None
@@ -941,6 +948,12 @@ async def start_task_agent(
     app = _app_from_request(http_request)
     run_id = uuid4().hex
     try:
+        default_agent_kind_selection = load_orchestration_defaults(
+            app.state.ctx
+        ).harness.agent_kind
+    except RuntimeError:
+        default_agent_kind_selection = AgentKindSelection.Auto
+    try:
         _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
             runner_backend=app.state.runner_backend,
@@ -948,6 +961,8 @@ async def start_task_agent(
             task_id=task_id,
             action="start",
             harness=request.harness,
+            agent_kind=request.agent_kind,
+            default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
         )
@@ -963,6 +978,8 @@ async def start_task_agent(
         agent_session_id=session_row.id,
         agent_label=result.agent_label,
         agent_status=session_row.status,
+        agent_kind_selection=session_row.agent_kind_selection,
+        agent_kind=session_row.agent_kind,
         harness_profile_id=session_row.harness_profile_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
         resolved_profile=TypeAdapter(
@@ -1070,6 +1087,8 @@ async def _perform_task_agent_action(
     task_id: int,
     action: Literal["stop"],
     harness: str | None,
+    agent_kind: AgentKindSelection | None,
+    default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
 ) -> tuple[Task, bool, list[str]]: ...
@@ -1084,6 +1103,8 @@ async def _perform_task_agent_action(
     task_id: int,
     action: Literal["start", "restart"],
     harness: str | None,
+    agent_kind: AgentKindSelection | None,
+    default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
 ) -> tuple[Task, StartAgentResult, list[str]]: ...
@@ -1097,6 +1118,8 @@ async def _perform_task_agent_action(
     task_id: int,
     action: Literal["start", "restart", "stop"],
     harness: str | None,
+    agent_kind: AgentKindSelection | None,
+    default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
 ) -> tuple[Task, StartAgentResult | bool, list[str]]:
@@ -1122,6 +1145,7 @@ async def _perform_task_agent_action(
             result = await runner_backend.start_task_agent(
                 task_id=task.id,
                 harness_command=harness or "",
+                agent_kind_selection=agent_kind or default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1141,6 +1165,8 @@ async def _perform_task_agent_action(
             result = await runner_backend.restart_task_agent(
                 task_id=task.id,
                 harness_command=harness,
+                agent_kind_selection_override=agent_kind,
+                default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1191,6 +1217,8 @@ async def _run_task_agents_bulk(
     start_task_ids: list[int],
     restart_task_ids: list[int],
     harness: str | None,
+    agent_kind: AgentKindSelection | None,
+    default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
 ) -> None:
@@ -1206,6 +1234,7 @@ async def _run_task_agents_bulk(
             result = await runner_backend.start_task_agent(
                 task_id=task_id,
                 harness_command=harness or "",
+                agent_kind_selection=agent_kind or default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1240,6 +1269,8 @@ async def _run_task_agents_bulk(
             result = await runner_backend.restart_task_agent(
                 task_id=task_id,
                 harness_command=None,
+                agent_kind_selection_override=agent_kind,
+                default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1270,6 +1301,8 @@ async def _run_task_agents_bulk_actions(
     run_id: str,
     actions: list[TaskAgentBulkActionItemRequest],
     harness: str | None,
+    agent_kind: AgentKindSelection | None,
+    default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
 ) -> None:
@@ -1282,6 +1315,8 @@ async def _run_task_agents_bulk_actions(
                 task_id=item.task_id,
                 action=item.action,
                 harness=harness,
+                agent_kind=agent_kind,
+                default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude=prelude,
             )
@@ -1295,6 +1330,12 @@ async def bulk_task_agent_actions(
     request: TaskAgentBulkActionRequest,
 ) -> TaskAgentBulkActionResponse:
     app = _app_from_request(http_request)
+    try:
+        default_agent_kind_selection = load_orchestration_defaults(
+            app.state.ctx
+        ).harness.agent_kind
+    except RuntimeError:
+        default_agent_kind_selection = AgentKindSelection.Auto
     actions = request.actions
     requires_harness = any(a.action == "start" for a in actions)
     if requires_harness and not request.harness:
@@ -1312,6 +1353,8 @@ async def bulk_task_agent_actions(
             run_id=run_id,
             actions=actions,
             harness=request.harness,
+            agent_kind=request.agent_kind,
+            default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
         ),
@@ -1326,6 +1369,12 @@ async def run_task_agents_bulk(
     request: TaskAgentBulkRunRequest,
 ) -> TaskAgentBulkRunResponse:
     app = _app_from_request(http_request)
+    try:
+        default_agent_kind_selection = load_orchestration_defaults(
+            app.state.ctx
+        ).harness.agent_kind
+    except RuntimeError:
+        default_agent_kind_selection = AgentKindSelection.Auto
     if request.start_task_ids and not request.harness:
         raise HTTPException(
             status_code=400,
@@ -1342,6 +1391,8 @@ async def run_task_agents_bulk(
             start_task_ids=request.start_task_ids,
             restart_task_ids=request.restart_task_ids,
             harness=request.harness,
+            agent_kind=request.agent_kind,
+            default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
         ),
@@ -1362,6 +1413,8 @@ async def stop_task_agent(http_request: Request, task_id: int) -> TaskAgentStopR
             task_id=task_id,
             action="stop",
             harness=None,
+            agent_kind=None,
+            default_agent_kind_selection=AgentKindSelection.Auto,
             detach=True,
             prelude=None,
         )
@@ -1397,6 +1450,12 @@ async def restart_task_agent(
     app = _app_from_request(http_request)
     run_id = uuid4().hex
     try:
+        default_agent_kind_selection = load_orchestration_defaults(
+            app.state.ctx
+        ).harness.agent_kind
+    except RuntimeError:
+        default_agent_kind_selection = AgentKindSelection.Auto
+    try:
         _, result, warnings = await _perform_task_agent_action(
             sessionmaker=app.state.sessionmaker,
             runner_backend=app.state.runner_backend,
@@ -1404,6 +1463,8 @@ async def restart_task_agent(
             task_id=task_id,
             action="restart",
             harness=request.harness,
+            agent_kind=request.agent_kind,
+            default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
         )
@@ -1419,6 +1480,8 @@ async def restart_task_agent(
         agent_session_id=session_row.id,
         agent_label=result.agent_label,
         agent_status=session_row.status,
+        agent_kind_selection=session_row.agent_kind_selection,
+        agent_kind=session_row.agent_kind,
         harness_profile_id=session_row.harness_profile_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
         resolved_profile=TypeAdapter(
@@ -2391,6 +2454,7 @@ async def get_orchestration_config(request: Request) -> OrchestrationDefaultsRes
         ),
         harness=OrchestrationHarnessDefaultsResponse(
             command=defaults.harness.command,
+            agent_kind=defaults.harness.agent_kind,
             detach=defaults.harness.detach,
             prelude=defaults.harness.prelude,
             built_in_prelude_template=DEFAULT_AGENT_PRELUDE_TEMPLATE,
@@ -2426,6 +2490,8 @@ async def update_orchestration_config(
     if request.harness is not None:
         if "command" in request.harness.model_fields_set:
             set_config_value(data, "harness.command", request.harness.command)
+        if "agent_kind" in request.harness.model_fields_set:
+            set_config_value(data, "harness.agent_kind", request.harness.agent_kind)
         if "detach" in request.harness.model_fields_set:
             set_config_value(data, "harness.detach", request.harness.detach)
         if "prelude" in request.harness.model_fields_set:

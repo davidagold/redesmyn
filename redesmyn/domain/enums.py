@@ -43,6 +43,19 @@ class AgentTurnState(StrEnum):
     Completed = "completed"
 
 
+class AgentKind(StrEnum):
+    Generic = "generic"
+    Codex = "codex"
+    ClaudeCode = "claude_code"
+
+
+class AgentKindSelection(StrEnum):
+    Auto = "auto"
+    Generic = "generic"
+    Codex = "codex"
+    ClaudeCode = "claude_code"
+
+
 class HarnessProfileSource(StrEnum):
     Builtin = "builtin"
     User = "user"

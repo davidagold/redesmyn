@@ -130,6 +130,8 @@ def test_migrations_remove_db_agent_construct(tmp_path: Path) -> None:
     assert session_cols["host_id"]["nullable"] is True
     assert session_cols["harness_profile_id"]["nullable"] is True
     assert session_cols["resolved_profile"]["nullable"] is True
+    assert session_cols["agent_kind_selection"]["nullable"] is False
+    assert session_cols["agent_kind"]["nullable"] is False
     assert session_cols["agent_capabilities"]["nullable"] is False
     assert session_cols["agent_semantic_status"]["nullable"] is False
     assert session_cols["external_session_ref"]["nullable"] is False

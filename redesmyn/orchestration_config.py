@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from redesmyn.context import RepoContext
+from redesmyn.domain.enums import AgentKindSelection
 
 FleetMode = Literal["fixed", "auto"]
 SandboxType = Literal["none", "worktree"]
@@ -34,6 +35,7 @@ class HarnessDefaults(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     command: str | None = None
+    agent_kind: AgentKindSelection = AgentKindSelection.Auto
     detach: bool = True
     prelude: str | None = None
     send_prelude: bool = True

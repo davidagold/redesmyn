@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from redesmyn.domain.enums import AgentKindSelection
 from redesmyn.agent_runtime import (
     StartAgentResult,
     restart_task_agent,
@@ -22,6 +23,7 @@ class RunnerBackend(Protocol):
         *,
         task_id: int,
         harness_command: str,
+        agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult: ...
@@ -37,6 +39,8 @@ class RunnerBackend(Protocol):
         *,
         task_id: int,
         harness_command: str | None,
+        agent_kind_selection_override: AgentKindSelection | None,
+        default_agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult: ...
@@ -61,6 +65,7 @@ class LocalRunnerBackend:
         *,
         task_id: int,
         harness_command: str,
+        agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult:
@@ -70,6 +75,7 @@ class LocalRunnerBackend:
             harness_command=harness_command,
             detach=detach,
             prelude_override=prelude_override,
+            agent_kind_selection=agent_kind_selection,
         )
 
     async def stop_task_agent(self, *, task_id: int) -> bool:
@@ -80,6 +86,8 @@ class LocalRunnerBackend:
         *,
         task_id: int,
         harness_command: str | None,
+        agent_kind_selection_override: AgentKindSelection | None,
+        default_agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult:
@@ -89,6 +97,8 @@ class LocalRunnerBackend:
             harness_command=harness_command,
             detach=detach,
             prelude_override=prelude_override,
+            agent_kind_selection_override=agent_kind_selection_override,
+            default_agent_kind_selection=default_agent_kind_selection,
         )
 
 
@@ -108,6 +118,7 @@ class RemoteRunnerBackend:
         *,
         task_id: int,
         harness_command: str,
+        agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult:
@@ -127,6 +138,8 @@ class RemoteRunnerBackend:
         *,
         task_id: int,
         harness_command: str | None,
+        agent_kind_selection_override: AgentKindSelection | None,
+        default_agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
     ) -> StartAgentResult:

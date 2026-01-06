@@ -199,6 +199,8 @@ def _session_update_event_payload(*, agent_session: AgentSession) -> dict[str, A
         ),
         "attach": agent_session.attach,
         "runtime_kind": _runtime_kind_from_attach(attach),
+        "agent_kind_selection": agent_session.agent_kind_selection,
+        "agent_kind": agent_session.agent_kind,
         "agent_capabilities": agent_session.agent_capabilities,
         "agent_semantic_status": agent_session.agent_semantic_status,
         "external_session_ref": agent_session.external_session_ref,

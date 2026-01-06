@@ -237,7 +237,7 @@ async def test_start_and_restart_agent_persists_db_state(
     try:
         start = await scenario.app.client.post(
             f"/v1/tasks/{seeded.child_task_id}/agent/start",
-            json={"harness": harness, "detach": True},
+            json={"harness": harness, "detach": True, "agentKind": "codex"},
         )
         assert start.status_code == 200, start.text
         start_body = start.json()
@@ -255,6 +255,8 @@ async def test_start_and_restart_agent_persists_db_state(
             assert started_session.task_id == seeded.child_task_id
             assert started_session.status == AgentStatus.Running
             assert started_session.ended_at is None
+            assert started_session.agent_kind_selection.value == "codex"
+            assert started_session.agent_kind.value == "codex"
 
         restart = await scenario.app.client.post(
             f"/v1/tasks/{seeded.child_task_id}/agent/restart",
@@ -266,5 +268,7 @@ async def test_start_and_restart_agent_persists_db_state(
         assert restart_body["agentStatus"] == AgentStatus.Running.value
         assert restart_body["attach"]["type"] == "tmux"
         assert restart_body["attach"]["session"] == tmux_name
+        assert restart_body["agentKindSelection"] == "codex"
+        assert restart_body["agentKind"] == "codex"
     finally:
         await scenario.app.client.post(f"/v1/tasks/{seeded.child_task_id}/agent/stop")
