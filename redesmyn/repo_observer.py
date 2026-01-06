@@ -36,6 +36,7 @@ from redesmyn.repo import (
 )
 from redesmyn.repo_executor_leases import get_primary_host_key
 from redesmyn.repo_identity import RepoKey
+from redesmyn.git_projections import update_git_projections_in_session
 from redesmyn.git_subprocess import run_git
 
 log = structlog.get_logger("redesmyn.repo_observer")
@@ -56,6 +57,7 @@ class RepoObserverState:
     last_worktree_by_task_id: dict[int, WorktreeObservation] = field(
         default_factory=dict
     )
+    last_git_projections_refresh_at: datetime | None = None
     initialized: bool = False
 
 
@@ -280,6 +282,7 @@ async def observe_once(
     events_added = 0
     merge_runs_updated = 0
     tasks_updated = 0
+    projections_refreshed = False
 
     new_shas: list[str] = []
     new_commits: list[tuple[Task, str]] = []
@@ -329,6 +332,25 @@ async def observe_once(
             )
         )
         events_added += 1
+
+    should_refresh_git_projections = (
+        state.last_git_projections_refresh_at is None
+        or (now - state.last_git_projections_refresh_at).total_seconds() >= 5.0
+    )
+    if should_refresh_git_projections:
+        try:
+            await update_git_projections_in_session(
+                ctx=ctx,
+                session=session,
+                repo=repo,
+                host_key=host_key,
+                now=now,
+                tasks=tasks,
+            )
+            projections_refreshed = True
+            state.last_git_projections_refresh_at = now
+        except Exception:
+            log.exception("repo_observer.git_projections_failed")
 
     # Compute stack_in_sync for each task
     epic_ids = {t.epic_id for t in tasks}
@@ -506,7 +528,7 @@ async def observe_once(
         )
         events_added += 1
 
-    if events_added or tasks_updated or merge_runs_updated:
+    if events_added or tasks_updated or merge_runs_updated or projections_refreshed:
         await session.commit()
     if not state.initialized:
         state.initialized = True
