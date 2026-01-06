@@ -83,12 +83,12 @@ class AgentTransport(Protocol):
     def interrupt(self) -> None: ...
 
 
-class AgentInterpreter(Protocol):
+class AgentBackend(Protocol):
     @property
     def capabilities(self) -> AgentCapabilities: ...
 
     @property
-    def status(self) -> AgentSemanticStatus: ...
+    def semantic_status(self) -> AgentSemanticStatus: ...
 
     @property
     def external_session_ref(self) -> ExternalSessionRef: ...
@@ -111,7 +111,7 @@ class ShellAgent:
         return self._capabilities
 
     @property
-    def status(self) -> AgentSemanticStatus:
+    def semantic_status(self) -> AgentSemanticStatus:
         return self._status
 
     @property
