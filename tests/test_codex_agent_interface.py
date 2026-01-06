@@ -15,8 +15,14 @@ def test_codex_agent_parses_structured_turn_events() -> None:
         return now_s
 
     agent = CodexAgent(clock_s=clock, max_busy_s=5.0)
+    assert agent.capabilities.can_stream_semantic_events is False
+    assert agent.capabilities.can_detect_turn_complete is False
+    assert agent.capabilities.can_resume_by_id is False
 
     agent.consume_output('{"type":"thread.started","thread_id":"th_123"}\n')
+    assert agent.capabilities.can_stream_semantic_events is True
+    assert agent.capabilities.can_detect_turn_complete is True
+    assert agent.capabilities.can_resume_by_id is True
     codex_ref = ExternalSessionCodex.model_validate(
         agent.external_session_ref.model_dump(mode="python")
     )

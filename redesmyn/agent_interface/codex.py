@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from pydantic import (
     AliasChoices,
@@ -14,6 +14,7 @@ from pydantic import (
     ValidationError,
 )
 
+from redesmyn.agent_interface import register_agent_backend_builder
 from redesmyn.agent_interface.v0 import (
     AgentCapabilities,
     AgentEvent,
@@ -22,7 +23,11 @@ from redesmyn.agent_interface.v0 import (
     ExternalSessionNone,
     ExternalSessionRef,
 )
+from redesmyn.domain.enums import AgentKind
 from redesmyn.domain.enums import AgentTurnState
+
+if TYPE_CHECKING:
+    from redesmyn.db.models import AgentSession
 
 _ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ANSI_OSC_RE = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)", re.DOTALL)
@@ -92,9 +97,11 @@ class CodexAgent:
     _capabilities: AgentCapabilities = field(
         default_factory=lambda: AgentCapabilities(
             can_detect_ready_for_input=True,
-            can_detect_turn_complete=True,
             can_send_text=True,
-            can_resume_by_id=True,
+            # Turn-complete detection is only reliable when we see Codex's
+            # structured JSONL stream (codex exec --json).
+            can_detect_turn_complete=False,
+            can_resume_by_id=False,
         )
     )
     _semantic_status: AgentSemanticStatus = field(default_factory=AgentSemanticStatus)
@@ -123,8 +130,15 @@ class CodexAgent:
         return self._external_session_ref
 
     def seed_external_session_ref(self, ref: ExternalSessionRef) -> None:
-        if ref.type == "codex_thread":
-            self._external_session_ref = ref
+        self._set_external_session_ref(ref)
+
+    def _set_external_session_ref(self, ref: ExternalSessionRef) -> None:
+        self._external_session_ref = ref
+        can_resume = ref.type == "codex_thread"
+        if self._capabilities.can_resume_by_id != can_resume:
+            self._capabilities = self._capabilities.model_copy(
+                update={"can_resume_by_id": can_resume}
+            )
 
     def _set_turn_state(
         self, state: AgentTurnState, *, detail: str | None = None
@@ -177,26 +191,31 @@ class CodexAgent:
             return
 
         self._saw_structured_events = True
+        cap_updates: dict[str, bool] = {}
         if self._capabilities.can_stream_semantic_events is not True:
-            self._capabilities = self._capabilities.model_copy(
-                update={"can_stream_semantic_events": True}
-            )
+            cap_updates["can_stream_semantic_events"] = True
+        if self._capabilities.can_detect_turn_complete is not True:
+            cap_updates["can_detect_turn_complete"] = True
+        if cap_updates:
+            self._capabilities = self._capabilities.model_copy(update=cap_updates)
 
         if event_type == "thread.started":
             if event.thread_id:
                 existing_codex = _as_codex_thread_ref(self._external_session_ref)
                 turn_id = existing_codex.turn_id if existing_codex is not None else None
-                self._external_session_ref = ExternalSessionCodex(
-                    thread_id=event.thread_id, turn_id=turn_id
+                self._set_external_session_ref(
+                    ExternalSessionCodex(thread_id=event.thread_id, turn_id=turn_id)
                 )
             return
 
         if event_type == "turn.started":
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
             if event.turn_id and existing_codex is not None:
-                self._external_session_ref = ExternalSessionCodex(
-                    thread_id=existing_codex.thread_id,
-                    turn_id=event.turn_id,
+                self._set_external_session_ref(
+                    ExternalSessionCodex(
+                        thread_id=existing_codex.thread_id,
+                        turn_id=event.turn_id,
+                    )
                 )
             self._note_busy()
             return
@@ -204,9 +223,11 @@ class CodexAgent:
         if event_type == "turn.completed":
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
             if event.turn_id and existing_codex is not None:
-                self._external_session_ref = ExternalSessionCodex(
-                    thread_id=existing_codex.thread_id,
-                    turn_id=event.turn_id,
+                self._set_external_session_ref(
+                    ExternalSessionCodex(
+                        thread_id=existing_codex.thread_id,
+                        turn_id=event.turn_id,
+                    )
                 )
             self._set_turn_state(AgentTurnState.Completed)
             self._busy_since_s = None
@@ -228,11 +249,13 @@ class CodexAgent:
         if not thread_id:
             return
 
-        self._external_session_ref = ExternalSessionCodex(
-            thread_id=thread_id,
-            turn_id=turn_id
-            if turn_id
-            else (existing_codex.turn_id if existing_codex is not None else None),
+        self._set_external_session_ref(
+            ExternalSessionCodex(
+                thread_id=thread_id,
+                turn_id=turn_id
+                if turn_id
+                else (existing_codex.turn_id if existing_codex is not None else None),
+            )
         )
 
     def consume_output(self, text: str) -> list[AgentEvent]:
@@ -299,3 +322,21 @@ def codex_agent_from_db_external_ref(ref_raw: object) -> CodexAgent:
         ref = ExternalSessionNone()
     agent.seed_external_session_ref(ref)
     return agent
+
+
+_EXTERNAL_SESSION_REF_ADAPTER = TypeAdapter(ExternalSessionRef)
+
+
+def _build_codex_backend(agent_session: "AgentSession") -> CodexAgent:
+    agent = CodexAgent()
+    try:
+        ref = _EXTERNAL_SESSION_REF_ADAPTER.validate_python(
+            agent_session.external_session_ref
+        )
+    except ValidationError:
+        ref = ExternalSessionNone()
+    agent.seed_external_session_ref(ref)
+    return agent
+
+
+register_agent_backend_builder(AgentKind.Codex, _build_codex_backend)
