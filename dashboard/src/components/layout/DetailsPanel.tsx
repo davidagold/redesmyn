@@ -15,15 +15,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import { SlidePanel } from "@/components/ui/slide-panel"
 import {
   Tooltip,
@@ -43,9 +34,14 @@ import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
+import {
+  isRunningAgentsConflict,
+  runningAgentsSummary,
+} from "@/lib/runningAgentsConflict"
 import { cn } from "@/lib/utils"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { FloatingActions } from "@/components/ui/floating-actions"
+import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import {
   ChevronDown,
@@ -78,34 +74,6 @@ function stripAnsi(text: string) {
   // OSC sequences (titles, hyperlinks, etc.)
   // eslint-disable-next-line no-control-regex
   return withoutCsi.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-}
-
-const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
-
-function isRunningAgentsConflict(error: ApiHttpError) {
-  const detail = error.detail
-  return (
-    typeof detail === "string" &&
-    detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)
-  )
-}
-
-function runningAgentsSummary(error: ApiHttpError) {
-  const detail = error.detail
-  if (typeof detail !== "string") {
-    return null
-  }
-  if (!detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)) {
-    return null
-  }
-  const summary = detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
-  if (!summary) {
-    return null
-  }
-  if (/allowRunning\s*=?/i.test(summary)) {
-    return null
-  }
-  return summary
 }
 
 interface DetailsPanelProps {
@@ -442,61 +410,22 @@ function MergeRunDetails({
         </pre>
       ) : null}
 
-      <AlertDialog
+      <ProceedAnywayDialog
         open={resumePromptOpen}
+        pending={resumePending}
+        actionLabel="resume"
+        detail={resumePromptDetail}
         onOpenChange={(open) => {
-          if (resumePending && !open) {
-            return
-          }
           if (!open) {
             setResumePromptDetail(null)
           }
           setResumePromptOpen(open)
         }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Proceed anyway?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This resume affects running tasks/agents.
-              {resumePromptDetail ? (
-                <div className="mt-2 whitespace-pre-line text-xs text-muted-foreground">
-                  {resumePromptDetail}
-                </div>
-              ) : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              disabledReason={resumePending ? "Action in progress" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                setResumePromptOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <AlertDialogAction
-              disabledReason={resumePending ? "Action in progress" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                setResumePromptOpen(false)
-                void handleResumeMerge(true)
-              }}
-            >
-              {resumePending ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Proceeding…
-                </>
-              ) : (
-                "Proceed"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onProceed={() => {
+          setResumePromptOpen(false)
+          void handleResumeMerge(true)
+        }}
+      />
     </div>
   )
 }

@@ -16,8 +16,13 @@ import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
+import {
+  isRunningAgentsConflict,
+  runningAgentsSummary,
+} from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { LinearIcon } from "@/components/linear/LinearIcon"
+import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -26,15 +31,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 import {
   Tooltip,
   TooltipContent,
@@ -99,8 +95,6 @@ interface RestackAllowRunningPrompt {
 
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
 
-const RUNNING_AGENTS_PREFIX = "RUNNING_AGENTS:"
-
 function linearStateTypeFromTaskState(state: Task["state"]) {
   switch (state) {
     case "todo":
@@ -151,32 +145,6 @@ function formatObservedAt(value: string | null) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date)
-}
-
-function isRunningAgentsConflict(error: ApiHttpError) {
-  const detail = error.detail
-  return (
-    typeof detail === "string" &&
-    detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)
-  )
-}
-
-function runningAgentsSummary(error: ApiHttpError) {
-  const detail = error.detail
-  if (typeof detail !== "string") {
-    return null
-  }
-  if (!detail.trimStart().startsWith(RUNNING_AGENTS_PREFIX)) {
-    return null
-  }
-  const summary = detail.replace(RUNNING_AGENTS_PREFIX, "").trim()
-  if (!summary) {
-    return null
-  }
-  if (/allowRunning\s*=?/i.test(summary)) {
-    return null
-  }
-  return summary
 }
 
 function statusSummary(
@@ -1610,65 +1578,19 @@ export function TaskCard({
           ) : null}
         </div>
       ) : null}
-      <AlertDialog
+      <ProceedAnywayDialog
         open={allowRunningPrompt !== null}
+        pending={allowRunningConfirming}
+        actionLabel={allowRunningActionLabel ?? "merge"}
+        detail={allowRunningPrompt?.detail}
         onOpenChange={(open) => {
           if (open) {
             return
           }
-          if (allowRunningConfirming) {
-            return
-          }
           setAllowRunningPrompt(null)
         }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Proceed anyway?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This {allowRunningActionLabel ?? "merge"} affects running
-              tasks/agents.
-              {allowRunningPrompt?.detail ? (
-                <div className="mt-2 whitespace-pre-line text-xs text-muted-foreground">
-                  {allowRunningPrompt.detail}
-                </div>
-              ) : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              disabledReason={
-                allowRunningConfirming ? "Action in progress" : null
-              }
-              onClick={(e) => {
-                e.preventDefault()
-                setAllowRunningPrompt(null)
-              }}
-            >
-              Cancel
-            </Button>
-            <AlertDialogAction
-              disabledReason={
-                allowRunningConfirming ? "Action in progress" : null
-              }
-              onClick={(e) => {
-                e.preventDefault()
-                void confirmAllowRunning()
-              }}
-            >
-              {allowRunningConfirming ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Proceeding…
-                </>
-              ) : (
-                "Proceed"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onProceed={() => void confirmAllowRunning()}
+      />
     </Card>
   )
 }
