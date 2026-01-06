@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
+
+from redesmyn.git_subprocess import run_git
 
 
 class NotAGitRepositoryError(RuntimeError):
@@ -23,15 +24,12 @@ class CommitInfo(TypedDict):
 
 
 def _run_git(
-    args: list[str], *, cwd: Path | None = None
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(cwd) if cwd is not None else None,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout_s: float | None = None,
+):
+    return run_git(args, cwd=cwd, timeout_s=timeout_s)
 
 
 def find_repo_root(*, cwd: Path | None = None) -> Path:
@@ -39,7 +37,7 @@ def find_repo_root(*, cwd: Path | None = None) -> Path:
 
 
 def canonical_repo_root(*, cwd: Path | None = None) -> Path:
-    proc = _run_git(["worktree", "list", "--porcelain"], cwd=cwd)
+    proc = _run_git(["worktree", "list", "--porcelain"], cwd=cwd, timeout_s=5)
     if proc.returncode == 0:
         candidates: list[Path] = []
         for line in proc.stdout.splitlines():
@@ -57,25 +55,27 @@ def canonical_repo_root(*, cwd: Path | None = None) -> Path:
 
 
 def worktree_root(*, cwd: Path | None = None) -> Path:
-    proc = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    proc = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd, timeout_s=5)
     if proc.returncode != 0:
         raise NotAGitRepositoryError(proc.stderr.strip() or "Not a git repository")
     return Path(proc.stdout.strip())
 
 
 def current_branch(*, cwd: Path | None = None) -> str:
-    proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+    proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd, timeout_s=5)
     if proc.returncode != 0:
         return "HEAD"
     return proc.stdout.strip()
 
 
 def default_branch(repo_root: Path) -> str:
-    origin_head = _run_git(["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=repo_root)
+    origin_head = _run_git(
+        ["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=repo_root, timeout_s=5
+    )
     if origin_head.returncode == 0:
         return origin_head.stdout.strip().removeprefix("refs/remotes/origin/")
 
-    head = _run_git(["symbolic-ref", "HEAD"], cwd=repo_root)
+    head = _run_git(["symbolic-ref", "HEAD"], cwd=repo_root, timeout_s=5)
     if head.returncode == 0:
         return head.stdout.strip().removeprefix("refs/heads/")
 
@@ -84,7 +84,9 @@ def default_branch(repo_root: Path) -> str:
 
 def branch_exists(repo_root: Path, branch_name: str) -> bool:
     proc = _run_git(
-        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"], cwd=repo_root
+        ["show-ref", "--verify", "--quiet", f"refs/heads/{branch_name}"],
+        cwd=repo_root,
+        timeout_s=5,
     )
     return proc.returncode == 0
 
@@ -99,7 +101,7 @@ def git_rename_current_branch(worktree_path: Path, *, new_name: str) -> None:
 
 
 def git_merge_base(repo_root: Path, ref_a: str, ref_b: str) -> str | None:
-    proc = _run_git(["merge-base", ref_a, ref_b], cwd=repo_root)
+    proc = _run_git(["merge-base", ref_a, ref_b], cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return None
     sha = proc.stdout.strip()
@@ -108,7 +110,9 @@ def git_merge_base(repo_root: Path, ref_a: str, ref_b: str) -> str | None:
 
 def git_is_ancestor(repo_root: Path, ancestor_ref: str, descendant_ref: str) -> bool:
     proc = _run_git(
-        ["merge-base", "--is-ancestor", ancestor_ref, descendant_ref], cwd=repo_root
+        ["merge-base", "--is-ancestor", ancestor_ref, descendant_ref],
+        cwd=repo_root,
+        timeout_s=5,
     )
     return proc.returncode == 0
 
@@ -126,14 +130,14 @@ def git_rev_list(
     if max_count is not None:
         args.extend(["-n", str(max_count)])
     args.append(ref)
-    proc = _run_git(args, cwd=repo_root)
+    proc = _run_git(args, cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return []
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
 def git_rev_parse(repo_root: Path, ref: str) -> str | None:
-    proc = _run_git(["rev-parse", "--verify", ref], cwd=repo_root)
+    proc = _run_git(["rev-parse", "--verify", ref], cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return None
     sha = proc.stdout.strip()
@@ -156,7 +160,7 @@ def git_rev_list_range(
     if max_count is not None:
         args.extend(["-n", str(max_count)])
     args.append(rev_range)
-    proc = _run_git(args, cwd=repo_root)
+    proc = _run_git(args, cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return []
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
@@ -169,7 +173,7 @@ def git_rev_list_count(
     if first_parent:
         args.append("--first-parent")
     args.extend(["--count", rev_range])
-    proc = _run_git(args, cwd=repo_root)
+    proc = _run_git(args, cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return 0
     try:
@@ -180,7 +184,9 @@ def git_rev_list_count(
 
 def git_for_each_ref(repo_root: Path, *, prefix: str = "refs/heads") -> dict[str, str]:
     proc = _run_git(
-        ["for-each-ref", prefix, "--format=%(refname) %(objectname)"], cwd=repo_root
+        ["for-each-ref", prefix, "--format=%(refname) %(objectname)"],
+        cwd=repo_root,
+        timeout_s=5,
     )
     if proc.returncode != 0:
         return {}
@@ -232,6 +238,7 @@ def git_commit_info(repo_root: Path, shas: list[str]) -> dict[str, CommitInfo]:
             *unique,
         ],
         cwd=repo_root,
+        timeout_s=5,
     )
     if proc.returncode != 0:
         return {}
@@ -281,7 +288,7 @@ class GitWorktreeEntry:
 
 
 def git_worktree_list(repo_root: Path) -> list[GitWorktreeEntry]:
-    proc = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root)
+    proc = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         raise GitCommandError(proc.stderr.strip() or "git worktree list failed")
 
@@ -333,7 +340,7 @@ def git_worktree_path_for_branch(repo_root: Path, branch_name: str) -> Path | No
 
 
 def git_status_porcelain(worktree_path: Path) -> str:
-    proc = _run_git(["status", "--porcelain=v1"], cwd=worktree_path)
+    proc = _run_git(["status", "--porcelain=v1"], cwd=worktree_path, timeout_s=5)
     if proc.returncode != 0:
         raise GitCommandError(proc.stderr.strip() or "git status failed")
     return proc.stdout
@@ -343,7 +350,9 @@ def git_has_in_progress_operation(worktree_path: Path) -> bool:
     """Return True when the worktree is mid-mutation (rebase/merge/cherry-pick/revert)."""
 
     def git_path(name: str) -> Path | None:
-        proc = _run_git(["rev-parse", "--git-path", name], cwd=worktree_path)
+        proc = _run_git(
+            ["rev-parse", "--git-path", name], cwd=worktree_path, timeout_s=5
+        )
         if proc.returncode != 0:
             return None
         raw = proc.stdout.strip()

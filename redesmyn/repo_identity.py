@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+
+from redesmyn.git_subprocess import run_git
 
 DEFAULT_WORKSPACE_ID = "default"
 
@@ -19,20 +20,10 @@ class RepoKey:
 
 
 def _run_git(repo_root: Path, args: list[str]) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_root), *args],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
-        return None
+    proc = run_git(args, cwd=repo_root, timeout_s=2)
     if proc.returncode != 0:
         return None
-    value = proc.stdout.strip()
+    value = (proc.stdout or "").strip()
     return value or None
 
 

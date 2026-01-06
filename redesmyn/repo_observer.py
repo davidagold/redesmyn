@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -37,6 +36,7 @@ from redesmyn.repo import (
 )
 from redesmyn.repo_executor_leases import get_primary_host_key
 from redesmyn.repo_identity import RepoKey
+from redesmyn.git_subprocess import run_git
 
 log = structlog.get_logger("redesmyn.repo_observer")
 
@@ -79,7 +79,7 @@ def default_worktree_path(ctx: RepoContext, *, branch: str) -> Path:
 def _find_existing_worktree_path_for_branch(
     repo_root: Path, *, branch: str
 ) -> Path | None:
-    proc = _run_git(["worktree", "list", "--porcelain"], cwd=repo_root, timeout_s=5)
+    proc = run_git(["worktree", "list", "--porcelain"], cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return None
 
@@ -117,21 +117,8 @@ def _find_existing_worktree_path_for_branch(
     return commit_current()
 
 
-def _run_git(
-    args: list[str], *, cwd: Path, timeout_s: float | None = None
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(cwd),
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=timeout_s,
-    )
-
-
 def read_branch_heads(repo_root: Path) -> dict[str, str]:
-    proc = _run_git(["show-ref", "--heads"], cwd=repo_root, timeout_s=5)
+    proc = run_git(["show-ref", "--heads"], cwd=repo_root, timeout_s=5)
     if proc.returncode != 0:
         return {}
 
@@ -173,7 +160,7 @@ def read_commit_summaries(
         return {}
 
     fmt = "%H%x1f%an%x1f%ae%x1f%aI%x1f%s"
-    proc = _run_git(
+    proc = run_git(
         ["show", "-s", f"--format={fmt}", *unique], cwd=repo_root, timeout_s=5
     )
     if proc.returncode != 0:
@@ -196,7 +183,7 @@ def read_commit_summaries(
 
 
 def worktree_dirty(worktree_path: Path) -> bool | None:
-    proc = _run_git(["status", "--porcelain"], cwd=worktree_path, timeout_s=5)
+    proc = run_git(["status", "--porcelain"], cwd=worktree_path, timeout_s=5)
     if proc.returncode != 0:
         return None
     return bool(proc.stdout.strip())
