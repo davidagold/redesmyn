@@ -45,6 +45,7 @@ from redesmyn.schemas.core import (
 )
 from redesmyn.ws_protocol import ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry
+from redesmyn.background_tasks import BackgroundTaskManager
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,19 +227,22 @@ def _spawn_local_merge_run(
     failure_kind: Literal["merge_ff", "rebase"],
     base_branch: str,
     host_key: str,
+    background_tasks: BackgroundTaskManager | None = None,
 ) -> None:
-    asyncio.create_task(
-        _run_local_merge_run(
-            execute=execute,
-            sessionmaker=sessionmaker,
-            run_id=run_id,
-            task_id=task_id,
-            operation=operation,
-            failure_kind=failure_kind,
-            base_branch=base_branch,
-            host_key=host_key,
-        )
+    coro = _run_local_merge_run(
+        execute=execute,
+        sessionmaker=sessionmaker,
+        run_id=run_id,
+        task_id=task_id,
+        operation=operation,
+        failure_kind=failure_kind,
+        base_branch=base_branch,
+        host_key=host_key,
     )
+    if background_tasks is not None:
+        background_tasks.spawn(coro, name=f"merge_run:{operation}:{run_id}")
+        return
+    asyncio.create_task(coro)
 
 
 async def _require_epic_id_for_task(
@@ -284,6 +288,7 @@ class _DaemonRepoPlanAckData(BaseModel):
 class LocalRepoExecutor:
     ctx: RepoContext
     sessionmaker: async_sessionmaker[AsyncSession]
+    background_tasks: BackgroundTaskManager | None = None
 
     async def merge(
         self,
@@ -367,6 +372,7 @@ class LocalRepoExecutor:
             failure_kind="merge_ff",
             base_branch=plan.base_branch,
             host_key=target.target_host_key,
+            background_tasks=self.background_tasks,
         )
         return TaskMergeResponse(
             run_id=run_id,
@@ -450,6 +456,7 @@ class LocalRepoExecutor:
             failure_kind="rebase",
             base_branch=plan.base_branch,
             host_key=target.target_host_key,
+            background_tasks=self.background_tasks,
         )
         return TaskRestackResponse(
             run_id=run_id,
@@ -601,6 +608,7 @@ class LocalRepoExecutor:
             failure_kind="rebase" if operation == "restack" else "merge_ff",
             base_branch=plan.base_branch,
             host_key=target.target_host_key,
+            background_tasks=self.background_tasks,
         )
         return MergeRunResumeResponse(run_id=run_id, base_branch=plan.base_branch)
 
@@ -1081,9 +1089,14 @@ def make_repo_executor(
     ctx: RepoContext,
     sessionmaker: async_sessionmaker[AsyncSession],
     daemon_connections: DaemonConnectionRegistry,
+    background_tasks: BackgroundTaskManager | None = None,
 ) -> RepoExecutor:
     local = (
-        LocalRepoExecutor(ctx=ctx, sessionmaker=sessionmaker)
+        LocalRepoExecutor(
+            ctx=ctx,
+            sessionmaker=sessionmaker,
+            background_tasks=background_tasks,
+        )
         if runner_mode == "local" and local_host_key is not None
         else None
     )

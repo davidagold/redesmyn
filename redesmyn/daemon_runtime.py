@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
@@ -15,6 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.agent_runtime import has_tmux
+from redesmyn.background_tasks import BackgroundTaskManager
 from redesmyn.context import RepoContext
 from redesmyn.db import (
     DatabaseMigrationRequiredError,
@@ -304,6 +304,7 @@ class DaemonRuntime:
 
                 send_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
                 command_queue: asyncio.Queue[ServerCommand] = asyncio.Queue(maxsize=128)
+                background = BackgroundTaskManager()
 
                 tasks = [
                     asyncio.create_task(self._sender_loop(websocket, send_queue)),
@@ -311,7 +312,9 @@ class DaemonRuntime:
                     asyncio.create_task(self._heartbeat_loop(send_queue)),
                     asyncio.create_task(self._telemetry_loop(api, send_queue)),
                     asyncio.create_task(
-                        self._command_loop(api, command_queue, send_queue)
+                        self._command_loop(
+                            api, command_queue, send_queue, background=background
+                        )
                     ),
                 ]
                 try:
@@ -325,6 +328,8 @@ class DaemonRuntime:
                 finally:
                     for task in tasks:
                         task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    await background.cancel_and_await()
 
     async def _ensure_db_ready(self) -> None:
         if self._db_ready:
@@ -521,19 +526,6 @@ class DaemonRuntime:
                     "stack_in_sync": value,
                 },
             )
-
-    def _spawn_background(self, coro: Coroutine[Any, Any, None]) -> None:
-        task = asyncio.create_task(coro)
-
-        def _consume(task: asyncio.Task[None]) -> None:
-            try:
-                task.exception()
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
-
-        task.add_done_callback(_consume)
 
     async def _run_merge_run_plan(
         self,
@@ -818,6 +810,8 @@ class DaemonRuntime:
         api: ControlPlaneClient,
         command_queue: asyncio.Queue[ServerCommand],
         send_queue: asyncio.Queue[dict[str, Any]],
+        *,
+        background: BackgroundTaskManager,
     ) -> None:
         while True:
             cmd = await command_queue.get()
@@ -911,16 +905,18 @@ class DaemonRuntime:
         if cmd.command_type == "repo.merge_run.start":
             self._require_attached_repo(cmd)
             payload = MergeRunStartCommand.model_validate(cmd.data)
-            self._spawn_background(
-                self._handle_merge_run_start(api, send_queue, payload=payload)
+            background.spawn(
+                self._handle_merge_run_start(api, send_queue, payload=payload),
+                name=f"merge_run.start:{payload.run_id}",
             )
             return {}
 
         if cmd.command_type == "repo.merge_run.resume":
             self._require_attached_repo(cmd)
             payload = MergeRunResumeCommand.model_validate(cmd.data)
-            self._spawn_background(
-                self._handle_merge_run_resume(api, send_queue, payload=payload)
+            background.spawn(
+                self._handle_merge_run_resume(api, send_queue, payload=payload),
+                name=f"merge_run.resume:{payload.run_id}",
             )
             return {}
 

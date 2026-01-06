@@ -164,6 +164,7 @@ from redesmyn.db.sqlite_lock import (
 from redesmyn.repo_identity import RepoKey
 from redesmyn.ws_protocol import DaemonInboundMessage, DaemonHello, ServerCommand
 from redesmyn.ws_runtime import DaemonConnectionRegistry, JsonWebSocketHub
+from redesmyn.background_tasks import BackgroundTaskManager
 
 logger = logging.getLogger("redesmyn")
 log = structlog.get_logger("redesmyn.api")
@@ -180,7 +181,7 @@ class AppState(Protocol):
     linear_oauth_states: dict[str, tuple[datetime, str]]
     event_hub: JsonWebSocketHub
     daemon_connections: DaemonConnectionRegistry
-    background_tasks: set[asyncio.Task[object]]
+    background_tasks: BackgroundTaskManager
 
 
 class App(FastAPI):
@@ -198,19 +199,7 @@ def _app_from_websocket(websocket: WebSocket) -> App:
 def _spawn_background_task(
     app: App, coro: Coroutine[Any, Any, object], *, name: str
 ) -> asyncio.Task[object]:
-    task = asyncio.create_task(coro, name=name)
-    app.state.background_tasks.add(task)
-
-    def _done(t: asyncio.Task[object]) -> None:
-        app.state.background_tasks.discard(t)
-        if t.cancelled():
-            return
-        exc = t.exception()
-        if exc is not None:
-            log.error("background_task.failed", task=name, error=str(exc))
-
-    task.add_done_callback(_done)
-    return task
+    return app.state.background_tasks.spawn(coro, name=name)
 
 
 class DashboardStaticFiles(StaticFiles):
@@ -270,10 +259,9 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     app.state.linear_oauth_states = {}
     app.state.event_hub = JsonWebSocketHub()
     app.state.daemon_connections = DaemonConnectionRegistry()
-    app.state.background_tasks = set()
+    app.state.background_tasks = BackgroundTaskManager(logger=log)
     maybe_mount_dashboard(app, ctx.worktree_root)
 
-    lease_refresh_task: asyncio.Task[object] | None = None
     if settings.runner_mode == "local":
         identity = load_or_create_host_identity(ctx)
         app.state.local_host_key = identity.host_key
@@ -352,9 +340,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
                     log.exception("lease.refresh.failed")
                     attempt = 0
 
-        lease_refresh_task = _spawn_background_task(
-            app, _refresh_local_lease(), name="lease_refresh_local"
-        )
+        _spawn_background_task(app, _refresh_local_lease(), name="lease_refresh_local")
 
     app.state.repo_executor = make_repo_executor(
         runner_mode=settings.runner_mode,
@@ -362,10 +348,8 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         ctx=ctx,
         sessionmaker=app.state.sessionmaker,
         daemon_connections=app.state.daemon_connections,
+        background_tasks=app.state.background_tasks,
     )
-
-    observer_task: asyncio.Task[object] | None = None
-    agent_driver_task: asyncio.Task[object] | None = None
     env_no_observer = os.environ.get("REDESMYN_NO_OBSERVER") in {"1", "true", "TRUE"}
     env_no_agent_monitor = os.environ.get("REDESMYN_NO_AGENT_MONITOR") in {
         "1",
@@ -376,7 +360,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     enable_agent_monitor = settings.enable_agent_monitor and not env_no_agent_monitor
 
     if settings.runner_mode == "local" and enable_repo_observer:
-        observer_task = _spawn_background_task(
+        _spawn_background_task(
             app,
             run_repo_observer(
                 ctx,
@@ -388,7 +372,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         )
 
     if settings.runner_mode == "local" and enable_agent_monitor:
-        agent_driver_task = _spawn_background_task(
+        _spawn_background_task(
             app,
             run_agent_driver(
                 ctx,
@@ -401,34 +385,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         )
 
     yield
-
-    if observer_task is not None:
-        observer_task.cancel()
-        try:
-            await observer_task
-        except asyncio.CancelledError:
-            pass
-
-    if agent_driver_task is not None:
-        agent_driver_task.cancel()
-        try:
-            await agent_driver_task
-        except asyncio.CancelledError:
-            pass
-
-    if lease_refresh_task is not None:
-        lease_refresh_task.cancel()
-        try:
-            await lease_refresh_task
-        except asyncio.CancelledError:
-            pass
-
-    background_tasks = list(app.state.background_tasks)
-    if background_tasks:
-        for task in background_tasks:
-            task.cancel()
-        await asyncio.gather(*background_tasks, return_exceptions=True)
-        app.state.background_tasks.clear()
+    await app.state.background_tasks.cancel_and_await()
 
     await app.state.engine.dispose()
 
