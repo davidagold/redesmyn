@@ -40,10 +40,10 @@ CAPABILITIES_DEFAULT = (
 SEMANTIC_STATUS_DEFAULT = '{"turn_state":"unknown","detail":null}'
 
 
-def _server_default_json_literal(conn, value: str) -> sa.ColumnElement:
+def _server_default_json_literal(conn, value: str) -> str:
     if conn.dialect.name == "postgresql":
-        return sa.literal_column(f"'{value}'::jsonb")
-    return sa.literal_column(f"'{value}'")
+        return f"'{value}'::jsonb"
+    return f"'{value}'"
 
 
 def upgrade() -> None:

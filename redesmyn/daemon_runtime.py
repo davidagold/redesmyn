@@ -817,7 +817,9 @@ class DaemonRuntime:
             cmd = await command_queue.get()
             await self._ack_command(send_queue, cmd.command_id, CommandState.Running)
             try:
-                data = await self._execute_command(cmd, api, send_queue)
+                data = await self._execute_command(
+                    cmd, api, send_queue, background=background
+                )
             except DaemonCommandError as exc:
                 await self._ack_command(
                     send_queue,
@@ -846,6 +848,8 @@ class DaemonRuntime:
         cmd: ServerCommand,
         api: ControlPlaneClient,
         send_queue: asyncio.Queue[dict[str, Any]],
+        *,
+        background: BackgroundTaskManager,
     ) -> dict[str, Any]:
         if cmd.command_type == "daemon.ping":
             return {}
