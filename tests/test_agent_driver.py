@@ -300,7 +300,7 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
             backend_factory=lambda *, agent_session: backend,
         )
 
-    assert backend.consume_calls == ["READY\n", "READY\n"]
+    assert backend.consume_calls == ["", "READY\n", "READY\n"]
 
 
 @pytest.mark.integration
