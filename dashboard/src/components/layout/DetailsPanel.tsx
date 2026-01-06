@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
+import { Alert } from "@/components/ui/alert"
 import {
   Collapsible,
   CollapsibleContent,
@@ -145,15 +145,6 @@ function MergeRunDetails({
           ? "emerald"
           : "default"
 
-  const calloutClasses =
-    calloutTone === "destructive"
-      ? "border border-destructive/25 bg-destructive/10 ring-destructive/10"
-      : calloutTone === "amber"
-        ? "border border-amber-400/25 bg-amber-400/10 ring-amber-400/10"
-        : calloutTone === "emerald"
-          ? "border border-emerald-400/25 bg-emerald-400/10 ring-emerald-400/10"
-          : "border border-border/60 bg-background/30 ring-border/10"
-
   const calloutTitle =
     // When a descendant rebase conflicts, the merge run is blocked in the restack portion.
     // (The spine merge may or may not have completed depending on the merge mode.)
@@ -227,180 +218,172 @@ function MergeRunDetails({
           onOpenChange={setCalloutExpanded}
           className="w-full min-w-0"
         >
-          <Card
-            size="sm"
-            className={cn(
-              "w-full min-w-0 gap-2 py-2 shadow-sm backdrop-blur",
-              calloutClasses,
-            )}
-          >
-            <CardContent className="min-w-0 px-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  {calloutIcon}
-                  <div className="truncate text-xs font-medium text-foreground">
-                    {calloutTitle}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {mergeRun.status === "resumable" ? (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                      disabledReason={
-                        resumePending
-                          ? "Action in progress"
-                          : !onRequestRefresh
-                            ? "Refresh handler unavailable"
-                            : null
-                      }
-                      onClick={() => void handleResumeMerge(false)}
-                    >
-                      {resumePending ? (
-                        <Loader2 className="animate-spin" />
-                      ) : (
-                        <Play />
-                      )}
-                      {operationLabel === "Restack"
-                        ? "Resume restack"
-                        : "Resume merge"}
-                    </Button>
-                  ) : null}
-
-                  <CollapsibleTrigger
-                    render={(triggerProps) => (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={(tooltipTriggerProps) => (
-                            <Button
-                              {...tooltipTriggerProps}
-                              {...triggerProps}
-                              variant="ghost"
-                              size="icon-xs"
-                              aria-label={
-                                calloutExpanded
-                                  ? "Collapse callout"
-                                  : "Expand callout"
-                              }
-                              className={cn(
-                                triggerProps.className,
-                                tooltipTriggerProps.className,
-                              )}
-                            >
-                              {calloutExpanded ? (
-                                <ChevronUp className="size-3" />
-                              ) : (
-                                <ChevronDown className="size-3" />
-                              )}
-                            </Button>
-                          )}
-                        />
-                        <TooltipContent side="bottom" sideOffset={10}>
-                          {calloutExpanded
-                            ? "Collapse callout"
-                            : "Expand callout"}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                  />
+          <Alert variant={calloutTone} className="w-full min-w-0 gap-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                {calloutIcon}
+                <div className="truncate text-xs font-medium text-foreground">
+                  {calloutTitle}
                 </div>
               </div>
+              <div className="flex items-center gap-2">
+                {mergeRun.status === "resumable" ? (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+                    disabledReason={
+                      resumePending
+                        ? "Action in progress"
+                        : !onRequestRefresh
+                          ? "Refresh handler unavailable"
+                          : null
+                    }
+                    onClick={() => void handleResumeMerge(false)}
+                  >
+                    {resumePending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <Play />
+                    )}
+                    {operationLabel === "Restack"
+                      ? "Resume restack"
+                      : "Resume merge"}
+                  </Button>
+                ) : null}
 
-              {mergeRun.status === "blocked" && remediation ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      attachCommand
-                        ? null
-                        : "No task id recorded for this blocked step."
+                <CollapsibleTrigger
+                  render={(triggerProps) => (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(tooltipTriggerProps) => (
+                          <Button
+                            {...tooltipTriggerProps}
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={
+                              calloutExpanded
+                                ? "Collapse callout"
+                                : "Expand callout"
+                            }
+                            className={cn(
+                              triggerProps.className,
+                              tooltipTriggerProps.className,
+                            )}
+                          >
+                            {calloutExpanded ? (
+                              <ChevronUp className="size-3" />
+                            ) : (
+                              <ChevronDown className="size-3" />
+                            )}
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent side="bottom" sideOffset={10}>
+                        {calloutExpanded
+                          ? "Collapse callout"
+                          : "Expand callout"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                />
+              </div>
+            </div>
+
+            {mergeRun.status === "blocked" && remediation ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={
+                    attachCommand
+                      ? null
+                      : "No task id recorded for this blocked step."
+                  }
+                  onClick={() => {
+                    if (!attachCommand) {
+                      return
                     }
-                    onClick={() => {
-                      if (!attachCommand) {
-                        return
-                      }
-                      void copyToClipboard(attachCommand)
-                    }}
-                  >
-                    <Terminal className="size-3" />
-                    Copy attach
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      agentNote ? null : "No remediation message available."
+                    void copyToClipboard(attachCommand)
+                  }}
+                >
+                  <Terminal className="size-3" />
+                  Copy attach
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={
+                    agentNote ? null : "No remediation message available."
+                  }
+                  onClick={() => {
+                    if (!agentNote) {
+                      return
                     }
-                    onClick={() => {
-                      if (!agentNote) {
-                        return
-                      }
-                      void copyToClipboard(agentNote)
-                    }}
-                  >
-                    <MessageSquareText className="size-3" />
-                    Copy agent note
-                  </Button>
+                    void copyToClipboard(agentNote)
+                  }}
+                >
+                  <MessageSquareText className="size-3" />
+                  Copy agent note
+                </Button>
+              </div>
+            ) : null}
+
+            <CollapsibleContent className="mt-2 w-full min-w-0">
+              {blockedStepKind ? (
+                <div className="text-xs text-muted-foreground">
+                  Step: <span className="font-mono">{blockedStepKind}</span>
                 </div>
               ) : null}
 
-              <CollapsibleContent className="mt-2 w-full min-w-0">
-                {blockedStepKind ? (
-                  <div className="text-xs text-muted-foreground">
-                    Step: <span className="font-mono">{blockedStepKind}</span>
-                  </div>
-                ) : null}
+              {blockedBranch ? (
+                <div className="mt-1 min-w-0 text-xs text-muted-foreground">
+                  Branch:{" "}
+                  <span className="break-all font-mono text-foreground/80">
+                    {blockedBranch}
+                  </span>
+                </div>
+              ) : null}
 
-                {blockedBranch ? (
-                  <div className="mt-1 min-w-0 text-xs text-muted-foreground">
-                    Branch:{" "}
-                    <span className="break-all font-mono text-foreground/80">
-                      {blockedBranch}
-                    </span>
-                  </div>
-                ) : null}
+              {blockedWorktree ? (
+                <div className="mt-1 min-w-0 text-xs text-muted-foreground">
+                  Worktree:{" "}
+                  <span className="break-all font-mono text-foreground/80">
+                    {blockedWorktree}
+                  </span>
+                </div>
+              ) : null}
 
-                {blockedWorktree ? (
-                  <div className="mt-1 min-w-0 text-xs text-muted-foreground">
-                    Worktree:{" "}
-                    <span className="break-all font-mono text-foreground/80">
-                      {blockedWorktree}
-                    </span>
+              {blockedError ? (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setDetailsExpanded((open) => !open)}
+                    >
+                      {detailsExpanded ? "Hide" : "Show"} details
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => void copyToClipboard(blockedError)}
+                    >
+                      Copy
+                    </Button>
                   </div>
-                ) : null}
-
-                {blockedError ? (
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setDetailsExpanded((open) => !open)}
-                      >
-                        {detailsExpanded ? "Hide" : "Show"} details
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => void copyToClipboard(blockedError)}
-                      >
-                        Copy
-                      </Button>
-                    </div>
-                    {detailsExpanded ? (
-                      <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                        <div className="whitespace-pre-wrap break-all">
-                          {blockedError}
-                        </div>
+                  {detailsExpanded ? (
+                    <div className="mt-2 max-h-48 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                      <div className="whitespace-pre-wrap break-all">
+                        {blockedError}
                       </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </CollapsibleContent>
-            </CardContent>
-          </Card>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </CollapsibleContent>
+          </Alert>
         </Collapsible>
       ) : null}
 

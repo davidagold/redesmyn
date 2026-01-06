@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
+import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import {
@@ -1240,312 +1241,298 @@ export function TaskCard({
           onClick={(e) => e.stopPropagation()}
         >
           {actionError ? (
-            <Card
-              size="sm"
-              className="gap-2 border border-destructive/25 bg-destructive/10 py-2 shadow-lg ring-destructive/10 backdrop-blur"
-            >
-              <CardContent className="px-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <AlertTriangle className="size-3.5 text-destructive" />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <div
-                            {...triggerProps}
-                            className={cn(
-                              "truncate text-xs font-medium text-foreground",
-                              triggerProps.className,
-                            )}
-                          >
-                            {actionError.title}
-                          </div>
-                        )}
-                      />
-                      <TooltipContent side="top" sideOffset={8}>
-                        {actionError.title}
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
+            <Alert variant="destructive" className="gap-2 shadow-lg">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <AlertTriangle className="size-3.5 text-destructive" />
                   <Tooltip>
                     <TooltipTrigger
                       render={(triggerProps) => (
-                        <Button
+                        <div
                           {...triggerProps}
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label="Dismiss error"
-                          className={cn(triggerProps.className)}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            clearActionError()
-                          }}
+                          className={cn(
+                            "truncate text-xs font-medium text-foreground",
+                            triggerProps.className,
+                          )}
                         >
-                          <X className="size-3" />
-                        </Button>
+                          {actionError.title}
+                        </div>
                       )}
                     />
-                    <TooltipContent side="bottom" sideOffset={10}>
-                      Dismiss error
+                    <TooltipContent side="top" sideOffset={8}>
+                      {actionError.title}
                     </TooltipContent>
                   </Tooltip>
                 </div>
-
-                <div
-                  className={cn(
-                    "break-words text-xs text-foreground/80",
-                    actionErrorExpanded
-                      ? "whitespace-pre-wrap"
-                      : "line-clamp-2",
-                  )}
-                >
-                  {actionError.summary}
-                </div>
-
-                {mergeRunBlockedRebase ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabledReason={
-                        rebaseAttachCommand
-                          ? null
-                          : "No task id recorded for this blocked step."
-                      }
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        if (!rebaseAttachCommand) {
-                          return
-                        }
-                        void copyToClipboard(rebaseAttachCommand)
-                      }}
-                    >
-                      <Terminal className="size-3" />
-                      Copy attach
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabledReason={
-                        rebaseRemediationMessage
-                          ? null
-                          : "No remediation message available."
-                      }
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        if (!rebaseRemediationMessage) {
-                          return
-                        }
-                        void copyToClipboard(rebaseRemediationMessage)
-                      }}
-                    >
-                      <MessageSquareText className="size-3" />
-                      Copy agent note
-                    </Button>
-                  </div>
-                ) : null}
-
-                <div className="mt-1 flex items-center justify-between gap-2">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setActionErrorExpanded((current) => !current)
-                    }}
-                  >
-                    {actionErrorExpanded ? (
-                      <ChevronUp className="size-3" />
-                    ) : (
-                      <ChevronDown className="size-3" />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={(triggerProps) => (
+                      <Button
+                        {...triggerProps}
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Dismiss error"
+                        className={cn(triggerProps.className)}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          clearActionError()
+                        }}
+                      >
+                        <X className="size-3" />
+                      </Button>
                     )}
-                    {actionErrorExpanded ? "Hide" : "Show"} details
+                  />
+                  <TooltipContent side="bottom" sideOffset={10}>
+                    Dismiss error
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+
+              <div
+                className={cn(
+                  "break-words text-xs text-foreground/80",
+                  actionErrorExpanded ? "whitespace-pre-wrap" : "line-clamp-2",
+                )}
+              >
+                {actionError.summary}
+              </div>
+
+              {mergeRunBlockedRebase ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    disabledReason={
+                      rebaseAttachCommand
+                        ? null
+                        : "No task id recorded for this blocked step."
+                    }
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!rebaseAttachCommand) {
+                        return
+                      }
+                      void copyToClipboard(rebaseAttachCommand)
+                    }}
+                  >
+                    <Terminal className="size-3" />
+                    Copy attach
                   </Button>
                   <Button
                     variant="ghost"
                     size="xs"
+                    disabledReason={
+                      rebaseRemediationMessage
+                        ? null
+                        : "No remediation message available."
+                    }
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      void copyToClipboard(actionError.raw)
+                      if (!rebaseRemediationMessage) {
+                        return
+                      }
+                      void copyToClipboard(rebaseRemediationMessage)
                     }}
                   >
-                    Copy
+                    <MessageSquareText className="size-3" />
+                    Copy agent note
                   </Button>
                 </div>
+              ) : null}
 
-                {actionErrorExpanded ? (
-                  <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                    <div className="whitespace-pre-wrap break-words">
-                      {actionError.raw}
-                    </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setActionErrorExpanded((current) => !current)
+                  }}
+                >
+                  {actionErrorExpanded ? (
+                    <ChevronUp className="size-3" />
+                  ) : (
+                    <ChevronDown className="size-3" />
+                  )}
+                  {actionErrorExpanded ? "Hide" : "Show"} details
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void copyToClipboard(actionError.raw)
+                  }}
+                >
+                  Copy
+                </Button>
+              </div>
+
+              {actionErrorExpanded ? (
+                <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
+                  <div className="whitespace-pre-wrap break-words">
+                    {actionError.raw}
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
+                </div>
+              ) : null}
+            </Alert>
           ) : null}
 
           {blockingMergeRunBlockedRebase ? (
-            <Card
-              size="sm"
-              className="gap-2 border border-amber-400/25 bg-amber-400/10 py-2 shadow-lg ring-amber-400/10 backdrop-blur"
-            >
-              <CardContent
-                className={cn(
-                  "flex flex-col gap-2 px-3",
-                  "cursor-pointer select-none",
-                )}
-                role="button"
-                tabIndex={0}
-                aria-expanded={blockedRebaseExpanded}
-                onClick={(e) => {
+            <Alert
+              variant="amber"
+              className={cn("gap-2 shadow-lg", "cursor-pointer select-none")}
+              role="button"
+              tabIndex={0}
+              aria-expanded={blockedRebaseExpanded}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setBlockedRebaseExpanded((current) => !current)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault()
                   e.stopPropagation()
                   setBlockedRebaseExpanded((current) => !current)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setBlockedRebaseExpanded((current) => !current)
-                  }
-                }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Pause className="size-3.5 text-amber-300/80" />
-                    <div className="flex min-w-0 items-center gap-1">
-                      <div className="truncate text-xs font-medium text-foreground">
-                        Rebase blocked
-                      </div>
-                      <ChevronRight
-                        className={cn(
-                          "size-3 text-foreground/70 transition-transform",
-                          blockedRebaseExpanded ? "rotate-90" : null,
-                        )}
-                        aria-hidden="true"
-                      />
+                }
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Pause className="size-3.5 text-amber-300/80" />
+                  <div className="flex min-w-0 items-center gap-1">
+                    <div className="truncate text-xs font-medium text-foreground">
+                      Rebase blocked
                     </div>
-                  </div>
-                  <div
-                    className="flex shrink-0 items-center gap-1"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    {blockingAttachCommand ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={(triggerProps) => (
-                            <Button
-                              {...triggerProps}
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label="Copy attach command"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                void copyToClipboard(blockingAttachCommand)
-                              }}
-                            >
-                              <Terminal />
-                            </Button>
-                          )}
-                        />
-                        <TooltipContent
-                          side="bottom"
-                          sideOffset={10}
-                          showArrow={false}
-                        >
-                          Copy attach
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        disabledReason="No task id recorded for this blocked step."
-                        aria-label="Copy attach command"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                        }}
-                      >
-                        <Terminal />
-                      </Button>
-                    )}
-
-                    {blockingRemediationMessage ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={(triggerProps) => (
-                            <Button
-                              {...triggerProps}
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label="Copy agent note"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                void copyToClipboard(blockingRemediationMessage)
-                              }}
-                            >
-                              <MessageSquareText />
-                            </Button>
-                          )}
-                        />
-                        <TooltipContent
-                          side="bottom"
-                          sideOffset={10}
-                          showArrow={false}
-                        >
-                          Copy agent note
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        disabledReason="No remediation message available."
-                        aria-label="Copy agent note"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                        }}
-                      >
-                        <MessageSquareText />
-                      </Button>
-                    )}
+                    <ChevronRight
+                      className={cn(
+                        "size-3 text-foreground/70 transition-transform",
+                        blockedRebaseExpanded ? "rotate-90" : null,
+                      )}
+                      aria-hidden="true"
+                    />
                   </div>
                 </div>
+                <div
+                  className="flex shrink-0 items-center gap-1"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {blockingAttachCommand ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Copy attach command"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void copyToClipboard(blockingAttachCommand)
+                            }}
+                          >
+                            <Terminal />
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={10}
+                        showArrow={false}
+                      >
+                        Copy attach
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabledReason="No task id recorded for this blocked step."
+                      aria-label="Copy attach command"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                    >
+                      <Terminal />
+                    </Button>
+                  )}
 
-                {blockedRebaseExpanded ? (
-                  <div className="space-y-1 text-[11px] text-foreground/80">
-                    {blockingMergeRun?.blockedBranchName ? (
-                      <div className="truncate">
-                        Blocked branch:{" "}
-                        <span className="font-mono text-foreground/90">
-                          {blockingMergeRun.blockedBranchName}
-                        </span>
-                      </div>
-                    ) : null}
-                    {blockingMergeRun?.blockedWorktreePath ? (
-                      <div className="truncate">
-                        Worktree:{" "}
-                        <span className="font-mono text-foreground/90">
-                          {blockingMergeRun.blockedWorktreePath}
-                        </span>
-                      </div>
-                    ) : null}
-                    <div className="text-foreground/70">
-                      Resolve conflicts, then resume the run.
+                  {blockingRemediationMessage ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Copy agent note"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void copyToClipboard(blockingRemediationMessage)
+                            }}
+                          >
+                            <MessageSquareText />
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent
+                        side="bottom"
+                        sideOffset={10}
+                        showArrow={false}
+                      >
+                        Copy agent note
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      disabledReason="No remediation message available."
+                      aria-label="Copy agent note"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                    >
+                      <MessageSquareText />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {blockedRebaseExpanded ? (
+                <div className="space-y-1 text-[11px] text-foreground/80">
+                  {blockingMergeRun?.blockedBranchName ? (
+                    <div className="truncate">
+                      Blocked branch:{" "}
+                      <span className="font-mono text-foreground/90">
+                        {blockingMergeRun.blockedBranchName}
+                      </span>
                     </div>
+                  ) : null}
+                  {blockingMergeRun?.blockedWorktreePath ? (
+                    <div className="truncate">
+                      Worktree:{" "}
+                      <span className="font-mono text-foreground/90">
+                        {blockingMergeRun.blockedWorktreePath}
+                      </span>
+                    </div>
+                  ) : null}
+                  <div className="text-foreground/70">
+                    Resolve conflicts, then resume the run.
                   </div>
-                ) : null}
-              </CardContent>
-            </Card>
+                </div>
+              ) : null}
+            </Alert>
           ) : null}
 
           {shouldShowResumeButton ? (
