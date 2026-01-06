@@ -99,6 +99,56 @@ Design goals for maintainability:
 - Provide an obvious pattern for “add a query” and “wire an event”.
 - Avoid over-abstraction: the goal is readability + correctness, not a framework inside the app.
 
+## Preparation (recommended before/while implementing)
+
+These are small refactors that make the TanStack Query migration much more mechanical and reduce the risk of “two competing state systems” during the transition.
+
+### A) Land T-3 extraction seams first (or use the same structure)
+
+T-2 will be easier if the code already has clean seams for:
+
+- a single “run toolbar model” (counts/buckets/targets)
+- a persisted bulk-action state hook
+- a dedicated orchestration config panel component
+- centralized parsing for “running agents” conflicts / confirmations
+
+If these don’t exist yet on the branch, prefer creating them as part of T-3 or early in T-2 so the Query migration doesn’t happen inside monolithic components.
+
+### B) Make `api.ts` query-friendly (AbortSignal + consistent errors)
+
+React Query will pass an `AbortSignal` to query functions; update `fetch*` helpers to accept an optional `signal` and forward it to `fetch(...)` so in-flight requests cancel cleanly.
+
+Also, prefer a single consistent error shape (e.g. `ApiHttpError`) across API calls so query/mutation hooks don’t need per-endpoint error parsing.
+
+### C) Establish query keys up front
+
+Create a small `queryKeys` module (or equivalent) early so every hook uses the same keys and invalidation is intentional and discoverable:
+
+- `epics`
+- `epicGraph(epicId)` (or epic slug)
+- `hosts`, `daemons`, `repoExecutorStatus` (as applicable)
+- `config/orchestrationDefaults`
+- any “task details” query if we split it from the graph later
+
+### D) Centralize “WS event → cache updates” in one hook
+
+Today, the event stream drives manual refresh calls. For T-2, move this wiring into a single hook (e.g. `useEpicCacheSync`) so:
+
+- it can call `queryClient.setQueryData(...)` for high-signal events (agent session + merge run)
+- and `invalidateQueries(...)` as a fallback for less precise events
+- with debouncing/batching handled in one place
+
+This avoids sprinkling query invalidation logic throughout components.
+
+### E) Identify and reduce local state shadowing server state
+
+Before adding optimistic mutations, audit where local state is used as a “server proxy” (examples: merge-ready toggles, agent status/callouts, selection-derived counts).
+
+Prefer:
+
+- derived values from query state (`useMemo`/pure functions), and
+- optimistic updates implemented inside mutation hooks (with rollback) rather than in component-local state.
+
 ## Notes / design choices
 
 - Prefer “invalidate then refetch” unless a patch update is clearly simpler and less bug-prone.
