@@ -15,7 +15,8 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redesmyn.agent_interface.v0 import AgentBackend, ShellAgent
+from redesmyn.agent_kind import resolve_agent_backend
+from redesmyn.agent_interface.v0 import AgentBackend
 from redesmyn.agent_runtime import (
     agent_session_log_path,
     has_tmux,
@@ -98,8 +99,7 @@ class AgentBackendFactory(Protocol):
 
 
 def _default_backend_factory(*, agent_session: AgentSession) -> AgentBackend:
-    _ = agent_session
-    return ShellAgent()
+    return resolve_agent_backend(agent_session=agent_session)
 
 
 def _task_id_from_tmux_session(name: str) -> int | None:

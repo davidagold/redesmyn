@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Iterable
+
+from redesmyn.agent_interface import AGENT_BACKEND_BUILDERS
+from redesmyn.agent_interface.v0 import AgentBackend, ShellAgent
+from typing import Protocol
 
 from redesmyn.domain.enums import AgentKind, AgentKindSelection
 
@@ -98,3 +103,35 @@ def resolve_agent_kind(
         return infer_agent_kind_from_argv(argv)
 
     raise ValueError(f"Unknown agent kind selection: {selection!r}")
+
+
+class _AgentSessionLike(Protocol):
+    agent_kind: AgentKind
+    agent_kind_selection: AgentKindSelection
+    external_session_ref: dict[str, Any]
+    resolved_profile: dict[str, Any] | None
+
+
+def resolve_agent_backend(*, agent_session: _AgentSessionLike) -> AgentBackend:
+    kind = agent_session.agent_kind
+    if kind == AgentKind.Codex:
+        with_extras = "redesmyn.agent_interface.codex"
+        try:
+            import_module(with_extras)
+        except Exception:
+            pass
+    elif kind == AgentKind.ClaudeCode:
+        with_extras = "redesmyn.agent_interface.claude_code"
+        try:
+            import_module(with_extras)
+        except Exception:
+            pass
+
+    builder = AGENT_BACKEND_BUILDERS.get(kind)
+    if builder is None:
+        return ShellAgent()
+    try:
+        return builder(agent_session)  # type: ignore[arg-type]
+    except Exception:
+        # Backend construction must never crash the supervisor loop.
+        return ShellAgent()
