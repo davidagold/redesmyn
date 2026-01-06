@@ -9,10 +9,11 @@ from typing import Protocol
 
 import structlog
 from sqlalchemy import desc, select
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.context import RepoContext
+from redesmyn.db.context import open_db
+from redesmyn.db.periodic import run_periodic_db_task
 from redesmyn.db import (
     AgentSession,
     Epic,
@@ -23,10 +24,6 @@ from redesmyn.db import (
     TaskStackInSyncState,
 )
 from redesmyn.db.models import GitCommitEventData, WorktreeHealthEventData
-from redesmyn.db.sqlite_lock import (
-    is_sqlite_database_locked_error,
-    sqlite_lock_backoff_s,
-)
 from redesmyn.domain.enums import AgentStatus, MergeRunStatus
 from redesmyn.host_identity import load_or_create_host_identity
 from redesmyn.repo import (
@@ -631,43 +628,22 @@ async def run_repo_observer(
     emit_baseline: bool,
     once: bool,
 ) -> None:
-    from redesmyn.db import create_engine, create_sessionmaker
-
-    engine = create_engine(ctx.db_path)
-    try:
-        sessionmaker = create_sessionmaker(engine)
+    async with open_db(db_path=ctx.db_path, migrate=False) as db:
         state = RepoObserverState()
-        lock_attempt = 0
-        while True:
-            try:
-                async with sessionmaker() as session:
-                    try:
-                        await observe_once(
-                            ctx,
-                            session,
-                            state,
-                            emit_baseline=emit_baseline,
-                        )
-                    except Exception:
-                        await session.rollback()
-                        raise
-                lock_attempt = 0
-            except OperationalError as e:
-                if is_sqlite_database_locked_error(e):
-                    log.warning(
-                        "repo_observer.db_locked",
-                        attempt=lock_attempt,
-                        interval_s=interval_s,
-                    )
-                    await asyncio.sleep(sqlite_lock_backoff_s(lock_attempt))
-                    lock_attempt += 1
-                    continue
-                raise
-            except Exception:
-                log.exception("repo_observer.loop_failed")
-                await asyncio.sleep(1.0)
-            if once:
-                return
-            await asyncio.sleep(interval_s)
-    finally:
-        await engine.dispose()
+
+        async def _step(session: AsyncSession) -> None:
+            await observe_once(
+                ctx,
+                session,
+                state,
+                emit_baseline=emit_baseline,
+            )
+
+        await run_periodic_db_task(
+            sessionmaker=db.sessionmaker,
+            interval_s=interval_s,
+            once=once,
+            name="repo_observer",
+            step=_step,
+            logger=log,
+        )

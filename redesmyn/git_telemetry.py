@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from redesmyn.context import RepoContext
-from redesmyn.db import Repository, create_engine, create_sessionmaker, init_db
+from redesmyn.db import Repository
+from redesmyn.db.context import open_db
 from redesmyn.git_projections import update_git_projections_in_session
 from redesmyn.host_identity import load_or_create_host_identity
 
@@ -18,12 +19,8 @@ async def update_git_projections(ctx: RepoContext) -> None:
     """
     ctx.state_dir.mkdir(parents=True, exist_ok=True)
 
-    engine = create_engine(ctx.db_path)
-    try:
-        await init_db(engine, migrate=False)
-        sessionmaker = create_sessionmaker(engine)
-
-        async with sessionmaker() as session:
+    async with open_db(db_path=ctx.db_path, migrate=False) as db:
+        async with db.sessionmaker() as session:
             repo = await session.scalar(
                 select(Repository).where(Repository.repo_root == str(ctx.repo_root))
             )
@@ -39,5 +36,3 @@ async def update_git_projections(ctx: RepoContext) -> None:
                 now=datetime.now(UTC),
             )
             await session.commit()
-    finally:
-        await engine.dispose()
