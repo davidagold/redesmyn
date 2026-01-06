@@ -7,6 +7,7 @@ from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from redesmyn.domain.enums import (
     AgentStatus,
+    AgentSessionRuntimeKind,
     AgentTurnState,
     BlockMode,
     BlockPolicy,
@@ -454,6 +455,7 @@ class TaskAgentSessionUpdateEventDataResponse(ApiResponse):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     attach: AttachInfoResponse
+    runtime_kind: AgentSessionRuntimeKind
     agent_capabilities: AgentCapabilitiesResponse
     agent_semantic_status: AgentSemanticStatusResponse
     external_session_ref: ExternalSessionRefResponse

@@ -4,11 +4,13 @@ import asyncio
 import os
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+import structlog
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -21,14 +23,23 @@ from redesmyn.agent_runtime import (
 )
 from redesmyn.context import RepoContext
 from redesmyn.db import AgentSession, Event, Task
-from redesmyn.db.models import AttachInfo, AttachTmux
-from redesmyn.domain.enums import AgentStatus
+from redesmyn.db.models import AttachExternal, AttachInfo, AttachTmux
+from redesmyn.domain.enums import AgentSessionRuntimeKind, AgentStatus
 from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
 
+log = structlog.get_logger("redesmyn.agent_driver")
+
+
+@dataclass(frozen=True, slots=True)
+class TmuxSessionSnapshot:
+    sessions: set[str]
+    authoritative: bool
+    error: str | None = None
+
 
 class TmuxSupervisor(Protocol):
-    def list_sessions(self, *, timeout_s: float) -> set[str]: ...
+    def list_sessions(self, *, timeout_s: float) -> TmuxSessionSnapshot: ...
 
     def pipe_pane_to_log(
         self,
@@ -40,7 +51,7 @@ class TmuxSupervisor(Protocol):
 
 
 class SubprocessTmuxSupervisor:
-    def list_sessions(self, *, timeout_s: float) -> set[str]:
+    def list_sessions(self, *, timeout_s: float) -> TmuxSessionSnapshot:
         proc = subprocess.run(
             ["tmux", "list-sessions", "-F", "#S"],
             capture_output=True,
@@ -49,8 +60,20 @@ class SubprocessTmuxSupervisor:
             timeout=timeout_s,
         )
         if proc.returncode != 0:
-            return set()
-        return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+            stderr = (proc.stderr or "").strip()
+            if "no server running" in stderr or "failed to connect to server" in stderr:
+                return TmuxSessionSnapshot(sessions=set(), authoritative=True)
+            return TmuxSessionSnapshot(
+                sessions=set(),
+                authoritative=False,
+                error=stderr or f"tmux list-sessions exited {proc.returncode}",
+            )
+        return TmuxSessionSnapshot(
+            sessions={
+                line.strip() for line in proc.stdout.splitlines() if line.strip()
+            },
+            authoritative=True,
+        )
 
     def pipe_pane_to_log(
         self,
@@ -123,6 +146,23 @@ class _SessionRuntime:
     cursor: int
 
 
+def _runtime_kind_from_attach(attach: AttachInfo | None) -> AgentSessionRuntimeKind:
+    if isinstance(attach, AttachTmux):
+        return AgentSessionRuntimeKind.Tmux
+    if isinstance(attach, AttachExternal):
+        return AgentSessionRuntimeKind.External
+    return AgentSessionRuntimeKind.None_
+
+
+def _log_path_from_attach(attach: AttachInfo | None) -> Path | None:
+    if attach is None:
+        return None
+    if isinstance(attach, AttachTmux) or isinstance(attach, AttachExternal):
+        if attach.log_path:
+            return Path(attach.log_path)
+    return None
+
+
 async def _emit_event(
     session: AsyncSession,
     pending: list[Event],
@@ -138,6 +178,11 @@ async def _emit_event(
 
 
 def _session_update_event_payload(*, agent_session: AgentSession) -> dict[str, Any]:
+    attach_adapter = TypeAdapter(AttachInfo)
+    try:
+        attach = attach_adapter.validate_python(agent_session.attach)
+    except Exception:
+        attach = None
     return {
         "task_id": agent_session.task_id,
         "agent_session_id": agent_session.id,
@@ -153,6 +198,7 @@ def _session_update_event_payload(*, agent_session: AgentSession) -> dict[str, A
             else None
         ),
         "attach": agent_session.attach,
+        "runtime_kind": _runtime_kind_from_attach(attach),
         "agent_capabilities": agent_session.agent_capabilities,
         "agent_semantic_status": agent_session.agent_semantic_status,
         "external_session_ref": agent_session.external_session_ref,
@@ -170,19 +216,35 @@ async def supervise_once(
     timeout_s: float = 1.0,
     max_read_bytes: int = 256 * 1024,
 ) -> int:
-    if tmux is None and not has_tmux():
-        return 0
-
-    tmux = tmux or SubprocessTmuxSupervisor()
     now = datetime.now(UTC)
     pending_events: list[Event] = []
+    attach_adapter = TypeAdapter(AttachInfo)
 
-    tmux_sessions = tmux.list_sessions(timeout_s=timeout_s)
-    running_task_ids = {
-        task_id
-        for name in tmux_sessions
-        if (task_id := _task_id_from_tmux_session(name)) is not None
-    }
+    tmux_snapshot: TmuxSessionSnapshot | None = None
+    if tmux is None and has_tmux():
+        tmux = SubprocessTmuxSupervisor()
+
+    if tmux is not None:
+        try:
+            tmux_snapshot = tmux.list_sessions(timeout_s=timeout_s)
+        except Exception as exc:
+            tmux_snapshot = TmuxSessionSnapshot(
+                sessions=set(),
+                authoritative=False,
+                error=str(exc),
+            )
+        if tmux_snapshot.authoritative is False:
+            log.warning("tmux.list_sessions.failed", error=tmux_snapshot.error)
+
+    tmux_sessions: set[str] = set()
+    running_task_ids: set[int] = set()
+    if tmux_snapshot is not None and tmux_snapshot.authoritative:
+        tmux_sessions = tmux_snapshot.sessions
+        running_task_ids = {
+            task_id
+            for name in tmux_sessions
+            if (task_id := _task_id_from_tmux_session(name)) is not None
+        }
 
     tasks_by_id: dict[int, Task] = {}
     if running_task_ids:
@@ -206,7 +268,6 @@ async def supervise_once(
         active_session_by_task_id[row.task_id] = row
 
     updated = 0
-    attach_adapter = TypeAdapter(AttachInfo)
 
     async def flush_session_update(agent_session: AgentSession) -> None:
         nonlocal updated
@@ -271,11 +332,12 @@ async def supervise_once(
             agent_session.attach = attach_dict
             changed = True
 
-        tmux.pipe_pane_to_log(
-            session_name=tmux_name,
-            log_path=log_path,
-            timeout_s=timeout_s,
-        )
+        if tmux is not None:
+            tmux.pipe_pane_to_log(
+                session_name=tmux_name,
+                log_path=log_path,
+                timeout_s=timeout_s,
+            )
 
         runtime = runtime_by_session_id.get(agent_session.id)
         if runtime is None:
@@ -285,8 +347,43 @@ async def supervise_once(
             )
             runtime_by_session_id[agent_session.id] = runtime
 
+        if changed:
+            await flush_session_update(agent_session)
+
+    for task_id, agent_session in list(active_session_by_task_id.items()):
+        try:
+            attach = attach_adapter.validate_python(agent_session.attach)
+        except Exception:
+            attach = None
+
+        runtime_kind = _runtime_kind_from_attach(attach)
+        if (
+            runtime_kind == AgentSessionRuntimeKind.Tmux
+            and tmux_snapshot is not None
+            and tmux_snapshot.authoritative
+        ):
+            tmux_name = tmux_session_name_for_task(task_id=task_id)
+            if tmux_name not in tmux_sessions:
+                agent_session.status = AgentStatus.Error
+                agent_session.ended_at = now
+                await flush_session_update(agent_session)
+                runtime_by_session_id.pop(agent_session.id, None)
+                continue
+
+        runtime = runtime_by_session_id.get(agent_session.id)
+        if runtime is None:
+            runtime = _SessionRuntime(
+                backend=backend_factory(agent_session=agent_session),
+                cursor=0,
+            )
+            runtime_by_session_id[agent_session.id] = runtime
+
+        log_path = _log_path_from_attach(attach)
+        if log_path is None:
+            continue
+
         log_text, next_cursor = _read_log_incremental(
-            log_path=Path(log_path),
+            log_path=log_path,
             cursor=runtime.cursor,
             max_read_bytes=max_read_bytes,
         )
@@ -301,6 +398,7 @@ async def supervise_once(
             mode="python"
         )
 
+        changed = False
         if agent_session.agent_capabilities != next_caps:
             agent_session.agent_capabilities = next_caps
             changed = True
@@ -313,15 +411,6 @@ async def supervise_once(
 
         if changed:
             await flush_session_update(agent_session)
-
-    for task_id, agent_session in list(active_session_by_task_id.items()):
-        tmux_name = tmux_session_name_for_task(task_id=task_id)
-        if tmux_name in tmux_sessions:
-            continue
-        agent_session.status = AgentStatus.Error
-        agent_session.ended_at = now
-        await flush_session_update(agent_session)
-        runtime_by_session_id.pop(agent_session.id, None)
 
     if updated:
         await session.commit()
@@ -360,6 +449,8 @@ async def run_agent_driver(
     tmux: TmuxSupervisor | None = None,
 ) -> None:
     runtime_by_session_id: dict[int, _SessionRuntime] = {}
+    last_error_at: float | None = None
+    min_error_interval_s = 10.0
     while True:
         async with sessionmaker() as session:
             try:
@@ -372,8 +463,16 @@ async def run_agent_driver(
                     tmux=tmux,
                     timeout_s=timeout_s,
                 )
-            except Exception:
-                pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                now_s = time.monotonic()
+                if (
+                    last_error_at is None
+                    or (now_s - last_error_at) >= min_error_interval_s
+                ):
+                    log.exception("tick.failed", error=str(exc))
+                    last_error_at = now_s
         if once:
             return
         await asyncio.sleep(interval_s)

@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import func, select
 
-from redesmyn.agent_driver import TmuxSupervisor, supervise_once
+from redesmyn.agent_driver import TmuxSessionSnapshot, TmuxSupervisor, supervise_once
 from redesmyn.agent_interface.v0 import (
     AgentCapabilities,
     AgentEvent,
@@ -20,6 +20,7 @@ from redesmyn.api import create_app
 from redesmyn.agent_runtime import tmux_session_name_for_task
 from redesmyn.context import build_repo_context
 from redesmyn.db import AgentSession, Epic, Event, Repository, Task
+from redesmyn.db.models import AttachExternal, AttachTmux
 from redesmyn.domain.enums import AgentStatus, AgentTurnState
 from redesmyn.host_identity import HostIdentity, host_identity_path
 from redesmyn.orchestrator import init_repo
@@ -32,10 +33,16 @@ from tests.scenarios.scenario import Scenario, ScenarioApp, ScenarioRepo
 class _FakeTmux(TmuxSupervisor):
     sessions: set[str]
     pipe_calls: list[tuple[str, str]]
+    snapshot_authoritative: bool = True
+    snapshot_error: str | None = None
 
-    def list_sessions(self, *, timeout_s: float) -> set[str]:
+    def list_sessions(self, *, timeout_s: float) -> TmuxSessionSnapshot:
         _ = timeout_s
-        return set(self.sessions)
+        return TmuxSessionSnapshot(
+            sessions=set(self.sessions),
+            authoritative=self.snapshot_authoritative,
+            error=self.snapshot_error,
+        )
 
     def pipe_pane_to_log(
         self, *, session_name: str, log_path: str, timeout_s: float
@@ -50,7 +57,9 @@ class _FakeTmux(TmuxSupervisor):
 class _FakeBackend:
     _capabilities: AgentCapabilities
     _semantic_status: AgentSemanticStatus
-    _external_session_ref: ExternalSessionNone | ExternalSessionCodex | ExternalSessionClaude
+    _external_session_ref: (
+        ExternalSessionNone | ExternalSessionCodex | ExternalSessionClaude
+    )
     consume_calls: list[str]
 
     @property
@@ -85,7 +94,9 @@ class _FakeBackend:
 async def _seed_task(scenario: Scenario) -> int:
     async with scenario.db.session() as session:
         repo_row = await session.scalar(
-            select(Repository).where(Repository.repo_root == str(scenario.ctx.repo_root))
+            select(Repository).where(
+                Repository.repo_root == str(scenario.ctx.repo_root)
+            )
         )
         if repo_row is None:
             raise RuntimeError("Scenario repository row missing")
@@ -154,8 +165,16 @@ async def test_agent_driver_marks_session_error_when_tmux_disappears(
     scenario: Scenario,
 ) -> None:
     task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
     async with scenario.db.session() as session:
-        session.add(AgentSession(task_id=task_id, status=AgentStatus.Running))
+        row = AgentSession(
+            task_id=task_id,
+            status=AgentStatus.Running,
+            attach=AttachTmux(
+                session=tmux_name, socket_path=None, log_path=None
+            ).model_dump(mode="python"),
+        )
+        session.add(row)
         await session.commit()
 
     fake_tmux = _FakeTmux(sessions=set(), pipe_calls=[])
@@ -175,6 +194,42 @@ async def test_agent_driver_marks_session_error_when_tmux_disappears(
         assert row is not None
         assert row.status == AgentStatus.Error
         assert row.ended_at is not None
+
+
+@pytest.mark.integration
+async def test_agent_driver_non_tmux_session_is_not_auto_ended(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                attach=AttachExternal(hint="programmatic", log_path=None).model_dump(
+                    mode="python"
+                ),
+            )
+        )
+        await session.commit()
+
+    fake_tmux = _FakeTmux(sessions=set(), pipe_calls=[])
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+        )
+
+    async with scenario.db.session() as session:
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.status == AgentStatus.Running
+        assert row.ended_at is None
 
 
 @pytest.mark.integration
@@ -246,6 +301,97 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
         )
 
     assert backend.consume_calls == ["READY\n", "READY\n"]
+
+
+@pytest.mark.integration
+async def test_agent_driver_external_log_tailing_updates_semantics(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    log_path = scenario.ctx.state_dir / "external" / "session.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("READY\n", encoding="utf-8")
+
+    backend = _FakeBackend(
+        _capabilities=AgentCapabilities(
+            can_send_text=True, can_detect_ready_for_input=True
+        ),
+        _semantic_status=AgentSemanticStatus(),
+        _external_session_ref=ExternalSessionNone(),
+        consume_calls=[],
+    )
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                attach=AttachExternal(
+                    hint="programmatic",
+                    log_path=str(log_path),
+                ).model_dump(mode="python"),
+            )
+        )
+        await session.commit()
+
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
+            backend_factory=lambda *, agent_session: backend,
+        )
+
+    async with scenario.db.session() as session:
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.agent_semantic_status["turn_state"] == AgentTurnState.Ready
+
+
+@pytest.mark.integration
+async def test_agent_driver_tmux_list_failure_does_not_end_tmux_sessions(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                attach=AttachTmux(
+                    session=tmux_name, socket_path=None, log_path=None
+                ).model_dump(mode="python"),
+            )
+        )
+        await session.commit()
+
+    fake_tmux = _FakeTmux(
+        sessions=set(),
+        pipe_calls=[],
+        snapshot_authoritative=False,
+        snapshot_error="tmux timeout",
+    )
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+        )
+
+    async with scenario.db.session() as session:
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.status == AgentStatus.Running
+        assert row.ended_at is None
 
 
 @pytest.mark.integration
@@ -327,7 +473,9 @@ async def test_agent_driver_kill_switch_disables_background_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = ScenarioRepo.init(tmp_path)
-    ctx = build_repo_context(repo_root=repo.repo_root, worktree_root=repo.worktrees_root)
+    ctx = build_repo_context(
+        repo_root=repo.repo_root, worktree_root=repo.worktrees_root
+    )
     ctx.state_dir.mkdir(parents=True, exist_ok=True)
     host_identity_path(ctx).write_text(
         HostIdentity(host_key="test-host-key", display_name="Tests").model_dump_json(

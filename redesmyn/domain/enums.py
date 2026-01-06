@@ -29,6 +29,12 @@ class AgentStatus(StrEnum):
     Error = "error"
 
 
+class AgentSessionRuntimeKind(StrEnum):
+    Tmux = "tmux"
+    External = "external"
+    None_ = "none"
+
+
 class AgentTurnState(StrEnum):
     Unknown = "unknown"
     Ready = "ready"
