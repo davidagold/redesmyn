@@ -478,11 +478,21 @@ function AgentActions({
   )
   const statusLabel = agentSession?.status ?? null
   const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
+  const agentKindValue = useMemo(() => {
+    if (!agentSession) {
+      return null
+    }
+    if (agentSession.agentKindSelection === "auto") {
+      return `auto→${agentSession.agentKind}`
+    }
+    return agentSession.agentKind
+  }, [agentSession])
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
   const canRestart = hasAgent
 
   const configuredHarnessCommand =
     orchestrationDefaults?.harness.command?.trim() ?? ""
+  const configuredAgentKind = orchestrationDefaults?.harness.agentKind ?? "auto"
   const agentArgv = agentSession?.resolvedProfile?.argv ?? null
   const harnessCommand =
     agentArgv && agentArgv.length > 0
@@ -492,9 +502,18 @@ function AgentActions({
   const harnessEditable =
     !isRunning && (statusLabel === "stopped" || statusLabel === "error")
   const [harnessDraft, setHarnessDraft] = useState("")
+  const [agentKindDraft, setAgentKindDraft] =
+    useState<"auto" | "generic" | "codex" | "claude_code">("auto")
   useEffect(() => {
     setHarnessDraft(harnessCommand)
-  }, [harnessCommand, task.id, agentSession?.id])
+    setAgentKindDraft(agentSession?.agentKindSelection ?? configuredAgentKind)
+  }, [
+    harnessCommand,
+    task.id,
+    agentSession?.id,
+    agentSession?.agentKindSelection,
+    configuredAgentKind,
+  ])
   const harnessDraftTrimmed = harnessDraft.trim()
   const harnessDirty =
     harnessEditable &&
@@ -509,6 +528,7 @@ function AgentActions({
     try {
       const response = await startTaskAgent(taskId, {
         harness: configuredHarnessCommand,
+        agentKind: agentKindDraft,
         detach: orchestrationDefaults?.harness.detach ?? true,
         prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
       })
@@ -549,6 +569,7 @@ function AgentActions({
     try {
       const response = await restartTaskAgent(taskId, {
         harness: harnessDirty ? harnessDraftTrimmed : null,
+        agentKind: agentKindDraft,
         detach: orchestrationDefaults?.harness.detach ?? true,
         prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
       })
@@ -729,7 +750,7 @@ function AgentActions({
           <div className="flex flex-wrap items-center gap-2">
             <ResourceBadge
               label={agentLabel}
-              value={harnessKind}
+              value={agentKindValue ?? harnessKind}
               extendBackground
               className="text-xs text-foreground/80"
             />
@@ -810,6 +831,37 @@ function AgentActions({
                 : "Command used when starting this agent."}
         </div>
       </div>
+
+      {!isRunning ? (
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">Agent kind</div>
+            {harnessKind ? (
+              <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
+                command: {harnessKind}
+              </span>
+            ) : null}
+          </div>
+          <select
+            className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            value={agentKindDraft}
+            onChange={(e) =>
+              setAgentKindDraft(e.target.value as typeof agentKindDraft)
+            }
+            disabled={pending !== null}
+          >
+            <option value="auto">Auto</option>
+            <option value="generic">Generic</option>
+            <option value="codex">Codex</option>
+            <option value="claude_code">Claude Code</option>
+          </select>
+          <div className="text-xs text-muted-foreground">
+            {agentKindDraft === "generic"
+              ? "Generic works with any command, but advanced features are disabled."
+              : "Auto infers the agent from your command; switch if wrong."}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-1">
         <div className="flex items-center justify-between gap-3">

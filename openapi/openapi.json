@@ -69,6 +69,25 @@
         "title": "AgentCapabilitiesResponse",
         "type": "object"
       },
+      "AgentKind": {
+        "enum": [
+          "generic",
+          "codex",
+          "claude_code"
+        ],
+        "title": "AgentKind",
+        "type": "string"
+      },
+      "AgentKindSelection": {
+        "enum": [
+          "auto",
+          "generic",
+          "codex",
+          "claude_code"
+        ],
+        "title": "AgentKindSelection",
+        "type": "string"
+      },
       "AgentSemanticStatusResponse": {
         "properties": {
           "detail": {
@@ -94,6 +113,14 @@
         "properties": {
           "agentCapabilities": {
             "$ref": "#/components/schemas/AgentCapabilitiesResponse"
+          },
+          "agentKind": {
+            "$ref": "#/components/schemas/AgentKind",
+            "default": "generic"
+          },
+          "agentKindSelection": {
+            "$ref": "#/components/schemas/AgentKindSelection",
+            "default": "auto"
           },
           "agentLabel": {
             "title": "Agentlabel",
@@ -1532,6 +1559,10 @@
       },
       "OrchestrationHarnessDefaultsResponse": {
         "properties": {
+          "agentKind": {
+            "$ref": "#/components/schemas/AgentKindSelection",
+            "default": "auto"
+          },
           "builtInPreludeTemplate": {
             "title": "Builtinpreludetemplate",
             "type": "string"
@@ -1582,6 +1613,16 @@
       },
       "OrchestrationHarnessDefaultsUpdateRequest": {
         "properties": {
+          "agentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKindSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "command": {
             "anyOf": [
               {
@@ -1864,6 +1905,16 @@
             "title": "Actions",
             "type": "array"
           },
+          "agentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKindSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detach": {
             "default": true,
             "title": "Detach",
@@ -1926,6 +1977,16 @@
       },
       "TaskAgentBulkRunRequest": {
         "properties": {
+          "agentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKindSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detach": {
             "default": true,
             "title": "Detach",
@@ -2002,6 +2063,16 @@
       },
       "TaskAgentRestartRequest": {
         "properties": {
+          "agentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKindSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detach": {
             "default": true,
             "title": "Detach",
@@ -2035,6 +2106,16 @@
       },
       "TaskAgentStartRequest": {
         "properties": {
+          "agentKind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentKindSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detach": {
             "default": true,
             "title": "Detach",
@@ -2064,6 +2145,14 @@
       },
       "TaskAgentStartResponse": {
         "properties": {
+          "agentKind": {
+            "$ref": "#/components/schemas/AgentKind",
+            "default": "generic"
+          },
+          "agentKindSelection": {
+            "$ref": "#/components/schemas/AgentKindSelection",
+            "default": "auto"
+          },
           "agentLabel": {
             "title": "Agentlabel",
             "type": "string"

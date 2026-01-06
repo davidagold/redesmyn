@@ -32,6 +32,8 @@ export function OrchestrationConfigPanel({
   const [configError, setConfigError] = useState<string | null>(null)
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configHarness, setConfigHarness] = useState("")
+  const [configAgentKind, setConfigAgentKind] =
+    useState<"auto" | "generic" | "codex" | "claude_code">("auto")
   const [configDetach, setConfigDetach] = useState(true)
   const [configSandboxType, setConfigSandboxType] =
     useState<"none" | "worktree">("none")
@@ -42,18 +44,19 @@ export function OrchestrationConfigPanel({
   const [configSubmitPrelude, setConfigSubmitPrelude] = useState(true)
   const [defaultPreludeOpen, setDefaultPreludeOpen] = useState(false)
 
-  const resetConfigFields = useCallback(() => {
-    setConfigError(null)
-    setConfigNotice(null)
-    setDefaultPreludeOpen(false)
-    setConfigHarness(defaults?.harness.command ?? "")
-    setConfigDetach(defaults?.harness.detach ?? true)
-    setConfigSandboxType(defaults?.sandbox.type ?? "none")
-    setConfigSandboxNetwork(defaults?.sandbox.network ?? "allow")
-    setConfigPrelude(defaults?.harness.prelude ?? "")
-    setConfigSendPrelude(defaults?.harness.sendPrelude ?? true)
-    setConfigSubmitPrelude(defaults?.harness.submitPrelude ?? true)
-  }, [defaults])
+	  const resetConfigFields = useCallback(() => {
+	    setConfigError(null)
+	    setConfigNotice(null)
+	    setDefaultPreludeOpen(false)
+	    setConfigHarness(defaults?.harness.command ?? "")
+	    setConfigAgentKind(defaults?.harness.agentKind ?? "auto")
+	    setConfigDetach(defaults?.harness.detach ?? true)
+	    setConfigSandboxType(defaults?.sandbox.type ?? "none")
+	    setConfigSandboxNetwork(defaults?.sandbox.network ?? "allow")
+	    setConfigPrelude(defaults?.harness.prelude ?? "")
+	    setConfigSendPrelude(defaults?.harness.sendPrelude ?? true)
+	    setConfigSubmitPrelude(defaults?.harness.submitPrelude ?? true)
+	  }, [defaults])
 
   useEffect(() => {
     if (!open) {
@@ -62,28 +65,31 @@ export function OrchestrationConfigPanel({
     resetConfigFields()
   }, [open, resetConfigFields])
 
-  const configDirty = useMemo(() => {
-    const currentCommand = defaults?.harness.command ?? ""
-    const currentDetach = defaults?.harness.detach ?? true
-    const currentSandboxType = defaults?.sandbox.type ?? "none"
-    const currentSandboxNetwork = defaults?.sandbox.network ?? "allow"
-    const currentPrelude = defaults?.harness.prelude ?? ""
-    const currentSendPrelude = defaults?.harness.sendPrelude ?? true
-    const currentSubmitPrelude = defaults?.harness.submitPrelude ?? true
-    return (
-      configHarness !== currentCommand ||
-      configDetach !== currentDetach ||
-      configSandboxType !== currentSandboxType ||
-      configSandboxNetwork !== currentSandboxNetwork ||
-      configPrelude !== currentPrelude ||
+	  const configDirty = useMemo(() => {
+	    const currentCommand = defaults?.harness.command ?? ""
+	    const currentAgentKind = defaults?.harness.agentKind ?? "auto"
+	    const currentDetach = defaults?.harness.detach ?? true
+	    const currentSandboxType = defaults?.sandbox.type ?? "none"
+	    const currentSandboxNetwork = defaults?.sandbox.network ?? "allow"
+	    const currentPrelude = defaults?.harness.prelude ?? ""
+	    const currentSendPrelude = defaults?.harness.sendPrelude ?? true
+	    const currentSubmitPrelude = defaults?.harness.submitPrelude ?? true
+	    return (
+	      configHarness !== currentCommand ||
+	      configAgentKind !== currentAgentKind ||
+	      configDetach !== currentDetach ||
+	      configSandboxType !== currentSandboxType ||
+	      configSandboxNetwork !== currentSandboxNetwork ||
+	      configPrelude !== currentPrelude ||
       configSendPrelude !== currentSendPrelude ||
       configSubmitPrelude !== currentSubmitPrelude
     )
-  }, [
-    configDetach,
-    configHarness,
-    configPrelude,
-    configSandboxNetwork,
+	  }, [
+	    configAgentKind,
+	    configDetach,
+	    configHarness,
+	    configPrelude,
+	    configSandboxNetwork,
     configSandboxType,
     configSendPrelude,
     configSubmitPrelude,
@@ -97,14 +103,15 @@ export function OrchestrationConfigPanel({
     setConfigPending(true)
     setConfigError(null)
     setConfigNotice(null)
-    try {
-      await updateOrchestrationDefaults({
-        harness: {
-          command: configHarness.trim() ? configHarness.trim() : null,
-          detach: configDetach,
-          prelude: configPrelude.trim() ? configPrelude : null,
-          sendPrelude: configSendPrelude,
-          submitPrelude: configSubmitPrelude,
+	    try {
+	      await updateOrchestrationDefaults({
+	        harness: {
+	          command: configHarness.trim() ? configHarness.trim() : null,
+	          agentKind: configAgentKind,
+	          detach: configDetach,
+	          prelude: configPrelude.trim() ? configPrelude : null,
+	          sendPrelude: configSendPrelude,
+	          submitPrelude: configSubmitPrelude,
         },
         sandbox: {
           type: configSandboxType,
@@ -208,22 +215,48 @@ export function OrchestrationConfigPanel({
             <AccordionItem value="harness">
               <AccordionTrigger>Harness</AccordionTrigger>
               <AccordionContent className="grid gap-4 pt-3">
-                <div className="grid gap-1">
-                  <div className="text-xs text-muted-foreground">
-                    Harness command
-                  </div>
-                  <input
+	                <div className="grid gap-1">
+	                  <div className="text-xs text-muted-foreground">
+	                    Harness command
+	                  </div>
+	                  <input
                     className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                     value={configHarness}
                     onChange={(e) => setConfigHarness(e.target.value)}
                     placeholder={defaults?.harness.command ?? "codex"}
                     disabled={configPending}
                   />
-                  <div className="mt-1.5 text-xs text-muted-foreground">
-                    Shell command used to start the harness inside each task’s
-                    worktree (e.g. <span className="font-mono">codex</span>).
-                  </div>
-                </div>
+	                  <div className="mt-1.5 text-xs text-muted-foreground">
+	                    Shell command used to start the harness inside each task’s
+	                    worktree (e.g. <span className="font-mono">codex</span>).
+	                  </div>
+	                </div>
+
+	                <div className="grid gap-1">
+	                  <div className="text-xs text-muted-foreground">
+	                    Agent kind
+	                  </div>
+	                  <select
+	                    className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+	                    value={configAgentKind}
+	                    onChange={(e) =>
+	                      setConfigAgentKind(
+	                        e.target.value as typeof configAgentKind,
+	                      )
+	                    }
+	                    disabled={configPending}
+	                  >
+	                    <option value="auto">Auto</option>
+	                    <option value="generic">Generic</option>
+	                    <option value="codex">Codex</option>
+	                    <option value="claude_code">Claude Code</option>
+	                  </select>
+	                  <div className="text-xs text-muted-foreground">
+	                    {configAgentKind === "generic"
+	                      ? "Generic works with any command, but advanced features are disabled."
+	                      : "Auto infers the agent from your command; switch if wrong."}
+	                  </div>
+	                </div>
 
                 <div className="grid gap-1">
                   <div className="flex items-center justify-between gap-3">

@@ -488,6 +488,16 @@ export interface components {
        */
       canStreamSemanticEvents: boolean
     }
+    /**
+     * AgentKind
+     * @enum {string}
+     */
+    AgentKind: "generic" | "codex" | "claude_code"
+    /**
+     * AgentKindSelection
+     * @enum {string}
+     */
+    AgentKindSelection: "auto" | "generic" | "codex" | "claude_code"
     /** AgentSemanticStatusResponse */
     AgentSemanticStatusResponse: {
       /** Detail */
@@ -498,6 +508,10 @@ export interface components {
     /** AgentSessionResponse */
     AgentSessionResponse: {
       agentCapabilities: components["schemas"]["AgentCapabilitiesResponse"]
+      /** @default generic */
+      agentKind: components["schemas"]["AgentKind"]
+      /** @default auto */
+      agentKindSelection: components["schemas"]["AgentKindSelection"]
       /** Agentlabel */
       agentLabel: string
       agentSemanticStatus: components["schemas"]["AgentSemanticStatusResponse"]
@@ -1000,6 +1014,8 @@ export interface components {
     }
     /** OrchestrationHarnessDefaultsResponse */
     OrchestrationHarnessDefaultsResponse: {
+      /** @default auto */
+      agentKind: components["schemas"]["AgentKindSelection"]
       /** Builtinpreludetemplate */
       builtInPreludeTemplate: string
       /** Command */
@@ -1024,6 +1040,7 @@ export interface components {
     }
     /** OrchestrationHarnessDefaultsUpdateRequest */
     OrchestrationHarnessDefaultsUpdateRequest: {
+      agentKind?: components["schemas"]["AgentKindSelection"] | null
       /** Command */
       command?: string | null
       /** Detach */
@@ -1117,6 +1134,7 @@ export interface components {
     TaskAgentBulkActionRequest: {
       /** Actions */
       actions?: components["schemas"]["TaskAgentBulkActionItemRequest"][]
+      agentKind?: components["schemas"]["AgentKindSelection"] | null
       /**
        * Detach
        * @default true
@@ -1138,6 +1156,7 @@ export interface components {
     }
     /** TaskAgentBulkRunRequest */
     TaskAgentBulkRunRequest: {
+      agentKind?: components["schemas"]["AgentKindSelection"] | null
       /**
        * Detach
        * @default true
@@ -1163,6 +1182,7 @@ export interface components {
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
+      agentKind?: components["schemas"]["AgentKindSelection"] | null
       /**
        * Detach
        * @default true
@@ -1175,6 +1195,7 @@ export interface components {
     }
     /** TaskAgentStartRequest */
     TaskAgentStartRequest: {
+      agentKind?: components["schemas"]["AgentKindSelection"] | null
       /**
        * Detach
        * @default true
@@ -1187,6 +1208,10 @@ export interface components {
     }
     /** TaskAgentStartResponse */
     TaskAgentStartResponse: {
+      /** @default generic */
+      agentKind: components["schemas"]["AgentKind"]
+      /** @default auto */
+      agentKindSelection: components["schemas"]["AgentKindSelection"]
       /** Agentlabel */
       agentLabel: string
       /** Agentsessionid */
