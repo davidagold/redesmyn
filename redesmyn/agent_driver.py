@@ -391,8 +391,9 @@ async def supervise_once(
         )
         runtime.cursor = next_cursor
 
-        if log_text:
-            runtime.backend.consume_output(log_text)
+        # Tick the backend every supervise loop so interpreters can enforce
+        # timeouts / degrade-to-unknown behavior even when the log is quiet.
+        runtime.backend.consume_output(log_text or "")
 
         next_caps = runtime.backend.capabilities.model_dump(mode="python")
         next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
