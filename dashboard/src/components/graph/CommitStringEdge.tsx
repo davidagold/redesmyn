@@ -7,19 +7,16 @@ import {
   type EdgeProps,
 } from "@xyflow/react"
 import type { CSSProperties } from "react"
-import { cn } from "@/lib/utils"
 import {
   edgeLodBand,
   GRAPH_EDGE_BORDER_RADIUS,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
 } from "./graphConfig"
-import type { EdgePulseData } from "./edgePulse"
 
 export type CommitStringEdgeData = {
   commitCount?: number | null
   baseSha?: string | null
   headSha?: string | null
-  pulse?: EdgePulseData | null
 }
 
 export type CommitStringFlowEdge = Edge<CommitStringEdgeData, "commitString">
@@ -55,7 +52,6 @@ export function CommitStringEdge({
   const commitCount = data?.commitCount ?? null
   const showLabel = commitCount !== null && lod >= 1
   const showTicks = commitCount !== null && lod >= 2
-  const pulse = data?.pulse ?? null
 
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
@@ -82,24 +78,6 @@ export function CommitStringEdge({
         style={edgeStyle}
         interactionWidth={24}
       />
-
-      {pulse ? (
-        <path
-          key={pulse.token}
-          d={edgePath}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={3}
-          strokeLinecap="round"
-          strokeDasharray="14 1000"
-          className={cn(
-            "pointer-events-none",
-            pulse.kind === "merge"
-              ? "rn-edge-pulse-merge text-emerald-300/80"
-              : "rn-edge-pulse-rebase text-sky-300/80",
-          )}
-        />
-      ) : null}
 
       {showLabel ? (
         <EdgeLabelRenderer>

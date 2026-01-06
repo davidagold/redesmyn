@@ -38,11 +38,6 @@ import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
 import { RoundedSmoothStepEdge } from "./RoundedSmoothStepEdge"
 import {
-  pulseDurationMs,
-  type EdgePulseData,
-  type EdgePulseKind,
-} from "./edgePulse"
-import {
   DETAILS_PANEL_WIDTH_PX,
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
@@ -83,11 +78,6 @@ interface GraphViewProps {
   selectedNodeId: number | null
   selectedEdgeId: string | null
   focusMode: boolean
-  mergeStepCue?: {
-    id: string
-    nodeId: number
-    kind: "rebase" | "merge_ff"
-  } | null
   epicSlug?: string | null
   routeEpicSlug?: string | null
   onSelectNode: (nodeId: number, options: { additive: boolean }) => void
@@ -259,7 +249,6 @@ export function GraphView({
   selectedNodeId,
   selectedEdgeId,
   focusMode,
-  mergeStepCue = null,
   epicSlug,
   routeEpicSlug = null,
   onSelectNode,
@@ -302,40 +291,6 @@ export function GraphView({
     return null
   }, [repoExecutor])
 
-  const [edgePulseById, setEdgePulseById] =
-    useState<Record<string, EdgePulseData>>({})
-  const edgePulseTimeoutsRef = useRef<Map<string, number>>(new Map())
-
-  const triggerEdgePulse = useCallback(
-    (edgeId: string, kind: EdgePulseKind, delayMs = 0) => {
-      window.setTimeout(() => {
-        setEdgePulseById((prev) => {
-          const previous = prev[edgeId]
-          const token = previous ? previous.token + 1 : 1
-          return { ...prev, [edgeId]: { kind, token } }
-        })
-
-        const existingTimeout = edgePulseTimeoutsRef.current.get(edgeId)
-        if (existingTimeout !== undefined) {
-          window.clearTimeout(existingTimeout)
-        }
-        const timeoutId = window.setTimeout(() => {
-          edgePulseTimeoutsRef.current.delete(edgeId)
-          setEdgePulseById((prev) => {
-            if (!(edgeId in prev)) {
-              return prev
-            }
-            const next = { ...prev }
-            delete next[edgeId]
-            return next
-          })
-        }, pulseDurationMs(kind) + 200)
-        edgePulseTimeoutsRef.current.set(edgeId, timeoutId)
-      }, delayMs)
-    },
-    [],
-  )
-
   const defaultEdgeOptions: DefaultEdgeOptions = useMemo(
     () => ({
       type: "roundedSmoothStep",
@@ -356,15 +311,10 @@ export function GraphView({
   }, [selectionNotice])
 
   useEffect(() => {
-    const edgePulseTimeouts = edgePulseTimeoutsRef.current
     return () => {
       if (selectionBarHideTimerRef.current !== null) {
         window.clearTimeout(selectionBarHideTimerRef.current)
       }
-      for (const timeoutId of edgePulseTimeouts.values()) {
-        window.clearTimeout(timeoutId)
-      }
-      edgePulseTimeouts.clear()
     }
   }, [])
 
@@ -425,26 +375,6 @@ export function GraphView({
     () => [...nodesById.values()].sort((a, b) => a.id - b.id),
     [nodesById],
   )
-
-  useEffect(() => {
-    if (!mergeStepCue) {
-      return
-    }
-    const node = nodesById.get(mergeStepCue.nodeId)
-    if (!node) {
-      return
-    }
-
-    const edgeId =
-      node.parentTaskId === null
-        ? `trunk:${node.id}`
-        : makeEdgeId(node.parentTaskId, node.id)
-
-    triggerEdgePulse(
-      edgeId,
-      mergeStepCue.kind === "merge_ff" ? "merge" : "rebase",
-    )
-  }, [mergeStepCue, nodesById, triggerEdgePulse])
 
   const selectedRunningTaskIds = useMemo(() => {
     const taskIds = new Set<number>()
@@ -1136,7 +1066,6 @@ export function GraphView({
     if (!focusPositions) {
       for (const root of rootNodes) {
         const edgeId = `trunk:${root.id}`
-        const pulse = edgePulseById[edgeId] ?? null
         mapped.push({
           id: edgeId,
           source: TRUNK_NODE_ID,
@@ -1146,7 +1075,6 @@ export function GraphView({
           selectable: false,
           focusable: false,
           interactionWidth: 0,
-          data: pulse ? { pulse } : undefined,
           style: {
             stroke: "var(--border)",
             strokeOpacity: 0.45,
@@ -1175,7 +1103,6 @@ export function GraphView({
       const edgeId = makeEdgeId(graphNode.parentTaskId, graphNode.id)
       const isSelected = selectedEdgeId === edgeId
       const isHovered = hoveredEdgeId === edgeId
-      const pulse = edgePulseById[edgeId] ?? null
       mapped.push({
         id: edgeId,
         source: String(graphNode.parentTaskId),
@@ -1186,7 +1113,6 @@ export function GraphView({
         selected: isSelected,
         interactionWidth: 24,
         className: "cursor-pointer",
-        data: pulse ? { pulse } : undefined,
         style: {
           stroke: isSelected || isHovered ? "var(--ring)" : "var(--border)",
           strokeWidth: isSelected ? 3.25 : isHovered ? 2.75 : 2,
@@ -1196,14 +1122,7 @@ export function GraphView({
       })
     }
     return mapped
-  }, [
-    edgePulseById,
-    focusPositions,
-    hoveredEdgeId,
-    nodes,
-    rootNodes,
-    selectedEdgeId,
-  ])
+  }, [focusPositions, hoveredEdgeId, nodes, rootNodes, selectedEdgeId])
 
   useLayoutEffect(() => {
     const wasSelected = previousHasSelectionRef.current
