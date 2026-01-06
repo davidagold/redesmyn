@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { ResourceBadge } from "@/components/ui/resource-badge"
 import {
   ApiHttpError,
   mergeTask,
@@ -1237,14 +1238,11 @@ export function NodeCard({
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
           {agentSession ? (
             <div className="flex flex-wrap items-end justify-start gap-2">
-              <span className="rounded-sm bg-accent px-2 py-0.5 font-mono text-xs text-accent-foreground/80 transition-colors group-hover:bg-accent/70 group-focus-within:bg-accent/70">
-                {agentSession.agentLabel}
-              </span>
-              {harnessKind ? (
-                <span className="rounded-sm bg-muted/60 px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors group-hover:bg-muted/75 group-focus-within:bg-muted/75">
-                  {harnessKind}
-                </span>
-              ) : null}
+              <ResourceBadge
+                label={agentSession.agentLabel}
+                value={harnessKind}
+                extendBackground
+              />
             </div>
           ) : (
             <div />

@@ -8,6 +8,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import {
   Collapsible,
@@ -45,6 +46,7 @@ import { getRebaseRemediation } from "@/lib/merge-remediation"
 import { cn } from "@/lib/utils"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
 import { FloatingActions } from "@/components/ui/floating-actions"
+import { ResourceBadge } from "@/components/ui/resource-badge"
 import {
   ChevronDown,
   ChevronUp,
@@ -211,14 +213,14 @@ function MergeRunDetails({
   const attachCommand = remediation?.attachCommand ?? null
   const agentNote = remediation?.message ?? null
 
-  const statusBadgeClasses =
+  const statusBadgeVariant =
     mergeRun.status === "blocked"
-      ? "border-amber-400/25 bg-amber-400/10 text-amber-200/90"
+      ? "amber"
       : mergeRun.status === "failed"
-        ? "border-destructive/25 bg-destructive/10 text-destructive"
+        ? "destructive"
         : mergeRun.status === "resumable"
-          ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
-          : "border-border/60 bg-background/30 text-muted-foreground"
+          ? "emerald"
+          : "default"
 
   async function handleResumeMerge(allowRunning: boolean) {
     if (!onRequestRefresh) {
@@ -247,17 +249,8 @@ function MergeRunDetails({
   return (
     <div className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-            statusBadgeClasses,
-          )}
-        >
-          {statusLabel}
-        </span>
-        <span className="bg-background/30 text-muted-foreground inline-flex items-center rounded-full border border-border/60 px-2 py-0.5 text-xs capitalize">
-          {mergeRun.scope}
-        </span>
+        <Badge variant={statusBadgeVariant}>{statusLabel}</Badge>
+        <Badge className="capitalize">{mergeRun.scope}</Badge>
       </div>
 
       {showCallout && calloutTitle ? (
@@ -822,15 +815,13 @@ function AgentActions({
       <div className="flex items-start justify-between gap-3">
         <div className={"min-w-0 " + (isRunning ? "pr-28" : "")}>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/80">
-              {agentLabel}
-            </div>
+            <ResourceBadge
+              label={agentLabel}
+              value={harnessKind}
+              extendBackground
+              className="text-xs text-foreground/80"
+            />
             <AgentStatusBadge status={statusLabel} />
-            {harnessKind ? (
-              <div className="rounded-md bg-foreground/5 px-2 py-1 font-mono text-xs text-foreground/70">
-                {harnessKind}
-              </div>
-            ) : null}
           </div>
         </div>
 
