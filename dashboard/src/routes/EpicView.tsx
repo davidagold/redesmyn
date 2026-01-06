@@ -36,6 +36,7 @@ import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { computeRepoDaemonStatus } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
 import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
+import { computeRunToolbarModel } from "@/routes/epicView/runToolbarModel"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -321,167 +322,27 @@ export function EpicView() {
 
   const stackProjectionsFresh = repoDaemonStatus.telemetryFresh
 
-  const runSummary = useMemo(() => {
-    if (!graph) {
-      return null
-    }
-    const tasks = graph.tasks ?? []
+  const runToolbarModel = useMemo(
+    () =>
+      computeRunToolbarModel({
+        tasks: graph?.tasks ?? null,
+        tasksById,
+        agentSessionsByNodeId,
+        selectedNodeIds,
+        stackProjectionsFresh,
+      }),
+    [
+      agentSessionsByNodeId,
+      graph?.tasks,
+      selectedNodeIds,
+      stackProjectionsFresh,
+      tasksById,
+    ],
+  )
 
-    let eligible = 0
-    let running = 0
-    let blocked = 0
-    let failed = 0
-    let outOfSync: number | null = stackProjectionsFresh ? 0 : null
-
-    for (const task of tasks) {
-      if (task.branchName === null) {
-        continue
-      }
-      if (task.state === "blocked") {
-        blocked += 1
-        continue
-      }
-      if (task.state === "done") {
-        continue
-      }
-
-      eligible += 1
-      const session = agentSessionsByNodeId.get(task.id) ?? null
-
-      if (stackProjectionsFresh && task.stackInSync === false) {
-        outOfSync = (outOfSync ?? 0) + 1
-      }
-
-      if (session?.status === "running") {
-        running += 1
-      } else if (session?.status === "blocked") {
-        blocked += 1
-      } else if (session?.status === "error") {
-        failed += 1
-      }
-    }
-
-    return { eligible, running, blocked, failed, outOfSync }
-  }, [agentSessionsByNodeId, graph, stackProjectionsFresh])
-
-  const actionTargets = useMemo(() => {
-    const empty = {
-      start: [] as number[],
-      restart: [] as number[],
-      stop: [] as number[],
-    }
-    const targets = { all: { ...empty }, selected: { ...empty } }
-    if (!graph) {
-      return targets
-    }
-
-    const allStart = new Set<number>()
-    const allRestart = new Set<number>()
-    const allStop = new Set<number>()
-
-    for (const task of graph.tasks ?? []) {
-      if (task.branchName === null) {
-        continue
-      }
-      if (task.state === "blocked" || task.state === "done") {
-        continue
-      }
-
-      const session = agentSessionsByNodeId.get(task.id) ?? null
-      const status = session?.status ?? null
-
-      if (!session || status === "stopped") {
-        allStart.add(task.id)
-      } else if (status === "error") {
-        allRestart.add(task.id)
-      }
-
-      if (status === "running" || status === "blocked") {
-        allStop.add(task.id)
-      }
-    }
-
-    const selectedStart = new Set<number>()
-    const selectedRestart = new Set<number>()
-    const selectedStop = new Set<number>()
-
-    for (const selectedNodeId of selectedNodeIds) {
-      const task = tasksById.get(selectedNodeId) ?? null
-      if (!task || task.state === "blocked" || task.state === "done") {
-        continue
-      }
-      const session = agentSessionsByNodeId.get(task.id) ?? null
-      const status = session?.status ?? null
-
-      if (!session || status === "stopped") {
-        selectedStart.add(task.id)
-      } else if (status === "error") {
-        selectedRestart.add(task.id)
-      }
-
-      if (status === "running" || status === "blocked") {
-        selectedStop.add(task.id)
-      }
-    }
-
-    targets.all.start = [...allStart].sort((a, b) => a - b)
-    targets.all.restart = [...allRestart].sort((a, b) => a - b)
-    targets.all.stop = [...allStop].sort((a, b) => a - b)
-    targets.selected.start = [...selectedStart].sort((a, b) => a - b)
-    targets.selected.restart = [...selectedRestart].sort((a, b) => a - b)
-    targets.selected.stop = [...selectedStop].sort((a, b) => a - b)
-
-    return targets
-  }, [agentSessionsByNodeId, graph, selectedNodeIds, tasksById])
-
-  const runBuckets = useMemo(() => {
-    if (!graph) {
-      return null
-    }
-
-    const eligible = new Set<number>()
-    const running = new Set<number>()
-    const blocked = new Set<number>()
-    const failed = new Set<number>()
-    const outOfSync = new Set<number>()
-
-    for (const task of graph.tasks ?? []) {
-      if (task.branchName === null) {
-        continue
-      }
-      if (task.state === "done") {
-        continue
-      }
-
-      if (stackProjectionsFresh && task.stackInSync === false) {
-        outOfSync.add(task.id)
-      }
-
-      if (task.state === "blocked") {
-        blocked.add(task.id)
-        continue
-      }
-
-      eligible.add(task.id)
-      const session = agentSessionsByNodeId.get(task.id) ?? null
-
-      if (session?.status === "running") {
-        running.add(task.id)
-      } else if (session?.status === "blocked") {
-        blocked.add(task.id)
-      } else if (session?.status === "error") {
-        failed.add(task.id)
-      }
-    }
-
-    return {
-      eligible: Array.from(eligible),
-      running: Array.from(running),
-      blocked: Array.from(blocked),
-      failed: Array.from(failed),
-      outOfSync: Array.from(outOfSync),
-    }
-  }, [agentSessionsByNodeId, graph, stackProjectionsFresh])
+  const runSummary = runToolbarModel.summary
+  const runBuckets = runToolbarModel.buckets
+  const actionTargets = runToolbarModel.actionTargets
 
   const selectionEquals = useCallback(
     (nodeIds: number[]) => {
