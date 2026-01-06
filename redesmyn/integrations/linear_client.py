@@ -10,9 +10,7 @@ import httpx
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 
 logger = logging.getLogger("redesmyn.integrations.linear")
-_GRAPHQL_OPERATION_RE = re.compile(
-    r"^\\s*(query|mutation)\\s+(?P<name>[A-Za-z0-9_]+)\\b"
-)
+_GRAPHQL_OPERATION_RE = re.compile(r"^\s*(query|mutation)\s+(?P<name>[A-Za-z0-9_]+)\b")
 
 _shared_graphql_client: httpx.AsyncClient | None = None
 
@@ -25,6 +23,15 @@ def _graphql_http_client() -> httpx.AsyncClient:
     if _shared_graphql_client is None or _shared_graphql_client.is_closed:
         _shared_graphql_client = httpx.AsyncClient(timeout=30.0)
     return _shared_graphql_client
+
+
+async def aclose_shared_graphql_client() -> None:
+    global _shared_graphql_client
+    client = _shared_graphql_client
+    _shared_graphql_client = None
+    if client is None or client.is_closed:
+        return
+    await client.aclose()
 
 
 class LinearApiError(RuntimeError):

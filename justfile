@@ -22,7 +22,7 @@ format:
 
 check:
     uv run ruff check .
-    uv run ty check .
+    uv run ty check --extra-search-path . .
     @cd dashboard && if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || ! cmp -s package-lock.json node_modules/.package-lock.json; then npm ci && cp package-lock.json node_modules/.package-lock.json; fi
     cd dashboard && npm run lint
     cd dashboard && npm run typecheck

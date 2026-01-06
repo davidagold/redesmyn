@@ -387,6 +387,13 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     yield
     await app.state.background_tasks.cancel_and_await()
 
+    try:
+        from redesmyn.integrations.linear_client import aclose_shared_graphql_client
+
+        await aclose_shared_graphql_client()
+    except Exception:
+        pass
+
     await app.state.engine.dispose()
 
 

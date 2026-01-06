@@ -236,6 +236,19 @@ query IssueLabels($labelName: String!, $after: String) {
 }
 """
 
+ISSUE_LABELS_BY_TEAM_QUERY = """
+query IssueLabelsByTeam($teamId: ID!, $labelName: String!, $after: String) {
+  issueLabels(
+    first: 50,
+    after: $after,
+    filter: { team: { id: { eq: $teamId } }, name: { eq: $labelName } }
+  ) {
+    nodes { id name }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
 ISSUE_LABEL_CREATE_MUTATION = """
 mutation IssueLabelCreate($name: String!) {
   issueLabelCreate(input: { name: $name }) {
@@ -908,8 +921,8 @@ async def resolve_or_create_label(
     after: str | None = None
     while True:
         data = await client.graphql(
-            ISSUE_LABELS_QUERY,
-            variables={"labelName": label_name, "after": after},
+            ISSUE_LABELS_BY_TEAM_QUERY,
+            variables={"teamId": team_id, "labelName": label_name, "after": after},
         )
         conn = data.get("issueLabels")
         if not isinstance(conn, dict):
