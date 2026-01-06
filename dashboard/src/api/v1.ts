@@ -500,7 +500,7 @@ export interface components {
       agentCapabilities: components["schemas"]["AgentCapabilitiesResponse"]
       /** Agentlabel */
       agentLabel: string
-      agentStatus: components["schemas"]["AgentSemanticStatusResponse"]
+      agentSemanticStatus: components["schemas"]["AgentSemanticStatusResponse"]
       /** Endedat */
       endedAt?: string | null
       /** Externalsessionref */

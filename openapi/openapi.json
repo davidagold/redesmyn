@@ -99,7 +99,7 @@
             "title": "Agentlabel",
             "type": "string"
           },
-          "agentStatus": {
+          "agentSemanticStatus": {
             "$ref": "#/components/schemas/AgentSemanticStatusResponse"
           },
           "endedAt": {
@@ -187,7 +187,7 @@
           "agentLabel",
           "status",
           "agentCapabilities",
-          "agentStatus",
+          "agentSemanticStatus",
           "externalSessionRef"
         ],
         "title": "AgentSessionResponse",
