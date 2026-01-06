@@ -55,10 +55,10 @@ ExternalSessionRef = Annotated[
 ]
 
 
-class AgentStatusUpdateEvent(BaseModel):
+class AgentSemanticStatusUpdateEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["agent_status_update"] = "agent_status_update"
+    type: Literal["agent_semantic_status_update"] = "agent_semantic_status_update"
     status: AgentSemanticStatus
 
 
@@ -72,7 +72,7 @@ class AgentExternalSessionRefUpdateEvent(BaseModel):
 
 
 AgentEvent = Annotated[
-    AgentStatusUpdateEvent | AgentExternalSessionRefUpdateEvent,
+    AgentSemanticStatusUpdateEvent | AgentExternalSessionRefUpdateEvent,
     Field(discriminator="type"),
 ]
 
@@ -121,4 +121,3 @@ class ShellAgent:
     def consume_output(self, text: str) -> list[AgentEvent]:
         # ShellAgent: no stable semantics without agent-specific signals.
         return []
-

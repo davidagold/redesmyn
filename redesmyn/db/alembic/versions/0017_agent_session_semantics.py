@@ -1,8 +1,8 @@
 """Add agent semantic fields to agent_sessions.
 
-Revision ID: 0016_agent_session_semantics
-Revises: 0015_remove_db_agent_construct
-Create Date: 2026-01-05
+Revision ID: 0017_agent_session_semantics
+Revises: 0016_task_linear_state_name
+Create Date: 2026-01-06
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0016_agent_session_semantics"
-down_revision = "0015_remove_db_agent_construct"
+revision = "0017_agent_session_semantics"
+down_revision = "0016_task_linear_state_name"
 branch_labels = None
 depends_on = None
 
@@ -53,18 +53,28 @@ def upgrade() -> None:
             ),
         )
 
-    if "agent_status" not in columns:
-        op.add_column(
-            "agent_sessions",
-            sa.Column(
-                "agent_status",
-                _json_type(),
-                nullable=False,
-                server_default=_dialect_server_default_json(
-                    conn, '{"turn_state":"unknown","detail":null}'
+    if "agent_semantic_status" not in columns:
+        if "agent_status" in columns:
+            # Backwards compat: older T-1 revisions used agent_status, which is
+            # easy to confuse with AgentSession.status (lifecycle). Rename it.
+            with op.batch_alter_table("agent_sessions") as batch:
+                batch.alter_column(
+                    "agent_status",
+                    new_column_name="agent_semantic_status",
+                    existing_type=_json_type(),
+                )
+        else:
+            op.add_column(
+                "agent_sessions",
+                sa.Column(
+                    "agent_semantic_status",
+                    _json_type(),
+                    nullable=False,
+                    server_default=_dialect_server_default_json(
+                        conn, '{"turn_state":"unknown","detail":null}'
+                    ),
                 ),
-            ),
-        )
+            )
 
     if "external_session_ref" not in columns:
         op.add_column(
@@ -85,8 +95,7 @@ def downgrade() -> None:
 
     if "external_session_ref" in columns:
         op.drop_column("agent_sessions", "external_session_ref")
-    if "agent_status" in columns:
-        op.drop_column("agent_sessions", "agent_status")
+    if "agent_semantic_status" in columns:
+        op.drop_column("agent_sessions", "agent_semantic_status")
     if "agent_capabilities" in columns:
         op.drop_column("agent_sessions", "agent_capabilities")
-

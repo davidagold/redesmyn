@@ -68,7 +68,7 @@ async def test_epic_graph_includes_agent_session_overlay_fields(
     assert latest.task_id == seeded.child_task_id
     assert latest.status == AgentStatus.Error
     assert latest.agent_label == f"a-{seeded.child_task_id}"
-    assert latest.agent_status.turn_state == AgentTurnState.Unknown
+    assert latest.agent_semantic_status.turn_state == AgentTurnState.Unknown
     assert latest.agent_capabilities.can_send_text is True
     assert latest.agent_capabilities.can_detect_turn_complete is False
     assert latest.external_session_ref.type == "none"

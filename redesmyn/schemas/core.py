@@ -109,7 +109,7 @@ class AgentSessionResponse(ApiResponse):
     harness_profile_id: str | None = None
     resolved_profile: HarnessProfileDefinitionResponse | None = None
     agent_capabilities: AgentCapabilitiesResponse
-    agent_status: AgentSemanticStatusResponse
+    agent_semantic_status: AgentSemanticStatusResponse
     external_session_ref: ExternalSessionRefResponse
     started_at: datetime | None = None
     ended_at: datetime | None = None

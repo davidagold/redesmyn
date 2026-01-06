@@ -691,9 +691,9 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         agent_capabilities=TypeAdapter(
                             AgentCapabilitiesResponse
                         ).validate_python(session_row.agent_capabilities),
-                        agent_status=TypeAdapter(
+                        agent_semantic_status=TypeAdapter(
                             AgentSemanticStatusResponse
-                        ).validate_python(session_row.agent_status),
+                        ).validate_python(session_row.agent_semantic_status),
                         external_session_ref=TypeAdapter(
                             ExternalSessionRefResponse
                         ).validate_python(session_row.external_session_ref),

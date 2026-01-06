@@ -79,7 +79,7 @@ Advanced features (like conflict auto-assist) must only be enabled when the sele
 We need a small vocabulary that is stable:
 
 - `AgentTurnState` (example):
-- `unknown` (ShellAgent / insufficient signals)
+  - `unknown` (ShellAgent / insufficient signals)
   - `ready` (safe to send input)
   - `busy` (actively working)
   - `blocked` (waiting for user; or needs attention)

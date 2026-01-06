@@ -54,7 +54,7 @@ def _default_agent_capabilities() -> dict[str, Any]:
     return AgentCapabilities(can_send_text=True).model_dump(mode="python")
 
 
-def _default_agent_status() -> dict[str, Any]:
+def _default_agent_semantic_status() -> dict[str, Any]:
     return AgentSemanticStatus().model_dump(mode="python")
 
 
@@ -384,10 +384,10 @@ class AgentSession(Base):
         nullable=False,  # Pydantic: AgentCapabilities
         default=_default_agent_capabilities,
     )
-    agent_status: Mapped[dict[str, Any]] = mapped_column(
+    agent_semantic_status: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
         nullable=False,  # Pydantic: AgentSemanticStatus
-        default=_default_agent_status,
+        default=_default_agent_semantic_status,
     )
     external_session_ref: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
