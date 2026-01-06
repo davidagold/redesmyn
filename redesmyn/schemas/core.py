@@ -446,6 +446,19 @@ class TaskAgentActionEventDataResponse(ApiResponse):
     error: str | None = None
 
 
+class TaskAgentSessionUpdateEventDataResponse(ApiResponse):
+    type: Literal["task.agent_session_update"] = "task.agent_session_update"
+    task_id: int
+    agent_session_id: int
+    agent_status: AgentStatus
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    attach: AttachInfoResponse
+    agent_capabilities: AgentCapabilitiesResponse
+    agent_semantic_status: AgentSemanticStatusResponse
+    external_session_ref: ExternalSessionRefResponse
+
+
 class TaskMergeEventDataResponse(ApiResponse):
     type: Literal["task.merge"] = "task.merge"
     run_id: str
@@ -484,6 +497,7 @@ EventDataResponse = Annotated[
     | BlockAckEventDataResponse
     | TaskAgentRunEventDataResponse
     | TaskAgentActionEventDataResponse
+    | TaskAgentSessionUpdateEventDataResponse
     | TaskMergeEventDataResponse
     | MergeRunEventDataResponse
     | UnknownEventDataResponse,
