@@ -37,6 +37,11 @@ import { computeRepoDaemonStatus } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
 import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
 import { computeRunToolbarModel } from "@/routes/epicView/runToolbarModel"
+import {
+  type BulkActionKind,
+  type BulkActionRequestItem,
+  usePersistedBulkAction,
+} from "@/routes/epicView/bulkActionState"
 
 function shellQuote(value: string) {
   if (value === "") {
@@ -46,66 +51,6 @@ function shellQuote(value: string) {
     return value
   }
   return `'${value.split("'").join("'\\\\''")}'`
-}
-
-const BULK_ACTION_TTL_MS = 10 * 60 * 1000
-
-type BulkActionKind = "run" | "stop"
-
-type BulkActionState = {
-  runId: string
-  kind: BulkActionKind
-  total: number
-  completed: number
-  failed: number
-  startedAt: number
-}
-
-type BulkActionRequestItem = {
-  taskId: number
-  action: "start" | "restart" | "stop"
-}
-
-function bulkActionStorageKey(epicSlug: string) {
-  return `redesmyn:bulk-action:${epicSlug}`
-}
-
-function readStoredBulkAction(epicSlug: string): BulkActionState | null {
-  try {
-    const raw = window.sessionStorage.getItem(bulkActionStorageKey(epicSlug))
-    if (!raw) {
-      return null
-    }
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== "object") {
-      return null
-    }
-    const state = parsed as Partial<BulkActionState>
-    if (
-      typeof state.runId !== "string" ||
-      (state.kind !== "run" && state.kind !== "stop") ||
-      typeof state.total !== "number" ||
-      typeof state.completed !== "number" ||
-      typeof state.failed !== "number" ||
-      typeof state.startedAt !== "number"
-    ) {
-      return null
-    }
-    if (
-      !Number.isFinite(state.total) ||
-      !Number.isFinite(state.completed) ||
-      !Number.isFinite(state.failed) ||
-      !Number.isFinite(state.startedAt)
-    ) {
-      return null
-    }
-    if (state.total <= 0 || state.completed < 0 || state.failed < 0) {
-      return null
-    }
-    return state as BulkActionState
-  } catch {
-    return null
-  }
 }
 
 export function EpicView() {
@@ -147,7 +92,7 @@ export function EpicView() {
   const selectedNodeIdsRef = useRef(selectedNodeIds)
   const [runAction, setRunAction] =
     useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
-  const [bulkAction, setBulkAction] = useState<BulkActionState | null>(null)
+  const { bulkAction, setBulkAction } = usePersistedBulkAction(epicSlug ?? null)
   const refreshTimerRef = useRef<number | null>(null)
   const streamRefreshTimerRef = useRef<number | null>(null)
   const daemonRefreshTimerRef = useRef<number | null>(null)
@@ -199,53 +144,6 @@ export function EpicView() {
     () => epics.find((e) => e.slug === epicSlug) ?? null,
     [epics, epicSlug],
   )
-
-  useEffect(() => {
-    if (!selectedEpic?.slug) {
-      setBulkAction(null)
-      return
-    }
-
-    const stored = readStoredBulkAction(selectedEpic.slug)
-    if (!stored) {
-      return
-    }
-
-    const ageMs = Date.now() - stored.startedAt
-    if (
-      ageMs < 0 ||
-      ageMs > BULK_ACTION_TTL_MS ||
-      stored.completed >= stored.total
-    ) {
-      try {
-        window.sessionStorage.removeItem(
-          bulkActionStorageKey(selectedEpic.slug),
-        )
-      } catch {
-        // ignore
-      }
-      return
-    }
-
-    setBulkAction(stored)
-  }, [selectedEpic?.slug])
-
-  useEffect(() => {
-    if (!selectedEpic?.slug) {
-      return
-    }
-
-    const key = bulkActionStorageKey(selectedEpic.slug)
-    try {
-      if (bulkAction === null) {
-        window.sessionStorage.removeItem(key)
-      } else {
-        window.sessionStorage.setItem(key, JSON.stringify(bulkAction))
-      }
-    } catch {
-      // ignore
-    }
-  }, [bulkAction, selectedEpic?.slug])
 
   const {
     graph,
@@ -510,7 +408,12 @@ export function EpicView() {
         return { ...current, completed, failed }
       })
     },
-    [scheduleDaemonsRefresh, scheduleGraphRefresh, scheduleStreamGraphRefresh],
+    [
+      scheduleDaemonsRefresh,
+      scheduleGraphRefresh,
+      scheduleStreamGraphRefresh,
+      setBulkAction,
+    ],
   )
 
   useEventStream({
