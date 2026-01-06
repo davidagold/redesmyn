@@ -30,7 +30,7 @@ import typer
 
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.agent_label import agent_label_for_task_id
-from redesmyn.agent_monitor import run_agent_monitor
+from redesmyn.agent_driver import run_agent_driver
 from redesmyn.agent_runtime import StartAgentResult, agent_log_path_for_session_row
 from redesmyn.context import RepoContext, build_repo_context
 from redesmyn.db import (
@@ -360,7 +360,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     )
 
     observer_task: asyncio.Task[object] | None = None
-    agent_monitor_task: asyncio.Task[object] | None = None
+    agent_driver_task: asyncio.Task[object] | None = None
     env_no_observer = os.environ.get("REDESMYN_NO_OBSERVER") in {"1", "true", "TRUE"}
     env_no_agent_monitor = os.environ.get("REDESMYN_NO_AGENT_MONITOR") in {
         "1",
@@ -383,15 +383,16 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         )
 
     if settings.runner_mode == "local" and enable_agent_monitor:
-        agent_monitor_task = _spawn_background_task(
+        agent_driver_task = _spawn_background_task(
             app,
-            run_agent_monitor(
+            run_agent_driver(
                 ctx,
                 app.state.sessionmaker,
                 interval_s=1.0,
                 once=False,
+                event_hub=app.state.event_hub,
             ),
-            name="agent_monitor",
+            name="agent_driver",
         )
 
     yield
@@ -403,10 +404,10 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
         except asyncio.CancelledError:
             pass
 
-    if agent_monitor_task is not None:
-        agent_monitor_task.cancel()
+    if agent_driver_task is not None:
+        agent_driver_task.cancel()
         try:
-            await agent_monitor_task
+            await agent_driver_task
         except asyncio.CancelledError:
             pass
 
