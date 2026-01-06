@@ -22,6 +22,7 @@ import {
   runningAgentsSummary,
 } from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
+import { AgentTurnStateBadge } from "@/components/agents/AgentTurnStateBadge"
 import { LinearIcon } from "@/components/linear/LinearIcon"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import {
@@ -1202,6 +1203,11 @@ export function TaskCard({
                 value={harnessKind}
                 extendBackground
               />
+              {agentSession.status === "running" ? (
+                <AgentTurnStateBadge
+                  turnState={agentSession.agentSemanticStatus.turnState}
+                />
+              ) : null}
             </div>
           ) : (
             <div />
