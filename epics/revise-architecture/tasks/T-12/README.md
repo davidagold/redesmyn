@@ -1,5 +1,14 @@
 # T-12 Consolidate overlapping backend mechanisms (reduce surface area)
 
+## Metadata
+
+```yaml
+id: T-12
+stacked_on: T-9
+node:
+  branch: rn/revise-architecture/T-12-consolidate-backend-mechanisms
+```
+
 ## Motivation
 
 Redesmyn has grown quickly and several core responsibilities are implemented in multiple places. Most of this code is *doing real work* (not dead), but we can reduce the long-term maintenance burden by consolidating common patterns and establishing a single “way to do it” for:
@@ -131,4 +140,3 @@ Goal:
 - Merge/restack orchestration code is simplified via shared helpers, with less duplication across server/daemon paths.
 - Linear integration code is easier to read/test, with stronger typing and smaller files.
 - DB engine/session construction is consolidated; SQLite lock handling and logging are consistent.
-

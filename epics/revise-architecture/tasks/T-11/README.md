@@ -1,5 +1,14 @@
 # T-11 Remove `rn git` / `git_proxy`; rely on daemon-side observation for projections
 
+## Metadata
+
+```yaml
+id: T-11
+stacked_on: T-7
+node:
+  branch: rn/revise-architecture/T-11-remove-rn-git
+```
+
 ## Motivation / context
 
 Today we have a special CLI surface area:
@@ -77,4 +86,3 @@ Implementation expectations:
   - the task branch SHA / trunk timeline / merge-base projections update without restarting the server/daemon.
 - After running a plain `git rebase` (or `git checkout`) that changes branch tips, the dashboard converges similarly.
 - The updated approach is documented in the revise-architecture epic docs (T-7 updated, and this task linked from the epic task map).
-
