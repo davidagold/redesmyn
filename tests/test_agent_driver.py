@@ -501,7 +501,7 @@ async def test_agent_driver_kill_switch_disables_background_loop(
     try:
         assert not any(
             task.get_name() == "agent_driver"
-            for task in scenario_app.app.state.background_tasks
+            for task in scenario_app.app.state.background_tasks.tasks
         )
     finally:
         await scenario_app.aclose()
