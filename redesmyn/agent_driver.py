@@ -412,6 +412,16 @@ async def supervise_once(
         if changed:
             await flush_session_update(agent_session)
 
+    active_session_ids = {
+        row.id
+        for row in active_session_by_task_id.values()
+        if row.ended_at is None
+        and row.status in {AgentStatus.Running, AgentStatus.Blocked}
+    }
+    for session_id in list(runtime_by_session_id):
+        if session_id not in active_session_ids:
+            runtime_by_session_id.pop(session_id, None)
+
     if updated:
         await session.commit()
         if event_hub is not None:
