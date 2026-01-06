@@ -66,10 +66,19 @@ Important: do not over-abstract; the reuse should be obvious and readable.
 Where we repeat the same structures:
 
 - “card with header + small badges + right actions”
-- “callout panel with compact buttons”
+- “callout panel with compact buttons” (use shadcn `Alert` as the base component)
 - “popover menus with consistent spacing”
 
 Factor out small primitives or shared `cn(...)` helpers so we aren’t manually re-tuning the same classes everywhere.
+
+In particular, there are several high-ROI patterns worth factoring into primitives (or `cva` variants) to keep JSX focused on behavior rather than Tailwind plumbing:
+
+- “glass surface” containers: `bg-*/80 + ring + shadow + backdrop-blur` combos (selection bar, popovers, floating actions)
+- bordered button groups: wrapper + `rounded-none` buttons + `border-l` separators (action clusters in graph + details)
+- chip/pill buttons: rounded-full bordered “pills” with consistent hover/focus and mono label styles (e.g. Linear pill)
+- callout cards: tone mapping (icon + border/bg/ring + compact action row) consolidated via shadcn `Alert`
+- icon-only action buttons: standardize `ghost` icon button chrome (kebab menus, expand/collapse, etc.)
+- tooltip boilerplate: wrap the common `TooltipTrigger(render)` + class merge pattern so callsites stay readable
 
 ### 4) Prepare for state/query modernization
 
@@ -134,7 +143,11 @@ We have multiple “callout-like” cards (graph card overlays and Details panel
 - compact action rows
 - “show details” affordances
 
-Introduce a small `Callout` primitive (or equivalent) with a clear `tone` API and reuse it everywhere.
+Use shadcn’s `Alert` component as the base building block (and, if needed, wrap it in a thin `Callout` facade that only maps `tone` → `Alert` variants). Avoid a bespoke callout component that re-implements shadcn patterns.
+
+## Shadcn-first guidance
+
+When introducing or standardizing UI primitives, prefer shadcn components as the base wherever possible (e.g. `Alert`, `Button`, `Badge`, `Popover`, `DropdownMenu`, `Tooltip`). Only add bespoke components when the shadcn base is clearly insufficient.
 
 ### 4) Isolate “imperative / effectful” glue into hooks
 
