@@ -35,7 +35,6 @@ import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { computeRepoDaemonStatus } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
-import type { NodeActivity } from "@/lib/presence"
 import { ChevronRight, Loader2, Play, Settings2, Square } from "lucide-react"
 
 function shellQuote(value: string) {
@@ -151,9 +150,6 @@ export function EpicView() {
   const refreshTimerRef = useRef<number | null>(null)
   const streamRefreshTimerRef = useRef<number | null>(null)
   const daemonRefreshTimerRef = useRef<number | null>(null)
-  const [activityByNodeId, setActivityByNodeId] =
-    useState<Map<number, NodeActivity>>(new Map())
-  const [, setActivityTick] = useState(0)
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
@@ -544,14 +540,6 @@ export function EpicView() {
     return () => window.clearTimeout(id)
   }, [runNotice])
 
-  useEffect(() => {
-    const id = window.setInterval(
-      () => setActivityTick((tick) => tick + 1),
-      1_000,
-    )
-    return () => window.clearInterval(id)
-  }, [])
-
   const scheduleGraphRefresh = useCallback(() => {
     if (refreshTimerRef.current !== null) {
       return
@@ -595,24 +583,6 @@ export function EpicView() {
       ) {
         scheduleGraphRefresh()
         return
-      }
-      const taskId =
-        "taskId" in event.data && typeof event.data.taskId === "number"
-          ? event.data.taskId
-          : null
-
-      const observedAt = Date.parse(event.createdAt) || Date.now()
-      if (taskId !== null) {
-        setActivityByNodeId((prev) => {
-          const next = new Map(prev)
-          const current = next.get(taskId) ?? {}
-          if (event.eventType === "git.commit") {
-            next.set(taskId, { ...current, lastCommitAt: observedAt })
-          } else if (event.eventType === "worktree.health") {
-            next.set(taskId, { ...current, lastWorktreeAt: observedAt })
-          }
-          return next
-        })
       }
 
       if (event.eventType === "merge.run") {
@@ -1972,7 +1942,6 @@ export function EpicView() {
             tasksById={tasksById}
             agentSessionsByNodeId={agentSessionsByNodeId}
             mergeRunsByTaskId={mergeRunsByTaskId}
-            activityByNodeId={activityByNodeId}
             harnessCommand={configuredHarnessCommand}
             detach={configuredDetach}
             trunk={graph.trunk ?? null}

@@ -1,4 +1,4 @@
-import { NodeCard } from "./NodeCard"
+import { TaskCard } from "./TaskCard"
 import {
   displayBranchLabel,
   type AgentSession,
@@ -44,7 +44,7 @@ export function NodeTree({
 
         return (
           <div key={node.id} style={{ paddingLeft: depth * 16 }}>
-            <NodeCard
+            <TaskCard
               node={node}
               task={task}
               agentSession={agentSession}

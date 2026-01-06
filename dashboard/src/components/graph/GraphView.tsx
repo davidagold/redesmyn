@@ -60,7 +60,6 @@ import {
 import { layoutWithElk } from "./elkLayout"
 import { type FlowPosition, layoutTree } from "./flowLayout"
 import { applySelectionLens, computeSelectionLens } from "./selectionLens"
-import type { NodeActivity } from "@/lib/presence"
 
 interface GraphViewProps {
   rootNodes: GraphNode[]
@@ -68,7 +67,6 @@ interface GraphViewProps {
   tasksById: Map<number, Task>
   mergeRunsByTaskId: Map<number, MergeRun>
   agentSessionsByNodeId: Map<number, AgentSession>
-  activityByNodeId: Map<number, NodeActivity>
   harnessCommand: string
   detach: boolean
   trunk?: TrunkTimeline | null
@@ -239,7 +237,6 @@ export function GraphView({
   tasksById,
   mergeRunsByTaskId,
   agentSessionsByNodeId,
-  activityByNodeId,
   harnessCommand,
   detach,
   trunk,
@@ -989,8 +986,6 @@ export function GraphView({
         ? mergeRunsByBlockedTaskId.get(task.id)
         : undefined
       const agentSession = agentSessionsByNodeId.get(graphNode.id) ?? undefined
-      const activity = activityByNodeId.get(graphNode.id)
-
       mapped.push({
         id: String(graphNode.id),
         type: "branch",
@@ -1021,7 +1016,6 @@ export function GraphView({
           mergeRun,
           blockingMergeRun,
           agentSession,
-          activity,
           epicSlug,
           gitMutationsDisabledReason,
           stackProjectionsFresh,
@@ -1041,7 +1035,6 @@ export function GraphView({
     }
     return mapped
   }, [
-    activityByNodeId,
     agentSessionsByNodeId,
     detach,
     epicSlug,

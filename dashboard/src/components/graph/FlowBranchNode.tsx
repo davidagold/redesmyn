@@ -1,5 +1,5 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react"
-import { NodeCard } from "@/components/graph/NodeCard"
+import { TaskCard } from "@/components/graph/TaskCard"
 import {
   displayBranchLabel,
   type AgentSession,
@@ -7,7 +7,6 @@ import {
   type MergeRun,
   type Task,
 } from "@/lib/graph-utils"
-import type { NodeActivity } from "@/lib/presence"
 
 export type FlowBranchNodeData = Record<string, unknown> & {
   node: GraphNode
@@ -15,7 +14,6 @@ export type FlowBranchNodeData = Record<string, unknown> & {
   mergeRun?: MergeRun
   blockingMergeRun?: MergeRun
   agentSession?: AgentSession
-  activity?: NodeActivity
   epicSlug?: string | null
   gitMutationsDisabledReason?: string | null
   stackProjectionsFresh: boolean
@@ -38,7 +36,6 @@ export function FlowBranchNode({
     mergeRun,
     blockingMergeRun,
     agentSession,
-    activity,
     epicSlug,
     gitMutationsDisabledReason,
     stackProjectionsFresh,
@@ -63,13 +60,12 @@ export function FlowBranchNode({
         position={Position.Right}
         className="h-2 w-2 border-0 bg-transparent opacity-0"
       />
-      <NodeCard
+      <TaskCard
         node={node}
         task={task}
         agentSession={agentSession}
         mergeRun={mergeRun}
         blockingMergeRun={blockingMergeRun}
-        activity={activity}
         branchLabel={branchLabel}
         branchLabelProvisional={branchLabelProvisional}
         gitMutationsDisabledReason={gitMutationsDisabledReason ?? null}
