@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Callable, cast
+from typing import Callable
 
-from pydantic import TypeAdapter
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+)
 
 from redesmyn.agent_interface.v0 import (
     AgentCapabilities,
@@ -40,12 +46,33 @@ def _tail_looks_like_codex_prompt(tail: str) -> bool:
     return bool(_PROMPT_TAIL_RE.search(trimmed) or _PROMPT_TAIL_ALT_RE.search(trimmed))
 
 
-def _best_effort_str(obj: dict[str, object], *keys: str) -> str | None:
-    for key in keys:
-        value = obj.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
+_EXTERNAL_CODEX_REF_ADAPTER = TypeAdapter(ExternalSessionCodex)
+
+
+def _as_codex_thread_ref(ref: ExternalSessionRef) -> ExternalSessionCodex | None:
+    if ref.type != "codex_thread":
+        return None
+    try:
+        return _EXTERNAL_CODEX_REF_ADAPTER.validate_python(ref)
+    except ValidationError:
+        return None
+
+
+class _CodexJsonlEvent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    thread_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thread_id", "threadId"),
+    )
+    turn_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("turn_id", "turnId"),
+    )
+
+
+_CODEX_JSONL_EVENT_ADAPTER = TypeAdapter(_CodexJsonlEvent)
 
 
 @dataclass(slots=True)
@@ -141,15 +168,11 @@ class CodexAgent:
 
     def _consume_structured_line(self, line: str) -> None:
         try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
+            event = _CODEX_JSONL_EVENT_ADAPTER.validate_json(line)
+        except ValidationError:
             return
-        if not isinstance(obj, dict):
-            return
-        type_value = obj.get("type")
-        if not isinstance(type_value, str):
-            return
-        event_type = type_value.strip()
+
+        event_type = event.type.strip()
         if not event_type:
             return
 
@@ -160,38 +183,30 @@ class CodexAgent:
             )
 
         if event_type == "thread.started":
-            thread_id = _best_effort_str(
-                cast(dict[str, object], obj), "thread_id", "threadId"
-            )
-            if thread_id:
-                turn_id = None
-                if self._external_session_ref.type == "codex_thread":
-                    turn_id = self._external_session_ref.turn_id
+            if event.thread_id:
+                existing_codex = _as_codex_thread_ref(self._external_session_ref)
+                turn_id = existing_codex.turn_id if existing_codex is not None else None
                 self._external_session_ref = ExternalSessionCodex(
-                    thread_id=thread_id, turn_id=turn_id
+                    thread_id=event.thread_id, turn_id=turn_id
                 )
             return
 
         if event_type == "turn.started":
-            turn_id = _best_effort_str(
-                cast(dict[str, object], obj), "turn_id", "turnId"
-            )
-            if turn_id and self._external_session_ref.type == "codex_thread":
+            existing_codex = _as_codex_thread_ref(self._external_session_ref)
+            if event.turn_id and existing_codex is not None:
                 self._external_session_ref = ExternalSessionCodex(
-                    thread_id=self._external_session_ref.thread_id,
-                    turn_id=turn_id,
+                    thread_id=existing_codex.thread_id,
+                    turn_id=event.turn_id,
                 )
             self._note_busy()
             return
 
         if event_type == "turn.completed":
-            turn_id = _best_effort_str(
-                cast(dict[str, object], obj), "turn_id", "turnId"
-            )
-            if turn_id and self._external_session_ref.type == "codex_thread":
+            existing_codex = _as_codex_thread_ref(self._external_session_ref)
+            if event.turn_id and existing_codex is not None:
                 self._external_session_ref = ExternalSessionCodex(
-                    thread_id=self._external_session_ref.thread_id,
-                    turn_id=turn_id,
+                    thread_id=existing_codex.thread_id,
+                    turn_id=event.turn_id,
                 )
             self._set_turn_state(AgentTurnState.Completed)
             self._busy_since_s = None
@@ -207,8 +222,9 @@ class CodexAgent:
         match = re.search(r"\bturn[-_ ]?id\b\s*[:=]\s*([A-Za-z0-9_-]+)", text)
         turn_id = match.group(1) if match else None
 
-        if not thread_id and self._external_session_ref.type == "codex_thread":
-            thread_id = self._external_session_ref.thread_id
+        existing_codex = _as_codex_thread_ref(self._external_session_ref)
+        if not thread_id and existing_codex is not None:
+            thread_id = existing_codex.thread_id
         if not thread_id:
             return
 
@@ -216,11 +232,7 @@ class CodexAgent:
             thread_id=thread_id,
             turn_id=turn_id
             if turn_id
-            else (
-                self._external_session_ref.turn_id
-                if self._external_session_ref.type == "codex_thread"
-                else None
-            ),
+            else (existing_codex.turn_id if existing_codex is not None else None),
         )
 
     def consume_output(self, text: str) -> list[AgentEvent]:
@@ -283,7 +295,7 @@ def codex_agent_from_db_external_ref(ref_raw: object) -> CodexAgent:
     agent = CodexAgent()
     try:
         ref = adapter.validate_python(ref_raw)
-    except Exception:
+    except ValidationError:
         ref = ExternalSessionNone()
     agent.seed_external_session_ref(ref)
     return agent

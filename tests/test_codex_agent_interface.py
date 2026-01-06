@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from redesmyn.agent_interface.codex import CodexAgent
+from redesmyn.agent_interface.v0 import ExternalSessionCodex
 from redesmyn.domain.enums import AgentTurnState
 
 
@@ -16,19 +17,25 @@ def test_codex_agent_parses_structured_turn_events() -> None:
     agent = CodexAgent(clock_s=clock, max_busy_s=5.0)
 
     agent.consume_output('{"type":"thread.started","thread_id":"th_123"}\n')
-    assert agent.external_session_ref.type == "codex_thread"
-    assert agent.external_session_ref.thread_id == "th_123"
-    assert agent.external_session_ref.turn_id is None
+    codex_ref = ExternalSessionCodex.model_validate(
+        agent.external_session_ref.model_dump(mode="python")
+    )
+    assert codex_ref.thread_id == "th_123"
+    assert codex_ref.turn_id is None
 
     agent.consume_output('{"type":"turn.started","turn_id":"tu_1"}\n')
     assert agent.semantic_status.turn_state == AgentTurnState.Busy
-    assert agent.external_session_ref.type == "codex_thread"
-    assert agent.external_session_ref.turn_id == "tu_1"
+    codex_ref = ExternalSessionCodex.model_validate(
+        agent.external_session_ref.model_dump(mode="python")
+    )
+    assert codex_ref.turn_id == "tu_1"
 
     agent.consume_output('{"type":"turn.completed","turn_id":"tu_1"}\n')
     assert agent.semantic_status.turn_state == AgentTurnState.Completed
-    assert agent.external_session_ref.type == "codex_thread"
-    assert agent.external_session_ref.turn_id == "tu_1"
+    codex_ref = ExternalSessionCodex.model_validate(
+        agent.external_session_ref.model_dump(mode="python")
+    )
+    assert codex_ref.turn_id == "tu_1"
 
 
 @pytest.mark.unit
