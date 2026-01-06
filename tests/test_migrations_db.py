@@ -152,3 +152,94 @@ def test_migrations_remove_db_agent_construct(tmp_path: Path) -> None:
             ),
             {"task_id": task_id, "status": "stopped", "attach": '{"type":"none"}'},
         )
+
+
+@pytest.mark.integration
+def test_migrations_fix_agent_session_json_defaults(tmp_path: Path) -> None:
+    db_path = tmp_path / "defaults.sqlite3"
+
+    # 0017 had broken SQLite JSON defaults (colons interpreted as bind params).
+    _upgrade_to_revision(db_path, "0017_agent_session_semantics")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO repositories (workspace_id, repo_id, repo_root, default_branch) "
+                "VALUES (:workspace_id, :repo_id, :repo_root, :default_branch)"
+            ),
+            {
+                "workspace_id": "default",
+                "repo_id": "test",
+                "repo_root": "/tmp/test",
+                "default_branch": "main",
+            },
+        )
+        repo_id = int(conn.execute(text("SELECT id FROM repositories")).scalar_one())
+        conn.execute(
+            text(
+                "INSERT INTO epics (repository_id, name, slug, root_branch) "
+                "VALUES (:repository_id, :name, :slug, :root_branch)"
+            ),
+            {
+                "repository_id": repo_id,
+                "name": "Test Epic",
+                "slug": "test-epic",
+                "root_branch": "main",
+            },
+        )
+        epic_id = int(conn.execute(text("SELECT id FROM epics")).scalar_one())
+        conn.execute(
+            text(
+                "INSERT INTO tasks (epic_id, title, source, authority, state) "
+                "VALUES (:epic_id, :title, :source, :authority, :state)"
+            ),
+            {
+                "epic_id": epic_id,
+                "title": "Task 1",
+                "source": "local",
+                "authority": "local",
+                "state": "todo",
+            },
+        )
+        task_id = int(conn.execute(text("SELECT id FROM tasks")).scalar_one())
+
+        # Insert a session relying on DB-side defaults for new JSON columns.
+        conn.execute(
+            text(
+                "INSERT INTO agent_sessions (task_id, status, attach) "
+                "VALUES (:task_id, :status, :attach)"
+            ),
+            {"task_id": task_id, "status": "running", "attach": '{"type":"none"}'},
+        )
+
+        row = conn.execute(
+            text(
+                "SELECT json_valid(agent_capabilities), json_valid(agent_semantic_status) "
+                "FROM agent_sessions ORDER BY id DESC LIMIT 1"
+            )
+        ).fetchone()
+        assert row and int(row[0]) == 0 and int(row[1]) == 0
+
+    engine.dispose()
+
+    upgrade_to_head(db_path=db_path)
+    assert _sqlite_alembic_version(db_path) == head_revision(db_path=db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                "SELECT json_valid(agent_capabilities), json_valid(agent_semantic_status) "
+                "FROM agent_sessions ORDER BY id DESC LIMIT 1"
+            )
+        ).fetchone()
+        assert row and int(row[0]) == 1 and int(row[1]) == 1
+
+        create_sql = conn.execute(
+            text(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_sessions'"
+            )
+        ).scalar_one()
+        assert '"can_send_text":true' in str(create_sql)
+        assert '"detail":null' in str(create_sql)
