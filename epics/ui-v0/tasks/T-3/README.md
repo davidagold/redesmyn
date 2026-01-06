@@ -42,6 +42,7 @@ Target the biggest/most entangled components first (expected candidates):
 
 - `dashboard/src/routes/EpicView.tsx`
 - `dashboard/src/components/graph/GraphView.tsx`
+- `dashboard/src/components/graph/NodeCard.tsx` (rename to `TaskCard.tsx` as part of this task)
 - `dashboard/src/components/layout/DetailsPanel.tsx`
 
 Approach:
@@ -77,6 +78,100 @@ This task should make it easy to implement T-2 (TanStack Query) by:
 - isolating data fetching into hook modules
 - reducing “manual refresh” wiring complexity
 - ensuring components can render well from cached/partial data
+
+## Additional requirements (v0 polish + simplification)
+
+These are concrete follow-ups discovered while dogfooding. They are explicitly in-scope for this refactor because they remove complexity and set stronger invariants for future work.
+
+### A) React best practices (effect hygiene)
+
+- Avoid `useEffect` for derived state, orchestration, or “keep X in sync with Y” patterns.
+  - Prefer deriving state from props/query state via pure functions + `useMemo`.
+  - Effects are acceptable for true subscriptions / imperative bridges (WebSocket wiring, timers, DOM integration), but they should be isolated in small hooks and kept rare in large view components.
+
+### B) Remove incidental motion (reduce visual + code footprint)
+
+- Remove the pulsing overlay around the agent status icon in the task card.
+- Remove graph edge animations that fire when git operations succeed (the “edge pulse” system).
+  - This feature currently spans `GraphView` + edge components + CSS keyframes; deleting it meaningfully reduces surface area.
+- In general: avoid adding motion unless it encodes new information that cannot be conveyed with simpler status cues.
+
+### C) Naming consistency
+
+- Rename `NodeCard` → `TaskCard`.
+  - “node” should mean “graph node” (layout/XYFlow concept); “task” should mean the domain object.
+  - Keep naming consistent across file names, component names, and props.
+
+## Concrete codebase-specific opportunities (reduce footprint)
+
+These are specific, high-leverage cleanups that measurably shrink the amount of code touched per change.
+
+### 1) Collapse duplicated “iterate over tasks” logic in `EpicView`
+
+In `dashboard/src/routes/EpicView.tsx`, we currently compute:
+
+- `runSummary`
+- `actionTargets`
+- `runBuckets`
+
+Each of these loops over the tasks list with near-identical predicates and slightly different outputs. Create a single derived “run toolbar model” (counts, buckets, action targets, and disabled-reason helpers) and have the UI read from it.
+
+### 2) Delete the edge pulse subsystem (if we keep the UI change above)
+
+If we are removing success edge animations, delete the related code rather than leaving it dormant:
+
+- `dashboard/src/components/graph/edgePulse.ts`
+- `dashboard/src/components/graph/CommitStringEdge.tsx`
+- `dashboard/src/components/graph/RoundedSmoothStepEdge.tsx`
+- supporting logic in `dashboard/src/components/graph/GraphView.tsx`
+- CSS keyframes/classes in `dashboard/src/index.css`
+
+### 3) Standardize callouts into a single reusable primitive
+
+We have multiple “callout-like” cards (graph card overlays and Details panel) that repeat:
+
+- tone → border/bg/ring/icon mappings
+- compact action rows
+- “show details” affordances
+
+Introduce a small `Callout` primitive (or equivalent) with a clear `tone` API and reuse it everywhere.
+
+### 4) Isolate “imperative / effectful” glue into hooks
+
+Examples that should live outside large view components:
+
+- sessionStorage state (cursors, bulk action state)
+- timers/TTL bookkeeping for transient UI state
+- WebSocket event plumbing
+
+The route should read as mostly declarative UI + “compose hooks”.
+
+### 5) Split `TaskCard` along stable boundaries
+
+Even before T-2, split the card into smaller components:
+
+- header (title + badges)
+- right-side quick actions
+- callouts/remediation content
+- status iconography
+
+This makes it easier to remove features (like motion overlays) and reduces the risk of incidental regressions.
+
+### 6) Reduce bundle/startup footprint where possible
+
+ELK is imported synchronously via `elkjs/lib/elk.bundled.js` (see `dashboard/src/components/graph/elkLayout.ts`). If startup cost becomes noticeable, consider lazy-loading ELK and/or moving layout to a worker to keep the initial chunk smaller.
+
+### 7) Reduce API boilerplate before adding TanStack Query
+
+`dashboard/src/api.ts` contains a lot of repeated fetch/error handling patterns. A small `requestJson` helper (method + path + body → typed result) would reduce code and make query/mutation functions smaller and more consistent once T-2 lands.
+
+## Test/verification guidance
+
+- Prefer small, pure-logic tests in `dashboard/tests/*` for:
+  - selection/bucket computation
+  - status derivations (daemon/merge run)
+  - “run toolbar model” logic (once extracted)
+- Keep UI tests minimal; aim for correctness by shrinking and purifying the logic layer.
 
 ## Non-goals
 
