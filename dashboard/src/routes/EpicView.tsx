@@ -291,10 +291,7 @@ export function EpicView() {
         scheduleGraphRefresh()
         return
       }
-      if (
-        event.eventType === "node.stack_in_sync" ||
-        event.eventType === "task.stack_in_sync"
-      ) {
+      if (event.eventType === "task.stack_in_sync") {
         scheduleGraphRefresh()
         return
       }
