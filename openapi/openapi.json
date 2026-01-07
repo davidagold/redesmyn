@@ -1416,6 +1416,101 @@
         "title": "ManualReleaseResponse",
         "type": "object"
       },
+      "MergeConflictAssistStatusResponse": {
+        "properties": {
+          "active": {
+            "default": false,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "agentSessionId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentsessionid"
+          },
+          "agentTaskId": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agenttaskid"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "messageSentAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messagesentat"
+          },
+          "state": {
+            "default": "inactive",
+            "enum": [
+              "inactive",
+              "waiting_for_agent_ready",
+              "sent_waiting_for_turn_complete",
+              "waiting_for_repo_clean",
+              "ready_to_resume",
+              "timed_out",
+              "unsupported",
+              "resumed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "timeoutAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeoutat"
+          },
+          "waitingOn": {
+            "items": {
+              "enum": [
+                "agent_ready",
+                "agent_turn_complete",
+                "repo_clean"
+              ],
+              "type": "string"
+            },
+            "title": "Waitingon",
+            "type": "array"
+          }
+        },
+        "title": "MergeConflictAssistStatusResponse",
+        "type": "object"
+      },
       "MergeRunCancelRequest": {
         "properties": {
           "abortGit": {
@@ -1606,6 +1701,16 @@
             "default": true,
             "title": "Canonical",
             "type": "boolean"
+          },
+          "conflictAssist": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MergeConflictAssistStatusResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "createdAt": {
             "format": "date-time",

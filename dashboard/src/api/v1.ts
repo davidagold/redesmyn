@@ -1059,6 +1059,32 @@ export interface components {
        */
       type: "manual"
     }
+    /** MergeConflictAssistStatusResponse */
+    MergeConflictAssistStatusResponse: {
+      /**
+       * Active
+       * @default false
+       */
+      active: boolean
+      /** Agentsessionid */
+      agentSessionId?: number | null
+      /** Agenttaskid */
+      agentTaskId?: number | null
+      /** Detail */
+      detail?: string | null
+      /** Messagesentat */
+      messageSentAt?: string | null
+      /**
+       * State
+       * @default inactive
+       * @enum {string}
+       */
+      state: "inactive" | "waiting_for_agent_ready" | "sent_waiting_for_turn_complete" | "waiting_for_repo_clean" | "ready_to_resume" | "timed_out" | "unsupported" | "resumed"
+      /** Timeoutat */
+      timeoutAt?: string | null
+      /** Waitingon */
+      waitingOn?: ("agent_ready" | "agent_turn_complete" | "repo_clean")[]
+    }
     /** MergeRunCancelRequest */
     MergeRunCancelRequest: {
       /**
@@ -1129,6 +1155,7 @@ export interface components {
        * @default true
        */
       canonical: boolean
+      conflictAssist?: components["schemas"]["MergeConflictAssistStatusResponse"] | null
       /**
        * Createdat
        * Format: date-time
