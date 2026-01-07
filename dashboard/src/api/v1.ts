@@ -573,6 +573,11 @@ export interface components {
       canStreamSemanticEvents: boolean
     }
     /**
+     * AgentInterfaceMode
+     * @enum {string}
+     */
+    AgentInterfaceMode: "interactive" | "structured"
+    /**
      * AgentKind
      * @enum {string}
      */
@@ -582,6 +587,15 @@ export interface components {
      * @enum {string}
      */
     AgentKindSelection: "auto" | "generic" | "codex" | "claude_code"
+    /** AgentPreviewResponse */
+    AgentPreviewResponse: {
+      /** Lastassistantmessageat */
+      lastAssistantMessageAt?: string | null
+      /** Lastassistantmessagepreview */
+      lastAssistantMessagePreview?: string | null
+      /** Lastmessageturnid */
+      lastMessageTurnId?: string | null
+    }
     /** AgentSemanticStatusResponse */
     AgentSemanticStatusResponse: {
       /** Detail */
@@ -592,12 +606,15 @@ export interface components {
     /** AgentSessionResponse */
     AgentSessionResponse: {
       agentCapabilities: components["schemas"]["AgentCapabilitiesResponse"]
+      /** @default interactive */
+      agentInterfaceMode: components["schemas"]["AgentInterfaceMode"]
       /** @default generic */
       agentKind: components["schemas"]["AgentKind"]
       /** @default auto */
       agentKindSelection: components["schemas"]["AgentKindSelection"]
       /** Agentlabel */
       agentLabel: string
+      agentPreview?: components["schemas"]["AgentPreviewResponse"]
       agentSemanticStatus: components["schemas"]["AgentSemanticStatusResponse"]
       /** Endedat */
       endedAt?: string | null

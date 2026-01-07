@@ -69,6 +69,14 @@
         "title": "AgentCapabilitiesResponse",
         "type": "object"
       },
+      "AgentInterfaceMode": {
+        "enum": [
+          "interactive",
+          "structured"
+        ],
+        "title": "AgentInterfaceMode",
+        "type": "string"
+      },
       "AgentKind": {
         "enum": [
           "generic",
@@ -87,6 +95,46 @@
         ],
         "title": "AgentKindSelection",
         "type": "string"
+      },
+      "AgentPreviewResponse": {
+        "properties": {
+          "lastAssistantMessageAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastassistantmessageat"
+          },
+          "lastAssistantMessagePreview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastassistantmessagepreview"
+          },
+          "lastMessageTurnId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastmessageturnid"
+          }
+        },
+        "title": "AgentPreviewResponse",
+        "type": "object"
       },
       "AgentSemanticStatusResponse": {
         "properties": {
@@ -114,6 +162,10 @@
           "agentCapabilities": {
             "$ref": "#/components/schemas/AgentCapabilitiesResponse"
           },
+          "agentInterfaceMode": {
+            "$ref": "#/components/schemas/AgentInterfaceMode",
+            "default": "interactive"
+          },
           "agentKind": {
             "$ref": "#/components/schemas/AgentKind",
             "default": "generic"
@@ -125,6 +177,9 @@
           "agentLabel": {
             "title": "Agentlabel",
             "type": "string"
+          },
+          "agentPreview": {
+            "$ref": "#/components/schemas/AgentPreviewResponse"
           },
           "agentSemanticStatus": {
             "$ref": "#/components/schemas/AgentSemanticStatusResponse"
