@@ -49,8 +49,12 @@ import { AgentKindSelect } from "@/components/agents/AgentKindSelect"
 import { FloatingActions } from "@/components/ui/floating-actions"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { ResourceBadge } from "@/components/ui/resource-badge"
-import { inferAgentKindFromCommand, labelForAgentKind } from "@/lib/agent-kind"
 import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
+import {
+  inferAgentKindFromCommand,
+  inferStructuredAgentFromCommand,
+  labelForAgentKind,
+} from "@/lib/agent-kind"
 import {
   ChevronDown,
   ChevronUp,
@@ -532,6 +536,25 @@ function AgentActions({
     return inferAgentKindFromCommand(effectiveCommand)
   }, [harnessCommand, harnessDirty, harnessDraftTrimmed, harnessEditable])
 
+  const effectiveHarnessForNextRun = useMemo(() => {
+    if (!hasAgent) {
+      return configuredHarnessCommand
+    }
+    if (harnessDirty) {
+      return harnessDraftTrimmed
+    }
+    return harnessCommand
+  }, [
+    configuredHarnessCommand,
+    hasAgent,
+    harnessCommand,
+    harnessDirty,
+    harnessDraftTrimmed,
+  ])
+  const structuredAgentForNextRun = useMemo(() => {
+    return inferStructuredAgentFromCommand(effectiveHarnessForNextRun)
+  }, [effectiveHarnessForNextRun])
+  const structuredModeForNextRun = structuredAgentForNextRun !== null
   const oneTimePreludeValue = oneTimePrelude.trim()
 
   async function handleStart() {
@@ -880,9 +903,34 @@ function AgentActions({
                 ? `Auto will infer ${labelForAgentKind(inferredKindFromCommand)} from your command; switch if wrong.`
                 : "Auto infers the agent from your command; switch if wrong."}
           </div>
+          {structuredModeForNextRun ? (
+            <div className="text-xs text-muted-foreground">
+              Structured output detected for{" "}
+              {labelForAgentKind(structuredAgentForNextRun ?? "generic")}.
+              Ensure Agent kind is Auto (or matches) to enable semantic events.
+            </div>
+          ) : null}
         </div>
       ) : null}
 
+      {agentSession?.agentInterfaceMode === "structured" ||
+      structuredModeForNextRun ? (
+        <div className="grid gap-1">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">Interface mode</div>
+            <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
+              Structured
+            </span>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Enabled via command flags for{" "}
+            {structuredAgentForNextRun
+              ? labelForAgentKind(structuredAgentForNextRun)
+              : (resolvedAgentKindLabel ?? "this agent")}
+            .
+          </div>
+        </div>
+      ) : null}
       <div className="grid gap-1">
         <div className="flex items-center justify-between gap-3">
           <div className="text-xs text-muted-foreground">One-time prelude</div>
@@ -890,11 +938,23 @@ function AgentActions({
             variant="ghost"
             size="xs"
             onClick={() => setOneTimePreludeOpen((open) => !open)}
-            disabledReason={pending !== null ? "Action in progress" : null}
+            disabledReason={
+              pending !== null
+                ? "Action in progress"
+                : structuredModeForNextRun
+                  ? "Prelude is disabled in structured mode"
+                  : null
+            }
           >
             {oneTimePreludeOpen ? "Hide" : "Set"}
           </Button>
         </div>
+        {structuredModeForNextRun ? (
+          <div className="text-xs text-muted-foreground">
+            Prelude is disabled for structured output to keep the stream
+            machine-readable.
+          </div>
+        ) : null}
         {oneTimePreludeOpen ? (
           <>
             <textarea
@@ -902,7 +962,7 @@ function AgentActions({
               value={oneTimePrelude}
               onChange={(e) => setOneTimePrelude(e.target.value)}
               placeholder="Optional. Sent once on the next Start/Restart. Supports placeholders like {task_id}, {task_title}, {epic_slug}."
-              disabled={pending !== null}
+              disabled={pending !== null || structuredModeForNextRun}
             />
             <div className="flex items-center justify-between gap-3">
               <div className="text-xs text-muted-foreground">
