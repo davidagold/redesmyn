@@ -1434,18 +1434,11 @@ async def restart_task_agent(
     detach: bool,
     prelude_override: str | None = None,
     agent_kind_selection_override: AgentKindSelection | None = None,
-    interface_mode_override: AgentInterfaceMode | None = None,
-    default_interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
     default_agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
 ) -> StartAgentResult:
     external_session_ref_hint: dict[str, Any] | None = None
     agent_kind_selection = agent_kind_selection_override
-    interface_mode = interface_mode_override
-    if (
-        harness_command is None
-        or agent_kind_selection is None
-        or interface_mode is None
-    ):
+    if harness_command is None or agent_kind_selection is None:
         engine = create_engine(ctx.db_path)
         try:
             sessionmaker = create_sessionmaker(engine)
@@ -1459,8 +1452,6 @@ async def restart_task_agent(
                     external_session_ref_hint = latest.external_session_ref
                     if agent_kind_selection is None:
                         agent_kind_selection = latest.agent_kind_selection
-                    if interface_mode is None:
-                        interface_mode = latest.agent_interface_mode
                 if harness_command is None:
                     if resolved_launch_configuration is None:
                         raise RuntimeError(
@@ -1474,8 +1465,6 @@ async def restart_task_agent(
             await engine.dispose()
     if agent_kind_selection is None:
         agent_kind_selection = default_agent_kind_selection
-    if interface_mode is None:
-        interface_mode = default_interface_mode
 
     if not detach:
         raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
@@ -1494,7 +1483,6 @@ async def restart_task_agent(
         prelude_override=prelude_override,
         agent_kind_selection=agent_kind_selection,
         external_session_ref_hint=external_session_ref_hint,
-        interface_mode=interface_mode,
     )
 
 

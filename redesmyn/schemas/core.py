@@ -204,7 +204,6 @@ AttachInfoResponse = Annotated[
 class TaskAgentStartRequest(ApiResponse):
     harness: str
     agent_kind: AgentKindSelection | None = None
-    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -212,7 +211,6 @@ class TaskAgentStartRequest(ApiResponse):
 class TaskAgentRestartRequest(ApiResponse):
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
-    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -245,7 +243,6 @@ class TaskAgentBulkRunRequest(ApiRequest):
     restart_task_ids: list[int] = Field(default_factory=list)
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
-    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -265,7 +262,6 @@ class TaskAgentBulkActionRequest(ApiRequest):
     actions: list[TaskAgentBulkActionItemRequest] = Field(default_factory=list)
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
-    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
