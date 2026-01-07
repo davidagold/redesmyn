@@ -500,11 +500,13 @@ def infer_interface_mode_from_argv(
                 else AgentInterfaceMode.Interactive
             )
         case AgentKind.ClaudeCode:
+            has_print = "--print" in agent_argv or "-p" in agent_argv
             return (
                 AgentInterfaceMode.Structured
                 if _argv_has_flag_value(
                     agent_argv, flag="--output-format", value="stream-json"
                 )
+                and has_print
                 else AgentInterfaceMode.Interactive
             )
         case _:

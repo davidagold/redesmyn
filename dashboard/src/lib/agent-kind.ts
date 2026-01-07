@@ -198,7 +198,9 @@ export function inferStructuredAgentFromCommand(
     return _isCodexStructuredArgv(agentArgv) ? "codex" : null
   }
   if (kind === "claude_code") {
-    return _hasFlagValue(agentArgv, "--output-format", "stream-json")
+    const hasPrint = agentArgv.includes("--print") || agentArgv.includes("-p")
+    return _hasFlagValue(agentArgv, "--output-format", "stream-json") &&
+      hasPrint
       ? "claude_code"
       : null
   }
