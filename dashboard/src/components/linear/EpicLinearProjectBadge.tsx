@@ -36,6 +36,7 @@ export function EpicLinearProjectBadge({
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [view, setView] = useState<PanelView>("projects")
   const [labelInput, setLabelInput] = useState("")
+  const [labelIsDirty, setLabelIsDirty] = useState(false)
 
   const projectsQuery = useLinearProjectsQuery({
     enabled: linearConnected && popoverOpen,
@@ -65,6 +66,7 @@ export function EpicLinearProjectBadge({
     setPopoverOpen(false)
     setView("projects")
     setLabelInput("")
+    setLabelIsDirty(false)
   }
 
   async function handleSelectProject(project: LinearProject) {
@@ -95,21 +97,31 @@ export function EpicLinearProjectBadge({
   }
 
   async function handleClearMilestone() {
+    const labelName =
+      (labelIsDirty
+        ? labelInput
+        : (configQuery.data?.labelName ?? "")
+      ).trim() || epic.slug
     await updateConfigMutation.mutateAsync({
       epicSlug: epic.slug,
       milestoneId: null,
-      labelName: labelInput || epic.slug,
+      labelName,
     })
   }
 
   async function handleSetLabel() {
-    const name = labelInput.trim() || epic.slug
+    const name =
+      (labelIsDirty
+        ? labelInput
+        : (configQuery.data?.labelName ?? "")
+      ).trim() || epic.slug
     await updateConfigMutation.mutateAsync({
       epicSlug: epic.slug,
       labelName: name,
       milestoneId: null,
     })
-    setLabelInput("")
+    setLabelInput(name)
+    setLabelIsDirty(true)
   }
 
   const isSaving =
@@ -236,7 +248,7 @@ export function EpicLinearProjectBadge({
                         <Tag className="size-3" />
                         <span>Label</span>
                         {configQuery.data?.syncMode === "label" ? (
-                          <span className="ml-auto rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
+                          <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
                             Active
                           </span>
                         ) : null}
@@ -246,8 +258,15 @@ export function EpicLinearProjectBadge({
                           type="text"
                           className="h-7 flex-1 rounded-md bg-background/40 px-2 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
                           placeholder={epic.slug}
-                          value={labelInput}
-                          onChange={(e) => setLabelInput(e.target.value)}
+                          value={
+                            labelIsDirty
+                              ? labelInput
+                              : (configQuery.data?.labelName ?? "")
+                          }
+                          onChange={(e) => {
+                            setLabelIsDirty(true)
+                            setLabelInput(e.target.value)
+                          }}
                           disabled={isSaving}
                         />
                         <Button
@@ -273,7 +292,7 @@ export function EpicLinearProjectBadge({
                         <Target className="size-3" />
                         <span>Milestone</span>
                         {configQuery.data?.syncMode === "milestone" ? (
-                          <span className="ml-auto rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
+                          <span className="rounded-full bg-foreground/10 px-1.5 py-0.5 text-[0.625rem] text-foreground/70">
                             Active
                           </span>
                         ) : null}
