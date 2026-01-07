@@ -21,4 +21,5 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/git-mechanics-v0/README.md`
 - `epics/linear-integration/README.md`
 - `epics/tests-v0/README.md`
+- `epics/v0-launch/README.md`
 - `epics/backlog/README.md`
