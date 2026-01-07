@@ -46,7 +46,6 @@ from redesmyn.domain.enums import (
     AgentInterfaceMode,
     AgentSessionRuntimeKind,
     AgentStatus,
-    AgentTurnState,
 )
 from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
