@@ -640,6 +640,81 @@ async def test_agent_driver_persists_semantic_events_and_preview_from_structured
 
 
 @pytest.mark.integration
+async def test_agent_driver_drains_structured_log_when_tmux_exits(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    log_path = scenario.ctx.state_dir / "external" / "codex-tmux-exit.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            [
+                '{"type":"thread.started","thread_id":"th_123"}',
+                '{"type":"turn.started","turn_id":"tu_1"}',
+                '{"type":"assistant.message","role":"assistant","text":"Hello world"}',
+                '{"type":"turn.completed","turn_id":"tu_1"}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                agent_kind=AgentKind.Codex,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                attach=AttachTmux(
+                    session=tmux_name, socket_path=None, log_path=str(log_path)
+                ).model_dump(mode="python"),
+            )
+        )
+        await session.commit()
+
+    fake_tmux = _FakeTmux(sessions=set(), pipe_calls=[])
+    runtime: dict[int, object] = {}
+    driver_started_at = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+            driver_started_at=driver_started_at,
+        )
+
+    async with scenario.db.session() as session:
+        events = list(
+            await session.scalars(
+                select(Event.event_type).where(
+                    Event.event_type.in_(
+                        [
+                            "agent.turn_started",
+                            "agent.assistant_message",
+                            "agent.turn_completed",
+                            "task.agent_session_update",
+                        ]
+                    )
+                )
+            )
+        )
+        assert "agent.turn_started" in events
+        assert "agent.assistant_message" in events
+        assert "agent.turn_completed" in events
+
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.status == AgentStatus.Stopped
+        assert row.ended_at is not None
+        assert row.agent_preview.get("last_assistant_message_preview") == "Hello world"
+
+
+@pytest.mark.integration
 async def test_agent_driver_kill_switch_disables_background_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -456,6 +456,54 @@ async def supervise_once(
             case _:
                 return
 
+    async def process_log_text(
+        *,
+        agent_session: AgentSession,
+        runtime: _SessionRuntime,
+        log_text: str | None,
+    ) -> None:
+        # Tick the backend every supervise loop so interpreters can enforce
+        # timeouts / degrade-to-unknown behavior even when the log is quiet.
+        agent_events = runtime.backend.consume_output(log_text or "")
+
+        # If we're attaching to a pre-existing session (e.g. after server
+        # restart), we start tailing from the end of the log and defer
+        # persisting updates until we see new log activity.
+        if runtime.skip_persist_until_log_activity and not log_text:
+            return
+        runtime.skip_persist_until_log_activity = False
+
+        # Persist semantic events derived from structured output.
+        ref = runtime.backend.external_session_ref
+        for agent_event in agent_events:
+            await persist_agent_event(
+                agent_session=agent_session,
+                runtime=runtime,
+                event=agent_event,
+                ref=ref,
+                now=now,
+            )
+
+        next_caps = runtime.backend.capabilities.model_dump(mode="python")
+        next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
+        next_external_ref = runtime.backend.external_session_ref.model_dump(
+            mode="python"
+        )
+
+        changed = False
+        if agent_session.agent_capabilities != next_caps:
+            agent_session.agent_capabilities = next_caps
+            changed = True
+        if agent_session.agent_semantic_status != next_semantic_status:
+            agent_session.agent_semantic_status = next_semantic_status
+            changed = True
+        if agent_session.external_session_ref != next_external_ref:
+            agent_session.external_session_ref = next_external_ref
+            changed = True
+
+        if changed:
+            await flush_session_update(agent_session)
+
     for task_id in running_task_ids:
         if task_id not in tasks_by_id:
             continue
@@ -549,8 +597,45 @@ async def supervise_once(
             and tmux_snapshot is not None
             and tmux_snapshot.authoritative
         ):
-            tmux_name = tmux_session_name_for_task(task_id=task_id)
+            match attach:
+                case AttachTmux(session=tmux_name, log_path=log_path):
+                    pass
+                case _:
+                    tmux_name = tmux_session_name_for_task(task_id=task_id)
+                    log_path = None
             if tmux_name not in tmux_sessions:
+                if log_path:
+                    drain_runtime = runtime_by_session_id.get(agent_session.id)
+                    if drain_runtime is None:
+                        skip_history = _should_skip_log_history(
+                            agent_session=agent_session,
+                            driver_started_at=driver_started_at,
+                        )
+                        drain_runtime = _SessionRuntime(
+                            backend=backend_factory(agent_session=agent_session),
+                            cursor=_log_file_size(Path(log_path))
+                            if skip_history
+                            else 0,
+                            skip_persist_until_log_activity=skip_history,
+                        )
+                        runtime_by_session_id[agent_session.id] = drain_runtime
+
+                    drain_log_path = Path(log_path)
+                    while True:
+                        drained_text, next_cursor = _read_log_incremental(
+                            log_path=drain_log_path,
+                            cursor=drain_runtime.cursor,
+                            max_read_bytes=max_read_bytes,
+                        )
+                        drain_runtime.cursor = next_cursor
+                        if drained_text is None:
+                            break
+                        await process_log_text(
+                            agent_session=agent_session,
+                            runtime=drain_runtime,
+                            log_text=drained_text,
+                        )
+
                 agent_session.status = (
                     AgentStatus.Stopped
                     if agent_session.agent_interface_mode
@@ -585,56 +670,11 @@ async def supervise_once(
         )
         runtime.cursor = next_cursor
 
-        # Tick the backend every supervise loop so interpreters can enforce
-        # timeouts / degrade-to-unknown behavior even when the log is quiet.
-        agent_events = runtime.backend.consume_output(log_text or "")
-
-        # If we're attaching to a pre-existing session (e.g. after server
-        # restart), we start tailing from the end of the log and defer
-        # persisting updates until we see new log activity.
-        if runtime.skip_persist_until_log_activity and not log_text:
-            continue
-        runtime.skip_persist_until_log_activity = False
-
-        # Persist semantic events derived from structured output.
-        ref = runtime.backend.external_session_ref
-        for agent_event in agent_events:
-            await persist_agent_event(
-                agent_session=agent_session,
-                runtime=runtime,
-                event=agent_event,
-                ref=ref,
-                now=now,
-            )
-
-        next_caps = runtime.backend.capabilities.model_dump(mode="python")
-        next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
-        next_external_ref = runtime.backend.external_session_ref.model_dump(
-            mode="python"
+        await process_log_text(
+            agent_session=agent_session,
+            runtime=runtime,
+            log_text=log_text,
         )
-
-        changed = False
-        if agent_session.agent_capabilities != next_caps:
-            agent_session.agent_capabilities = next_caps
-            changed = True
-        if agent_session.agent_semantic_status != next_semantic_status:
-            agent_session.agent_semantic_status = next_semantic_status
-            changed = True
-        if agent_session.external_session_ref != next_external_ref:
-            agent_session.external_session_ref = next_external_ref
-            changed = True
-
-        # Snapshot-based turn completion for non-structured sessions: keep the
-        # session view consistent even if we didn't emit explicit events.
-        if (
-            runtime.backend.capabilities.can_stream_semantic_events is False
-            and runtime.backend.semantic_status.turn_state == AgentTurnState.Completed
-        ):
-            # No-op for now; downstream gating should rely on structured events.
-            pass
-
-        if changed:
-            await flush_session_update(agent_session)
 
     active_session_ids = {
         row.id

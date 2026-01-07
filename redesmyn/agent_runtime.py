@@ -1167,9 +1167,6 @@ async def start_task_agent(
 
             await asyncio.sleep(0.25)
             if not _tmux_has_session(name=tmux_name):
-                now = datetime.now(UTC)
-                agent_session.status = AgentStatus.Error
-                agent_session.ended_at = now
                 log_path = agent_session_log_path(
                     ctx, task_id=task.id, session_id=agent_session.id
                 )
@@ -1180,15 +1177,20 @@ async def start_task_agent(
                     )
                 else:
                     warnings.append("Harness exited immediately (no logs captured).")
-                await session.commit()
-                await session.refresh(agent_session)
-                return StartAgentResult(
-                    agent_label=agent_label,
-                    agent_session=agent_session,
-                    attach=attach,
-                    started=False,
-                    warnings=tuple(warnings),
-                )
+
+                if interface_mode != AgentInterfaceMode.Structured:
+                    now = datetime.now(UTC)
+                    agent_session.status = AgentStatus.Error
+                    agent_session.ended_at = now
+                    await session.commit()
+                    await session.refresh(agent_session)
+                    return StartAgentResult(
+                        agent_label=agent_label,
+                        agent_session=agent_session,
+                        attach=attach,
+                        started=False,
+                        warnings=tuple(warnings),
+                    )
 
             now = datetime.now(UTC)
             agent_session.status = AgentStatus.Running
