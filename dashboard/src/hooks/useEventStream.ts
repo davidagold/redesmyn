@@ -192,9 +192,16 @@ export function useEventStream(options: {
   onResync?: (reason: string) => void
 }) {
   const { epic, onEvent, onResync } = options
+  const onEventRef = useRef<typeof onEvent>(onEvent)
+  const onResyncRef = useRef<typeof onResync>(onResync)
   const [status, setStatus] = useState<EventStreamStatus>({ state: "idle" })
   const lastEventIdRef = useRef<number | null>(null)
   const retryRef = useRef(0)
+
+  useEffect(() => {
+    onEventRef.current = onEvent
+    onResyncRef.current = onResync
+  }, [onEvent, onResync])
 
   useEffect(() => {
     if (!epic) {
@@ -267,12 +274,12 @@ export function useEventStream(options: {
           if (msg.type === "event") {
             lastEventIdRef.current = msg.event.id
             storeCursor(epicValue, msg.event.id)
-            onEvent?.(msg.event)
+            onEventRef.current?.(msg.event)
             return
           }
 
           if (msg.type === "resync") {
-            onResync?.(msg.reason)
+            onResyncRef.current?.(msg.reason)
             return
           }
         } catch {
@@ -296,7 +303,7 @@ export function useEventStream(options: {
       }
       socket = null
     }
-  }, [epic, onEvent, onResync])
+  }, [epic])
 
   return { status }
 }
