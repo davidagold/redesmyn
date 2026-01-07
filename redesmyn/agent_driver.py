@@ -552,6 +552,10 @@ async def supervise_once(
                 runtime_by_session_id.pop(agent_session.id, None)
                 continue
 
+        log_path = _log_path_from_attach(attach)
+        if log_path is None:
+            continue
+
         runtime = runtime_by_session_id.get(agent_session.id)
         if runtime is None:
             skip_history = _should_skip_log_history(
@@ -563,10 +567,6 @@ async def supervise_once(
                 skip_persist_until_log_activity=skip_history,
             )
             runtime_by_session_id[agent_session.id] = runtime
-
-        log_path = _log_path_from_attach(attach)
-        if log_path is None:
-            continue
 
         log_text, next_cursor = _read_log_incremental(
             log_path=log_path,
