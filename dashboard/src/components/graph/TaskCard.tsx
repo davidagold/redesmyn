@@ -25,6 +25,7 @@ import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { AgentTurnStateBadge } from "@/components/agents/AgentTurnStateBadge"
 import { LinearIcon } from "@/components/linear/LinearIcon"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
+import { labelForAgentKind } from "@/lib/agent-kind"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -221,7 +222,9 @@ export function TaskCard({
   )
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
   const gitDisabledReason = gitMutationsDisabledReason ?? null
-  const harnessKind = agentSession?.launchConfigurationId?.split("/")[0] ?? null
+  const agentKindLabel = agentSession
+    ? labelForAgentKind(agentSession.agentKind)
+    : null
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
@@ -773,7 +776,7 @@ export function TaskCard({
             pendingAction !== null
               ? "Action in progress"
               : !harnessCommand.trim()
-                ? "Set a harness command in Configure"
+                ? "Set an agent command in Configure"
                 : null,
           onClick: (e) => {
             e.preventDefault()
@@ -1200,7 +1203,7 @@ export function TaskCard({
             <div className="flex flex-wrap items-end justify-start gap-2">
               <ResourceBadge
                 label={agentSession.agentLabel}
-                value={harnessKind}
+                value={agentKindLabel}
                 extendBackground
               />
               {agentSession.status === "running" ? (

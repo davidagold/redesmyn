@@ -598,7 +598,7 @@ export function EpicView() {
       return
     }
     if (options.actions.some((a) => a.action === "start") && !options.harness) {
-      throw new Error("Set a harness command in Configure")
+      throw new Error("Set an agent command in Configure")
     }
 
     const runId =
@@ -819,7 +819,7 @@ export function EpicView() {
                 )}
               />
               <TooltipContent side="bottom" align="center" sideOffset={10}>
-                Configure harness and agent prelude
+                Configure agent defaults and prelude
               </TooltipContent>
             </Tooltip>
             {runBuckets ? (
@@ -1005,7 +1005,7 @@ export function EpicView() {
                       runAction !== null || bulkAction !== null
                         ? "Action in progress"
                         : needsHarnessForAll && !configuredHarnessCommand
-                          ? "Set a harness command in Configure"
+                          ? "Set an agent command in Configure"
                           : "Nothing to start"
                     }
                   >
@@ -1058,7 +1058,7 @@ export function EpicView() {
                         runAction !== null || bulkAction !== null
                           ? "Action in progress"
                           : needsHarnessForSelected && !configuredHarnessCommand
-                            ? "Set a harness command in Configure"
+                            ? "Set an agent command in Configure"
                             : !showSelectedActions
                               ? "Select 2+ tasks"
                               : "Nothing to start in selection"

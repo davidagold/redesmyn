@@ -40,9 +40,11 @@ import {
 } from "@/lib/runningAgentsConflict"
 import { cn } from "@/lib/utils"
 import { AgentStatusBadge } from "@/components/agents/AgentStatusBadge"
+import { AgentKindSelect } from "@/components/agents/AgentKindSelect"
 import { FloatingActions } from "@/components/ui/floating-actions"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { ResourceBadge } from "@/components/ui/resource-badge"
+import { inferAgentKindFromCommand, labelForAgentKind } from "@/lib/agent-kind"
 import {
   ChevronDown,
   ChevronUp,
@@ -477,15 +479,18 @@ function AgentActions({
     [agentSession?.agentLabel],
   )
   const statusLabel = agentSession?.status ?? null
-  const harnessKind = agentSession?.launchConfigurationId?.split("/")[0] ?? null
-  const agentKindValue = useMemo(() => {
+  const resolvedAgentKindLabel = agentSession
+    ? labelForAgentKind(agentSession.agentKind)
+    : null
+  const agentKindBadgeValue = useMemo(() => {
     if (!agentSession) {
       return null
     }
+    const resolved = labelForAgentKind(agentSession.agentKind)
     if (agentSession.agentKindSelection === "auto") {
-      return `auto→${agentSession.agentKind}`
+      return `Auto→${resolved}`
     }
-    return agentSession.agentKind
+    return resolved
   }, [agentSession])
   const isRunning = statusLabel === "running" || statusLabel === "blocked"
   const canRestart = hasAgent
@@ -519,6 +524,15 @@ function AgentActions({
     harnessEditable &&
     harnessDraftTrimmed !== harnessCommand.trim() &&
     harnessDraftTrimmed.length > 0
+
+  const inferredKindFromCommand = useMemo(() => {
+    const effectiveCommand =
+      harnessEditable && harnessDirty ? harnessDraftTrimmed : harnessCommand
+    if (!effectiveCommand.trim()) {
+      return null
+    }
+    return inferAgentKindFromCommand(effectiveCommand)
+  }, [harnessCommand, harnessDirty, harnessDraftTrimmed, harnessEditable])
 
   const oneTimePreludeValue = oneTimePrelude.trim()
 
@@ -750,7 +764,7 @@ function AgentActions({
           <div className="flex flex-wrap items-center gap-2">
             <ResourceBadge
               label={agentLabel}
-              value={agentKindValue ?? harnessKind}
+              value={agentKindBadgeValue}
               extendBackground
               className="text-xs text-foreground/80"
             />
@@ -771,7 +785,7 @@ function AgentActions({
                     pending !== null
                       ? "Action in progress"
                       : harnessEditable && !harnessDraftTrimmed
-                        ? "Harness command is empty"
+                        ? "Agent command is empty"
                         : null
                   }
                 >
@@ -788,7 +802,7 @@ function AgentActions({
                     pending !== null
                       ? "Action in progress"
                       : !configuredHarnessCommand
-                        ? "Set a harness command in Configure"
+                        ? "Set an agent command in Configure"
                         : null
                   }
                 >
@@ -802,7 +816,7 @@ function AgentActions({
 
       <div className="grid gap-1">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground">Harness</div>
+          <div className="text-xs text-muted-foreground">Agent</div>
           <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
             {(orchestrationDefaults?.harness.detach ?? true)
               ? "Detached"
@@ -823,7 +837,7 @@ function AgentActions({
         )}
         <div className="text-xs text-muted-foreground">
           {harnessEditable && !harnessDraftTrimmed
-            ? "Enter a harness command to use when restarting this agent."
+            ? "Enter an agent command to use when restarting this agent."
             : harnessEditable && harnessDirty
               ? "Edited command will be used when restarting this agent."
               : agentArgv
@@ -836,29 +850,23 @@ function AgentActions({
         <div className="grid gap-1">
           <div className="flex items-center justify-between gap-3">
             <div className="text-xs text-muted-foreground">Agent kind</div>
-            {harnessKind ? (
+            {resolvedAgentKindLabel ? (
               <span className="rounded-md bg-foreground/5 px-2 py-1 text-[0.625rem] text-foreground/70">
-                command: {harnessKind}
+                resolved: {resolvedAgentKindLabel}
               </span>
             ) : null}
           </div>
-          <select
-            className="h-7 rounded-md border bg-background/40 px-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          <AgentKindSelect
             value={agentKindDraft}
-            onChange={(e) =>
-              setAgentKindDraft(e.target.value as typeof agentKindDraft)
-            }
-            disabled={pending !== null}
-          >
-            <option value="auto">Auto</option>
-            <option value="generic">Generic</option>
-            <option value="codex">Codex</option>
-            <option value="claude_code">Claude Code</option>
-          </select>
+            onChange={setAgentKindDraft}
+            disabledReason={pending !== null ? "Action in progress" : null}
+          />
           <div className="text-xs text-muted-foreground">
             {agentKindDraft === "generic"
               ? "Generic works with any command, but advanced features are disabled."
-              : "Auto infers the agent from your command; switch if wrong."}
+              : agentKindDraft === "auto" && inferredKindFromCommand
+                ? `Auto will infer ${labelForAgentKind(inferredKindFromCommand)} from your command; switch if wrong.`
+                : "Auto infers the agent from your command; switch if wrong."}
           </div>
         </div>
       ) : null}
