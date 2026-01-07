@@ -32,6 +32,7 @@ from redesmyn.agent_interface.v0 import (
 from redesmyn.domain.enums import (
     AgentKind,
     AgentKindSelection,
+    AgentInterfaceMode,
     AgentStatus,
     BlockMode,
     BlockPolicy,
@@ -143,6 +144,18 @@ class LaunchConfigurationDefinition(BaseModel):
     working_dir: Literal["node_worktree", "task_worktree"] = "task_worktree"
     bootstrap_prelude: str | None = None
     skill_recommendation: str | None = None
+
+
+class AgentPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    last_assistant_message_preview: str | None = None
+    last_assistant_message_at: datetime | None = None
+    last_message_turn_id: str | None = None
+
+
+def _default_agent_preview() -> dict[str, Any]:
+    return AgentPreview().model_dump(mode="python")
 
 
 class AttachNone(BaseModel):
@@ -375,6 +388,11 @@ class AgentSession(Base):
         default=AgentKind.Generic,
         nullable=False,
     )
+    agent_interface_mode: Mapped[AgentInterfaceMode] = mapped_column(
+        _enum_type(AgentInterfaceMode, "agent_interface_mode"),
+        default=AgentInterfaceMode.Interactive,
+        nullable=False,
+    )
 
     host_id: Mapped[int | None] = mapped_column(
         ForeignKey("hosts.id"), nullable=True, index=True
@@ -407,6 +425,11 @@ class AgentSession(Base):
         JSON_TYPE,
         nullable=False,  # Pydantic: ExternalSessionRef
         default=_default_external_session_ref,
+    )
+    agent_preview: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,  # Pydantic: AgentPreview
+        default=_default_agent_preview,
     )
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

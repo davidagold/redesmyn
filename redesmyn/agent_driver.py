@@ -5,7 +5,8 @@ import os
 import shlex
 import subprocess
 import time
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -16,7 +17,17 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.agent_kind import resolve_agent_backend
-from redesmyn.agent_interface.v0 import AgentBackend
+from redesmyn.agent_interface.v0 import (
+    AgentAssistantMessageEvent,
+    AgentBackend,
+    AgentEvent,
+    AgentTurnCompletedEvent,
+    AgentTurnStartedEvent,
+    ExternalSessionClaude,
+    ExternalSessionCodex,
+    ExternalSessionNone,
+    ExternalSessionRef,
+)
 from redesmyn.agent_runtime import (
     agent_session_log_path,
     has_tmux,
@@ -24,8 +35,14 @@ from redesmyn.agent_runtime import (
 )
 from redesmyn.context import RepoContext
 from redesmyn.db import AgentSession, Event, Task
-from redesmyn.db.models import AttachExternal, AttachInfo, AttachTmux
-from redesmyn.domain.enums import AgentSessionRuntimeKind, AgentStatus
+from redesmyn.db.models import (
+    AgentPreview,
+    AttachExternal,
+    AttachInfo,
+    AttachNone,
+    AttachTmux,
+)
+from redesmyn.domain.enums import AgentSessionRuntimeKind, AgentStatus, AgentTurnState
 from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
 
@@ -144,23 +161,38 @@ def _read_log_incremental(
 class _SessionRuntime:
     backend: AgentBackend
     cursor: int
+    suppress_event_emission: bool = True
+    recent_event_keys: deque[str] = field(default_factory=lambda: deque(maxlen=256))
 
 
-def _runtime_kind_from_attach(attach: AttachInfo | None) -> AgentSessionRuntimeKind:
-    if isinstance(attach, AttachTmux):
-        return AgentSessionRuntimeKind.Tmux
-    if isinstance(attach, AttachExternal):
-        return AgentSessionRuntimeKind.External
-    return AgentSessionRuntimeKind.None_
+def _runtime_kind_from_attach(attach: AttachInfo) -> AgentSessionRuntimeKind:
+    match attach:
+        case AttachTmux():
+            return AgentSessionRuntimeKind.Tmux
+        case AttachExternal():
+            return AgentSessionRuntimeKind.External
+        case AttachNone():
+            return AgentSessionRuntimeKind.None_
 
 
-def _log_path_from_attach(attach: AttachInfo | None) -> Path | None:
-    if attach is None:
-        return None
-    if isinstance(attach, AttachTmux) or isinstance(attach, AttachExternal):
-        if attach.log_path:
-            return Path(attach.log_path)
-    return None
+def _log_path_from_attach(attach: AttachInfo) -> Path | None:
+    match attach:
+        case AttachTmux(log_path=log_path) | AttachExternal(log_path=log_path):
+            return Path(log_path) if log_path else None
+        case AttachNone():
+            return None
+
+
+def _normalize_preview_text(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _truncate(text: str, *, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
 
 
 async def _emit_event(
@@ -182,7 +214,7 @@ def _session_update_event_payload(*, agent_session: AgentSession) -> dict[str, A
     try:
         attach = attach_adapter.validate_python(agent_session.attach)
     except Exception:
-        attach = None
+        attach = AttachNone()
     return {
         "task_id": agent_session.task_id,
         "agent_session_id": agent_session.id,
@@ -201,9 +233,11 @@ def _session_update_event_payload(*, agent_session: AgentSession) -> dict[str, A
         "runtime_kind": _runtime_kind_from_attach(attach),
         "agent_kind_selection": agent_session.agent_kind_selection,
         "agent_kind": agent_session.agent_kind,
+        "agent_interface_mode": agent_session.agent_interface_mode,
         "agent_capabilities": agent_session.agent_capabilities,
         "agent_semantic_status": agent_session.agent_semantic_status,
         "external_session_ref": agent_session.external_session_ref,
+        "agent_preview": agent_session.agent_preview,
     }
 
 
@@ -221,6 +255,7 @@ async def supervise_once(
     now = datetime.now(UTC)
     pending_events: list[Event] = []
     attach_adapter = TypeAdapter(AttachInfo)
+    preview_adapter = TypeAdapter(AgentPreview)
 
     tmux_snapshot: TmuxSessionSnapshot | None = None
     if tmux is None and has_tmux():
@@ -274,15 +309,130 @@ async def supervise_once(
 
     updated = 0
 
-    async def flush_session_update(agent_session: AgentSession) -> None:
+    async def emit_event(event_type: str, data: dict[str, Any]) -> None:
         nonlocal updated
         await _emit_event(
             session,
             pending_events,
-            event_type="task.agent_session_update",
-            data=_session_update_event_payload(agent_session=agent_session),
+            event_type=event_type,
+            data=data,
         )
         updated += 1
+
+    async def flush_session_update(agent_session: AgentSession) -> None:
+        nonlocal updated
+        await emit_event(
+            "task.agent_session_update",
+            _session_update_event_payload(agent_session=agent_session),
+        )
+
+    def external_ref_key(ref: ExternalSessionRef) -> str:
+        match ref:
+            case ExternalSessionCodex(thread_id=thread_id, turn_id=turn_id):
+                return f"codex:{thread_id}:{turn_id or ''}"
+            case ExternalSessionClaude(session_id=session_id):
+                return f"claude:{session_id}"
+            case ExternalSessionNone():
+                return "none"
+
+    def agent_event_key(
+        *, event_type: str, ref: ExternalSessionRef, text: str | None
+    ) -> str:
+        base = f"{event_type}:{external_ref_key(ref)}"
+        if text is None:
+            return base
+        normalized = _normalize_preview_text(text)
+        return f"{base}:{hash(normalized)}"
+
+    async def persist_agent_event(
+        *,
+        agent_session: AgentSession,
+        runtime: _SessionRuntime,
+        event: AgentEvent,
+        ref: ExternalSessionRef,
+        now: datetime,
+    ) -> None:
+        match event:
+            case AgentTurnStartedEvent():
+                key = agent_event_key(event_type="turn_started", ref=ref, text=None)
+                if key in runtime.recent_event_keys:
+                    return
+                runtime.recent_event_keys.append(key)
+                await emit_event(
+                    "agent.turn_started",
+                    {
+                        "task_id": agent_session.task_id,
+                        "agent_session_id": agent_session.id,
+                        "external_session_ref": ref.model_dump(mode="python"),
+                    },
+                )
+                return
+            case AgentTurnCompletedEvent():
+                key = agent_event_key(event_type="turn_completed", ref=ref, text=None)
+                if key in runtime.recent_event_keys:
+                    return
+                runtime.recent_event_keys.append(key)
+                await emit_event(
+                    "agent.turn_completed",
+                    {
+                        "task_id": agent_session.task_id,
+                        "agent_session_id": agent_session.id,
+                        "external_session_ref": ref.model_dump(mode="python"),
+                    },
+                )
+                return
+            case AgentAssistantMessageEvent():
+                raw_text = event.text
+                if not raw_text.strip():
+                    return
+                key = agent_event_key(
+                    event_type="assistant_message", ref=ref, text=raw_text
+                )
+                if key in runtime.recent_event_keys:
+                    return
+                runtime.recent_event_keys.append(key)
+
+                normalized = _normalize_preview_text(raw_text)
+                preview = _truncate(normalized, max_chars=240)
+                stored_text = _truncate(normalized, max_chars=4000)
+
+                try:
+                    current_preview = preview_adapter.validate_python(
+                        agent_session.agent_preview
+                    )
+                except Exception:
+                    current_preview = AgentPreview()
+
+                next_turn_id: str | None = None
+                match ref:
+                    case ExternalSessionCodex(turn_id=turn_id):
+                        next_turn_id = turn_id
+                next_preview = current_preview.model_copy(
+                    update={
+                        "last_assistant_message_preview": preview,
+                        "last_assistant_message_at": now,
+                        "last_message_turn_id": next_turn_id,
+                    }
+                )
+                next_preview_dump = next_preview.model_dump(mode="json")
+                if agent_session.agent_preview != next_preview_dump:
+                    agent_session.agent_preview = next_preview_dump
+                    # Preview changes should update the session snapshot event too.
+                    await flush_session_update(agent_session)
+
+                await emit_event(
+                    "agent.assistant_message",
+                    {
+                        "task_id": agent_session.task_id,
+                        "agent_session_id": agent_session.id,
+                        "text": stored_text,
+                        "preview": preview,
+                        "external_session_ref": ref.model_dump(mode="python"),
+                    },
+                )
+                return
+            case _:
+                return
 
     for task_id in running_task_ids:
         if task_id not in tasks_by_id:
@@ -318,12 +468,12 @@ async def supervise_once(
         try:
             existing_attach = attach_adapter.validate_python(agent_session.attach)
         except Exception:
-            existing_attach = None
-        existing_log_path = (
-            existing_attach.log_path
-            if isinstance(existing_attach, AttachTmux)
-            else None
-        )
+            existing_attach = AttachNone()
+        match existing_attach:
+            case AttachTmux(log_path=existing_log_path):
+                pass
+            case _:
+                existing_log_path = None
         log_path = existing_log_path or str(
             agent_session_log_path(ctx, task_id=task_id, session_id=agent_session.id)
         )
@@ -365,7 +515,7 @@ async def supervise_once(
         try:
             attach = attach_adapter.validate_python(agent_session.attach)
         except Exception:
-            attach = None
+            attach = AttachNone()
 
         runtime_kind = _runtime_kind_from_attach(attach)
         if (
@@ -402,7 +552,23 @@ async def supervise_once(
 
         # Tick the backend every supervise loop so interpreters can enforce
         # timeouts / degrade-to-unknown behavior even when the log is quiet.
-        runtime.backend.consume_output(log_text or "")
+        agent_events = runtime.backend.consume_output(log_text or "")
+
+        # Persist semantic events derived from structured output. We suppress
+        # event emission on first observation of a session in this process to
+        # avoid spamming historical events after server restart.
+        if runtime.suppress_event_emission:
+            runtime.suppress_event_emission = False
+        else:
+            ref = runtime.backend.external_session_ref
+            for agent_event in agent_events:
+                await persist_agent_event(
+                    agent_session=agent_session,
+                    runtime=runtime,
+                    event=agent_event,
+                    ref=ref,
+                    now=now,
+                )
 
         next_caps = runtime.backend.capabilities.model_dump(mode="python")
         next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
@@ -420,6 +586,15 @@ async def supervise_once(
         if agent_session.external_session_ref != next_external_ref:
             agent_session.external_session_ref = next_external_ref
             changed = True
+
+        # Snapshot-based turn completion for non-structured sessions: keep the
+        # session view consistent even if we didn't emit explicit events.
+        if (
+            runtime.backend.capabilities.can_stream_semantic_events is False
+            and runtime.backend.semantic_status.turn_state == AgentTurnState.Completed
+        ):
+            # No-op for now; downstream gating should rely on structured events.
+            pass
 
         if changed:
             await flush_session_update(agent_session)

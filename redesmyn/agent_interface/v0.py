@@ -71,8 +71,31 @@ class AgentExternalSessionRefUpdateEvent(BaseModel):
     external_session_ref: ExternalSessionRef
 
 
+class AgentTurnStartedEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["turn_started"] = "turn_started"
+
+
+class AgentTurnCompletedEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["turn_completed"] = "turn_completed"
+
+
+class AgentAssistantMessageEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["assistant_message"] = "assistant_message"
+    text: str
+
+
 AgentEvent = Annotated[
-    AgentSemanticStatusUpdateEvent | AgentExternalSessionRefUpdateEvent,
+    AgentSemanticStatusUpdateEvent
+    | AgentExternalSessionRefUpdateEvent
+    | AgentTurnStartedEvent
+    | AgentTurnCompletedEvent
+    | AgentAssistantMessageEvent,
     Field(discriminator="type"),
 ]
 

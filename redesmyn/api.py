@@ -55,6 +55,7 @@ from redesmyn.db import (
 from redesmyn.db.models import HostCapabilities, LinearEpicDefaults
 from redesmyn.docs.loader import DocLoadError, load_epic_doc
 from redesmyn.domain.enums import (
+    AgentInterfaceMode,
     AgentKindSelection,
     BlockPolicy,
     CommandState,
@@ -108,6 +109,7 @@ from redesmyn.sandbox import make_sandbox_provider
 from redesmyn.schemas.core import (
     ApiStatusResponse,
     AgentCapabilitiesResponse,
+    AgentPreviewResponse,
     AgentSemanticStatusResponse,
     AgentSessionResponse,
     AttachInfoResponse,
@@ -489,13 +491,13 @@ async def v1_ws(
 ) -> None:
     """WebSocket event stream (v0: activity + presence)."""
     app = _app_from_websocket(websocket)
-    await websocket.accept()
     try:
         await run_event_stream(
             websocket,
             app.state.sessionmaker,
             epic=epic,
             after_id=after_id,
+            event_hub=app.state.event_hub,
         )
     except WebSocketDisconnect:
         return
@@ -668,6 +670,7 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         status=session_row.status,
                         agent_kind_selection=session_row.agent_kind_selection,
                         agent_kind=session_row.agent_kind,
+                        agent_interface_mode=session_row.agent_interface_mode,
                         launch_configuration_id=session_row.launch_configuration_id,
                         resolved_launch_configuration=TypeAdapter(
                             LaunchConfigurationDefinitionResponse | None
@@ -681,6 +684,9 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         external_session_ref=TypeAdapter(
                             ExternalSessionRefResponse
                         ).validate_python(session_row.external_session_ref),
+                        agent_preview=TypeAdapter(AgentPreviewResponse).validate_python(
+                            session_row.agent_preview
+                        ),
                         started_at=session_row.started_at,
                         ended_at=session_row.ended_at,
                     )
@@ -943,6 +949,8 @@ async def start_task_agent(
             action="start",
             harness=request.harness,
             agent_kind=request.agent_kind,
+            interface_mode=request.interface_mode,
+            default_interface_mode=AgentInterfaceMode.Interactive,
             default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
@@ -1069,6 +1077,8 @@ async def _perform_task_agent_action(
     action: Literal["stop"],
     harness: str | None,
     agent_kind: AgentKindSelection | None,
+    interface_mode: AgentInterfaceMode | None,
+    default_interface_mode: AgentInterfaceMode,
     default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
@@ -1085,6 +1095,8 @@ async def _perform_task_agent_action(
     action: Literal["start", "restart"],
     harness: str | None,
     agent_kind: AgentKindSelection | None,
+    interface_mode: AgentInterfaceMode | None,
+    default_interface_mode: AgentInterfaceMode,
     default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
@@ -1100,6 +1112,8 @@ async def _perform_task_agent_action(
     action: Literal["start", "restart", "stop"],
     harness: str | None,
     agent_kind: AgentKindSelection | None,
+    interface_mode: AgentInterfaceMode | None,
+    default_interface_mode: AgentInterfaceMode,
     default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
@@ -1127,6 +1141,7 @@ async def _perform_task_agent_action(
                 task_id=task.id,
                 harness_command=harness or "",
                 agent_kind_selection=agent_kind or default_agent_kind_selection,
+                interface_mode=interface_mode or default_interface_mode,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1147,6 +1162,8 @@ async def _perform_task_agent_action(
                 task_id=task.id,
                 harness_command=harness,
                 agent_kind_selection_override=agent_kind,
+                interface_mode_override=interface_mode,
+                default_interface_mode=default_interface_mode,
                 default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
@@ -1199,6 +1216,8 @@ async def _run_task_agents_bulk(
     restart_task_ids: list[int],
     harness: str | None,
     agent_kind: AgentKindSelection | None,
+    interface_mode: AgentInterfaceMode | None,
+    default_interface_mode: AgentInterfaceMode,
     default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
@@ -1216,6 +1235,7 @@ async def _run_task_agents_bulk(
                 task_id=task_id,
                 harness_command=harness or "",
                 agent_kind_selection=agent_kind or default_agent_kind_selection,
+                interface_mode=interface_mode or default_interface_mode,
                 detach=detach,
                 prelude_override=prelude,
             )
@@ -1251,6 +1271,8 @@ async def _run_task_agents_bulk(
                 task_id=task_id,
                 harness_command=None,
                 agent_kind_selection_override=agent_kind,
+                interface_mode_override=interface_mode,
+                default_interface_mode=default_interface_mode,
                 default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude_override=prelude,
@@ -1283,6 +1305,8 @@ async def _run_task_agents_bulk_actions(
     actions: list[TaskAgentBulkActionItemRequest],
     harness: str | None,
     agent_kind: AgentKindSelection | None,
+    interface_mode: AgentInterfaceMode | None,
+    default_interface_mode: AgentInterfaceMode,
     default_agent_kind_selection: AgentKindSelection,
     detach: bool,
     prelude: str | None,
@@ -1297,6 +1321,8 @@ async def _run_task_agents_bulk_actions(
                 action=item.action,
                 harness=harness,
                 agent_kind=agent_kind,
+                interface_mode=interface_mode,
+                default_interface_mode=default_interface_mode,
                 default_agent_kind_selection=default_agent_kind_selection,
                 detach=detach,
                 prelude=prelude,
@@ -1335,6 +1361,8 @@ async def bulk_task_agent_actions(
             actions=actions,
             harness=request.harness,
             agent_kind=request.agent_kind,
+            interface_mode=request.interface_mode,
+            default_interface_mode=AgentInterfaceMode.Interactive,
             default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
@@ -1373,6 +1401,8 @@ async def run_task_agents_bulk(
             restart_task_ids=request.restart_task_ids,
             harness=request.harness,
             agent_kind=request.agent_kind,
+            interface_mode=request.interface_mode,
+            default_interface_mode=AgentInterfaceMode.Interactive,
             default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
@@ -1395,6 +1425,8 @@ async def stop_task_agent(http_request: Request, task_id: int) -> TaskAgentStopR
             action="stop",
             harness=None,
             agent_kind=None,
+            interface_mode=None,
+            default_interface_mode=AgentInterfaceMode.Interactive,
             default_agent_kind_selection=AgentKindSelection.Auto,
             detach=True,
             prelude=None,
@@ -1445,6 +1477,8 @@ async def restart_task_agent(
             action="restart",
             harness=request.harness,
             agent_kind=request.agent_kind,
+            interface_mode=request.interface_mode,
+            default_interface_mode=AgentInterfaceMode.Interactive,
             default_agent_kind_selection=default_agent_kind_selection,
             detach=request.detach,
             prelude=request.prelude,
@@ -2243,49 +2277,6 @@ async def issue_daemon_command(
         },
     )
     return command
-
-
-@v1.websocket("/ws")
-async def ui_event_stream(websocket: WebSocket) -> None:
-    app = _app_from_websocket(websocket)
-    send_queue = await app.state.event_hub.connect(websocket)
-    sender_task = asyncio.create_task(
-        app.state.event_hub.sender_loop(websocket, send_queue)
-    )
-    try:
-        while True:
-            msg = await websocket.receive_json()
-            if not isinstance(msg, dict):
-                continue
-            msg_type = msg.get("type")
-            if msg_type == "ping":
-                await websocket.send_json({"type": "pong", "id": msg.get("id")})
-                continue
-            if msg_type == "subscribe":
-                since_id = msg.get("since_id")
-                if not isinstance(since_id, int):
-                    continue
-                sessionmaker = app.state.sessionmaker
-                async with sessionmaker() as session:
-                    rows = await session.scalars(
-                        select(Event).where(Event.id > since_id).order_by(Event.id)
-                    )
-                    for row in rows:
-                        event = EventResponse.model_validate(row, from_attributes=True)
-                        await websocket.send_json(
-                            {
-                                "type": "event",
-                                "event": event.model_dump(by_alias=True, mode="json"),
-                            }
-                        )
-                continue
-    except WebSocketDisconnect:
-        pass
-    finally:
-        sender_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await sender_task
-        await app.state.event_hub.disconnect(websocket)
 
 
 @v1.websocket("/daemon/ws")

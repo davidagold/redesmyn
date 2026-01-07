@@ -4,7 +4,12 @@ import pytest
 
 from redesmyn.agent_interface.claude_code import ClaudeCodeAgent
 from redesmyn.agent_kind import resolve_agent_backend
-from redesmyn.agent_interface.v0 import ExternalSessionClaude
+from redesmyn.agent_interface.v0 import (
+    AgentAssistantMessageEvent,
+    AgentTurnCompletedEvent,
+    AgentTurnStartedEvent,
+    ExternalSessionClaude,
+)
 from redesmyn.db import AgentSession
 from redesmyn.domain.enums import AgentKind, AgentTurnState
 
@@ -105,3 +110,17 @@ def test_claude_code_ignores_non_json_lines_before_stream_json() -> None:
     assert isinstance(agent.external_session_ref, ExternalSessionClaude)
     assert agent.external_session_ref.session_id == "sess_noise"
     assert agent.semantic_status.turn_state == AgentTurnState.Ready
+
+
+@pytest.mark.unit
+def test_claude_code_emits_turn_and_message_events() -> None:
+    agent = ClaudeCodeAgent()
+    events = agent.consume_output(
+        '{"type":"system","subtype":"init","session_id":"sess_evt"}\n'
+        '{"type":"user","session_id":"sess_evt"}\n'
+        '{"type":"assistant","session_id":"sess_evt","text":"Hi"}\n'
+        '{"type":"result","subtype":"success","session_id":"sess_evt"}\n'
+    )
+    assert any(isinstance(e, AgentTurnStartedEvent) for e in events)
+    assert any(isinstance(e, AgentAssistantMessageEvent) for e in events)
+    assert any(isinstance(e, AgentTurnCompletedEvent) for e in events)

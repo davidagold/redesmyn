@@ -12,6 +12,9 @@ from redesmyn.agent_interface.v0 import (
     AgentBackend,
     AgentEvent,
     AgentSemanticStatus,
+    AgentAssistantMessageEvent,
+    AgentTurnCompletedEvent,
+    AgentTurnStartedEvent,
     ExternalSessionClaude,
     ExternalSessionNone,
     ExternalSessionRef,
@@ -28,6 +31,9 @@ class _ClaudeEvent(BaseModel):
     type: str
     session_id: str | None = None
     subtype: str | None = None
+    text: str | None = None
+    message: str | None = None
+    content: str | None = None
 
 
 _claude_event_adapter = TypeAdapter(_ClaudeEvent)
@@ -81,6 +87,7 @@ class ClaudeCodeAgent:
     _external_session_ref: ExternalSessionRef = field(
         default_factory=ExternalSessionNone
     )
+    _in_turn: bool = False
 
     def __post_init__(self) -> None:
         self._set_external_session_ref(self._external_session_ref)
@@ -127,7 +134,8 @@ class ClaudeCodeAgent:
             return
         self._set_external_session_ref(ExternalSessionClaude(session_id=session_id))
 
-    def _consume_event(self, event: _ClaudeEvent) -> None:
+    def _consume_event(self, event: _ClaudeEvent) -> list[AgentEvent]:
+        emitted: list[AgentEvent] = []
         self._maybe_update_external_session_ref(event)
         self._saw_structured_events = True
 
@@ -137,15 +145,23 @@ class ClaudeCodeAgent:
                 turn_state=AgentTurnState.Ready,
                 detail="claude:init",
             )
-            return
+            self._in_turn = False
+            return emitted
 
         if event.type in {"assistant", "user"}:
             self._enable_stream_semantic_capabilities()
+            if not self._in_turn:
+                self._in_turn = True
+                emitted.append(AgentTurnStartedEvent())
             self._status = AgentSemanticStatus(
                 turn_state=AgentTurnState.Busy,
                 detail=f"claude:{event.type}",
             )
-            return
+            if event.type == "assistant":
+                text_value = event.text or event.message or event.content
+                if isinstance(text_value, str) and text_value.strip():
+                    emitted.append(AgentAssistantMessageEvent(text=text_value))
+            return emitted
 
         if event.type == "result":
             self._enable_stream_semantic_capabilities()
@@ -154,21 +170,26 @@ class ClaudeCodeAgent:
                 turn_state=AgentTurnState.Ready,
                 detail=f"claude:result:{subtype_str}",
             )
-            return
+            if self._in_turn:
+                self._in_turn = False
+                emitted.append(AgentTurnCompletedEvent())
+            return emitted
+        return emitted
 
-    def _consume_json_block_from_buffer(self) -> None:
+    def _consume_json_block_from_buffer(self) -> list[AgentEvent]:
+        emitted: list[AgentEvent] = []
         if self._saw_structured_events:
-            return
+            return emitted
         stripped = self._buffer.lstrip()
         if not stripped.startswith("{"):
-            return
+            return emitted
 
         decoder = json.JSONDecoder()
         leading = len(self._buffer) - len(stripped)
         try:
             _, end_index = decoder.raw_decode(stripped)
         except json.JSONDecodeError:
-            return
+            return emitted
 
         json_text = stripped[:end_index]
         try:
@@ -176,10 +197,12 @@ class ClaudeCodeAgent:
         except ValidationError:
             event = None
         if event is not None:
-            self._consume_event(event)
+            emitted.extend(self._consume_event(event))
         self._buffer = self._buffer[leading + end_index :]
+        return emitted
 
     def consume_output(self, text: str) -> list[AgentEvent]:
+        emitted: list[AgentEvent] = []
         self._buffer += text
         if len(self._buffer) > self._max_buffer_chars:
             self._buffer = self._buffer[-self._max_buffer_chars :]
@@ -188,7 +211,7 @@ class ClaudeCodeAgent:
             line, rest = self._buffer.split("\n", 1)
             event = _try_parse_claude_event_json(line)
             if event is not None:
-                self._consume_event(event)
+                emitted.extend(self._consume_event(event))
                 self._buffer = rest
                 continue
             if line.lstrip().startswith("{") and not self._saw_structured_events:
@@ -196,8 +219,8 @@ class ClaudeCodeAgent:
             self._buffer = rest
             continue
 
-        self._consume_json_block_from_buffer()
-        return []
+        emitted.extend(self._consume_json_block_from_buffer())
+        return emitted
 
 
 def _build_claude_code_backend(agent_session: "AgentSession") -> AgentBackend:

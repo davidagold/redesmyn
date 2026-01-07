@@ -8,6 +8,7 @@ from pydantic import Field, TypeAdapter, ValidationError, model_validator
 from redesmyn.domain.enums import (
     AgentKind,
     AgentKindSelection,
+    AgentInterfaceMode,
     AgentStatus,
     AgentSessionRuntimeKind,
     AgentTurnState,
@@ -81,6 +82,12 @@ class AgentSemanticStatusResponse(ApiResponse):
     detail: str | None = None
 
 
+class AgentPreviewResponse(ApiResponse):
+    last_assistant_message_preview: str | None = None
+    last_assistant_message_at: datetime | None = None
+    last_message_turn_id: str | None = None
+
+
 class ExternalSessionNoneResponse(ApiResponse):
     type: Literal["none"] = "none"
 
@@ -111,11 +118,13 @@ class AgentSessionResponse(ApiResponse):
     status: AgentStatus
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
     agent_kind: AgentKind = AgentKind.Generic
+    agent_interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive
     launch_configuration_id: str | None = None
     resolved_launch_configuration: LaunchConfigurationDefinitionResponse | None = None
     agent_capabilities: AgentCapabilitiesResponse
     agent_semantic_status: AgentSemanticStatusResponse
     external_session_ref: ExternalSessionRefResponse
+    agent_preview: AgentPreviewResponse = Field(default_factory=AgentPreviewResponse)
     started_at: datetime | None = None
     ended_at: datetime | None = None
 
@@ -179,6 +188,7 @@ AttachInfoResponse = Annotated[
 class TaskAgentStartRequest(ApiResponse):
     harness: str
     agent_kind: AgentKindSelection | None = None
+    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -186,6 +196,7 @@ class TaskAgentStartRequest(ApiResponse):
 class TaskAgentRestartRequest(ApiResponse):
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
+    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -218,6 +229,7 @@ class TaskAgentBulkRunRequest(ApiRequest):
     restart_task_ids: list[int] = Field(default_factory=list)
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
+    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -237,6 +249,7 @@ class TaskAgentBulkActionRequest(ApiRequest):
     actions: list[TaskAgentBulkActionItemRequest] = Field(default_factory=list)
     harness: str | None = None
     agent_kind: AgentKindSelection | None = None
+    interface_mode: AgentInterfaceMode | None = None
     detach: bool = True
     prelude: str | None = None
 
@@ -469,8 +482,33 @@ class TaskAgentSessionUpdateEventDataResponse(ApiResponse):
     runtime_kind: AgentSessionRuntimeKind
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
     agent_kind: AgentKind = AgentKind.Generic
+    agent_interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive
     agent_capabilities: AgentCapabilitiesResponse
     agent_semantic_status: AgentSemanticStatusResponse
+    external_session_ref: ExternalSessionRefResponse
+    agent_preview: AgentPreviewResponse = Field(default_factory=AgentPreviewResponse)
+
+
+class AgentTurnStartedEventDataResponse(ApiResponse):
+    type: Literal["agent.turn_started"] = "agent.turn_started"
+    task_id: int
+    agent_session_id: int
+    external_session_ref: ExternalSessionRefResponse
+
+
+class AgentTurnCompletedEventDataResponse(ApiResponse):
+    type: Literal["agent.turn_completed"] = "agent.turn_completed"
+    task_id: int
+    agent_session_id: int
+    external_session_ref: ExternalSessionRefResponse
+
+
+class AgentAssistantMessageEventDataResponse(ApiResponse):
+    type: Literal["agent.assistant_message"] = "agent.assistant_message"
+    task_id: int
+    agent_session_id: int
+    text: str
+    preview: str
     external_session_ref: ExternalSessionRefResponse
 
 
@@ -513,6 +551,9 @@ EventDataResponse = Annotated[
     | TaskAgentRunEventDataResponse
     | TaskAgentActionEventDataResponse
     | TaskAgentSessionUpdateEventDataResponse
+    | AgentTurnStartedEventDataResponse
+    | AgentTurnCompletedEventDataResponse
+    | AgentAssistantMessageEventDataResponse
     | TaskMergeEventDataResponse
     | MergeRunEventDataResponse
     | UnknownEventDataResponse,

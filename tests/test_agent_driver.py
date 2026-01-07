@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import func, select
@@ -21,12 +22,19 @@ from redesmyn.agent_runtime import tmux_session_name_for_task
 from redesmyn.context import build_repo_context
 from redesmyn.db import AgentSession, Epic, Event, Repository, Task
 from redesmyn.db.models import AttachExternal, AttachTmux
-from redesmyn.domain.enums import AgentStatus, AgentTurnState
+from redesmyn.domain.enums import (
+    AgentKind,
+    AgentInterfaceMode,
+    AgentStatus,
+    AgentTurnState,
+)
 from redesmyn.host_identity import HostIdentity, host_identity_path
 from redesmyn.orchestrator import init_repo
 from redesmyn.settings import RedesmynSettings
+from redesmyn.ws_runtime import JsonWebSocketHub
 
 from tests.scenarios.scenario import Scenario, ScenarioApp, ScenarioRepo
+from tests.helpers.ws import JsonQueueWebSocket
 
 
 @dataclass(slots=True)
@@ -504,6 +512,109 @@ async def test_agent_driver_reuses_active_session_row_when_tmux_running(
         assert row.status == AgentStatus.Running
         assert row.ended_at is None
         assert row.attach.get("type") == "tmux"
+
+
+@pytest.mark.integration
+async def test_agent_driver_persists_semantic_events_and_preview_from_structured_codex_log(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    log_path = scenario.ctx.state_dir / "external" / "codex-structured.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("", encoding="utf-8")
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=task_id,
+                status=AgentStatus.Running,
+                agent_kind=AgentKind.Codex,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                attach=AttachExternal(
+                    hint="structured",
+                    log_path=str(log_path),
+                ).model_dump(mode="python"),
+            )
+        )
+        await session.commit()
+
+    event_hub = JsonWebSocketHub()
+    websocket = JsonQueueWebSocket()
+    send_queue = await event_hub.connect(websocket)  # type: ignore[arg-type]
+
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
+            event_hub=event_hub,
+        )
+
+    log_path.write_text(
+        "\n".join(
+            [
+                '{"type":"thread.started","thread_id":"th_123"}',
+                '{"type":"turn.started","turn_id":"tu_1"}',
+                '{"type":"assistant.message","role":"assistant","text":"Hello world"}',
+                '{"type":"turn.completed","turn_id":"tu_1"}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
+            event_hub=event_hub,
+        )
+
+    async with scenario.db.session() as session:
+        events = list(
+            await session.scalars(
+                select(Event.event_type).where(
+                    Event.event_type.in_(
+                        [
+                            "agent.turn_started",
+                            "agent.assistant_message",
+                            "agent.turn_completed",
+                        ]
+                    )
+                )
+            )
+        )
+        assert "agent.turn_started" in events
+        assert "agent.assistant_message" in events
+        assert "agent.turn_completed" in events
+
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.agent_preview.get("last_assistant_message_preview") == "Hello world"
+        assert row.agent_preview.get("last_message_turn_id") == "tu_1"
+        assert row.agent_preview.get("last_assistant_message_at") is not None
+
+    drained: list[dict[str, object]] = []
+    while not send_queue.empty():
+        drained.append(send_queue.get_nowait())
+    found = False
+    for payload in drained:
+        if payload.get("type") != "event":
+            continue
+        event = payload.get("event")
+        if not isinstance(event, dict):
+            continue
+        event_dict = cast(dict[str, Any], event)
+        if event_dict.get("eventType") == "agent.assistant_message":
+            found = True
+            break
+    assert found
 
 
 @pytest.mark.integration

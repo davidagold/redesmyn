@@ -56,6 +56,11 @@ class AgentKindSelection(StrEnum):
     ClaudeCode = "claude_code"
 
 
+class AgentInterfaceMode(StrEnum):
+    Interactive = "interactive"
+    Structured = "structured"
+
+
 class LaunchConfigurationSource(StrEnum):
     Builtin = "builtin"
     User = "user"

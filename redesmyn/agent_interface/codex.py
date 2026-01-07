@@ -19,6 +19,9 @@ from redesmyn.agent_interface.v0 import (
     AgentCapabilities,
     AgentEvent,
     AgentSemanticStatus,
+    AgentAssistantMessageEvent,
+    AgentTurnCompletedEvent,
+    AgentTurnStartedEvent,
     ExternalSessionCodex,
     ExternalSessionNone,
     ExternalSessionRef,
@@ -75,6 +78,10 @@ class _CodexJsonlEvent(BaseModel):
         default=None,
         validation_alias=AliasChoices("turn_id", "turnId"),
     )
+    role: str | None = None
+    text: str | None = None
+    message: str | None = None
+    content: str | None = None
 
 
 _CODEX_JSONL_EVENT_ADAPTER = TypeAdapter(_CodexJsonlEvent)
@@ -180,15 +187,16 @@ class CodexAgent:
             detail="Timeout waiting for Codex turn completion; signals unavailable.",
         )
 
-    def _consume_structured_line(self, line: str) -> None:
+    def _consume_structured_line(self, line: str) -> list[AgentEvent]:
+        emitted: list[AgentEvent] = []
         try:
             event = _CODEX_JSONL_EVENT_ADAPTER.validate_json(line)
         except ValidationError:
-            return
+            return emitted
 
         event_type = event.type.strip()
         if not event_type:
-            return
+            return emitted
 
         self._saw_structured_events = True
         cap_updates: dict[str, bool] = {}
@@ -206,7 +214,7 @@ class CodexAgent:
                 self._set_external_session_ref(
                     ExternalSessionCodex(thread_id=event.thread_id, turn_id=turn_id)
                 )
-            return
+            return emitted
 
         if event_type == "turn.started":
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
@@ -218,7 +226,8 @@ class CodexAgent:
                     )
                 )
             self._note_busy()
-            return
+            emitted.append(AgentTurnStartedEvent())
+            return emitted
 
         if event_type == "turn.completed":
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
@@ -232,7 +241,22 @@ class CodexAgent:
             self._set_turn_state(AgentTurnState.Completed)
             self._busy_since_s = None
             self._output_since_prompt = False
-            return
+            emitted.append(AgentTurnCompletedEvent())
+            return emitted
+
+        message_type = event_type.lower()
+        if message_type in {
+            "assistant.message",
+            "assistant_message",
+            "assistant",
+            "message",
+        }:
+            role = (event.role or "").strip().lower()
+            if message_type != "message" or role == "assistant":
+                text_value = event.text or event.message or event.content
+                if isinstance(text_value, str) and text_value.strip():
+                    emitted.append(AgentAssistantMessageEvent(text=text_value))
+        return emitted
 
     def _consume_text_for_external_ids(self, text: str) -> None:
         # Best-effort parse of Codex notifications that include thread/turn ids.
@@ -269,6 +293,7 @@ class CodexAgent:
         # line. If we don't successfully parse anything, we fall back to plain
         # text heuristics.
         saw_structured_in_chunk = False
+        emitted: list[AgentEvent] = []
         self._jsonl_buffer += text
         while True:
             if "\n" not in self._jsonl_buffer:
@@ -278,7 +303,7 @@ class CodexAgent:
             if not line or not line.startswith("{") or not line.endswith("}"):
                 continue
             before = self._saw_structured_events
-            self._consume_structured_line(line)
+            emitted.extend(self._consume_structured_line(line))
             if self._saw_structured_events and not before:
                 saw_structured_in_chunk = True
             elif self._saw_structured_events:
@@ -292,7 +317,7 @@ class CodexAgent:
         # harmful (they would treat the JSON as "output since prompt" and mark
         # the agent busy forever).
         if saw_structured_in_chunk and cleaned.lstrip().startswith("{"):
-            return []
+            return emitted
 
         self._text_tail = (self._text_tail + cleaned)[-4000:]
 
@@ -310,7 +335,7 @@ class CodexAgent:
                 self._note_busy()
             self._maybe_timeout()
 
-        return []
+        return emitted
 
 
 def codex_agent_from_db_external_ref(ref_raw: object) -> CodexAgent:

@@ -142,13 +142,36 @@ export type BlockAckEventData = {
   agentId: number
 }
 
+export type AgentTurnStartedEventData = {
+  type: "agent.turn_started"
+  taskId: number
+  agentSessionId: number
+  externalSessionRef: Record<string, unknown>
+}
+
+export type AgentTurnCompletedEventData = {
+  type: "agent.turn_completed"
+  taskId: number
+  agentSessionId: number
+  externalSessionRef: Record<string, unknown>
+}
+
+export type AgentAssistantMessageEventData = {
+  type: "agent.assistant_message"
+  taskId: number
+  agentSessionId: number
+  text: string
+  preview: string
+  externalSessionRef: Record<string, unknown>
+}
+
 export type UnknownEventData = {
   type: "unknown"
   eventType: string
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | TaskAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | TaskAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | AgentTurnStartedEventData | AgentTurnCompletedEventData | AgentAssistantMessageEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"
