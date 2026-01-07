@@ -163,7 +163,11 @@
             ],
             "title": "Externalsessionref"
           },
-          "harnessProfileId": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "launchConfigurationId": {
             "anyOf": [
               {
                 "type": "string"
@@ -172,16 +176,12 @@
                 "type": "null"
               }
             ],
-            "title": "Harnessprofileid"
+            "title": "Launchconfigurationid"
           },
-          "id": {
-            "title": "Id",
-            "type": "integer"
-          },
-          "resolvedProfile": {
+          "resolvedLaunchConfiguration": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+                "$ref": "#/components/schemas/LaunchConfigurationDefinitionResponse"
               },
               {
                 "type": "null"
@@ -852,139 +852,6 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "HarnessProfileDefinitionResponse": {
-        "properties": {
-          "argv": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Argv",
-            "type": "array"
-          },
-          "bootstrapPrelude": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bootstrapprelude"
-          },
-          "env": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "title": "Env",
-            "type": "object"
-          },
-          "skillRecommendation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Skillrecommendation"
-          },
-          "workingDir": {
-            "title": "Workingdir",
-            "type": "string"
-          }
-        },
-        "required": [
-          "argv",
-          "env",
-          "workingDir"
-        ],
-        "title": "HarnessProfileDefinitionResponse",
-        "type": "object"
-      },
-      "HarnessProfileResponse": {
-        "properties": {
-          "createdAt": {
-            "format": "date-time",
-            "title": "Createdat",
-            "type": "string"
-          },
-          "definition": {
-            "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
-          },
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/HarnessProfileSource"
-          },
-          "updatedAt": {
-            "format": "date-time",
-            "title": "Updatedat",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "source",
-          "displayName",
-          "definition",
-          "createdAt",
-          "updatedAt"
-        ],
-        "title": "HarnessProfileResponse",
-        "type": "object"
-      },
-      "HarnessProfileSource": {
-        "enum": [
-          "builtin",
-          "user"
-        ],
-        "title": "HarnessProfileSource",
-        "type": "string"
-      },
-      "HarnessProfileUpsertRequest": {
-        "properties": {
-          "definition": {
-            "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
-          },
-          "displayName": {
-            "title": "Displayname",
-            "type": "string"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "source": {
-            "$ref": "#/components/schemas/HarnessProfileSource",
-            "default": "user"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "displayName",
-          "definition"
-        ],
-        "title": "HarnessProfileUpsertRequest",
-        "type": "object"
-      },
       "HostCapabilitiesResponse": {
         "properties": {
           "supportsPathShim": {
@@ -1119,6 +986,139 @@
           "command_type"
         ],
         "title": "IssueDaemonCommandRequest",
+        "type": "object"
+      },
+      "LaunchConfigurationDefinitionResponse": {
+        "properties": {
+          "argv": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Argv",
+            "type": "array"
+          },
+          "bootstrapPrelude": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bootstrapprelude"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Env",
+            "type": "object"
+          },
+          "skillRecommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skillrecommendation"
+          },
+          "workingDir": {
+            "title": "Workingdir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "argv",
+          "env",
+          "workingDir"
+        ],
+        "title": "LaunchConfigurationDefinitionResponse",
+        "type": "object"
+      },
+      "LaunchConfigurationResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/LaunchConfigurationDefinitionResponse"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/LaunchConfigurationSource"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "displayName",
+          "definition",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "LaunchConfigurationResponse",
+        "type": "object"
+      },
+      "LaunchConfigurationSource": {
+        "enum": [
+          "builtin",
+          "user"
+        ],
+        "title": "LaunchConfigurationSource",
+        "type": "string"
+      },
+      "LaunchConfigurationUpsertRequest": {
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/LaunchConfigurationDefinitionResponse"
+          },
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/LaunchConfigurationSource",
+            "default": "user"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "displayName",
+          "definition"
+        ],
+        "title": "LaunchConfigurationUpsertRequest",
         "type": "object"
       },
       "LinearPushStatsResponse": {
@@ -2186,14 +2186,14 @@
             ],
             "title": "Attach"
           },
-          "harnessProfileId": {
-            "title": "Harnessprofileid",
+          "launchConfigurationId": {
+            "title": "Launchconfigurationid",
             "type": "string"
           },
-          "resolvedProfile": {
+          "resolvedLaunchConfiguration": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/HarnessProfileDefinitionResponse"
+                "$ref": "#/components/schemas/LaunchConfigurationDefinitionResponse"
               },
               {
                 "type": "null"
@@ -2227,9 +2227,9 @@
           "agentSessionId",
           "agentLabel",
           "agentStatus",
-          "harnessProfileId",
+          "launchConfigurationId",
           "attach",
-          "resolvedProfile",
+          "resolvedLaunchConfiguration",
           "startedAt"
         ],
         "title": "TaskAgentStartResponse",
@@ -3277,64 +3277,6 @@
         "summary": "Sync To Linear"
       }
     },
-    "/v1/harness-profiles": {
-      "get": {
-        "operationId": "list_harness_profiles_v1_harness_profiles_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/HarnessProfileResponse"
-                  },
-                  "title": "Response List Harness Profiles V1 Harness Profiles Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Harness Profiles"
-      },
-      "post": {
-        "operationId": "upsert_harness_profile_v1_harness_profiles_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HarnessProfileUpsertRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HarnessProfileResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Upsert Harness Profile"
-      }
-    },
     "/v1/healthz": {
       "get": {
         "operationId": "healthz_v1_healthz_get",
@@ -3415,6 +3357,64 @@
           }
         },
         "summary": "Upsert Host"
+      }
+    },
+    "/v1/launch-configurations": {
+      "get": {
+        "operationId": "list_launch_configurations_v1_launch_configurations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LaunchConfigurationResponse"
+                  },
+                  "title": "Response List Launch Configurations V1 Launch Configurations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Launch Configurations"
+      },
+      "post": {
+        "operationId": "upsert_launch_configuration_v1_launch_configurations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchConfigurationUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchConfigurationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upsert Launch Configuration"
       }
     },
     "/v1/linear/logout": {

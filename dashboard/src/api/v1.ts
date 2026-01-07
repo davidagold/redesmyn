@@ -141,24 +141,6 @@ export interface paths {
     patch?: never
     trace?: never
   }
-  "/v1/harness-profiles": {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    /** List Harness Profiles */
-    get: operations["list_harness_profiles_v1_harness_profiles_get"]
-    put?: never
-    /** Upsert Harness Profile */
-    post: operations["upsert_harness_profile_v1_harness_profiles_post"]
-    delete?: never
-    options?: never
-    head?: never
-    patch?: never
-    trace?: never
-  }
   "/v1/healthz": {
     parameters: {
       query?: never
@@ -204,6 +186,24 @@ export interface paths {
     put?: never
     /** Upsert Host */
     post: operations["upsert_host_v1_hosts_upsert_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/launch-configurations": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** List Launch Configurations */
+    get: operations["list_launch_configurations_v1_launch_configurations_get"]
+    put?: never
+    /** Upsert Launch Configuration */
+    post: operations["upsert_launch_configuration_v1_launch_configurations_post"]
     delete?: never
     options?: never
     head?: never
@@ -519,11 +519,11 @@ export interface components {
       endedAt?: string | null
       /** Externalsessionref */
       externalSessionRef: components["schemas"]["ExternalSessionNoneResponse"] | components["schemas"]["ExternalSessionCodexResponse"] | components["schemas"]["ExternalSessionClaudeResponse"]
-      /** Harnessprofileid */
-      harnessProfileId?: string | null
       /** Id */
       id: number
-      resolvedProfile?: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /** Launchconfigurationid */
+      launchConfigurationId?: string | null
+      resolvedLaunchConfiguration?: components["schemas"]["LaunchConfigurationDefinitionResponse"] | null
       /** Startedat */
       startedAt?: string | null
       status: components["schemas"]["AgentStatus"]
@@ -758,59 +758,6 @@ export interface components {
       /** Detail */
       detail?: components["schemas"]["ValidationError"][]
     }
-    /** HarnessProfileDefinitionResponse */
-    HarnessProfileDefinitionResponse: {
-      /** Argv */
-      argv: string[]
-      /** Bootstrapprelude */
-      bootstrapPrelude?: string | null
-      /** Env */
-      env: {
-        [key: string]: string
-      }
-      /** Skillrecommendation */
-      skillRecommendation?: string | null
-      /** Workingdir */
-      workingDir: string
-    }
-    /** HarnessProfileResponse */
-    HarnessProfileResponse: {
-      /**
-       * Createdat
-       * Format: date-time
-       */
-      createdAt: string
-      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
-      /** Displayname */
-      displayName: string
-      /** Id */
-      id: string
-      /** Kind */
-      kind: string
-      source: components["schemas"]["HarnessProfileSource"]
-      /**
-       * Updatedat
-       * Format: date-time
-       */
-      updatedAt: string
-    }
-    /**
-     * HarnessProfileSource
-     * @enum {string}
-     */
-    HarnessProfileSource: "builtin" | "user"
-    /** HarnessProfileUpsertRequest */
-    HarnessProfileUpsertRequest: {
-      definition: components["schemas"]["HarnessProfileDefinitionResponse"]
-      /** Displayname */
-      displayName: string
-      /** Id */
-      id: string
-      /** Kind */
-      kind: string
-      /** @default user */
-      source: components["schemas"]["HarnessProfileSource"]
-    }
     /** HostCapabilitiesResponse */
     HostCapabilitiesResponse: {
       /**
@@ -866,6 +813,59 @@ export interface components {
       repo_id?: string | null
       /** Workspace Id */
       workspace_id?: string | null
+    }
+    /** LaunchConfigurationDefinitionResponse */
+    LaunchConfigurationDefinitionResponse: {
+      /** Argv */
+      argv: string[]
+      /** Bootstrapprelude */
+      bootstrapPrelude?: string | null
+      /** Env */
+      env: {
+        [key: string]: string
+      }
+      /** Skillrecommendation */
+      skillRecommendation?: string | null
+      /** Workingdir */
+      workingDir: string
+    }
+    /** LaunchConfigurationResponse */
+    LaunchConfigurationResponse: {
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string
+      definition: components["schemas"]["LaunchConfigurationDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      source: components["schemas"]["LaunchConfigurationSource"]
+      /**
+       * Updatedat
+       * Format: date-time
+       */
+      updatedAt: string
+    }
+    /**
+     * LaunchConfigurationSource
+     * @enum {string}
+     */
+    LaunchConfigurationSource: "builtin" | "user"
+    /** LaunchConfigurationUpsertRequest */
+    LaunchConfigurationUpsertRequest: {
+      definition: components["schemas"]["LaunchConfigurationDefinitionResponse"]
+      /** Displayname */
+      displayName: string
+      /** Id */
+      id: string
+      /** Kind */
+      kind: string
+      /** @default user */
+      source: components["schemas"]["LaunchConfigurationSource"]
     }
     /** LinearPushStatsResponse */
     LinearPushStatsResponse: {
@@ -1219,9 +1219,9 @@ export interface components {
       agentStatus: components["schemas"]["AgentStatus"]
       /** Attach */
       attach: components["schemas"]["AttachNoneResponse"] | components["schemas"]["AttachTmuxResponse"] | components["schemas"]["AttachExternalResponse"]
-      /** Harnessprofileid */
-      harnessProfileId: string
-      resolvedProfile: components["schemas"]["HarnessProfileDefinitionResponse"] | null
+      /** Launchconfigurationid */
+      launchConfigurationId: string
+      resolvedLaunchConfiguration: components["schemas"]["LaunchConfigurationDefinitionResponse"] | null
       /**
        * Started
        * @default true
@@ -1730,59 +1730,6 @@ export interface operations {
       }
     }
   }
-  list_harness_profiles_v1_harness_profiles_get: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody?: never
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HarnessProfileResponse"][]
-        }
-      }
-    }
-  }
-  upsert_harness_profile_v1_harness_profiles_post: {
-    parameters: {
-      query?: never
-      header?: never
-      path?: never
-      cookie?: never
-    }
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["HarnessProfileUpsertRequest"]
-      }
-    }
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HarnessProfileResponse"]
-        }
-      }
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown
-        }
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"]
-        }
-      }
-    }
-  }
   healthz_v1_healthz_get: {
     parameters: {
       query?: never
@@ -1845,6 +1792,59 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["HostResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  list_launch_configurations_v1_launch_configurations_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LaunchConfigurationResponse"][]
+        }
+      }
+    }
+  }
+  upsert_launch_configuration_v1_launch_configurations_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["LaunchConfigurationUpsertRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LaunchConfigurationResponse"]
         }
       }
       /** @description Validation Error */
