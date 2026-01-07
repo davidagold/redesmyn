@@ -1072,8 +1072,8 @@ export function DetailsPanel({
 
   return (
     <SlidePanel open={open}>
-      <div className="p-3">
-        <div id={floatingActionsPortalId} />
+      <div className="relative p-3">
+        <div id={floatingActionsPortalId} className="contents" />
         <Accordion
           key={selectionKey}
           multiple
