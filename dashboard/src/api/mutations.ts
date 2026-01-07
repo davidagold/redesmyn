@@ -27,6 +27,21 @@ import {
 } from "@/api"
 import { queryKeys } from "@/api/queryKeys"
 
+type SetTaskMergeReadyVariables = {
+  taskId: number
+  ready: boolean
+}
+
+type StopTaskAgentVariables = {
+  epicId: number
+  taskId: number
+}
+
+type LinearSyncVariables = {
+  epicId: number | null
+  epicSlug: string
+}
+
 function updateTaskInGraph(graph: EpicGraph, task: Task): EpicGraph {
   const tasks = graph.tasks ?? []
   const index = tasks.findIndex((t) => t.id === task.id)
@@ -69,7 +84,7 @@ export function useSetTaskMergeReadyMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (variables: { taskId: number ready: boolean }) => {
+    mutationFn: async (variables: SetTaskMergeReadyVariables) => {
       return setTaskMergeReady(variables.taskId, variables.ready)
     },
     onMutate: async (variables) => {
@@ -167,7 +182,7 @@ export function useStopTaskAgentMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (variables: { epicId: number taskId: number }) =>
+    mutationFn: (variables: StopTaskAgentVariables) =>
       stopTaskAgent(variables.taskId),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
@@ -265,7 +280,7 @@ export function useSyncFromLinearMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (variables: { epicId: number | null epicSlug: string }) =>
+    mutationFn: (variables: LinearSyncVariables) =>
       postSyncFromLinear(variables.epicSlug),
     onSuccess: (_result, variables) => {
       if (variables.epicId !== null) {
@@ -283,7 +298,7 @@ export function useSyncToLinearMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (variables: { epicId: number | null epicSlug: string }) =>
+    mutationFn: (variables: LinearSyncVariables) =>
       postSyncToLinear(variables.epicSlug),
     onSuccess: (_result, variables) => {
       if (variables.epicId !== null) {
