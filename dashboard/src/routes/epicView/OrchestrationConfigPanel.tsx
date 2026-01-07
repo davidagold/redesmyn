@@ -236,9 +236,7 @@ export function OrchestrationConfigPanel({
                   <AgentKindSelect
                     value={configAgentKind}
                     onChange={setConfigAgentKind}
-                    disabledReason={
-                      updateDefaults.isPending ? "Saving…" : null
-                    }
+                    disabledReason={updateDefaults.isPending ? "Saving…" : null}
                   />
                   <div className="text-xs text-muted-foreground">
                     {configAgentKind === "generic"

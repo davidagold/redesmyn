@@ -13,7 +13,6 @@ export function useEpicsQuery() {
   return useQuery({
     queryKey: queryKeys.epics(),
     queryFn: ({ signal }) => fetchEpics({ signal }),
-    placeholderData: [],
   })
 }
 
@@ -37,7 +36,6 @@ export function useHostsQuery() {
   return useQuery({
     queryKey: queryKeys.hosts(),
     queryFn: ({ signal }) => fetchHosts({ signal }),
-    placeholderData: [],
   })
 }
 
@@ -47,16 +45,11 @@ export function useDaemonsQuery(options?: { pollIntervalMs?: number }) {
   return useQuery({
     queryKey: queryKeys.daemons(),
     queryFn: ({ signal }) => fetchDaemons({ signal }),
-    placeholderData: [],
-    refetchInterval: () => {
-      if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) {
-        return false
-      }
-      if (typeof document !== "undefined" && document.hidden) {
-        return false
-      }
-      return pollIntervalMs
-    },
+    refetchInterval:
+      Number.isFinite(pollIntervalMs) && pollIntervalMs > 0
+        ? pollIntervalMs
+        : false,
+    refetchIntervalInBackground: false,
   })
 }
 
