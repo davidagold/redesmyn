@@ -42,7 +42,12 @@ from redesmyn.db.models import (
     AttachNone,
     AttachTmux,
 )
-from redesmyn.domain.enums import AgentSessionRuntimeKind, AgentStatus, AgentTurnState
+from redesmyn.domain.enums import (
+    AgentInterfaceMode,
+    AgentSessionRuntimeKind,
+    AgentStatus,
+    AgentTurnState,
+)
 from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
 
@@ -546,7 +551,12 @@ async def supervise_once(
         ):
             tmux_name = tmux_session_name_for_task(task_id=task_id)
             if tmux_name not in tmux_sessions:
-                agent_session.status = AgentStatus.Error
+                agent_session.status = (
+                    AgentStatus.Stopped
+                    if agent_session.agent_interface_mode
+                    == AgentInterfaceMode.Structured
+                    else AgentStatus.Error
+                )
                 agent_session.ended_at = now
                 await flush_session_update(agent_session)
                 runtime_by_session_id.pop(agent_session.id, None)

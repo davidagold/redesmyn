@@ -418,29 +418,97 @@ def _find_agent_executable_index(argv: list[str], *, names: set[str]) -> int | N
     return None
 
 
-def _ensure_codex_structured_argv(argv: list[str]) -> list[str]:
-    """Best-effort rewrite to enable Codex's structured JSONL stream."""
+def _unwrap_launcher_argv(argv: list[str]) -> list[str]:
+    if not argv:
+        return []
+    name0 = _argv_token_name(argv[0])
+    if name0 == "uv":
+        if "run" in argv[1:]:
+            idx = argv.index("run", 1)
+            return argv[idx + 1 :]
+        return argv[1:]
+    if name0 in {"npx", "bunx"}:
+        return argv[1:]
+    if name0 == "npm":
+        if len(argv) > 1 and argv[1] in {"exec", "x"}:
+            return argv[2:]
+    if name0 == "pnpm":
+        if len(argv) > 1 and argv[1] in {"dlx", "exec"}:
+            return argv[2:]
+    if name0 == "yarn":
+        if len(argv) > 1 and argv[1] in {"dlx", "exec", "run"}:
+            return argv[2:]
+    return argv
+
+
+def _is_claude_code_token(token: str) -> bool:
+    if not token or token.startswith("-"):
+        return False
+    name = _argv_token_name(token)
+    if name in {"claude", "claude-code"}:
+        return True
+    normalized = token.replace("\\", "/").lower()
+    return normalized.endswith("@anthropic-ai/claude-code") or normalized.startswith(
+        "@anthropic-ai/claude-code@"
+    )
+
+
+def _agent_invocation_argv(argv: list[str], *, agent_kind: AgentKind) -> list[str]:
+    unwrapped = _unwrap_launcher_argv(argv)
+    match agent_kind:
+        case AgentKind.Codex:
+            idx = _find_agent_executable_index(unwrapped, names={"codex"})
+            return unwrapped[idx:] if idx is not None else unwrapped
+        case AgentKind.ClaudeCode:
+            for idx, token in enumerate(unwrapped):
+                if _is_claude_code_token(token):
+                    return unwrapped[idx:]
+            return unwrapped
+        case _:
+            return unwrapped
+
+
+def _argv_has_flag_value(argv: list[str], *, flag: str, value: str) -> bool:
+    for idx, token in enumerate(argv):
+        if token == flag and idx + 1 < len(argv) and argv[idx + 1] == value:
+            return True
+        if token.startswith(flag + "=") and token.split("=", 1)[1] == value:
+            return True
+    return False
+
+
+def _is_codex_structured_argv(argv: list[str]) -> bool:
     idx = _find_agent_executable_index(argv, names={"codex"})
     if idx is None:
-        return argv
-    out = list(argv)
-    if len(out) <= idx + 1 or out[idx + 1] != "exec":
-        out.insert(idx + 1, "exec")
-    if "--json" not in out[idx + 2 :]:
-        out.insert(idx + 2, "--json")
-    return out
+        return False
+    try:
+        exec_idx = argv.index("exec", idx + 1)
+    except ValueError:
+        return False
+    return "--json" in argv[exec_idx + 1 :]
 
 
-def _ensure_claude_structured_argv(argv: list[str]) -> list[str]:
-    """Best-effort rewrite to enable Claude Code's stream-json output mode."""
-    idx = _find_agent_executable_index(argv, names={"claude", "claude-code"})
-    if idx is None:
-        return argv
-    out = list(argv)
-    if "--output-format" in out[idx + 1 :] or "--outputFormat" in out[idx + 1 :]:
-        return out
-    out[idx + 1 : idx + 1] = ["--output-format", "stream-json"]
-    return out
+def infer_interface_mode_from_argv(
+    *, argv: list[str], resolved_agent_kind: AgentKind
+) -> AgentInterfaceMode:
+    agent_argv = _agent_invocation_argv(argv, agent_kind=resolved_agent_kind)
+    match resolved_agent_kind:
+        case AgentKind.Codex:
+            return (
+                AgentInterfaceMode.Structured
+                if _is_codex_structured_argv(agent_argv)
+                else AgentInterfaceMode.Interactive
+            )
+        case AgentKind.ClaudeCode:
+            return (
+                AgentInterfaceMode.Structured
+                if _argv_has_flag_value(
+                    agent_argv, flag="--output-format", value="stream-json"
+                )
+                else AgentInterfaceMode.Interactive
+            )
+        case _:
+            return AgentInterfaceMode.Interactive
 
 
 async def ensure_launch_configuration_row(
@@ -840,7 +908,6 @@ async def start_task_agent(
     prelude_override: str | None = None,
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
     external_session_ref_hint: dict[str, Any] | None = None,
-    interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -909,15 +976,9 @@ async def start_task_agent(
                 argv,
                 external_session_ref_hint=external_session_ref_hint,
             )
-            if interface_mode == AgentInterfaceMode.Structured:
-                if resolved_agent_kind == AgentKind.Codex:
-                    argv = _ensure_codex_structured_argv(argv)
-                elif resolved_agent_kind == AgentKind.ClaudeCode:
-                    argv = _ensure_claude_structured_argv(argv)
-                else:
-                    raise RuntimeError(
-                        "Structured interface mode is only supported for Codex and Claude Code"
-                    )
+            interface_mode = infer_interface_mode_from_argv(
+                argv=argv, resolved_agent_kind=resolved_agent_kind
+            )
 
             definition = LaunchConfigurationDefinition(argv=argv)
             profile_id = launch_configuration_id_for_definition(argv[0], definition)
@@ -1146,6 +1207,11 @@ async def start_task_agent(
                     submit_prelude = defaults.harness.submit_prelude
                 except RuntimeError:
                     prelude = prelude_override or None
+
+                if interface_mode == AgentInterfaceMode.Structured and prelude:
+                    warnings.append(
+                        "Prelude ignored: structured agent output must remain machine-readable"
+                    )
                 if send_prelude and interface_mode == AgentInterfaceMode.Interactive:
                     prelude_lines = _agent_prelude_lines(
                         task=task,
@@ -1243,18 +1309,11 @@ async def restart_task_agent(
     detach: bool,
     prelude_override: str | None = None,
     agent_kind_selection_override: AgentKindSelection | None = None,
-    interface_mode_override: AgentInterfaceMode | None = None,
-    default_interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
     default_agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
 ) -> StartAgentResult:
     external_session_ref_hint: dict[str, Any] | None = None
     agent_kind_selection = agent_kind_selection_override
-    interface_mode = interface_mode_override
-    if (
-        harness_command is None
-        or agent_kind_selection is None
-        or interface_mode is None
-    ):
+    if harness_command is None or agent_kind_selection is None:
         engine = create_engine(ctx.db_path)
         try:
             sessionmaker = create_sessionmaker(engine)
@@ -1268,8 +1327,6 @@ async def restart_task_agent(
                     external_session_ref_hint = latest.external_session_ref
                     if agent_kind_selection is None:
                         agent_kind_selection = latest.agent_kind_selection
-                    if interface_mode is None:
-                        interface_mode = latest.agent_interface_mode
                 if harness_command is None:
                     if resolved_launch_configuration is None:
                         raise RuntimeError(
@@ -1283,8 +1340,6 @@ async def restart_task_agent(
             await engine.dispose()
     if agent_kind_selection is None:
         agent_kind_selection = default_agent_kind_selection
-    if interface_mode is None:
-        interface_mode = default_interface_mode
 
     if not detach:
         raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
@@ -1303,7 +1358,6 @@ async def restart_task_agent(
         prelude_override=prelude_override,
         agent_kind_selection=agent_kind_selection,
         external_session_ref_hint=external_session_ref_hint,
-        interface_mode=interface_mode,
     )
 
 
