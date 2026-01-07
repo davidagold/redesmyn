@@ -14,7 +14,7 @@ from redesmyn.domain.enums import (
     BlockMode,
     BlockPolicy,
     CommandState,
-    HarnessProfileSource,
+    LaunchConfigurationSource,
     MergeRunStatus,
     TaskAuthority,
     TaskSource,
@@ -111,8 +111,8 @@ class AgentSessionResponse(ApiResponse):
     status: AgentStatus
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
     agent_kind: AgentKind = AgentKind.Generic
-    harness_profile_id: str | None = None
-    resolved_profile: HarnessProfileDefinitionResponse | None = None
+    launch_configuration_id: str | None = None
+    resolved_launch_configuration: LaunchConfigurationDefinitionResponse | None = None
     agent_capabilities: AgentCapabilitiesResponse
     agent_semantic_status: AgentSemanticStatusResponse
     external_session_ref: ExternalSessionRefResponse
@@ -135,7 +135,7 @@ class HostResponse(ApiResponse):
     updated_at: datetime
 
 
-class HarnessProfileDefinitionResponse(ApiResponse):
+class LaunchConfigurationDefinitionResponse(ApiResponse):
     argv: list[str]
     env: dict[str, str]
     working_dir: str
@@ -143,12 +143,12 @@ class HarnessProfileDefinitionResponse(ApiResponse):
     skill_recommendation: str | None = None
 
 
-class HarnessProfileResponse(ApiResponse):
+class LaunchConfigurationResponse(ApiResponse):
     id: str
     kind: str
-    source: HarnessProfileSource
+    source: LaunchConfigurationSource
     display_name: str
-    definition: HarnessProfileDefinitionResponse
+    definition: LaunchConfigurationDefinitionResponse
     created_at: datetime
     updated_at: datetime
 
@@ -197,9 +197,9 @@ class TaskAgentStartResponse(ApiResponse):
     agent_status: AgentStatus
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto
     agent_kind: AgentKind = AgentKind.Generic
-    harness_profile_id: str
+    launch_configuration_id: str
     attach: AttachInfoResponse
-    resolved_profile: HarnessProfileDefinitionResponse | None
+    resolved_launch_configuration: LaunchConfigurationDefinitionResponse | None
     started_at: datetime
     started: bool = True
     warnings: list[str] = Field(default_factory=list)
@@ -331,12 +331,12 @@ class HostUpsertRequest(ApiResponse):
     capabilities: HostCapabilitiesResponse | None = None
 
 
-class HarnessProfileUpsertRequest(ApiResponse):
+class LaunchConfigurationUpsertRequest(ApiResponse):
     id: str
     kind: str
     display_name: str
-    definition: HarnessProfileDefinitionResponse
-    source: HarnessProfileSource = HarnessProfileSource.User
+    definition: LaunchConfigurationDefinitionResponse
+    source: LaunchConfigurationSource = LaunchConfigurationSource.User
 
 
 class CommandResponse(ApiResponse):

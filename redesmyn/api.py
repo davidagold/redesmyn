@@ -42,7 +42,7 @@ from redesmyn.db import (
     Epic,
     Event,
     GitTrunkTimelineByInstance,
-    HarnessProfile,
+    LaunchConfiguration,
     Host,
     LinearAuth,
     MergeRun,
@@ -111,9 +111,9 @@ from redesmyn.schemas.core import (
     EpicGraphResponse,
     EpicResponse,
     EventResponse,
-    HarnessProfileDefinitionResponse,
-    HarnessProfileResponse,
-    HarnessProfileUpsertRequest,
+    LaunchConfigurationDefinitionResponse,
+    LaunchConfigurationResponse,
+    LaunchConfigurationUpsertRequest,
     HostResponse,
     HostUpsertRequest,
     ExternalSessionRefResponse,
@@ -656,10 +656,10 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                         status=session_row.status,
                         agent_kind_selection=session_row.agent_kind_selection,
                         agent_kind=session_row.agent_kind,
-                        harness_profile_id=session_row.harness_profile_id,
-                        resolved_profile=TypeAdapter(
-                            HarnessProfileDefinitionResponse | None
-                        ).validate_python(session_row.resolved_profile),
+                        launch_configuration_id=session_row.launch_configuration_id,
+                        resolved_launch_configuration=TypeAdapter(
+                            LaunchConfigurationDefinitionResponse | None
+                        ).validate_python(session_row.resolved_launch_configuration),
                         agent_capabilities=TypeAdapter(
                             AgentCapabilitiesResponse
                         ).validate_python(session_row.agent_capabilities),
@@ -785,30 +785,35 @@ async def upsert_host(
         return HostResponse.model_validate(row, from_attributes=True)
 
 
-@v1.get("/harness-profiles", response_model=list[HarnessProfileResponse])
-async def list_harness_profiles(request: Request) -> list[HarnessProfileResponse]:
+@v1.get("/launch-configurations", response_model=list[LaunchConfigurationResponse])
+async def list_launch_configurations(
+    request: Request,
+) -> list[LaunchConfigurationResponse]:
     app = _app_from_request(request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
         rows = list(
-            await session.scalars(select(HarnessProfile).order_by(HarnessProfile.id))
+            await session.scalars(
+                select(LaunchConfiguration).order_by(LaunchConfiguration.id)
+            )
         )
     return [
-        HarnessProfileResponse.model_validate(r, from_attributes=True) for r in rows
+        LaunchConfigurationResponse.model_validate(r, from_attributes=True)
+        for r in rows
     ]
 
 
-@v1.post("/harness-profiles", response_model=HarnessProfileResponse)
-async def upsert_harness_profile(
+@v1.post("/launch-configurations", response_model=LaunchConfigurationResponse)
+async def upsert_launch_configuration(
     http_request: Request,
-    request: HarnessProfileUpsertRequest,
-) -> HarnessProfileResponse:
+    request: LaunchConfigurationUpsertRequest,
+) -> LaunchConfigurationResponse:
     app = _app_from_request(http_request)
     sessionmaker = app.state.sessionmaker
     async with sessionmaker() as session:
-        row = await session.get(HarnessProfile, request.id)
+        row = await session.get(LaunchConfiguration, request.id)
         if row is None:
-            row = HarnessProfile(
+            row = LaunchConfiguration(
                 id=request.id,
                 kind=request.kind,
                 source=request.source,
@@ -824,7 +829,7 @@ async def upsert_harness_profile(
 
         await session.commit()
         await session.refresh(row)
-        return HarnessProfileResponse.model_validate(row, from_attributes=True)
+        return LaunchConfigurationResponse.model_validate(row, from_attributes=True)
 
 
 async def _require_task(session: AsyncSession, *, task_id: int) -> Task:
@@ -944,11 +949,11 @@ async def start_task_agent(
         agent_status=session_row.status,
         agent_kind_selection=session_row.agent_kind_selection,
         agent_kind=session_row.agent_kind,
-        harness_profile_id=session_row.harness_profile_id or "",
+        launch_configuration_id=session_row.launch_configuration_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
-        resolved_profile=TypeAdapter(
-            HarnessProfileDefinitionResponse | None
-        ).validate_python(session_row.resolved_profile),
+        resolved_launch_configuration=TypeAdapter(
+            LaunchConfigurationDefinitionResponse | None
+        ).validate_python(session_row.resolved_launch_configuration),
         started_at=session_row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=warnings,
@@ -1446,11 +1451,11 @@ async def restart_task_agent(
         agent_status=session_row.status,
         agent_kind_selection=session_row.agent_kind_selection,
         agent_kind=session_row.agent_kind,
-        harness_profile_id=session_row.harness_profile_id or "",
+        launch_configuration_id=session_row.launch_configuration_id or "",
         attach=TypeAdapter(AttachInfoResponse).validate_python(session_row.attach),
-        resolved_profile=TypeAdapter(
-            HarnessProfileDefinitionResponse | None
-        ).validate_python(session_row.resolved_profile),
+        resolved_launch_configuration=TypeAdapter(
+            LaunchConfigurationDefinitionResponse | None
+        ).validate_python(session_row.resolved_launch_configuration),
         started_at=session_row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=warnings,

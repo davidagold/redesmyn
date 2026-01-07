@@ -477,7 +477,7 @@ function AgentActions({
     [agentSession?.agentLabel],
   )
   const statusLabel = agentSession?.status ?? null
-  const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
+  const harnessKind = agentSession?.launchConfigurationId?.split("/")[0] ?? null
   const agentKindValue = useMemo(() => {
     if (!agentSession) {
       return null
@@ -493,7 +493,7 @@ function AgentActions({
   const configuredHarnessCommand =
     orchestrationDefaults?.harness.command?.trim() ?? ""
   const configuredAgentKind = orchestrationDefaults?.harness.agentKind ?? "auto"
-  const agentArgv = agentSession?.resolvedProfile?.argv ?? null
+  const agentArgv = agentSession?.resolvedLaunchConfiguration?.argv ?? null
   const harnessCommand =
     agentArgv && agentArgv.length > 0
       ? agentArgv.join(" ")

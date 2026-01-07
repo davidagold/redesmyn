@@ -109,7 +109,7 @@ class _AgentSessionLike(Protocol):
     agent_kind: AgentKind
     agent_kind_selection: AgentKindSelection
     external_session_ref: dict[str, Any]
-    resolved_profile: dict[str, Any] | None
+    resolved_launch_configuration: dict[str, Any] | None
 
 
 def resolve_agent_backend(*, agent_session: _AgentSessionLike) -> AgentBackend:

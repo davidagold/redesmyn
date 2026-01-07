@@ -65,7 +65,7 @@ class _FakeAgentSession:
     agent_kind: AgentKind
     agent_kind_selection: AgentKindSelection
     external_session_ref: dict[str, object]
-    resolved_profile: dict[str, object] | None = None
+    resolved_launch_configuration: dict[str, object] | None = None
 
 
 @pytest.mark.unit

@@ -25,7 +25,7 @@ from redesmyn.host_identity import HostIdentity, load_or_create_host_identity
 from redesmyn.db import (
     AgentSession,
     Epic,
-    HarnessProfile,
+    LaunchConfiguration,
     Host,
     Task,
     create_engine,
@@ -35,14 +35,14 @@ from redesmyn.db.models import (
     AttachExternal,
     AttachInfo,
     AttachTmux,
-    HarnessProfileDefinition,
+    LaunchConfigurationDefinition,
     HostCapabilities,
 )
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
 from redesmyn.domain.enums import (
     AgentKindSelection,
     AgentStatus,
-    HarnessProfileSource,
+    LaunchConfigurationSource,
     TaskState,
 )
 from redesmyn.integrations.linear_automation import maybe_push_task_state_to_linear
@@ -403,21 +403,21 @@ def _parse_harness_command(command: str) -> list[str]:
     return argv
 
 
-async def ensure_harness_profile_row(
+async def ensure_launch_configuration_row(
     session: AsyncSession,
     *,
     profile_id: str,
     kind: str,
-    definition: HarnessProfileDefinition,
-) -> HarnessProfile:
-    profile = await session.get(HarnessProfile, profile_id)
+    definition: LaunchConfigurationDefinition,
+) -> LaunchConfiguration:
+    profile = await session.get(LaunchConfiguration, profile_id)
     if profile is not None:
         return profile
 
-    profile = HarnessProfile(
+    profile = LaunchConfiguration(
         id=profile_id,
         kind=kind,
-        source=HarnessProfileSource.Builtin,
+        source=LaunchConfigurationSource.Builtin,
         display_name=kind,
         definition=definition.model_dump(mode="python"),
     )
@@ -485,8 +485,8 @@ def find_existing_worktree_path_for_branch(
     return commit_current()
 
 
-def harness_profile_id_for_definition(
-    kind: str, definition: HarnessProfileDefinition
+def launch_configuration_id_for_definition(
+    kind: str, definition: LaunchConfigurationDefinition
 ) -> str:
     normalized = json.dumps(
         definition.model_dump(mode="python"), sort_keys=True
@@ -863,9 +863,9 @@ async def start_task_agent(
                 session, ctx, task=task, epic=epic
             )
 
-            definition = HarnessProfileDefinition(argv=argv)
-            profile_id = harness_profile_id_for_definition(argv[0], definition)
-            profile = await ensure_harness_profile_row(
+            definition = LaunchConfigurationDefinition(argv=argv)
+            profile_id = launch_configuration_id_for_definition(argv[0], definition)
+            profile = await ensure_launch_configuration_row(
                 session,
                 profile_id=profile_id,
                 kind=argv[0],
@@ -1022,10 +1022,10 @@ async def start_task_agent(
                 agent_kind_selection=agent_kind_selection,
                 agent_kind=resolved_agent_kind,
                 host_id=host.id,
-                harness_profile_id=profile.id,
+                launch_configuration_id=profile.id,
                 cwd_path=str(worktree_path),
                 pid=None,
-                resolved_profile=definition.model_dump(mode="python"),
+                resolved_launch_configuration=definition.model_dump(mode="python"),
                 exit_code=None,
                 started_at=now,
                 ended_at=None,
@@ -1203,21 +1203,21 @@ async def restart_task_agent(
             async with sessionmaker() as session:
                 task, _ = await _load_task_and_epic(session, task_id=task_id)
                 latest = await load_latest_task_agent_session_row(session, task=task)
-                resolved_profile: dict[str, Any] | None = (
-                    None if latest is None else latest.resolved_profile
+                resolved_launch_configuration: dict[str, Any] | None = (
+                    None if latest is None else latest.resolved_launch_configuration
                 )
                 if latest is not None:
                     external_session_ref_hint = latest.external_session_ref
                     if agent_kind_selection is None:
                         agent_kind_selection = latest.agent_kind_selection
                 if harness_command is None:
-                    if resolved_profile is None:
+                    if resolved_launch_configuration is None:
                         raise RuntimeError(
                             "No prior agent config found; pass --harness to restart"
                         )
-                    definition = TypeAdapter(HarnessProfileDefinition).validate_python(
-                        resolved_profile
-                    )
+                    definition = TypeAdapter(
+                        LaunchConfigurationDefinition
+                    ).validate_python(resolved_launch_configuration)
                     harness_command = shlex.join(definition.argv)
         finally:
             await engine.dispose()

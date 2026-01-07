@@ -56,7 +56,7 @@ class AgentKindSelection(StrEnum):
     ClaudeCode = "claude_code"
 
 
-class HarnessProfileSource(StrEnum):
+class LaunchConfigurationSource(StrEnum):
     Builtin = "builtin"
     User = "user"
 

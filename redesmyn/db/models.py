@@ -36,7 +36,7 @@ from redesmyn.domain.enums import (
     BlockMode,
     BlockPolicy,
     CommandState,
-    HarnessProfileSource,
+    LaunchConfigurationSource,
     MergeRunStatus,
     TaskAuthority,
     TaskSource,
@@ -137,7 +137,7 @@ class HostCapabilities(BaseModel):
     supports_path_shim: bool = True
 
 
-class HarnessProfileDefinition(BaseModel):
+class LaunchConfigurationDefinition(BaseModel):
     argv: list[str]
     env: dict[str, str] = Field(default_factory=dict)
     working_dir: Literal["node_worktree", "task_worktree"] = "task_worktree"
@@ -377,8 +377,8 @@ class AgentSession(Base):
     host_id: Mapped[int | None] = mapped_column(
         ForeignKey("hosts.id"), nullable=True, index=True
     )
-    harness_profile_id: Mapped[str | None] = mapped_column(
-        ForeignKey("harness_profiles.id"), nullable=True, index=True
+    launch_configuration_id: Mapped[str | None] = mapped_column(
+        ForeignKey("launch_configurations.id"), nullable=True, index=True
     )
     cwd_path: Mapped[str | None] = mapped_column(String, nullable=True)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -387,9 +387,9 @@ class AgentSession(Base):
         nullable=False,
         default=lambda: AttachNone().model_dump(mode="python"),
     )
-    resolved_profile: Mapped[dict[str, Any] | None] = mapped_column(
+    resolved_launch_configuration: Mapped[dict[str, Any] | None] = mapped_column(
         JSON_TYPE,
-        nullable=True,  # Pydantic: HarnessProfileDefinition
+        nullable=True,  # Pydantic: LaunchConfigurationDefinition
     )
     agent_capabilities: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
@@ -440,21 +440,21 @@ class Host(Base):
     )
 
 
-class HarnessProfile(Base):
-    __tablename__ = "harness_profiles"
+class LaunchConfiguration(Base):
+    __tablename__ = "launch_configurations"
 
     # String primary key so built-ins and user-defined profiles can exist without schema changes.
     id: Mapped[str] = mapped_column(String, primary_key=True)
     kind: Mapped[str] = mapped_column(String, nullable=False)
-    source: Mapped[HarnessProfileSource] = mapped_column(
-        _enum_type(HarnessProfileSource, "harness_profile_source"),
-        default=HarnessProfileSource.Builtin,
+    source: Mapped[LaunchConfigurationSource] = mapped_column(
+        _enum_type(LaunchConfigurationSource, "launch_configuration_source"),
+        default=LaunchConfigurationSource.Builtin,
         nullable=False,
     )
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     definition: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE,
-        nullable=False,  # Pydantic: HarnessProfileDefinition
+        nullable=False,  # Pydantic: LaunchConfigurationDefinition
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

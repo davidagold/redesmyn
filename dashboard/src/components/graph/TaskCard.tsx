@@ -221,7 +221,7 @@ export function TaskCard({
   )
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
   const gitDisabledReason = gitMutationsDisabledReason ?? null
-  const harnessKind = agentSession?.harnessProfileId?.split("/")[0] ?? null
+  const harnessKind = agentSession?.launchConfigurationId?.split("/")[0] ?? null
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
