@@ -120,6 +120,8 @@ def _worktree_is_clean_for_resume(worktree_path: str) -> tuple[bool, str | None]
         return False, f"Failed to read git status: {e}"
     if _has_unmerged_entries(status):
         return False, "Worktree still has unmerged entries."
+    if status.strip():
+        return False, "Worktree has uncommitted changes."
     return True, None
 
 
@@ -320,22 +322,33 @@ class MergeConflictAssistSupervisor:
                 runtime.detail = "Timed out waiting for conflict assist completion; use manual resume."
                 continue
 
-            agent_session = await session.scalar(
-                select(AgentSession)
-                .where(AgentSession.task_id == run.blocked_task_id)
-                .order_by(AgentSession.id.desc())
-                .limit(1)
-            )
-            runtime.agent_task_id = run.blocked_task_id
-            runtime.agent_session_id = agent_session.id if agent_session else None
+            candidate_task_ids: list[int] = [run.blocked_task_id]
+            if run.requested_task_id not in candidate_task_ids:
+                candidate_task_ids.append(run.requested_task_id)
 
-            if agent_session is None or agent_session.status != AgentStatus.Running:
+            agent_session: AgentSession | None = None
+            runtime.agent_task_id = None
+            runtime.agent_session_id = None
+
+            for task_id in candidate_task_ids:
+                row = await session.scalar(
+                    select(AgentSession)
+                    .where(AgentSession.task_id == task_id)
+                    .order_by(AgentSession.id.desc())
+                    .limit(1)
+                )
+                if row is None or row.status != AgentStatus.Running:
+                    continue
+                if not _supports_conflict_assist(row):
+                    continue
+                agent_session = row
+                runtime.agent_task_id = task_id
+                runtime.agent_session_id = row.id
+                break
+
+            if agent_session is None:
                 runtime.state = "unsupported"
-                runtime.detail = "No running agent session for blocked task."
-                continue
-            if not _supports_conflict_assist(agent_session):
-                runtime.state = "unsupported"
-                runtime.detail = "Agent does not support ready/turn-complete semantics for safe assist."
+                runtime.detail = "No running agent session supports conflict assist."
                 continue
 
             message = _rebase_remediation_message(run)
