@@ -255,10 +255,13 @@ async def supervise_once(
         )
         tasks_by_id = {t.id: t for t in tasks}
 
+    # "Active" sessions are defined by `ended_at IS NULL`. We intentionally do
+    # not filter by `status` here because we may need to reconcile/heal
+    # inconsistent rows (e.g. stopped sessions with `ended_at IS NULL`) to avoid
+    # violating the `uq_agent_sessions_active_task_id` uniqueness constraint.
     active_sessions = list(
         await session.scalars(
             select(AgentSession)
-            .where(AgentSession.status.in_([AgentStatus.Running, AgentStatus.Blocked]))
             .where(AgentSession.ended_at.is_(None))
             .order_by(desc(AgentSession.id))
         )
@@ -353,6 +356,12 @@ async def supervise_once(
             await flush_session_update(agent_session)
 
     for task_id, agent_session in list(active_session_by_task_id.items()):
+        if agent_session.status in {AgentStatus.Stopped, AgentStatus.Error}:
+            agent_session.ended_at = now
+            await flush_session_update(agent_session)
+            runtime_by_session_id.pop(agent_session.id, None)
+            continue
+
         try:
             attach = attach_adapter.validate_python(agent_session.attach)
         except Exception:

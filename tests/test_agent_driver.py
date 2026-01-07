@@ -469,6 +469,44 @@ async def test_agent_driver_persists_external_session_ref_without_thrashing(
 
 
 @pytest.mark.integration
+async def test_agent_driver_reuses_active_session_row_when_tmux_running(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+
+    async with scenario.db.session() as session:
+        # Simulate a stale/inconsistent DB row: stopped but still "active"
+        # according to the `ended_at IS NULL` uniqueness constraint.
+        agent_session = AgentSession(task_id=task_id, status=AgentStatus.Stopped)
+        session.add(agent_session)
+        await session.commit()
+        await session.refresh(agent_session)
+        session_id = agent_session.id
+
+    fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+        )
+
+    async with scenario.db.session() as session:
+        count = await session.scalar(
+            select(func.count(AgentSession.id)).where(AgentSession.task_id == task_id)
+        )
+        assert count == 1
+        row = await session.get(AgentSession, session_id)
+        assert row is not None
+        assert row.status == AgentStatus.Running
+        assert row.ended_at is None
+        assert row.attach.get("type") == "tmux"
+
+
+@pytest.mark.integration
 async def test_agent_driver_kill_switch_disables_background_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
