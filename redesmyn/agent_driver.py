@@ -210,8 +210,6 @@ def _runtime_kind_from_attach(attach: AttachInfo) -> AgentSessionRuntimeKind:
             return AgentSessionRuntimeKind.External
         case AttachNone():
             return AgentSessionRuntimeKind.None_
-
-
 def _log_path_from_attach(attach: AttachInfo) -> Path | None:
     match attach:
         case AttachTmux(log_path=log_path) | AttachExternal(log_path=log_path):
@@ -519,7 +517,6 @@ async def supervise_once(
 
         if changed:
             await flush_session_update(agent_session)
-
     for task_id in running_task_ids:
         if task_id not in tasks_by_id:
             continue
@@ -705,7 +702,6 @@ async def supervise_once(
             runtime=runtime,
             log_text=log_text,
         )
-
     active_session_ids = {
         row.id
         for row in active_session_by_task_id.values()

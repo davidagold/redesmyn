@@ -555,6 +555,31 @@ def infer_interface_mode_from_argv(
             return AgentInterfaceMode.Interactive
 
 
+def _ensure_codex_structured_argv(argv: list[str]) -> list[str]:
+    """Best-effort rewrite to enable Codex's structured JSONL stream."""
+    idx = _find_agent_executable_index(argv, names={"codex"})
+    if idx is None:
+        return argv
+    out = list(argv)
+    if len(out) <= idx + 1 or out[idx + 1] != "exec":
+        out.insert(idx + 1, "exec")
+    if "--json" not in out[idx + 2 :]:
+        out.insert(idx + 2, "--json")
+    return out
+
+
+def _ensure_claude_structured_argv(argv: list[str]) -> list[str]:
+    """Best-effort rewrite to enable Claude Code's stream-json output mode."""
+    idx = _find_agent_executable_index(argv, names={"claude", "claude-code"})
+    if idx is None:
+        return argv
+    out = list(argv)
+    if "--output-format" in out[idx + 1 :] or "--outputFormat" in out[idx + 1 :]:
+        return out
+    out[idx + 1 : idx + 1] = ["--output-format", "stream-json"]
+    return out
+
+
 async def ensure_launch_configuration_row(
     session: AsyncSession,
     *,
@@ -977,6 +1002,7 @@ async def start_task_agent(
     prelude_override: str | None = None,
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
     external_session_ref_hint: dict[str, Any] | None = None,
+    interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -1045,9 +1071,21 @@ async def start_task_agent(
                 argv,
                 external_session_ref_hint=external_session_ref_hint,
             )
-            interface_mode = infer_interface_mode_from_argv(
+            inferred_mode = infer_interface_mode_from_argv(
                 argv=argv, resolved_agent_kind=resolved_agent_kind
             )
+            if interface_mode == AgentInterfaceMode.Interactive:
+                interface_mode = inferred_mode
+
+            if interface_mode == AgentInterfaceMode.Structured:
+                if resolved_agent_kind == AgentKind.Codex:
+                    argv = _ensure_codex_structured_argv(argv)
+                elif resolved_agent_kind == AgentKind.ClaudeCode:
+                    argv = _ensure_claude_structured_argv(argv)
+                else:
+                    raise RuntimeError(
+                        "Structured interface mode is only supported for Codex and Claude Code"
+                    )
 
             definition = LaunchConfigurationDefinition(argv=argv)
             profile_id = launch_configuration_id_for_definition(argv[0], definition)
@@ -1396,11 +1434,18 @@ async def restart_task_agent(
     detach: bool,
     prelude_override: str | None = None,
     agent_kind_selection_override: AgentKindSelection | None = None,
+    interface_mode_override: AgentInterfaceMode | None = None,
+    default_interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
     default_agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
 ) -> StartAgentResult:
     external_session_ref_hint: dict[str, Any] | None = None
     agent_kind_selection = agent_kind_selection_override
-    if harness_command is None or agent_kind_selection is None:
+    interface_mode = interface_mode_override
+    if (
+        harness_command is None
+        or agent_kind_selection is None
+        or interface_mode is None
+    ):
         engine = create_engine(ctx.db_path)
         try:
             sessionmaker = create_sessionmaker(engine)
@@ -1414,6 +1459,8 @@ async def restart_task_agent(
                     external_session_ref_hint = latest.external_session_ref
                     if agent_kind_selection is None:
                         agent_kind_selection = latest.agent_kind_selection
+                    if interface_mode is None:
+                        interface_mode = latest.agent_interface_mode
                 if harness_command is None:
                     if resolved_launch_configuration is None:
                         raise RuntimeError(
@@ -1427,6 +1474,8 @@ async def restart_task_agent(
             await engine.dispose()
     if agent_kind_selection is None:
         agent_kind_selection = default_agent_kind_selection
+    if interface_mode is None:
+        interface_mode = default_interface_mode
 
     if not detach:
         raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
@@ -1445,6 +1494,7 @@ async def restart_task_agent(
         prelude_override=prelude_override,
         agent_kind_selection=agent_kind_selection,
         external_session_ref_hint=external_session_ref_hint,
+        interface_mode=interface_mode,
     )
 
 
