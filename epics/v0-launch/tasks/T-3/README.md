@@ -28,18 +28,27 @@ otherwise the product becomes unusable.
 
 - Decide whether the setting is deleted vs deprecated-but-ignored (v0 likely deletes).
 - Ensure config/env surfaces do not imply a local execution mode.
+- Concrete code removals (target end state):
+  - Delete `RedesmynSettings.runner_mode` (and any env/config keys that set it).
+  - Delete `LocalRunnerBackend` and “server starts agents directly” pathways.
+  - Delete “server can be a repo executor” pathways (e.g., `LocalRepoExecutor` / `RepoExecutorTarget.is_local`).
+  - Remove any server-side “auto-acquire primary on demand” behavior that is keyed on local mode.
 
 2) Delete server-owned repo-local loops
 
 - Remove server in-process repo observer loop.
 - Remove server in-process agent monitor/driver.
 - Remove server in-process “primary executor lease refresh” behavior.
+- Remove/retire CLI and env affordances that imply server-owned observation:
+  - `rn server run --observer/--no-observer`
+  - `REDESMYN_NO_OBSERVER`, `REDESMYN_NO_AGENT_MONITOR`
 
 3) Harden “daemon required” pathways
 
 - Any endpoint that requires repo-local execution must:
   - resolve an executor target, and
   - fail with explicit guidance when no daemon is connected/attached (and/or when not primary).
+- Ensure canonical operations do not silently fall back to local execution when the daemon is missing.
 
 4) Ensure the server can run without repo FS
 

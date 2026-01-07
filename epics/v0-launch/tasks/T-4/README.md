@@ -42,6 +42,8 @@ This task fills that gap: agent lifecycle becomes a daemon command surface, and 
 
 - Implement a real “remote runner backend” that sends commands to the daemon and waits for `command_ack`.
 - Remove/retire the existing “remote runner backend is not implemented” (currently 501).
+- Ensure all control-plane agent endpoints (`/v1/tasks/{id}/agent/*`) route through the daemon path (no direct `agent_runtime`
+  calls remain in server request handlers).
 
 4) Error messages and UX contracts
 
@@ -68,3 +70,5 @@ Make the daemon the sole owner of agent lifecycle:
   - daemon not connected
   - daemon connected but repo not attached
   - requested host is not primary executor (when relevant)
+- There is no remaining “server-local runner backend” in normal operation (local mode removal in T-3 turns this into a
+  hard guarantee rather than a configuration choice).
