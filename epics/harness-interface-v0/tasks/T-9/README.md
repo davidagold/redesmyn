@@ -5,7 +5,7 @@
 ```yaml
 id: T-9
 epic: harness-interface-v0
-stacked_on: T-3
+stacked_on: T-10
 branch:
   suggested: rn/harness-interface-v0/T-9-agent-message-preview
 ```
@@ -94,4 +94,3 @@ Add tests that validate:
 - When Codex emits a new assistant message, the corresponding task card shows a single-line preview within ~1s.
 - The graph remains readable and non-busy: no multi-line transcripts on cards.
 - The preview data is persisted on `AgentSession` (so it survives reloads) and can serve as a future Timeline source.
-
