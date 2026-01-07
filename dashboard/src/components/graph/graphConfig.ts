@@ -6,6 +6,12 @@ export const GRAPH_NODE_WIDTH = 320
 export const GRAPH_NODE_HEIGHT = 96
 export const GRAPH_PADDING = 40
 
+// Task cards can render "chrome" outside the base card (badges above, action
+// buttons, callouts below). The graph layout treats these as additional spacing
+// so they don't collide with neighboring nodes.
+export const GRAPH_NODE_VERTICAL_GAP = 160
+export const GRAPH_NODE_HORIZONTAL_GAP = 140
+
 export const TRUNK_THICKNESS = 2
 export const TRUNK_GAP = 56
 export const TRUNK_COMMIT_PADDING = 18

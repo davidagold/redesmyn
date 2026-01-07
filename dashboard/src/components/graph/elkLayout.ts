@@ -1,6 +1,10 @@
 import ELK from "elkjs/lib/elk.bundled.js"
 import type { GraphNode } from "@/lib/graph-utils"
 import type { FlowPosition } from "./flowLayout"
+import {
+  GRAPH_NODE_HORIZONTAL_GAP,
+  GRAPH_NODE_VERTICAL_GAP,
+} from "./graphConfig"
 
 export interface ElkLayoutOptions {
   nodeWidth: number
@@ -71,8 +75,10 @@ export async function layoutWithElk(
     layoutOptions: {
       "elk.algorithm": "mrtree",
       "elk.direction": "RIGHT",
-      "elk.spacing.nodeNode": "80",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "140",
+      "elk.spacing.nodeNode": String(GRAPH_NODE_VERTICAL_GAP),
+      "elk.layered.spacing.nodeNodeBetweenLayers": String(
+        GRAPH_NODE_HORIZONTAL_GAP,
+      ),
       "elk.edgeRouting": "ORTHOGONAL",
     },
     children: sortedNodes.map((node) => ({
@@ -109,7 +115,7 @@ export async function layoutWithElk(
     }
     positions.set(root.id, {
       x: xOffset,
-      y: yOffset + fallbackRow * nodeHeight,
+      y: yOffset + fallbackRow * (nodeHeight + GRAPH_NODE_VERTICAL_GAP),
     })
     fallbackRow += 1
   }

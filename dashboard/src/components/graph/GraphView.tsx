@@ -37,7 +37,9 @@ import {
   GRAPH_FIT_MIN_ZOOM,
   GRAPH_FIT_PADDING_PX,
   GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_HORIZONTAL_GAP,
   GRAPH_NODE_WIDTH,
+  GRAPH_NODE_VERTICAL_GAP,
   GRAPH_PADDING,
   TRUNK_GAP,
   TRUNK_COMMIT_PADDING,
@@ -154,6 +156,7 @@ export function GraphView({
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
+  const [elkLayoutSettled, setElkLayoutSettled] = useState(false)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [bulkMergeReadyPending, setBulkMergeReadyPending] = useState(false)
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
@@ -468,10 +471,12 @@ export function GraphView({
   useEffect(() => {
     if (!graphNodes.length) {
       setElkPositions(null)
+      setElkLayoutSettled(true)
       return
     }
 
     let cancelled = false
+    setElkLayoutSettled(false)
     const yOffset = layoutAnchorY
     const xOffset = GRAPH_PADDING + trunkColumnWidth + TRUNK_GAP
     ;(async () => {
@@ -484,10 +489,12 @@ export function GraphView({
         })
         if (!cancelled) {
           setElkPositions(positions)
+          setElkLayoutSettled(true)
         }
       } catch {
         if (!cancelled) {
           setElkPositions(null)
+          setElkLayoutSettled(true)
         }
       }
     })()
@@ -502,8 +509,8 @@ export function GraphView({
       return elkPositions
     }
     return layoutTree(rootNodes, childrenByParent, {
-      xSpacing: 360,
-      ySpacing: 140,
+      xSpacing: GRAPH_NODE_WIDTH + GRAPH_NODE_HORIZONTAL_GAP,
+      ySpacing: GRAPH_NODE_HEIGHT + GRAPH_NODE_VERTICAL_GAP,
       xOffset: GRAPH_PADDING + trunkColumnWidth + TRUNK_GAP,
       yOffset: layoutAnchorY,
     })
@@ -541,6 +548,7 @@ export function GraphView({
     didInitialFitRef.current = false
     fitSuppressedRef.current = false
     setElkPositions(null)
+    setElkLayoutSettled(false)
   }, [epicSlug])
 
   const targetPositions = useMemo(
@@ -621,6 +629,10 @@ export function GraphView({
       return
     }
 
+    if (!elkLayoutSettled) {
+      return
+    }
+
     if (positions.size === 0) {
       return
     }
@@ -649,6 +661,7 @@ export function GraphView({
       })
     })
   }, [
+    elkLayoutSettled,
     flow,
     positions,
     selectedEdgeId,
