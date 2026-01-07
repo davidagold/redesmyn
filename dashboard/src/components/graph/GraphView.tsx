@@ -785,6 +785,7 @@ export function GraphView({
         data: {
           node: graphNode,
           task,
+          tasksById,
           mergeRun,
           blockingMergeRun,
           agentSession,
