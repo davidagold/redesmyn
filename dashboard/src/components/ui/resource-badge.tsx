@@ -38,7 +38,10 @@ export function ResourceBadge({
   extendBackground = false,
   ...props
 }: ResourceBadgeProps) {
-  const hasValue = value !== null && value !== undefined && value !== ""
+  const displayValue =
+    typeof value === "string" && value === "Generic" ? "Shell" : value
+  const hasValue =
+    displayValue !== null && displayValue !== undefined && displayValue !== ""
   const segmentClasses = cn(
     "inline-flex items-center px-2 py-0.5 transition-colors",
     size === "xs" ? "text-[0.625rem]" : null,
@@ -67,7 +70,7 @@ export function ResourceBadge({
               : null,
           )}
         >
-          {value}
+          {displayValue}
         </span>
       ) : null}
     </span>
