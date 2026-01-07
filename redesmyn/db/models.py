@@ -274,6 +274,7 @@ class LinearEpicDefaults(Base):
     )
     team_id: Mapped[str | None] = mapped_column(String, nullable=True)
     label_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    label_name: Mapped[str | None] = mapped_column(String, nullable=True)
     milestone_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

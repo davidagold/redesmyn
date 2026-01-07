@@ -71,6 +71,8 @@ from redesmyn.integrations.linear import (
     new_oauth_state,
     new_pkce_verifier,
     pkce_code_challenge,
+    resolve_default_team,
+    resolve_or_create_label,
 )
 from redesmyn.integrations.linear_sync import (
     fetch_project_milestones,
@@ -1820,6 +1822,7 @@ async def get_epic_linear_config(
         defaults = await session.get(LinearEpicDefaults, epic_row.id)
 
         label_id = defaults.label_id if defaults else None
+        label_name = defaults.label_name if defaults else None
         milestone_id = defaults.milestone_id if defaults else None
 
         sync_mode: Literal["label", "milestone"] = (
@@ -1829,7 +1832,7 @@ async def get_epic_linear_config(
         return EpicLinearConfigResponse(
             sync_mode=sync_mode,
             label_id=label_id,
-            label_name=None,
+            label_name=label_name,
             milestone_id=milestone_id,
             milestone_name=None,
         )
@@ -1853,17 +1856,61 @@ async def update_epic_linear_config(
             defaults = LinearEpicDefaults(epic_id=epic_row.id)
             session.add(defaults)
 
-        # Mutual exclusivity: setting one clears the other
-        if request_body.milestone_id is not None:
+        fields_set = request_body.model_fields_set
+
+        if "milestone_id" in fields_set:
             defaults.milestone_id = request_body.milestone_id
-            defaults.label_id = None
-        elif request_body.label_id is not None:
+
+        if "label_id" in fields_set:
             defaults.label_id = request_body.label_id
+            if request_body.label_id is None:
+                defaults.label_name = None
             defaults.milestone_id = None
-        elif request_body.label_name is not None:
-            # TODO: Create label via Linear API if it doesn't exist
-            # For now, just clear milestone
-            defaults.milestone_id = None
+
+        if "label_name" in fields_set:
+            if request_body.label_name is None:
+                defaults.label_id = None
+                defaults.label_name = None
+                defaults.milestone_id = None
+            else:
+                label_name = request_body.label_name.strip()
+                if not label_name:
+                    label_name = epic_row.slug
+
+                store = default_linear_credential_store()
+                creds = store.get()
+                if creds is None:
+                    raise HTTPException(
+                        status_code=400, detail="Linear is not connected"
+                    )
+
+                project_id = epic_row.linear_project_id
+                if not project_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Epic is not linked to a Linear project",
+                    )
+
+                client = LinearClient(access_token=creds.access_token)
+                try:
+                    try:
+                        team = await resolve_default_team(
+                            client,
+                            project_id=project_id,
+                            preferred_team_id=defaults.team_id,
+                        )
+                    except ValueError:
+                        team = await resolve_default_team(client, project_id=project_id)
+                    label = await resolve_or_create_label(
+                        client, label_name=label_name, team_id=team.id
+                    )
+                except Exception as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+                defaults.team_id = team.id
+                defaults.label_id = label.id
+                defaults.label_name = label.name
+                defaults.milestone_id = None
 
         await session.commit()
         await session.refresh(defaults)
@@ -1875,7 +1922,7 @@ async def update_epic_linear_config(
         return EpicLinearConfigResponse(
             sync_mode=sync_mode,
             label_id=defaults.label_id,
-            label_name=None,
+            label_name=defaults.label_name,
             milestone_id=defaults.milestone_id,
             milestone_name=None,
         )
