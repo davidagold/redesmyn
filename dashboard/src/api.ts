@@ -11,6 +11,30 @@ export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type LinearStatus = components["schemas"]["LinearStatusResponse"]
 export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
+
+export type LinearProject = {
+  id: string
+  name: string
+  slug: string | null
+}
+
+export type LinearLabel = {
+  id: string
+  name: string
+}
+
+export type LinearMilestone = {
+  id: string
+  name: string
+}
+
+export type EpicLinearConfig = {
+  syncMode: "label" | "milestone"
+  labelId: string | null
+  labelName: string | null
+  milestoneId: string | null
+  milestoneName: string | null
+}
 export type Task = components["schemas"]["TaskResponse"]
 export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartRequest"] & {
   prelude?: string | null
@@ -317,4 +341,56 @@ export async function fetchTaskAgentLogs(
     url.searchParams.set("max_bytes", String(params.maxBytes))
   }
   return requestJson(url.pathname + url.search)
+}
+
+export async function fetchLinearProjects(options?: {
+  signal?: AbortSignal
+}): Promise<LinearProject[]> {
+  return requestJson("/v1/linear/projects", { signal: options?.signal })
+}
+
+export async function updateEpicLinearProject(
+  epicSlug: string,
+  linearProjectId: string | null,
+): Promise<Epic> {
+  return requestJson(`/v1/epics/${epicSlug}/linear/project`, {
+    method: "PATCH",
+    body: { linear_project_id: linearProjectId },
+  })
+}
+
+export async function fetchLinearMilestones(
+  projectId: string,
+  options?: { signal?: AbortSignal },
+): Promise<LinearMilestone[]> {
+  return requestJson(`/v1/linear/projects/${projectId}/milestones`, {
+    signal: options?.signal,
+  })
+}
+
+export async function fetchEpicLinearConfig(
+  epicSlug: string,
+  options?: { signal?: AbortSignal },
+): Promise<EpicLinearConfig> {
+  return requestJson(`/v1/epics/${epicSlug}/linear/config`, {
+    signal: options?.signal,
+  })
+}
+
+export async function updateEpicLinearConfig(
+  epicSlug: string,
+  config: {
+    labelId?: string | null
+    labelName?: string | null
+    milestoneId?: string | null
+  },
+): Promise<EpicLinearConfig> {
+  return requestJson(`/v1/epics/${epicSlug}/linear/config`, {
+    method: "PATCH",
+    body: {
+      label_id: config.labelId,
+      label_name: config.labelName,
+      milestone_id: config.milestoneId,
+    },
+  })
 }

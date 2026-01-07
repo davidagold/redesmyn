@@ -52,7 +52,7 @@ from redesmyn.db import (
     create_sessionmaker,
     init_db,
 )
-from redesmyn.db.models import HostCapabilities
+from redesmyn.db.models import HostCapabilities, LinearEpicDefaults
 from redesmyn.docs.loader import DocLoadError, load_epic_doc
 from redesmyn.domain.enums import (
     AgentKindSelection,
@@ -71,6 +71,10 @@ from redesmyn.integrations.linear import (
     new_oauth_state,
     new_pkce_verifier,
     pkce_code_challenge,
+)
+from redesmyn.integrations.linear_sync import (
+    fetch_project_milestones,
+    fetch_projects,
 )
 from redesmyn.integrations.linear_credentials import (
     LinearCredentials,
@@ -109,7 +113,11 @@ from redesmyn.schemas.core import (
     DaemonCommandResponse,
     DaemonPresenceResponse,
     EpicGraphResponse,
+    EpicLinearConfigResponse,
+    EpicLinearConfigUpdateRequest,
+    EpicLinearProjectUpdateRequest,
     EpicResponse,
+    LinearMilestoneResponse,
     EventResponse,
     LaunchConfigurationDefinitionResponse,
     LaunchConfigurationResponse,
@@ -117,6 +125,7 @@ from redesmyn.schemas.core import (
     HostResponse,
     HostUpsertRequest,
     ExternalSessionRefResponse,
+    LinearProjectResponse,
     LinearStatusResponse,
     LinearPushStatsResponse,
     MergeRunResumeRequest,
@@ -1740,6 +1749,136 @@ async def linear_logout() -> LinearStatusResponse:
         await session.commit()
 
     return LinearStatusResponse(connected=False, connected_at=None)
+
+
+@v1.get("/linear/projects", response_model=list[LinearProjectResponse])
+async def list_linear_projects() -> list[LinearProjectResponse]:
+    """List all Linear projects accessible to the connected user."""
+    store = default_linear_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Linear is not connected")
+
+    client = LinearClient(access_token=creds.access_token)
+    try:
+        projects = await fetch_projects(client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return [LinearProjectResponse(id=p.id, name=p.name, slug=p.slug) for p in projects]
+
+
+@v1.patch("/epics/{epic}/linear/project", response_model=EpicResponse)
+async def update_epic_linear_project(
+    epic: str,
+    request_body: EpicLinearProjectUpdateRequest,
+    request: Request,
+) -> EpicResponse:
+    """Update or unset the Linear project ID for an epic."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+        epic_row.linear_project_id = request_body.linear_project_id
+        session.add(epic_row)
+        await session.commit()
+        await session.refresh(epic_row)
+        return EpicResponse.model_validate(epic_row, from_attributes=True)
+
+
+@v1.get(
+    "/linear/projects/{project_id}/milestones",
+    response_model=list[LinearMilestoneResponse],
+)
+async def list_linear_milestones(project_id: str) -> list[LinearMilestoneResponse]:
+    """List all milestones for a Linear project."""
+    store = default_linear_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Linear is not connected")
+
+    client = LinearClient(access_token=creds.access_token)
+    try:
+        milestones = await fetch_project_milestones(client, project_id=project_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return [LinearMilestoneResponse(id=m.id, name=m.name) for m in milestones]
+
+
+@v1.get("/epics/{epic}/linear/config", response_model=EpicLinearConfigResponse)
+async def get_epic_linear_config(
+    epic: str, request: Request
+) -> EpicLinearConfigResponse:
+    """Get the Linear sync configuration for an epic."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+        defaults = await session.get(LinearEpicDefaults, epic_row.id)
+
+        label_id = defaults.label_id if defaults else None
+        milestone_id = defaults.milestone_id if defaults else None
+
+        sync_mode: Literal["label", "milestone"] = (
+            "milestone" if milestone_id else "label"
+        )
+
+        return EpicLinearConfigResponse(
+            sync_mode=sync_mode,
+            label_id=label_id,
+            label_name=None,
+            milestone_id=milestone_id,
+            milestone_name=None,
+        )
+
+
+@v1.patch("/epics/{epic}/linear/config", response_model=EpicLinearConfigResponse)
+async def update_epic_linear_config(
+    epic: str,
+    request_body: EpicLinearConfigUpdateRequest,
+    request: Request,
+) -> EpicLinearConfigResponse:
+    """Update the Linear sync configuration for an epic."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+
+        defaults = await session.get(LinearEpicDefaults, epic_row.id)
+        if defaults is None:
+            defaults = LinearEpicDefaults(epic_id=epic_row.id)
+            session.add(defaults)
+
+        # Mutual exclusivity: setting one clears the other
+        if request_body.milestone_id is not None:
+            defaults.milestone_id = request_body.milestone_id
+            defaults.label_id = None
+        elif request_body.label_id is not None:
+            defaults.label_id = request_body.label_id
+            defaults.milestone_id = None
+        elif request_body.label_name is not None:
+            # TODO: Create label via Linear API if it doesn't exist
+            # For now, just clear milestone
+            defaults.milestone_id = None
+
+        await session.commit()
+        await session.refresh(defaults)
+
+        sync_mode: Literal["label", "milestone"] = (
+            "milestone" if defaults.milestone_id else "label"
+        )
+
+        return EpicLinearConfigResponse(
+            sync_mode=sync_mode,
+            label_id=defaults.label_id,
+            label_name=None,
+            milestone_id=defaults.milestone_id,
+            milestone_name=None,
+        )
 
 
 def _resolve_linear_project_id(epic_row: Epic) -> str | None:

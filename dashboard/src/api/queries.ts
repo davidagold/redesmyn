@@ -2,8 +2,11 @@ import { useQuery } from "@tanstack/react-query"
 import {
   fetchDaemons,
   fetchEpicGraph,
+  fetchEpicLinearConfig,
   fetchEpics,
   fetchHosts,
+  fetchLinearMilestones,
+  fetchLinearProjects,
   fetchLinearStatus,
   fetchOrchestrationDefaults,
 } from "@/api"
@@ -64,5 +67,51 @@ export function useLinearStatusQuery() {
   return useQuery({
     queryKey: queryKeys.linearStatus(),
     queryFn: ({ signal }) => fetchLinearStatus({ signal }),
+  })
+}
+
+export function useLinearProjectsQuery(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.linearProjects(),
+    queryFn: ({ signal }) => fetchLinearProjects({ signal }),
+    enabled: options?.enabled ?? true,
+  })
+}
+
+export function useLinearMilestonesQuery(
+  projectId: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey:
+      projectId === null
+        ? ["linear", "projects", "none", "milestones"]
+        : queryKeys.linearMilestones(projectId),
+    queryFn: ({ signal }) => {
+      if (projectId === null) {
+        throw new Error("Project id missing for milestones query.")
+      }
+      return fetchLinearMilestones(projectId, { signal })
+    },
+    enabled: (options?.enabled ?? true) && projectId !== null,
+  })
+}
+
+export function useEpicLinearConfigQuery(
+  epicSlug: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey:
+      epicSlug === null
+        ? ["epics", "none", "linear", "config"]
+        : queryKeys.epicLinearConfig(epicSlug),
+    queryFn: ({ signal }) => {
+      if (epicSlug === null) {
+        throw new Error("Epic slug missing for Linear config query.")
+      }
+      return fetchEpicLinearConfig(epicSlug, { signal })
+    },
+    enabled: (options?.enabled ?? true) && epicSlug !== null,
   })
 }

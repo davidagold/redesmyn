@@ -23,7 +23,7 @@ _TEAM_STATE_ID_CACHE_TTL_S = 10 * 60
 
 
 PROJECT_URL_QUERY = """
-query ProjectUrl($projectId: ID!) {
+query ProjectUrl($projectId: String!) {
   project(id: $projectId) {
     url
   }
@@ -39,7 +39,7 @@ query IssueUrl($issueId: String!) {
 """
 
 PROJECT_ISSUES_QUERY = """
-query ProjectIssues($projectId: ID!, $after: String) {
+query ProjectIssues($projectId: String!, $after: String) {
   project(id: $projectId) {
     id
     name
@@ -81,7 +81,7 @@ async def fetch_issue_url(client: LinearClient, *, issue_id: str) -> str:
 
 
 PROJECT_ISSUES_BY_LABEL_QUERY = """
-query ProjectIssuesByLabel($projectId: ID!, $labelName: String!, $after: String) {
+query ProjectIssuesByLabel($projectId: String!, $labelName: String!, $after: String) {
   issues(
     first: 50,
     after: $after,
@@ -100,7 +100,7 @@ query ProjectIssuesByLabel($projectId: ID!, $labelName: String!, $after: String)
 """
 
 PROJECT_RELATIONS_QUERY = """
-query ProjectIssueRelations($projectId: ID!, $after: String) {
+query ProjectIssueRelations($projectId: String!, $after: String) {
   issueRelations(first: 100, after: $after, filter: { issue: { project: { id: { eq: $projectId } } } }) {
     nodes {
       id
@@ -114,7 +114,7 @@ query ProjectIssueRelations($projectId: ID!, $after: String) {
 """
 
 PROJECT_TEAMS_QUERY = """
-query ProjectTeams($projectId: ID!) {
+query ProjectTeams($projectId: String!) {
   project(id: $projectId) {
     id
     teams(first: 50) {
@@ -125,7 +125,7 @@ query ProjectTeams($projectId: ID!) {
 """
 
 PROJECT_MILESTONES_QUERY = """
-query ProjectMilestones($projectId: ID!, $after: String) {
+query ProjectMilestones($projectId: String!, $after: String) {
   project(id: $projectId) {
     id
     projectMilestones(first: 50, after: $after) {
@@ -137,7 +137,7 @@ query ProjectMilestones($projectId: ID!, $after: String) {
 """
 
 PROJECT_MILESTONES_QUERY_FALLBACK = """
-query ProjectMilestonesFallback($projectId: ID!, $after: String) {
+query ProjectMilestonesFallback($projectId: String!, $after: String) {
   project(id: $projectId) {
     id
     milestones(first: 50, after: $after) {
@@ -167,7 +167,7 @@ query IssueMilestoneFallback($id: String!) {
 """
 
 PROJECT_QUERY_MIN = """
-query Project($projectId: ID!) {
+query Project($projectId: String!) {
   project(id: $projectId) {
     id
     name
@@ -177,7 +177,7 @@ query Project($projectId: ID!) {
 """
 
 PROJECT_QUERY_BARE = """
-query Project($projectId: ID!) {
+query Project($projectId: String!) {
   project(id: $projectId) {
     id
     name

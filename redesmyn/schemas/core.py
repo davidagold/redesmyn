@@ -682,6 +682,40 @@ class LinearStatusResponse(ApiResponse):
     connected_at: datetime | None
 
 
+class LinearProjectResponse(ApiResponse):
+    id: str
+    name: str
+    slug: str | None
+
+
+class LinearLabelResponse(ApiResponse):
+    id: str
+    name: str
+
+
+class LinearMilestoneResponse(ApiResponse):
+    id: str
+    name: str
+
+
+class EpicLinearConfigResponse(ApiResponse):
+    sync_mode: Literal["label", "milestone"]
+    label_id: str | None
+    label_name: str | None
+    milestone_id: str | None
+    milestone_name: str | None
+
+
+class EpicLinearConfigUpdateRequest(ApiRequest):
+    label_id: str | None = None
+    label_name: str | None = None
+    milestone_id: str | None = None
+
+
+class EpicLinearProjectUpdateRequest(ApiRequest):
+    linear_project_id: str | None = None
+
+
 class SyncStatsResponse(ApiResponse):
     epics_created: int
     epics_updated: int

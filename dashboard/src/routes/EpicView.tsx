@@ -5,6 +5,7 @@ import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { ConnectionsCluster } from "@/components/layout/ConnectionsCluster"
+import { EpicLinearProjectBadge } from "@/components/linear/EpicLinearProjectBadge"
 import { GraphView } from "@/components/graph/GraphView"
 import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ import { useBulkTaskAgentActionsMutation } from "@/api/mutations"
 import { useEpics } from "@/hooks/useEpics"
 import { useDaemons } from "@/hooks/useDaemons"
 import { useHosts } from "@/hooks/useHosts"
+import { useLinearStatus } from "@/hooks/useLinearStatus"
 import type { StreamEvent } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
@@ -72,6 +74,7 @@ export function EpicView() {
   const { epics, loading: epicsLoading, error: epicsError } = useEpics()
   const { daemons } = useDaemons()
   const { hosts } = useHosts()
+  const { status: linearStatus } = useLinearStatus()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
@@ -712,6 +715,13 @@ export function EpicView() {
             onSelectEpic={handleSelectEpic}
           />
 
+          {selectedEpic ? (
+            <EpicLinearProjectBadge
+              epic={selectedEpic}
+              linearConnected={linearStatus?.connected ?? false}
+            />
+          ) : null}
+
           {selectedLabel ? (
             <>
               <ChevronRight
@@ -892,7 +902,10 @@ export function EpicView() {
                           upstream (ignores merged ancestors).
                         </div>
                         {stackProjectionsFresh ? null : (
-                          <div>Telemetry is stale, so sync projections may be stale.</div>
+                          <div>
+                            Telemetry is stale, so sync projections may be
+                            stale.
+                          </div>
                         )}
                       </div>
                     </TooltipContent>
@@ -909,7 +922,9 @@ export function EpicView() {
                             "h-full rounded-none border-0 border-l px-1.5 leading-none",
                             triggerProps.className,
                           )}
-                          onClick={() => selectBucketNodes(runBuckets.outOfSync)}
+                          onClick={() =>
+                            selectBucketNodes(runBuckets.outOfSync)
+                          }
                           disabledReason="No tasks to select"
                         >
                           <span className="truncate">

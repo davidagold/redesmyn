@@ -16,12 +16,39 @@ from collections.abc import Iterable
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine.interfaces import ReflectedColumn, ReflectedIndex
 
 revision = "0020_rename_harness_profile_to_launch_configuration"
 down_revision = "0019_agent_kind_selection"
 branch_labels = None
 depends_on = None
+
+
+def _json_type() -> sa.JSON:
+    return sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
+
+
+CAPABILITIES_DEFAULT = (
+    '{"can_detect_ready_for_input":false,'
+    '"can_detect_turn_complete":false,'
+    '"can_send_text":true,'
+    '"can_interrupt":false,'
+    '"can_receive_notifications":false,'
+    '"can_resume_by_id":false,'
+    '"can_continue_in_cwd":false,'
+    '"can_stream_semantic_events":false}'
+)
+
+SEMANTIC_STATUS_DEFAULT = '{"turn_state":"unknown","detail":null}'
+
+EXTERNAL_SESSION_DEFAULT = '{"type":"none"}'
+
+
+def _server_default_json_literal(conn, value: str) -> str:
+    if conn.dialect.name == "postgresql":
+        return f"'{value}'::jsonb"
+    return f"'{value}'"
 
 
 def _index_names(indexes: Iterable[ReflectedIndex]) -> set[str]:
@@ -106,6 +133,35 @@ def upgrade() -> None:
                 new_column_name="resolved_launch_configuration",
                 existing_nullable=True,
             )
+
+        if conn.dialect.name == "sqlite":
+            if "agent_capabilities" in agent_session_columns:
+                batch.alter_column(
+                    "agent_capabilities",
+                    existing_type=_json_type(),
+                    existing_nullable=False,
+                    server_default=_server_default_json_literal(
+                        conn, CAPABILITIES_DEFAULT
+                    ),
+                )
+            if "agent_semantic_status" in agent_session_columns:
+                batch.alter_column(
+                    "agent_semantic_status",
+                    existing_type=_json_type(),
+                    existing_nullable=False,
+                    server_default=_server_default_json_literal(
+                        conn, SEMANTIC_STATUS_DEFAULT
+                    ),
+                )
+            if "external_session_ref" in agent_session_columns:
+                batch.alter_column(
+                    "external_session_ref",
+                    existing_type=_json_type(),
+                    existing_nullable=False,
+                    server_default=_server_default_json_literal(
+                        conn, EXTERNAL_SESSION_DEFAULT
+                    ),
+                )
 
     # Work around an Alembic/SQLite batch-alter edge case where creating an index
     # on a column being renamed in the same batch can raise a KeyError.

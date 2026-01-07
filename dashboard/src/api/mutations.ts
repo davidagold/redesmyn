@@ -22,6 +22,8 @@ import {
   setTaskMergeReady,
   startTaskAgent,
   stopTaskAgent,
+  updateEpicLinearConfig,
+  updateEpicLinearProject,
   updateOrchestrationDefaults,
   type EpicGraph,
 } from "@/api"
@@ -308,6 +310,44 @@ export function useSyncToLinearMutation() {
         return
       }
       void queryClient.invalidateQueries({ queryKey: ["epics"], exact: false })
+    },
+  })
+}
+
+export function useUpdateEpicLinearProjectMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variables: {
+      epicSlug: string
+      linearProjectId: string | null
+    }) =>
+      updateEpicLinearProject(variables.epicSlug, variables.linearProjectId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.epics() })
+    },
+  })
+}
+
+export function useUpdateEpicLinearConfigMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variables: {
+      epicSlug: string
+      labelId?: string | null
+      labelName?: string | null
+      milestoneId?: string | null
+    }) =>
+      updateEpicLinearConfig(variables.epicSlug, {
+        labelId: variables.labelId,
+        labelName: variables.labelName,
+        milestoneId: variables.milestoneId,
+      }),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.epicLinearConfig(variables.epicSlug),
+      })
     },
   })
 }
