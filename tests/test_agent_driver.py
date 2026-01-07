@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 from typing import Any, cast
@@ -132,6 +133,7 @@ async def test_agent_driver_creates_session_and_pipes_log(scenario: Scenario) ->
     task_id = await _seed_task(scenario)
     tmux_name = tmux_session_name_for_task(task_id=task_id)
     fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    driver_started_at = datetime.now(UTC)
 
     runtime: dict[int, object] = {}
     async with scenario.db.session() as session:
@@ -140,6 +142,7 @@ async def test_agent_driver_creates_session_and_pipes_log(scenario: Scenario) ->
             session,
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -174,6 +177,7 @@ async def test_agent_driver_marks_session_error_when_tmux_disappears(
 ) -> None:
     task_id = await _seed_task(scenario)
     tmux_name = tmux_session_name_for_task(task_id=task_id)
+    driver_started_at = datetime.now(UTC)
     async with scenario.db.session() as session:
         row = AgentSession(
             task_id=task_id,
@@ -193,6 +197,7 @@ async def test_agent_driver_marks_session_error_when_tmux_disappears(
             session,
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -209,6 +214,7 @@ async def test_agent_driver_non_tmux_session_is_not_auto_ended(
     scenario: Scenario,
 ) -> None:
     task_id = await _seed_task(scenario)
+    driver_started_at = datetime.now(UTC)
     async with scenario.db.session() as session:
         session.add(
             AgentSession(
@@ -229,6 +235,7 @@ async def test_agent_driver_non_tmux_session_is_not_auto_ended(
             session,
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -247,6 +254,7 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
     task_id = await _seed_task(scenario)
     tmux_name = tmux_session_name_for_task(task_id=task_id)
     fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    driver_started_at = datetime.now(UTC)
 
     backend = _FakeBackend(
         _capabilities=AgentCapabilities(
@@ -265,6 +273,7 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -282,6 +291,7 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -306,6 +316,7 @@ async def test_agent_driver_cursoring_and_edge_triggered_semantics(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     assert backend.consume_calls == ["", "READY\n", "READY\n"]
@@ -319,6 +330,7 @@ async def test_agent_driver_external_log_tailing_updates_semantics(
     log_path = scenario.ctx.state_dir / "external" / "session.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("READY\n", encoding="utf-8")
+    driver_started_at = datetime.now(UTC)
 
     backend = _FakeBackend(
         _capabilities=AgentCapabilities(
@@ -350,6 +362,7 @@ async def test_agent_driver_external_log_tailing_updates_semantics(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -366,6 +379,7 @@ async def test_agent_driver_tmux_list_failure_does_not_end_tmux_sessions(
 ) -> None:
     task_id = await _seed_task(scenario)
     tmux_name = tmux_session_name_for_task(task_id=task_id)
+    driver_started_at = datetime.now(UTC)
     async with scenario.db.session() as session:
         session.add(
             AgentSession(
@@ -391,6 +405,7 @@ async def test_agent_driver_tmux_list_failure_does_not_end_tmux_sessions(
             session,
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -409,6 +424,7 @@ async def test_agent_driver_persists_external_session_ref_without_thrashing(
     task_id = await _seed_task(scenario)
     tmux_name = tmux_session_name_for_task(task_id=task_id)
     fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    driver_started_at = datetime.now(UTC)
 
     backend = _FakeBackend(
         _capabilities=AgentCapabilities(can_send_text=True, can_resume_by_id=True),
@@ -425,6 +441,7 @@ async def test_agent_driver_persists_external_session_ref_without_thrashing(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -442,6 +459,7 @@ async def test_agent_driver_persists_external_session_ref_without_thrashing(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -465,6 +483,7 @@ async def test_agent_driver_persists_external_session_ref_without_thrashing(
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
             backend_factory=lambda *, agent_session: backend,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
@@ -522,6 +541,7 @@ async def test_agent_driver_persists_semantic_events_and_preview_from_structured
     log_path = scenario.ctx.state_dir / "external" / "codex-structured.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("", encoding="utf-8")
+    driver_started_at = datetime.now(UTC)
 
     async with scenario.db.session() as session:
         session.add(
@@ -550,6 +570,7 @@ async def test_agent_driver_persists_semantic_events_and_preview_from_structured
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
             event_hub=event_hub,
+            driver_started_at=driver_started_at,
         )
 
     log_path.write_text(
@@ -572,6 +593,7 @@ async def test_agent_driver_persists_semantic_events_and_preview_from_structured
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=_FakeTmux(sessions=set(), pipe_calls=[]),
             event_hub=event_hub,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:

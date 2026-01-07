@@ -161,8 +161,24 @@ def _read_log_incremental(
 class _SessionRuntime:
     backend: AgentBackend
     cursor: int
-    suppress_event_emission: bool = True
+    skip_persist_until_log_activity: bool = False
     recent_event_keys: deque[str] = field(default_factory=lambda: deque(maxlen=256))
+
+
+def _log_file_size(log_path: Path) -> int:
+    try:
+        return log_path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _should_skip_log_history(
+    *, agent_session: AgentSession, driver_started_at: datetime
+) -> bool:
+    started_at = agent_session.started_at
+    if started_at is None:
+        return False
+    return started_at < driver_started_at
 
 
 def _runtime_kind_from_attach(attach: AttachInfo) -> AgentSessionRuntimeKind:
@@ -249,6 +265,7 @@ async def supervise_once(
     backend_factory: AgentBackendFactory = _default_backend_factory,
     event_hub: JsonWebSocketHub | None = None,
     tmux: TmuxSupervisor | None = None,
+    driver_started_at: datetime,
     timeout_s: float = 1.0,
     max_read_bytes: int = 256 * 1024,
 ) -> int:
@@ -496,9 +513,13 @@ async def supervise_once(
 
         runtime = runtime_by_session_id.get(agent_session.id)
         if runtime is None:
+            skip_history = _should_skip_log_history(
+                agent_session=agent_session, driver_started_at=driver_started_at
+            )
             runtime = _SessionRuntime(
                 backend=backend_factory(agent_session=agent_session),
-                cursor=0,
+                cursor=_log_file_size(Path(log_path)) if skip_history else 0,
+                skip_persist_until_log_activity=skip_history,
             )
             runtime_by_session_id[agent_session.id] = runtime
 
@@ -533,9 +554,13 @@ async def supervise_once(
 
         runtime = runtime_by_session_id.get(agent_session.id)
         if runtime is None:
+            skip_history = _should_skip_log_history(
+                agent_session=agent_session, driver_started_at=driver_started_at
+            )
             runtime = _SessionRuntime(
                 backend=backend_factory(agent_session=agent_session),
-                cursor=0,
+                cursor=_log_file_size(log_path) if skip_history else 0,
+                skip_persist_until_log_activity=skip_history,
             )
             runtime_by_session_id[agent_session.id] = runtime
 
@@ -554,21 +579,23 @@ async def supervise_once(
         # timeouts / degrade-to-unknown behavior even when the log is quiet.
         agent_events = runtime.backend.consume_output(log_text or "")
 
-        # Persist semantic events derived from structured output. We suppress
-        # event emission on first observation of a session in this process to
-        # avoid spamming historical events after server restart.
-        if runtime.suppress_event_emission:
-            runtime.suppress_event_emission = False
-        else:
-            ref = runtime.backend.external_session_ref
-            for agent_event in agent_events:
-                await persist_agent_event(
-                    agent_session=agent_session,
-                    runtime=runtime,
-                    event=agent_event,
-                    ref=ref,
-                    now=now,
-                )
+        # If we're attaching to a pre-existing session (e.g. after server
+        # restart), we start tailing from the end of the log and defer
+        # persisting updates until we see new log activity.
+        if runtime.skip_persist_until_log_activity and not log_text:
+            continue
+        runtime.skip_persist_until_log_activity = False
+
+        # Persist semantic events derived from structured output.
+        ref = runtime.backend.external_session_ref
+        for agent_event in agent_events:
+            await persist_agent_event(
+                agent_session=agent_session,
+                runtime=runtime,
+                event=agent_event,
+                ref=ref,
+                now=now,
+            )
 
         next_caps = runtime.backend.capabilities.model_dump(mode="python")
         next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
@@ -646,6 +673,7 @@ async def run_agent_driver(
     tmux: TmuxSupervisor | None = None,
 ) -> None:
     runtime_by_session_id: dict[int, _SessionRuntime] = {}
+    driver_started_at = datetime.now(UTC)
     last_error_at: float | None = None
     min_error_interval_s = 10.0
     while True:
@@ -658,6 +686,7 @@ async def run_agent_driver(
                     backend_factory=backend_factory,
                     event_hub=event_hub,
                     tmux=tmux,
+                    driver_started_at=driver_started_at,
                     timeout_s=timeout_s,
                 )
             except asyncio.CancelledError:
