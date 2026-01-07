@@ -13,7 +13,12 @@ import {
 import { cn } from "@/lib/utils"
 import { ChevronDown } from "lucide-react"
 
-const OPTIONS: { value: AgentKindSelection label: string }[] = [
+type AgentKindSelectOption = {
+  value: AgentKindSelection
+  label: string
+}
+
+const OPTIONS: AgentKindSelectOption[] = [
   { value: "auto", label: "Auto" },
   { value: "generic", label: "Generic" },
   { value: "codex", label: "Codex" },
