@@ -91,6 +91,11 @@ from redesmyn.orchestration_config import (
     write_config,
 )
 from redesmyn.merge_runs import apply_merge_run_event_update
+from redesmyn.merge_conflict_assist import (
+    MergeConflictAssistSupervisor,
+    make_default_supervisor,
+    run_merge_conflict_assist,
+)
 from redesmyn.repo_observer import run_repo_observer
 from redesmyn.repo_executor import (
     RepoExecutor,
@@ -197,6 +202,7 @@ class AppState(Protocol):
     event_hub: JsonWebSocketHub
     daemon_connections: DaemonConnectionRegistry
     background_tasks: BackgroundTaskManager
+    merge_conflict_assist: MergeConflictAssistSupervisor | None
 
 
 class App(FastAPI):
@@ -275,6 +281,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     app.state.event_hub = JsonWebSocketHub()
     app.state.daemon_connections = DaemonConnectionRegistry()
     app.state.background_tasks = BackgroundTaskManager(logger=log)
+    app.state.merge_conflict_assist = None
     maybe_mount_dashboard(app, ctx.worktree_root)
 
     if settings.runner_mode == "local":
@@ -397,6 +404,24 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
                 event_hub=app.state.event_hub,
             ),
             name="agent_driver",
+        )
+
+        app.state.merge_conflict_assist = make_default_supervisor(
+            sessionmaker=app.state.sessionmaker,
+            repo_executor=app.state.repo_executor,
+            runner_mode=app.state.runner_mode,
+            local_host_key=app.state.local_host_key,
+            repo_root=ctx.repo_root,
+        )
+        _spawn_background_task(
+            app,
+            run_merge_conflict_assist(
+                sessionmaker=app.state.sessionmaker,
+                supervisor=app.state.merge_conflict_assist,
+                interval_s=1.0,
+                once=False,
+            ),
+            name="merge_conflict_assist",
         )
 
     yield
@@ -749,14 +774,19 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
         else None
     )
 
+    merge_run_responses: list[MergeRunSummaryResponse] = []
+    for merge_run in merge_runs:
+        resp = MergeRunSummaryResponse.model_validate(merge_run, from_attributes=True)
+        supervisor = app.state.merge_conflict_assist
+        if supervisor is not None:
+            resp.conflict_assist = supervisor.snapshot(run_id=merge_run.run_id)
+        merge_run_responses.append(resp)
+
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=task_responses,
         agent_sessions=latest_sessions,
-        merge_runs=[
-            MergeRunSummaryResponse.model_validate(r, from_attributes=True)
-            for r in merge_runs
-        ],
+        merge_runs=merge_run_responses,
         trunk=trunk,
         repo_executor=repo_executor,
     )

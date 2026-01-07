@@ -295,6 +295,28 @@ class TaskRestackRequest(ApiRequest):
     allow_running: bool = False
 
 
+class MergeConflictAssistStatusResponse(ApiResponse):
+    active: bool = False
+    state: Literal[
+        "inactive",
+        "waiting_for_agent_ready",
+        "sent_waiting_for_turn_complete",
+        "waiting_for_repo_clean",
+        "ready_to_resume",
+        "timed_out",
+        "unsupported",
+        "resumed",
+    ] = "inactive"
+    waiting_on: list[Literal["agent_ready", "agent_turn_complete", "repo_clean"]] = (
+        Field(default_factory=list)
+    )
+    agent_task_id: int | None = None
+    agent_session_id: int | None = None
+    message_sent_at: datetime | None = None
+    timeout_at: datetime | None = None
+    detail: str | None = None
+
+
 class MergeRunSummaryResponse(ApiResponse):
     run_id: str
     epic_id: int
@@ -314,6 +336,7 @@ class MergeRunSummaryResponse(ApiResponse):
     blocked_branch_name: str | None = None
     blocked_worktree_path: str | None = None
     blocked_error: str | None = None
+    conflict_assist: MergeConflictAssistStatusResponse | None = None
     created_at: datetime
     updated_at: datetime
 
