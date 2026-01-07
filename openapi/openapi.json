@@ -727,6 +727,127 @@
         "title": "EpicGraphResponse",
         "type": "object"
       },
+      "EpicLinearConfigResponse": {
+        "properties": {
+          "labelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelid"
+          },
+          "labelName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelname"
+          },
+          "milestoneId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Milestoneid"
+          },
+          "milestoneName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Milestonename"
+          },
+          "syncMode": {
+            "enum": [
+              "label",
+              "milestone"
+            ],
+            "title": "Syncmode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "syncMode",
+          "labelId",
+          "labelName",
+          "milestoneId",
+          "milestoneName"
+        ],
+        "title": "EpicLinearConfigResponse",
+        "type": "object"
+      },
+      "EpicLinearConfigUpdateRequest": {
+        "properties": {
+          "labelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelid"
+          },
+          "labelName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelname"
+          },
+          "milestoneId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Milestoneid"
+          }
+        },
+        "title": "EpicLinearConfigUpdateRequest",
+        "type": "object"
+      },
+      "EpicLinearProjectUpdateRequest": {
+        "properties": {
+          "linearProjectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linearprojectid"
+          }
+        },
+        "title": "EpicLinearProjectUpdateRequest",
+        "type": "object"
+      },
       "EpicResponse": {
         "properties": {
           "createdAt": {
@@ -1119,6 +1240,54 @@
           "definition"
         ],
         "title": "LaunchConfigurationUpsertRequest",
+        "type": "object"
+      },
+      "LinearMilestoneResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "LinearMilestoneResponse",
+        "type": "object"
+      },
+      "LinearProjectResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "LinearProjectResponse",
         "type": "object"
       },
       "LinearPushStatsResponse": {
@@ -3199,6 +3368,144 @@
         "summary": "Epic Graph"
       }
     },
+    "/v1/epics/{epic}/linear/config": {
+      "get": {
+        "description": "Get the Linear sync configuration for an epic.",
+        "operationId": "get_epic_linear_config_v1_epics__epic__linear_config_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicLinearConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Epic Linear Config"
+      },
+      "patch": {
+        "description": "Update the Linear sync configuration for an epic.",
+        "operationId": "update_epic_linear_config_v1_epics__epic__linear_config_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EpicLinearConfigUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicLinearConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Epic Linear Config"
+      }
+    },
+    "/v1/epics/{epic}/linear/project": {
+      "patch": {
+        "description": "Update or unset the Linear project ID for an epic.",
+        "operationId": "update_epic_linear_project_v1_epics__epic__linear_project_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EpicLinearProjectUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Epic Linear Project"
+      }
+    },
     "/v1/epics/{epic}/sync/from/linear": {
       "post": {
         "operationId": "sync_from_linear_v1_epics__epic__sync_from_linear_post",
@@ -3433,6 +3740,73 @@
           }
         },
         "summary": "Linear Logout"
+      }
+    },
+    "/v1/linear/projects": {
+      "get": {
+        "description": "List all Linear projects accessible to the connected user.",
+        "operationId": "list_linear_projects_v1_linear_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LinearProjectResponse"
+                  },
+                  "title": "Response List Linear Projects V1 Linear Projects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Linear Projects"
+      }
+    },
+    "/v1/linear/projects/{project_id}/milestones": {
+      "get": {
+        "description": "List all milestones for a Linear project.",
+        "operationId": "list_linear_milestones_v1_linear_projects__project_id__milestones_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LinearMilestoneResponse"
+                  },
+                  "title": "Response List Linear Milestones V1 Linear Projects  Project Id  Milestones Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Linear Milestones"
       }
     },
     "/v1/linear/status": {

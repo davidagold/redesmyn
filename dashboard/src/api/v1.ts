@@ -107,6 +107,50 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/epics/{epic}/linear/config": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * Get Epic Linear Config
+     * @description Get the Linear sync configuration for an epic.
+     */
+    get: operations["get_epic_linear_config_v1_epics__epic__linear_config_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /**
+     * Update Epic Linear Config
+     * @description Update the Linear sync configuration for an epic.
+     */
+    patch: operations["update_epic_linear_config_v1_epics__epic__linear_config_patch"]
+    trace?: never
+  }
+  "/v1/epics/{epic}/linear/project": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /**
+     * Update Epic Linear Project
+     * @description Update or unset the Linear project ID for an epic.
+     */
+    patch: operations["update_epic_linear_project_v1_epics__epic__linear_project_patch"]
+    trace?: never
+  }
   "/v1/epics/{epic}/sync/from/linear": {
     parameters: {
       query?: never
@@ -221,6 +265,46 @@ export interface paths {
     put?: never
     /** Linear Logout */
     post: operations["linear_logout_v1_linear_logout_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/linear/projects": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * List Linear Projects
+     * @description List all Linear projects accessible to the connected user.
+     */
+    get: operations["list_linear_projects_v1_linear_projects_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/linear/projects/{project_id}/milestones": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * List Linear Milestones
+     * @description List all milestones for a Linear project.
+     */
+    get: operations["list_linear_milestones_v1_linear_projects__project_id__milestones_get"]
+    put?: never
+    post?: never
     delete?: never
     options?: never
     head?: never
@@ -703,6 +787,36 @@ export interface components {
       tasks: components["schemas"]["TaskResponse"][]
       trunk?: components["schemas"]["TrunkTimelineResponse"] | null
     }
+    /** EpicLinearConfigResponse */
+    EpicLinearConfigResponse: {
+      /** Labelid */
+      labelId: string | null
+      /** Labelname */
+      labelName: string | null
+      /** Milestoneid */
+      milestoneId: string | null
+      /** Milestonename */
+      milestoneName: string | null
+      /**
+       * Syncmode
+       * @enum {string}
+       */
+      syncMode: "label" | "milestone"
+    }
+    /** EpicLinearConfigUpdateRequest */
+    EpicLinearConfigUpdateRequest: {
+      /** Labelid */
+      labelId?: string | null
+      /** Labelname */
+      labelName?: string | null
+      /** Milestoneid */
+      milestoneId?: string | null
+    }
+    /** EpicLinearProjectUpdateRequest */
+    EpicLinearProjectUpdateRequest: {
+      /** Linearprojectid */
+      linearProjectId?: string | null
+    }
     /** EpicResponse */
     EpicResponse: {
       /**
@@ -866,6 +980,22 @@ export interface components {
       kind: string
       /** @default user */
       source: components["schemas"]["LaunchConfigurationSource"]
+    }
+    /** LinearMilestoneResponse */
+    LinearMilestoneResponse: {
+      /** Id */
+      id: string
+      /** Name */
+      name: string
+    }
+    /** LinearProjectResponse */
+    LinearProjectResponse: {
+      /** Id */
+      id: string
+      /** Name */
+      name: string
+      /** Slug */
+      slug: string | null
     }
     /** LinearPushStatsResponse */
     LinearPushStatsResponse: {
@@ -1668,6 +1798,107 @@ export interface operations {
       }
     }
   }
+  get_epic_linear_config_v1_epics__epic__linear_config_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicLinearConfigResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  update_epic_linear_config_v1_epics__epic__linear_config_patch: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EpicLinearConfigUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicLinearConfigResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  update_epic_linear_project_v1_epics__epic__linear_project_patch: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EpicLinearProjectUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
   sync_from_linear_v1_epics__epic__sync_from_linear_post: {
     parameters: {
       query?: never
@@ -1874,6 +2105,57 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["LinearStatusResponse"]
+        }
+      }
+    }
+  }
+  list_linear_projects_v1_linear_projects_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LinearProjectResponse"][]
+        }
+      }
+    }
+  }
+  list_linear_milestones_v1_linear_projects__project_id__milestones_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        project_id: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["LinearMilestoneResponse"][]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }
