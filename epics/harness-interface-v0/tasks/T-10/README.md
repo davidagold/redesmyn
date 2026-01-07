@@ -8,6 +8,9 @@ epic: harness-interface-v0
 stacked_on: T-3
 branch:
   suggested: rn/harness-interface-v0/T-10-structured-exec-events
+linear:
+  issue_id: b2435ea5-1887-4e55-8e23-5bb3a12565ad
+  identifier: RED-18
 ```
 
 ## Problem
@@ -121,4 +124,3 @@ Add tests that validate the full loop without needing to actually run Codex/Clau
 - AgentDriver persists and publishes semantic events; downstream tasks can implement gating/preview on top of them.
 - The system has an explicit and visible degraded path:
   - interactive tmux sessions can still run, but are treated as “heuristic-only” and do not claim structured capabilities unless structured events are observed.
-

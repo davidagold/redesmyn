@@ -8,6 +8,9 @@ epic: harness-interface-v0
 stacked_on: T-7
 branch:
   suggested: rn/harness-interface-v0/T-4-claude-code-agent
+linear:
+  issue_id: c5f5a23e-c8e7-4e69-94a3-e91b93be08ca
+  identifier: RED-21
 ```
 
 ## Problem

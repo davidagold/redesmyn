@@ -8,6 +8,9 @@ epic: harness-interface-v0
 stacked_on: T-8
 branch:
   suggested: rn/harness-interface-v0/T-1-agent-interface
+linear:
+  issue_id: fbba86a5-c122-4ac4-9494-797523a724f2
+  identifier: RED-17
 ```
 
 ## Problem
