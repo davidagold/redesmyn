@@ -1,5 +1,6 @@
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { ContentPanel, ContentPanelHeader } from "@/components/ui/content-panel"
 import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
@@ -12,13 +13,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { bulkTaskAgentActions } from "@/api"
+import { useBulkTaskAgentActionsMutation } from "@/api/mutations"
 import { useEpics } from "@/hooks/useEpics"
 import { useDaemons } from "@/hooks/useDaemons"
 import { useHosts } from "@/hooks/useHosts"
-import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
+import type { StreamEvent } from "@/hooks/useEventStream"
 import { useGraph } from "@/hooks/useGraph"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
+import { queryKeys } from "@/api/queryKeys"
+import { useEpicCacheSync } from "@/api/useEpicCacheSync"
 import { formatBranchName, makeEdgeId } from "@/lib/graph-utils"
 import { computeRepoDaemonStatus } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
@@ -66,14 +69,9 @@ export function EpicView() {
       ? makeEdgeId(fromTaskId, toTaskId)
       : null
 
-  const {
-    epics,
-    loading: epicsLoading,
-    error: epicsError,
-    refresh: refreshEpics,
-  } = useEpics()
-  const { daemons, refresh: refreshDaemons } = useDaemons()
-  const { hosts, refresh: refreshHosts } = useHosts()
+  const { epics, loading: epicsLoading, error: epicsError } = useEpics()
+  const { daemons } = useDaemons()
+  const { hosts } = useHosts()
   const [epicMenuOpen, setEpicMenuOpen] = useState(false)
   const [focusMode, setFocusMode] = useState(false)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set())
@@ -81,16 +79,15 @@ export function EpicView() {
   const [runAction, setRunAction] =
     useState<"runAll" | "runSelected" | "stopAll" | "stopSelected" | null>(null)
   const { bulkAction, setBulkAction } = usePersistedBulkAction(epicSlug ?? null)
+  const queryClient = useQueryClient()
+  const bulkAgentActions = useBulkTaskAgentActionsMutation()
   const refreshTimerRef = useRef<number | null>(null)
-  const streamRefreshTimerRef = useRef<number | null>(null)
-  const daemonRefreshTimerRef = useRef<number | null>(null)
 
   const [runNotice, setRunNotice] = useState<string | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const {
     defaults: orchestrationDefaults,
     loading: orchestrationDefaultsLoading,
-    refresh: refreshOrchestrationDefaults,
   } = useOrchestrationDefaults()
 
   const closeConfig = useCallback(() => setConfigOpen(false), [])
@@ -104,7 +101,6 @@ export function EpicView() {
     graph,
     error: graphError,
     loading: graphLoading,
-    refresh: refreshGraph,
     tasksById,
     mergeRunsByTaskId,
     agentSessionsByNodeId,
@@ -255,69 +251,28 @@ export function EpicView() {
   }, [runNotice])
 
   const scheduleGraphRefresh = useCallback(() => {
+    if (!selectedEpic) {
+      return
+    }
     if (refreshTimerRef.current !== null) {
       return
     }
     refreshTimerRef.current = window.setTimeout(() => {
       refreshTimerRef.current = null
-      void refreshGraph()
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.epicGraph(selectedEpic.id),
+      })
     }, 250)
-  }, [refreshGraph])
-
-  const scheduleStreamGraphRefresh = useCallback(() => {
-    if (streamRefreshTimerRef.current !== null) {
-      return
-    }
-    streamRefreshTimerRef.current = window.setTimeout(() => {
-      streamRefreshTimerRef.current = null
-      void refreshGraph()
-    }, 750)
-  }, [refreshGraph])
-
-  const scheduleDaemonsRefresh = useCallback(() => {
-    if (daemonRefreshTimerRef.current !== null) {
-      return
-    }
-    daemonRefreshTimerRef.current = window.setTimeout(() => {
-      daemonRefreshTimerRef.current = null
-      void refreshDaemons()
-    }, 250)
-  }, [refreshDaemons])
+  }, [queryClient, selectedEpic])
 
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
-      if (event.eventType.startsWith("daemon.")) {
-        scheduleDaemonsRefresh()
-        scheduleGraphRefresh()
+      if (
+        event.eventType !== "task.agent_run" &&
+        event.eventType !== "task.agent_action"
+      ) {
         return
       }
-      if (event.eventType === "task.stack_in_sync") {
-        scheduleGraphRefresh()
-        return
-      }
-
-      if (event.eventType === "merge.run") {
-        scheduleGraphRefresh()
-        return
-      }
-
-      if (event.eventType === "node.stack_in_sync") {
-        scheduleStreamGraphRefresh()
-        return
-      }
-
-      if (event.eventType === "task.merge") {
-        scheduleGraphRefresh()
-        return
-      }
-
-      if (event.eventType !== "task.agent_run") {
-        if (event.eventType !== "task.agent_action") {
-          return
-        }
-      }
-
-      scheduleStreamGraphRefresh()
 
       const runId =
         event.data.type === "task.agent_action" ||
@@ -360,30 +315,19 @@ export function EpicView() {
         return { ...current, completed, failed }
       })
     },
-    [
-      scheduleDaemonsRefresh,
-      scheduleGraphRefresh,
-      scheduleStreamGraphRefresh,
-      setBulkAction,
-    ],
+    [scheduleGraphRefresh, setBulkAction],
   )
 
-  useEventStream({
-    epic: selectedEpic?.slug ?? null,
+  useEpicCacheSync({
+    epicSlug: selectedEpic?.slug ?? null,
+    epicId: selectedEpic?.id ?? null,
     onEvent: handleStreamEvent,
-    onResync: scheduleGraphRefresh,
   })
 
   useEffect(() => {
     return () => {
       if (refreshTimerRef.current !== null) {
         window.clearTimeout(refreshTimerRef.current)
-      }
-      if (streamRefreshTimerRef.current !== null) {
-        window.clearTimeout(streamRefreshTimerRef.current)
-      }
-      if (daemonRefreshTimerRef.current !== null) {
-        window.clearTimeout(daemonRefreshTimerRef.current)
       }
     }
   }, [])
@@ -551,11 +495,19 @@ export function EpicView() {
   }
 
   async function handleRefresh() {
-    await refreshEpics()
-    await refreshOrchestrationDefaults()
-    await refreshDaemons()
-    await refreshHosts()
-    await refreshGraph()
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: queryKeys.epics() }),
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.orchestrationDefaults(),
+      }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.daemons() }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.hosts() }),
+      selectedEpic
+        ? queryClient.invalidateQueries({
+            queryKey: queryKeys.epicGraph(selectedEpic.id),
+          })
+        : Promise.resolve(),
+    ])
   }
 
   const configuredHarnessCommand =
@@ -614,15 +566,22 @@ export function EpicView() {
       startedAt: Date.now(),
     })
 
-    await bulkTaskAgentActions({
-      runId,
-      actions: options.actions.map((a) => ({
-        taskId: a.taskId,
-        action: a.action,
-      })),
-      harness: options.harness,
-      detach: configuredDetach,
-      prelude: null,
+    if (!selectedEpic) {
+      throw new Error("Epic must be selected before starting agents.")
+    }
+
+    await bulkAgentActions.mutateAsync({
+      epicId: selectedEpic.id,
+      request: {
+        runId,
+        actions: options.actions.map((a) => ({
+          taskId: a.taskId,
+          action: a.action,
+        })),
+        harness: options.harness,
+        detach: configuredDetach,
+        prelude: null,
+      },
     })
   }
 
@@ -774,6 +733,7 @@ export function EpicView() {
           {epicSlug ? (
             <ConnectionsCluster
               repoDaemonStatus={repoDaemonStatus}
+              epicId={selectedEpic?.id ?? null}
               epicSlug={epicSlug}
               onSynced={handleRefresh}
               startCommand="rn daemon run"
@@ -1229,7 +1189,6 @@ export function EpicView() {
             defaults={orchestrationDefaults}
             defaultsLoading={orchestrationDefaultsLoading}
             onClose={closeConfig}
-            onRefresh={refreshOrchestrationDefaults}
           />
           <GraphView
             rootNodes={rootNodes}
@@ -1251,7 +1210,6 @@ export function EpicView() {
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}
             onClearSelection={handleClearSelection}
-            onRequestRefresh={scheduleGraphRefresh}
           />
 
           <DetailsPanel
@@ -1264,7 +1222,6 @@ export function EpicView() {
                 : null
             }
             mergeRun={selectedMergeRun}
-            onRequestRefresh={scheduleGraphRefresh}
             edge={selectedEdge}
           />
         </div>

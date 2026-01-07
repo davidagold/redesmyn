@@ -47,6 +47,7 @@ function connectionsDotClass(options: {
 
 export type ConnectionsClusterProps = {
   repoDaemonStatus: RepoDaemonStatus
+  epicId?: number | null
   epicSlug: string
   onSynced?: () => Promise<void> | void
   startCommand?: string
@@ -54,6 +55,7 @@ export type ConnectionsClusterProps = {
 
 export function ConnectionsCluster({
   repoDaemonStatus,
+  epicId = null,
   epicSlug,
   onSynced,
   startCommand = "rn daemon run",
@@ -117,6 +119,7 @@ export function ConnectionsCluster({
       />
 
       <LinearSyncMenuButton
+        epicId={epicId}
         epicSlug={epicSlug}
         variant="epic"
         onSynced={onSynced}

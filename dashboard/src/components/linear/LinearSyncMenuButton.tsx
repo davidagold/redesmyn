@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { fetchLinearStatus, type LinearPushStats, type SyncStats } from "@/api"
 import {
-  fetchLinearStatus,
-  postLinearLogout,
-  postSyncFromLinear,
-  postSyncToLinear,
-  type LinearPushStats,
-  type SyncStats,
-} from "@/api"
+  useLinearLogoutMutation,
+  useSyncFromLinearMutation,
+  useSyncToLinearMutation,
+} from "@/api/mutations"
 import { useLinearStatus } from "@/hooks/useLinearStatus"
 import type { Task } from "@/lib/graph-utils"
 import {
@@ -44,6 +42,7 @@ function formatPushStats(stats: LinearPushStats) {
 }
 
 interface LinearSyncMenuButtonProps {
+  epicId: number | null
   epicSlug: string
   variant: "epic" | "task"
   task?: Task | null
@@ -54,6 +53,7 @@ interface LinearSyncMenuButtonProps {
 }
 
 export function LinearSyncMenuButton({
+  epicId,
   epicSlug,
   variant,
   task,
@@ -62,6 +62,10 @@ export function LinearSyncMenuButton({
   buttonClassName,
   onStatusChange,
 }: LinearSyncMenuButtonProps) {
+  const logoutMutation = useLinearLogoutMutation()
+  const syncFromMutation = useSyncFromLinearMutation()
+  const syncToMutation = useSyncToLinearMutation()
+
   const [menuOpen, setMenuOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -161,8 +165,7 @@ export function LinearSyncMenuButton({
     setMenuOpen(false)
     setBusyAction("disconnect")
     try {
-      await postLinearLogout()
-      await refreshStatus()
+      await logoutMutation.mutateAsync()
       setNotice({ kind: "success", message: "Disconnected from Linear." })
     } catch (e) {
       setNotice({
@@ -178,7 +181,7 @@ export function LinearSyncMenuButton({
     setMenuOpen(false)
     setBusyAction("sync-from")
     try {
-      const stats = await postSyncFromLinear(epicSlug)
+      const stats = await syncFromMutation.mutateAsync({ epicId, epicSlug })
       try {
         await onSynced?.()
       } catch {
@@ -202,7 +205,7 @@ export function LinearSyncMenuButton({
     setMenuOpen(false)
     setBusyAction("sync-to")
     try {
-      const stats = await postSyncToLinear(epicSlug)
+      const stats = await syncToMutation.mutateAsync({ epicId, epicSlug })
       try {
         await onSynced?.()
       } catch {

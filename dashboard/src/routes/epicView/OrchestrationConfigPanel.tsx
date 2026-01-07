@@ -13,8 +13,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
-import { updateOrchestrationDefaults, type OrchestrationDefaults } from "@/api"
+import type { OrchestrationDefaults } from "@/api"
 import { AgentKindSelect } from "@/components/agents/AgentKindSelect"
+import { useUpdateOrchestrationDefaultsMutation } from "@/api/mutations"
 import { inferAgentKindFromCommand, labelForAgentKind } from "@/lib/agent-kind"
 
 export function OrchestrationConfigPanel({
@@ -22,15 +23,13 @@ export function OrchestrationConfigPanel({
   defaults,
   defaultsLoading,
   onClose,
-  onRefresh,
 }: {
   open: boolean
   defaults: OrchestrationDefaults | null
   defaultsLoading: boolean
   onClose: () => void
-  onRefresh: () => Promise<void>
 }) {
-  const [configPending, setConfigPending] = useState(false)
+  const updateDefaults = useUpdateOrchestrationDefaultsMutation()
   const [configError, setConfigError] = useState<string | null>(null)
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configHarness, setConfigHarness] = useState("")
@@ -99,14 +98,13 @@ export function OrchestrationConfigPanel({
   ])
 
   async function handleSaveConfig() {
-    if (configPending || !configDirty) {
+    if (updateDefaults.isPending || !configDirty) {
       return
     }
-    setConfigPending(true)
     setConfigError(null)
     setConfigNotice(null)
     try {
-      await updateOrchestrationDefaults({
+      await updateDefaults.mutateAsync({
         harness: {
           command: configHarness.trim() ? configHarness.trim() : null,
           agentKind: configAgentKind,
@@ -120,12 +118,9 @@ export function OrchestrationConfigPanel({
           network: configSandboxNetwork,
         },
       })
-      await onRefresh()
       setConfigNotice("Saved")
     } catch (e) {
       setConfigError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setConfigPending(false)
     }
   }
 
@@ -155,7 +150,7 @@ export function OrchestrationConfigPanel({
                   className="h-full rounded-none border-0 leading-none"
                   onClick={() => void handleSaveConfig()}
                   disabledReason={
-                    configPending
+                    updateDefaults.isPending
                       ? "Saving…"
                       : !configDirty
                         ? "No changes"
@@ -170,7 +165,7 @@ export function OrchestrationConfigPanel({
                   className="h-full rounded-none border-0 border-l leading-none"
                   onClick={resetConfigFields}
                   disabledReason={
-                    configPending
+                    updateDefaults.isPending
                       ? "Saving…"
                       : !defaults
                         ? "Defaults not loaded"
@@ -226,7 +221,7 @@ export function OrchestrationConfigPanel({
                     value={configHarness}
                     onChange={(e) => setConfigHarness(e.target.value)}
                     placeholder={defaults?.harness.command ?? "codex"}
-                    disabled={configPending}
+                    disabled={updateDefaults.isPending}
                   />
                   <div className="mt-1.5 text-xs text-muted-foreground">
                     Shell command used to start the agent inside each task’s
@@ -241,7 +236,9 @@ export function OrchestrationConfigPanel({
                   <AgentKindSelect
                     value={configAgentKind}
                     onChange={setConfigAgentKind}
-                    disabledReason={configPending ? "Saving…" : null}
+                    disabledReason={
+                      updateDefaults.isPending ? "Saving…" : null
+                    }
                   />
                   <div className="text-xs text-muted-foreground">
                     {configAgentKind === "generic"
@@ -269,7 +266,9 @@ export function OrchestrationConfigPanel({
                       size="sm"
                       className="h-full rounded-none border-0 leading-none"
                       onClick={() => setConfigDetach(true)}
-                      disabledReason={configPending ? "Saving…" : null}
+                      disabledReason={
+                        updateDefaults.isPending ? "Saving…" : null
+                      }
                     >
                       Detached
                     </Button>
@@ -278,7 +277,9 @@ export function OrchestrationConfigPanel({
                       size="sm"
                       className="h-full rounded-none border-0 border-l leading-none"
                       onClick={() => setConfigDetach(false)}
-                      disabledReason={configPending ? "Saving…" : null}
+                      disabledReason={
+                        updateDefaults.isPending ? "Saving…" : null
+                      }
                     >
                       Foreground
                     </Button>
@@ -304,7 +305,9 @@ export function OrchestrationConfigPanel({
                             setConfigSandboxNetwork("allow")
                           }
                         }}
-                        disabledReason={configPending ? "Saving…" : null}
+                        disabledReason={
+                          updateDefaults.isPending ? "Saving…" : null
+                        }
                       />
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -317,7 +320,7 @@ export function OrchestrationConfigPanel({
                           setConfigSandboxNetwork(checked ? "deny" : "allow")
                         }
                         disabledReason={
-                          configPending
+                          updateDefaults.isPending
                             ? "Saving…"
                             : configSandboxType !== "worktree"
                               ? "Enable sandbox first"
@@ -402,7 +405,7 @@ export function OrchestrationConfigPanel({
                     value={configPrelude}
                     onChange={(e) => setConfigPrelude(e.target.value)}
                     placeholder="Optional. Leave blank to use the built-in prelude."
-                    disabled={configPending}
+                    disabled={updateDefaults.isPending}
                   />
                   <div className="mt-1.5 text-xs text-muted-foreground">
                     Sent to the agent right after the harness starts. Use it to
@@ -427,7 +430,9 @@ export function OrchestrationConfigPanel({
                             setConfigSubmitPrelude(false)
                           }
                         }}
-                        disabledReason={configPending ? "Saving…" : null}
+                        disabledReason={
+                          updateDefaults.isPending ? "Saving…" : null
+                        }
                       />
                     </div>
                     <div className="flex items-center justify-between gap-3">
@@ -438,7 +443,7 @@ export function OrchestrationConfigPanel({
                         checked={configSubmitPrelude}
                         onCheckedChange={setConfigSubmitPrelude}
                         disabledReason={
-                          configPending
+                          updateDefaults.isPending
                             ? "Saving…"
                             : !configSendPrelude
                               ? "Enable Auto-send first"

@@ -1,18 +1,18 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react"
+import { useEffect, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ResourceBadge } from "@/components/ui/resource-badge"
+import { ApiHttpError } from "@/api"
 import {
-  ApiHttpError,
-  mergeTask,
-  restackTask,
-  resumeMergeRun,
-  restartTaskAgent,
-  setTaskMergeReady,
-  startTaskAgent,
-  stopTaskAgent,
-} from "@/api"
+  useMergeTaskMutation,
+  useRestartTaskAgentMutation,
+  useRestackTaskMutation,
+  useResumeMergeRunMutation,
+  useSetTaskMergeReadyMutation,
+  useStartTaskAgentMutation,
+  useStopTaskAgentMutation,
+} from "@/api/mutations"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
@@ -73,7 +73,6 @@ interface TaskCardProps {
   isSelected: boolean
   isHighlighted?: boolean
   onSelect: (options: { additive: boolean }) => void
-  onRequestRefresh?: () => void
 }
 
 interface MergeAllowRunningPrompt {
@@ -206,8 +205,15 @@ export function TaskCard({
   isSelected,
   isHighlighted = false,
   onSelect,
-  onRequestRefresh,
 }: TaskCardProps) {
+  const startAgent = useStartTaskAgentMutation()
+  const stopAgent = useStopTaskAgentMutation()
+  const restartAgent = useRestartTaskAgentMutation()
+  const setMergeReadyMutation = useSetTaskMergeReadyMutation()
+  const mergeTaskMutation = useMergeTaskMutation()
+  const restackTaskMutation = useRestackTaskMutation()
+  const resumeMergeRunMutation = useResumeMergeRunMutation()
+
   const now = Date.now()
   const stackInSync = stackProjectionsFresh ? (node.stackInSync ?? null) : null
   const outOfSync = stackInSync === false
@@ -247,22 +253,7 @@ export function TaskCard({
       null,
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
-  const [mergeReady, setMergeReady] = useState(Boolean(task?.mergeReadyAt))
-  const mergeReadyRequestInFlightRef = useRef(false)
-  const mergeReadyRefreshTimersRef = useRef<number[]>([])
-
-  function clearMergeReadyRefreshTimers() {
-    for (const timer of mergeReadyRefreshTimersRef.current) {
-      window.clearTimeout(timer)
-    }
-    mergeReadyRefreshTimersRef.current = []
-  }
-
-  useEffect(() => {
-    return () => {
-      clearMergeReadyRefreshTimers()
-    }
-  }, [])
+  const mergeReady = Boolean(task?.mergeReadyAt)
   const expectedLinearStateType =
     task === undefined
       ? null
@@ -306,8 +297,6 @@ export function TaskCard({
     }
     return "border-border/60"
   })()
-  const [refreshPendingAfterMenuClose, setRefreshPendingAfterMenuClose] =
-    useState(false)
   const [actionErrorExpanded, setActionErrorExpanded] = useState(false)
   const [actionError, setActionError] = useState<{
     title: string
@@ -361,29 +350,8 @@ export function TaskCard({
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
 
-  useEffect(() => {
-    setMergeReady(Boolean(task?.mergeReadyAt))
-  }, [taskId, task?.mergeReadyAt])
-
-  useEffect(() => {
-    if (!refreshPendingAfterMenuClose) {
-      return
-    }
-    if (actionsMenuOpen) {
-      return
-    }
-    if (!onRequestRefresh) {
-      return
-    }
-    onRequestRefresh()
-    setRefreshPendingAfterMenuClose(false)
-  }, [actionsMenuOpen, onRequestRefresh, refreshPendingAfterMenuClose])
-
   const quickActionsEnabled =
-    taskId !== null &&
-    !!onRequestRefresh &&
-    task?.state !== "blocked" &&
-    task?.state !== "done"
+    taskId !== null && task?.state !== "blocked" && task?.state !== "done"
 
   const isRunning = agentStatus === "running" || agentStatus === "blocked"
   const canStart =
@@ -408,7 +376,7 @@ export function TaskCard({
   }
 
   async function handleStart() {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
     if (!harnessCommand.trim()) {
@@ -417,8 +385,11 @@ export function TaskCard({
     setPendingAction("start")
     clearActionError()
     try {
-      await startTaskAgent(taskId, { harness: harnessCommand, detach })
-      onRequestRefresh()
+      await startAgent.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: { harness: harnessCommand, detach },
+      })
     } catch (e) {
       setActionErrorFromException("Start agent", e)
     } finally {
@@ -427,14 +398,13 @@ export function TaskCard({
   }
 
   async function handleStop() {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
     setPendingAction("stop")
     clearActionError()
     try {
-      await stopTaskAgent(taskId)
-      onRequestRefresh()
+      await stopAgent.mutateAsync({ epicId: node.epicId, taskId })
     } catch (e) {
       setActionErrorFromException("Stop agent", e)
     } finally {
@@ -443,14 +413,17 @@ export function TaskCard({
   }
 
   async function handleRestart() {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
     setPendingAction("restart")
     clearActionError()
     try {
-      await restartTaskAgent(taskId, { detach: true })
-      onRequestRefresh()
+      await restartAgent.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: { detach: true },
+      })
     } catch (e) {
       setActionErrorFromException("Restart agent", e)
     } finally {
@@ -459,58 +432,41 @@ export function TaskCard({
   }
 
   async function handleToggleMergeReady(next: boolean) {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
     if (next && !task?.branchName) {
       return
     }
-    if (mergeReadyRequestInFlightRef.current) {
+    if (setMergeReadyMutation.isPending) {
       return
     }
-    const previous = mergeReady
     setPendingMerge("ready")
-    setMergeReady(next)
     clearActionError()
-    clearMergeReadyRefreshTimers()
-    mergeReadyRequestInFlightRef.current = true
     try {
-      await setTaskMergeReady(taskId, next)
-      if (actionsMenuOpen) {
-        setRefreshPendingAfterMenuClose(true)
-      } else {
-        onRequestRefresh()
-      }
-      if (next) {
-        mergeReadyRefreshTimersRef.current.push(
-          window.setTimeout(() => onRequestRefresh(), 1250),
-        )
-        mergeReadyRefreshTimersRef.current.push(
-          window.setTimeout(() => onRequestRefresh(), 3500),
-        )
-      }
+      await setMergeReadyMutation.mutateAsync({ taskId, ready: next })
     } catch (e) {
-      setMergeReady(previous)
       setActionErrorFromException("Set merge readiness", e)
     } finally {
-      mergeReadyRequestInFlightRef.current = false
       setPendingMerge(null)
     }
   }
 
   async function handleMerge({ cascade }: { cascade: boolean }) {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
-    setRefreshPendingAfterMenuClose(false)
     setPendingMerge(cascade ? "mergeStack" : "merge")
     clearActionError()
 
     const restackMode: "strict" | "merge_then_restack" = "strict"
     const actionLabel = cascade ? "Merge and Restack" : "Merge"
     try {
-      await mergeTask(taskId, { cascade, restackMode })
-      onRequestRefresh()
+      await mergeTaskMutation.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: { cascade, restackMode },
+      })
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
@@ -531,17 +487,19 @@ export function TaskCard({
   }
 
   async function handleMergeThenRestack() {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
-    setRefreshPendingAfterMenuClose(false)
     setPendingMerge("mergeStack")
     clearActionError()
     const actionLabel = "Merge then Restack"
     const restackMode: "strict" | "merge_then_restack" = "merge_then_restack"
     try {
-      await mergeTask(taskId, { cascade: true, restackMode })
-      onRequestRefresh()
+      await mergeTaskMutation.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: { cascade: true, restackMode },
+      })
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
@@ -562,15 +520,17 @@ export function TaskCard({
   }
 
   async function handleResumeMerge() {
-    if (!mergeRun?.runId || !onRequestRefresh) {
+    if (!mergeRun?.runId) {
       return
     }
-    setRefreshPendingAfterMenuClose(false)
     setPendingMerge("resume")
     clearActionError()
     try {
-      await resumeMergeRun(mergeRun.runId, {})
-      onRequestRefresh()
+      await resumeMergeRunMutation.mutateAsync({
+        epicId: node.epicId,
+        runId: mergeRun.runId,
+        request: {},
+      })
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
@@ -593,16 +553,18 @@ export function TaskCard({
   }
 
   async function handleRestack({ scope }: { scope: "descendants" | "spine" }) {
-    if (taskId === null || !onRequestRefresh) {
+    if (taskId === null) {
       return
     }
-    setRefreshPendingAfterMenuClose(false)
     setPendingMerge("restack")
     clearActionError()
     const actionLabel = "Restack"
     try {
-      await restackTask(taskId, { scope })
-      onRequestRefresh()
+      await restackTaskMutation.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: { scope },
+      })
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
@@ -622,7 +584,7 @@ export function TaskCard({
   }
 
   async function confirmAllowRunning() {
-    if (!allowRunningPrompt || !onRequestRefresh) {
+    if (!allowRunningPrompt) {
       return
     }
 
@@ -648,26 +610,34 @@ export function TaskCard({
           throw new Error("Task id missing for merge confirmation.")
         }
         setPendingMerge(allowRunningPrompt.cascade ? "mergeStack" : "merge")
-        await mergeTask(taskId, {
-          cascade: allowRunningPrompt.cascade,
-          restackMode: allowRunningPrompt.restackMode,
-          allowRunning: true,
+        await mergeTaskMutation.mutateAsync({
+          epicId: node.epicId,
+          taskId,
+          request: {
+            cascade: allowRunningPrompt.cascade,
+            restackMode: allowRunningPrompt.restackMode,
+            allowRunning: true,
+          },
         })
       } else if (allowRunningPrompt.kind === "restack") {
         if (taskId === null) {
           throw new Error("Task id missing for restack confirmation.")
         }
         setPendingMerge("restack")
-        await restackTask(taskId, {
-          scope: allowRunningPrompt.scope,
-          allowRunning: true,
+        await restackTaskMutation.mutateAsync({
+          epicId: node.epicId,
+          taskId,
+          request: { scope: allowRunningPrompt.scope, allowRunning: true },
         })
       } else {
         setPendingMerge("resume")
-        await resumeMergeRun(allowRunningPrompt.runId, { allowRunning: true })
+        await resumeMergeRunMutation.mutateAsync({
+          epicId: node.epicId,
+          runId: allowRunningPrompt.runId,
+          request: { allowRunning: true },
+        })
       }
       setAllowRunningPrompt(null)
-      onRequestRefresh()
     } catch (e) {
       setAllowRunningPrompt(null)
       setActionErrorFromException(actionLabel, e)
@@ -832,7 +802,7 @@ export function TaskCard({
 
   const gitAttentionIcon = mergeAttentionIcon || syncAttentionIcon
 
-  const shouldShowResumeButton = canResumeMerge && !!onRequestRefresh
+  const shouldShowResumeButton = canResumeMerge
 
   const allowRunningActionLabel =
     allowRunningPrompt?.kind === "merge"
@@ -941,7 +911,7 @@ export function TaskCard({
           </Tooltip>
         </div>
       ) : null}
-      {taskId !== null && onRequestRefresh ? (
+      {taskId !== null ? (
         <div
           className={cn(
             "nodrag nopan absolute right-0 top-2.5 z-40 translate-x-[calc(100%+8px)] transition-opacity",

@@ -5,7 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { setTaskMergeReady } from "@/api"
+import { useSetTaskMergeReadyMutation } from "@/api/mutations"
 import { cn } from "@/lib/utils"
 import {
   Position,
@@ -81,7 +81,6 @@ interface GraphViewProps {
   onSelectNode: (nodeId: number, options: { additive: boolean }) => void
   onSelectEdge: (fromNodeId: number, toNodeId: number) => void
   onClearSelection: () => void
-  onRequestRefresh?: () => void
 }
 
 const TRUNK_NODE_ID = "trunk"
@@ -251,8 +250,8 @@ export function GraphView({
   onSelectNode,
   onSelectEdge,
   onClearSelection,
-  onRequestRefresh,
 }: GraphViewProps) {
+  const setMergeReady = useSetTaskMergeReadyMutation()
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
@@ -467,7 +466,9 @@ export function GraphView({
 
     try {
       const results = await Promise.allSettled(
-        tasksToMark.map((taskId) => setTaskMergeReady(taskId, true)),
+        tasksToMark.map((taskId) =>
+          setMergeReady.mutateAsync({ taskId, ready: true }),
+        ),
       )
 
       const failures: PromiseRejectedResult[] = []
@@ -495,7 +496,6 @@ export function GraphView({
       }
     } finally {
       setBulkMergeReadyPending(false)
-      onRequestRefresh?.()
     }
   }
 
@@ -1023,7 +1023,6 @@ export function GraphView({
           detach,
           edgeHighlighted: selectedEdgeNodeIds?.has(graphNode.id) ?? false,
           onSelectNode,
-          onRequestRefresh,
         },
         selectable: true,
         draggable: false,
@@ -1043,7 +1042,6 @@ export function GraphView({
     mergeRunsByTaskId,
     gitMutationsDisabledReason,
     onSelectNode,
-    onRequestRefresh,
     nodesById,
     positions,
     selectedEdgeNodeIds,

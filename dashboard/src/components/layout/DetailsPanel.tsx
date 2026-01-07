@@ -21,15 +21,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { ApiHttpError, fetchTaskAgentLogs } from "@/api"
 import {
-  ApiHttpError,
-  fetchTaskAgentLogs,
-  restartTaskAgent,
-  resumeMergeRun,
-  setTaskMergeReady,
-  startTaskAgent,
-  stopTaskAgent,
-} from "@/api"
+  useRestartTaskAgentMutation,
+  useResumeMergeRunMutation,
+  useSetTaskMergeReadyMutation,
+  useStartTaskAgentMutation,
+  useStopTaskAgentMutation,
+} from "@/api/mutations"
 import type { AgentSession, GraphNode, MergeRun, Task } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
 import { copyToClipboard } from "@/lib/clipboard"
@@ -84,7 +83,6 @@ interface DetailsPanelProps {
   node?: GraphNode | null
   mergeRun?: MergeRun | null
   agentSession?: AgentSession | null
-  onRequestRefresh?: () => void
   edge?: EdgeSelection | null
 }
 
@@ -92,13 +90,12 @@ function MergeRunDetails({
   mergeRun,
   node,
   panelOpen,
-  onRequestRefresh,
 }: {
   mergeRun: MergeRun
   node: GraphNode | null | undefined
   panelOpen: boolean
-  onRequestRefresh?: () => void
 }) {
+  const resumeMerge = useResumeMergeRunMutation()
   const [calloutExpanded, setCalloutExpanded] = useState(false)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
@@ -184,15 +181,14 @@ function MergeRunDetails({
           : "default"
 
   async function handleResumeMerge(allowRunning: boolean) {
-    if (!onRequestRefresh) {
-      return
-    }
-
     setResumePending(true)
     setResumeError(null)
     try {
-      await resumeMergeRun(mergeRun.runId, { allowRunning })
-      onRequestRefresh()
+      await resumeMerge.mutateAsync({
+        epicId: mergeRun.epicId,
+        runId: mergeRun.runId,
+        request: { allowRunning },
+      })
     } catch (e) {
       if (e instanceof ApiHttpError && e.status === 409 && !allowRunning) {
         if (isRunningAgentsConflict(e)) {
@@ -234,13 +230,7 @@ function MergeRunDetails({
                     variant="outline"
                     size="xs"
                     className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                    disabledReason={
-                      resumePending
-                        ? "Action in progress"
-                        : !onRequestRefresh
-                          ? "Refresh handler unavailable"
-                          : null
-                    }
+                    disabledReason={resumePending ? "Action in progress" : null}
                     onClick={() => void handleResumeMerge(false)}
                   >
                     {resumePending ? (
@@ -418,14 +408,17 @@ function MergeRunDetails({
 function AgentActions({
   task,
   agentSession,
-  onRequestRefresh,
   floatingActionsPortalId,
 }: {
   task: Task
   agentSession: AgentSession | null
-  onRequestRefresh: () => void
   floatingActionsPortalId?: string
 }) {
+  const startAgent = useStartTaskAgentMutation()
+  const stopAgent = useStopTaskAgentMutation()
+  const restartAgent = useRestartTaskAgentMutation()
+  const setMergeReadyMutation = useSetTaskMergeReadyMutation()
+
   const { defaults: orchestrationDefaults } = useOrchestrationDefaults()
   const [pending, setPending] = useState<"start" | "stop" | "restart" | null>(
     null,
@@ -440,10 +433,7 @@ function AgentActions({
   const [logsTruncated, setLogsTruncated] = useState<boolean>(false)
   const [oneTimePreludeOpen, setOneTimePreludeOpen] = useState(false)
   const [oneTimePrelude, setOneTimePrelude] = useState("")
-  const [mergeReadyPending, setMergeReadyPending] = useState(false)
-  const [mergeReady, setMergeReady] = useState<boolean>(
-    Boolean(task.mergeReadyAt),
-  )
+  const mergeReady = Boolean(task.mergeReadyAt)
 
   useEffect(() => {
     setPending(null)
@@ -457,12 +447,7 @@ function AgentActions({
     setLogsTruncated(false)
     setOneTimePreludeOpen(false)
     setOneTimePrelude("")
-    setMergeReadyPending(false)
   }, [task.id])
-
-  useEffect(() => {
-    setMergeReady(Boolean(task.mergeReadyAt))
-  }, [task.id, task.mergeReadyAt])
 
   useEffect(() => {
     if (!notice) {
@@ -540,11 +525,15 @@ function AgentActions({
     setPending("start")
     setError(null)
     try {
-      const response = await startTaskAgent(taskId, {
-        harness: configuredHarnessCommand,
-        agentKind: agentKindDraft,
-        detach: orchestrationDefaults?.harness.detach ?? true,
-        prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
+      const response = await startAgent.mutateAsync({
+        epicId: task.epicId,
+        taskId,
+        request: {
+          harness: configuredHarnessCommand,
+          agentKind: agentKindDraft,
+          detach: orchestrationDefaults?.harness.detach ?? true,
+          prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
+        },
       })
       const warnings = response.warnings ?? []
       if (warnings.length > 0) {
@@ -556,7 +545,6 @@ function AgentActions({
       }
       setOneTimePrelude("")
       setOneTimePreludeOpen(false)
-      onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -568,8 +556,7 @@ function AgentActions({
     setPending("stop")
     setError(null)
     try {
-      await stopTaskAgent(taskId)
-      onRequestRefresh()
+      await stopAgent.mutateAsync({ epicId: task.epicId, taskId })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -581,11 +568,15 @@ function AgentActions({
     setPending("restart")
     setError(null)
     try {
-      const response = await restartTaskAgent(taskId, {
-        harness: harnessDirty ? harnessDraftTrimmed : null,
-        agentKind: agentKindDraft,
-        detach: orchestrationDefaults?.harness.detach ?? true,
-        prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
+      const response = await restartAgent.mutateAsync({
+        epicId: task.epicId,
+        taskId,
+        request: {
+          harness: harnessDirty ? harnessDraftTrimmed : null,
+          agentKind: agentKindDraft,
+          detach: orchestrationDefaults?.harness.detach ?? true,
+          prelude: oneTimePreludeValue ? oneTimePreludeValue : null,
+        },
       })
       const warnings = response.warnings ?? []
       if (warnings.length > 0) {
@@ -597,7 +588,6 @@ function AgentActions({
       }
       setOneTimePrelude("")
       setOneTimePreludeOpen(false)
-      onRequestRefresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -615,16 +605,11 @@ function AgentActions({
   }
 
   async function handleSetMergeReady(next: boolean) {
-    setMergeReadyPending(true)
     setError(null)
     try {
-      await setTaskMergeReady(taskId, next)
-      setMergeReady(next)
-      onRequestRefresh()
+      await setMergeReadyMutation.mutateAsync({ taskId, ready: next })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setMergeReadyPending(false)
     }
   }
 
@@ -918,7 +903,7 @@ function AgentActions({
             disabledReason={
               pending !== null
                 ? "Action in progress"
-                : mergeReadyPending
+                : setMergeReadyMutation.isPending
                   ? "Saving…"
                   : !task.branchName && !mergeReady
                     ? "Task has no branch"
@@ -1059,7 +1044,6 @@ export function DetailsPanel({
   node,
   mergeRun,
   agentSession,
-  onRequestRefresh,
   edge,
 }: DetailsPanelProps) {
   const selectionKey = edge
@@ -1155,7 +1139,6 @@ export function DetailsPanel({
                       mergeRun={mergeRunActive}
                       node={node}
                       panelOpen={open}
-                      onRequestRefresh={onRequestRefresh}
                     />
                   </AccordionContent>
                 </AccordionItem>
@@ -1164,11 +1147,10 @@ export function DetailsPanel({
               <AccordionItem value="agent">
                 <AccordionTrigger>Agent</AccordionTrigger>
                 <AccordionContent className="pt-3">
-                  {task && onRequestRefresh ? (
+                  {task ? (
                     <AgentActions
                       task={task}
                       agentSession={agentSession ?? null}
-                      onRequestRefresh={onRequestRefresh}
                       floatingActionsPortalId={floatingActionsPortalId}
                     />
                   ) : null}
