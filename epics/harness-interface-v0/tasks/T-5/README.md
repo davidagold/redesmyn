@@ -53,11 +53,35 @@ Enable an automated “conflict assist” loop when the selected agent kind supp
 
 If the selected agent kind cannot provide the needed capabilities, the behavior should remain manual (current UI).
 
+## Using T-10 (structured exec + semantic events)
+
+T-10 is the source of truth for “structured vs interactive” sessions and provides the signals this task must consume.
+
+### Enabling structured mode (required)
+
+Structured mode is **command-driven** (there is no separate interface-mode switch). Users must explicitly opt in by providing a harness command that enables machine-readable output:
+
+- **Codex**: include `exec` and `--json`, e.g. `codex exec --json …`
+- **Claude Code**: include both `--print` (or `-p`) and `--output-format stream-json`, e.g. `claude --print --output-format stream-json …`
+
+If those flags are not present, the session is treated as interactive and this task must not attempt any automation.
+
+### Signals available from T-10
+
+When structured mode is enabled, T-10 ensures the AgentDriver can tail the structured stream and will persist/emit:
+
+- `agent_session.agent_interface_mode == structured`
+- `agent_session.external_session_ref` (Codex thread id / Claude session id when available)
+- DB events: `agent.turn_started`, `agent.turn_completed`, `agent.assistant_message`
+- `task.agent_session_update` snapshots reflecting the above
+
+This task should gate auto-resume on these explicit events, not tmux prompt heuristics.
+
 ## Requirements
 
 ### 0) Structured-only support
 
-Conflict assist automation is enabled only when the active agent session can provide structured semantic events.
+Conflict assist automation is enabled only when the active agent session can provide structured semantic events (i.e. `agent_session.agent_interface_mode == structured`).
 If the session is interactive / tmux-only (no structured stream), the system must fall back to the existing manual flow (no partial heuristics-based automation).
 
 ### 1) Gating rules (must enforce both)
@@ -77,7 +101,7 @@ If either is not satisfied:
 The remediation message delivery should:
 
 - be queued and retried when the agent reports “ready for input” (derived from structured signals)
-- use a transport that works for structured sessions (not tmux-specific send-keys)
+- use a transport that works for structured sessions (not tmux-specific send-keys; prefer resuming the external session id from `external_session_ref` where supported)
 - after delivery, wait for the **next structured remediation turn** to complete before resuming:
   - prefer correlating by `external_turn_id` when provided, else use a conservative “observed after send time” boundary.
 - include timeouts; on timeout, fall back to the manual flow with guidance.

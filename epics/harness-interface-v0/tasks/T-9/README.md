@@ -31,69 +31,40 @@ Add a minimal on-graph affordance:
 
 This should be a small, non-busy enhancement: it should not re-layout the graph dramatically and should not introduce “chat UI” density on every node.
 
+## Using T-10 (structured exec + semantic events)
+
+T-10 already provides the backend plumbing this task should consume:
+
+- Structured mode is **command-driven**:
+  - **Codex** is structured only when the harness command includes `exec` and `--json` (e.g. `codex exec --json …`).
+  - **Claude Code** is structured only when the harness command includes `--print`/`-p` and `--output-format stream-json` (e.g. `claude --print --output-format stream-json …`).
+- AgentDriver persists a session-scoped `agent_preview` JSON payload onto `AgentSession` and updates it when it observes structured `agent.assistant_message` events.
+- The preview is included in the `task.agent_session_update` event snapshots (so the UI can update live without polling).
+
+This task should **not** scrape interactive tmux logs. If a session does not emit structured assistant-message events, the preview should simply remain absent.
+
 ## Requirements
 
-### 1) Persist a “preview” snippet on `AgentSession` (not the full transcript)
+### 1) Display the persisted preview on the task card
 
-We should not store full transcripts in the DB as part of v0. We only need a stable snippet for UI preview and Timeline integration.
-
-Add a session-scoped persisted preview model (shape can evolve, but must be typed/validated):
-
-- `last_assistant_message_preview: str | null` (already truncated; max length enforced)
-- `last_assistant_message_at: datetime | null`
-- optional: `last_message_turn_id: str | null` (if the agent provides it; informational)
-
-Implementation guidance:
-
-- Prefer a JSON column validated by a Pydantic model (repo convention), e.g. `agent_preview` with an `AgentPreview` model.
-- Ensure defaults are valid JSON across SQLite/Postgres (avoid the 0017 default pitfall).
-
-### 2) Wire preview updates through the AgentDriver
-
-AgentDriver (T-7) is the single supervisor and should own:
-
-- consuming output (tmux log tail / structured exec stream),
-- interpreting it via the agent backend’s **structured semantic events**, and
-- persisting derived state onto the `AgentSession`.
-
-Codex backend (T-3) should surface assistant message text in a way the driver can consume without UI coupling.
-
-Important: this task should **not** attempt to scrape transcripts from interactive tmux logs.
-If a session does not emit structured assistant-message events, the preview should simply remain absent.
-
-Required seam (v0):
-
-- extend `AgentEvent` with a typed `assistant_message` event (includes `text`, and optional `external_turn_id`/`session_id` metadata when available).
-- the preview should be derived **only** from these structured events.
-
-### 3) UI: show a single-line preview on the task card
-
-Update the graph node card UI to render a one-line preview when available:
+Use `AgentSession.agent_preview.last_assistant_message_preview` (and optionally `…_at`) to render a single-line preview on the task card:
 
 - always single line (line clamp 1),
 - truncation with subtle fade/ellipsis,
-- only shown when there is a recent assistant message preview (no placeholder / “not available” state),
+- only shown when preview is present (no placeholder / “not available” state),
 - visually secondary to title/status (avoid heavy borders or chat bubbles).
 
-Copy/layout guidance:
+### 2) Live updates (no polling)
 
-- do not add “Agent:” labels; the affordance should read naturally.
-- avoid duplicating what the status badge already conveys (this is content, not state).
+Ensure the graph updates live when the preview changes:
 
-### 4) Eventing and live updates
+- listen to `task.agent_session_update` events and apply the updated `agent_preview` to task nodes in the client cache/state
+- do not add a separate polling loop for previews
 
-Preview changes must update live without polling:
-
-- include the preview fields in the existing `task.agent_session_update` payload, or emit a dedicated event (but keep a coherent event model).
-- ensure the UI updates the selected node and any visible node cards when the event arrives.
-
-### 5) Testing expectations
+### 3) Testing expectations
 
 Add tests that validate:
 
-- Codex backend extracts assistant message text from structured signals (stream-json / JSONL).
-- AgentDriver persists preview only when changed (no thrash).
-- AgentDriver does not populate preview from interactive/tmux-only logs (no prompt scraping fallback).
 - UI renders preview safely and does not break layout when missing/empty.
 
 ## Acceptance criteria
