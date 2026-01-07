@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { fetchEpicGraph, type EpicGraph } from "@/api"
+import { useCallback, useMemo } from "react"
+import type { EpicGraph } from "@/api"
+import { useEpicGraphQuery } from "@/api/queries"
 import {
   buildAgentSessionsByNodeId,
   buildChildrenMap,
@@ -27,30 +28,20 @@ function isNodeOnSpine(
 type MergeRun = NonNullable<EpicGraph["mergeRuns"]>[number]
 
 export function useGraph(epicId: number | null) {
-  const [graph, setGraph] = useState<EpicGraph | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const {
+    data,
+    error: queryError,
+    isFetching,
+    refetch,
+  } = useEpicGraphQuery(epicId)
+  const graph = epicId === null ? null : (data ?? null)
 
   const refresh = useCallback(async () => {
     if (epicId === null) {
-      setGraph(null)
       return
     }
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await fetchEpicGraph(epicId)
-      setGraph(data)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [epicId])
-
-  useEffect(() => {
-    void refresh()
-  }, [refresh])
+    await refetch()
+  }, [epicId, refetch])
 
   const tasksById = useMemo(() => buildTasksMap(graph?.tasks ?? []), [graph])
 
@@ -93,8 +84,12 @@ export function useGraph(epicId: number | null) {
 
   return {
     graph,
-    error,
-    loading,
+    error: queryError
+      ? queryError instanceof Error
+        ? queryError.message
+        : String(queryError)
+      : null,
+    loading: epicId !== null && isFetching,
     refresh,
     tasksById,
     agentSessionsByNodeId,

@@ -88,248 +88,6 @@ export type TaskAgentLogsResponse = {
   truncated: boolean
 }
 
-async function apiError(response: Response): Promise<Error> {
-  try {
-    const payload = (await response.json()) as unknown
-    if (
-      payload &&
-      typeof payload === "object" &&
-      "detail" in payload &&
-      typeof payload.detail === "string"
-    ) {
-      return new Error(payload.detail)
-    }
-  } catch {
-    // ignore parse errors
-  }
-  return new Error(`${response.status} ${response.statusText}`)
-}
-
-export async function fetchStatus(): Promise<ApiStatus> {
-  const response = await fetch("/v1/status", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<ApiStatus>
-}
-
-export async function fetchEpics(): Promise<Epic[]> {
-  const response = await fetch("/v1/epics", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<Epic[]>
-}
-
-export async function fetchEpicGraph(
-  epic: string | number,
-): Promise<EpicGraph> {
-  const response = await fetch(`/v1/epics/${epic}/graph`, {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<EpicGraph>
-}
-
-export async function fetchHosts(): Promise<Host[]> {
-  const response = await fetch("/v1/hosts", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<Host[]>
-}
-
-export async function fetchDaemons(): Promise<DaemonPresence[]> {
-  const response = await fetch("/v1/daemons", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<DaemonPresence[]>
-}
-
-export async function fetchLinearStatus(): Promise<LinearStatus> {
-  const response = await fetch("/v1/linear/status", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<LinearStatus>
-}
-
-export async function postLinearLogout(): Promise<LinearStatus> {
-  const response = await fetch("/v1/linear/logout", {
-    method: "POST",
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<LinearStatus>
-}
-
-export async function postSyncFromLinear(epic: string): Promise<SyncStats> {
-  const response = await fetch(`/v1/epics/${epic}/sync/from/linear`, {
-    method: "POST",
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<SyncStats>
-}
-
-export async function postSyncToLinear(epic: string): Promise<LinearPushStats> {
-  const response = await fetch(`/v1/epics/${epic}/sync/to/linear`, {
-    method: "POST",
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw await apiError(response)
-  }
-  return response.json() as Promise<LinearPushStats>
-}
-
-export async function setTaskMergeReady(
-  taskId: number,
-  ready: boolean,
-): Promise<Task> {
-  const response = await fetch(`/v1/tasks/${taskId}/merge-ready`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ ready }),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/${taskId}/merge-ready failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<Task>
-}
-
-export async function mergeTask(
-  taskId: number,
-  request: TaskMergeRequest,
-): Promise<TaskMergeResponse> {
-  const response = await fetch(`/v1/tasks/${taskId}/merge`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new ApiHttpError(
-      `POST /v1/tasks/${taskId}/merge failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-      response.status,
-      detail,
-    )
-  }
-  return response.json() as Promise<TaskMergeResponse>
-}
-
-export async function restackTask(
-  taskId: number,
-  request: TaskRestackRequest,
-): Promise<TaskRestackResponse> {
-  const response = await fetch(`/v1/tasks/${taskId}/restack`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new ApiHttpError(
-      `POST /v1/tasks/${taskId}/restack failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-      response.status,
-      detail,
-    )
-  }
-  return response.json() as Promise<TaskRestackResponse>
-}
-
-export async function resumeMergeRun(
-  runId: string,
-  request: MergeRunResumeRequest,
-): Promise<MergeRunResumeResponse> {
-  const response = await fetch(`/v1/merge-runs/${runId}/resume`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new ApiHttpError(
-      `POST /v1/merge-runs/${runId}/resume failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-      response.status,
-      detail,
-    )
-  }
-  return response.json() as Promise<MergeRunResumeResponse>
-}
-
-export async function fetchOrchestrationDefaults(): Promise<OrchestrationDefaults> {
-  const response = await fetch("/v1/config", {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    throw new Error(`GET /v1/config failed (${response.status})`)
-  }
-  return response.json() as Promise<OrchestrationDefaults>
-}
-
-export async function updateOrchestrationDefaults(
-  request: OrchestrationDefaultsUpdateRequest,
-): Promise<OrchestrationDefaults> {
-  const response = await fetch("/v1/config", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/config failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<OrchestrationDefaults>
-}
-
 export class ApiHttpError extends Error {
   status: number
   detail: string | null
@@ -359,112 +117,189 @@ async function readErrorDetail(response: Response): Promise<string | null> {
   return null
 }
 
+async function requestJson<T>(
+  path: string,
+  options: {
+    method?: string
+    body?: unknown
+    signal?: AbortSignal
+  } = {},
+): Promise<T> {
+  const method = options.method ?? "GET"
+  const init: RequestInit = {
+    method,
+    signal: options.signal,
+    headers: {
+      Accept: "application/json",
+    },
+  }
+
+  if (options.body !== undefined) {
+    init.headers = {
+      ...init.headers,
+      "Content-Type": "application/json",
+    }
+    init.body = JSON.stringify(options.body)
+  }
+
+  const response = await fetch(path, init)
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new ApiHttpError(
+      `${method} ${path} failed (${response.status})${
+        detail ? `: ${detail}` : ""
+      }`,
+      response.status,
+      detail,
+    )
+  }
+
+  return response.json() as Promise<T>
+}
+
+export async function fetchStatus(options?: {
+  signal?: AbortSignal
+}): Promise<ApiStatus> {
+  return requestJson("/v1/status", { signal: options?.signal })
+}
+
+export async function fetchEpics(options?: {
+  signal?: AbortSignal
+}): Promise<Epic[]> {
+  return requestJson("/v1/epics", { signal: options?.signal })
+}
+
+export async function fetchEpicGraph(
+  epic: string | number,
+  options?: { signal?: AbortSignal },
+): Promise<EpicGraph> {
+  return requestJson(`/v1/epics/${epic}/graph`, { signal: options?.signal })
+}
+
+export async function fetchHosts(options?: {
+  signal?: AbortSignal
+}): Promise<Host[]> {
+  return requestJson("/v1/hosts", { signal: options?.signal })
+}
+
+export async function fetchDaemons(options?: {
+  signal?: AbortSignal
+}): Promise<DaemonPresence[]> {
+  return requestJson("/v1/daemons", { signal: options?.signal })
+}
+
+export async function fetchLinearStatus(options?: {
+  signal?: AbortSignal
+}): Promise<LinearStatus> {
+  return requestJson("/v1/linear/status", { signal: options?.signal })
+}
+
+export async function postLinearLogout(): Promise<LinearStatus> {
+  return requestJson("/v1/linear/logout", { method: "POST" })
+}
+
+export async function postSyncFromLinear(epic: string): Promise<SyncStats> {
+  return requestJson(`/v1/epics/${epic}/sync/from/linear`, { method: "POST" })
+}
+
+export async function postSyncToLinear(epic: string): Promise<LinearPushStats> {
+  return requestJson(`/v1/epics/${epic}/sync/to/linear`, { method: "POST" })
+}
+
+export async function setTaskMergeReady(
+  taskId: number,
+  ready: boolean,
+): Promise<Task> {
+  return requestJson(`/v1/tasks/${taskId}/merge-ready`, {
+    method: "POST",
+    body: { ready },
+  })
+}
+
+export async function mergeTask(
+  taskId: number,
+  request: TaskMergeRequest,
+): Promise<TaskMergeResponse> {
+  return requestJson(`/v1/tasks/${taskId}/merge`, {
+    method: "POST",
+    body: request,
+  })
+}
+
+export async function restackTask(
+  taskId: number,
+  request: TaskRestackRequest,
+): Promise<TaskRestackResponse> {
+  return requestJson(`/v1/tasks/${taskId}/restack`, {
+    method: "POST",
+    body: request,
+  })
+}
+
+export async function resumeMergeRun(
+  runId: string,
+  request: MergeRunResumeRequest,
+): Promise<MergeRunResumeResponse> {
+  return requestJson(`/v1/merge-runs/${runId}/resume`, {
+    method: "POST",
+    body: request,
+  })
+}
+
+export async function fetchOrchestrationDefaults(options?: {
+  signal?: AbortSignal
+}): Promise<OrchestrationDefaults> {
+  return requestJson("/v1/config", { signal: options?.signal })
+}
+
+export async function updateOrchestrationDefaults(
+  request: OrchestrationDefaultsUpdateRequest,
+): Promise<OrchestrationDefaults> {
+  return requestJson("/v1/config", {
+    method: "POST",
+    body: request,
+  })
+}
+
 export async function startTaskAgent(
   taskId: number,
   request: TaskAgentStartRequest,
 ): Promise<TaskAgentStartResponse> {
-  const response = await fetch(`/v1/tasks/${taskId}/agent/start`, {
+  return requestJson(`/v1/tasks/${taskId}/agent/start`, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
+    body: request,
   })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/${taskId}/agent/start failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentStartResponse>
 }
 
 export async function runTaskAgentsBulk(
   request: TaskAgentBulkRunRequest,
 ): Promise<TaskAgentBulkRunResponse> {
-  const response = await fetch("/v1/tasks/agent/run", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/agent/run failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentBulkRunResponse>
+  return requestJson("/v1/tasks/agent/run", { method: "POST", body: request })
 }
 
 export async function bulkTaskAgentActions(
   request: TaskAgentBulkActionRequest,
 ): Promise<TaskAgentBulkActionResponse> {
-  const response = await fetch("/v1/tasks/agent/actions", {
+  return requestJson("/v1/tasks/agent/actions", {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
+    body: request,
   })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/agent/actions failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentBulkActionResponse>
 }
 
 export async function stopTaskAgent(
   taskId: number,
 ): Promise<TaskAgentStopResponse> {
-  const response = await fetch(`/v1/tasks/${taskId}/agent/stop`, {
-    method: "POST",
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/${taskId}/agent/stop failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentStopResponse>
+  return requestJson(`/v1/tasks/${taskId}/agent/stop`, { method: "POST" })
 }
 
 export async function restartTaskAgent(
   taskId: number,
   request: TaskAgentRestartRequest = { detach: true },
 ): Promise<TaskAgentStartResponse> {
-  const response = await fetch(`/v1/tasks/${taskId}/agent/restart`, {
+  return requestJson(`/v1/tasks/${taskId}/agent/restart`, {
     method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(request),
+    body: request,
   })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `POST /v1/tasks/${taskId}/agent/restart failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentStartResponse>
 }
 
 export async function fetchTaskAgentLogs(
@@ -481,16 +316,5 @@ export async function fetchTaskAgentLogs(
   if (typeof params.maxBytes === "number") {
     url.searchParams.set("max_bytes", String(params.maxBytes))
   }
-  const response = await fetch(url.pathname + url.search, {
-    headers: { Accept: "application/json" },
-  })
-  if (!response.ok) {
-    const detail = await readErrorDetail(response)
-    throw new Error(
-      `GET /v1/tasks/${taskId}/agent/logs failed (${response.status})${
-        detail ? `: ${detail}` : ""
-      }`,
-    )
-  }
-  return response.json() as Promise<TaskAgentLogsResponse>
+  return requestJson(url.pathname + url.search)
 }
