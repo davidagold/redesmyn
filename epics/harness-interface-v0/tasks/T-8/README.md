@@ -78,7 +78,7 @@ Concrete changes (minimum set to delete the construct):
   - Replace `agent_configs.agent_id` with `agent_configs.task_id` (unique) OR eliminate the table and persist config snapshots only on `AgentSession` (preferred if feasible).
   - Ensure restart uses a predictable source of truth:
     - either the task-scoped config row, or
-    - the latest session’s `resolved_profile`/config snapshot.
+    - the latest session’s `resolved_launch_configuration`/config snapshot.
 
 - **Remove `tasks.agent_id`**
   - Replace “task has agent?” checks with “task has a (running) latest session?” and/or “task has config?” depending on workflow.
@@ -129,7 +129,7 @@ This refactor should explicitly unblock:
 ### 3) Align downstream task framing and copy
 
 - Revise T-1 (in its own branch) to use the clarified terms (Agent interface/interpreter + capabilities + generic fallback) and keep “transport vs semantics” separation crisp.
-- Keep “harness profile” terminology only where it truly means “how to launch” (argv/env/cwd); avoid using it to mean semantic behavior.
+- Keep “launch configuration” terminology only where it truly means “how to launch” (argv/env/cwd); avoid using it to mean semantic behavior.
 - Ensure CLI/UI copy prefers “Agent” for the program and “Session” for a run instance.
 
 ### Non-goals (for T-8)

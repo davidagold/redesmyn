@@ -11,7 +11,7 @@ node:
 
 ## Brief (local)
 
-- Add a Codex harness profile (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
+- Add a Codex launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - If Codex supports hooks, use them opportunistically to enrich session state; otherwise rely on generic mechanisms (process lifecycle + repo observer).
 - Document the recommended workflow for Codex (including any skill-based guidance and degraded-mode notes).
 

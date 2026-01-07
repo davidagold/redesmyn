@@ -12,9 +12,9 @@ node:
 ## Brief (local)
 
 - Add persistence for runner hosts and agent sessions (migrations + ORM + schemas).
-- Add a `harness_profiles` registry table (string PK) and reference it from sessions:
-  - Archetypal profile lives in `harness_profiles` (built-in + user-defined).
-  - Session records the selected `harness_profile_id` plus a resolved profile snapshot (for audit/debug).
+- Add a `launch_configurations` registry table (string PK) and reference it from sessions:
+  - Archetypal configuration lives in `launch_configurations` (built-in + user-defined).
+  - Session records the selected `launch_configuration_id` plus a resolved launch configuration snapshot (for audit/debug).
 - Add mutation endpoints so the dashboard can act as a control surface:
   - register/list hosts
   - list profiles (and optionally CRUD user profiles)

@@ -32,13 +32,13 @@ node:
 - `rn agent attach` works when tmux is available; a fallback path exists when not.
 - The daemon updates agent state (status, last-seen, attach/log metadata) in the control plane.
 - The harness environment resolves `git` to the shim (or Redesmyn reports a degraded mode explicitly).
-- Agents reference a persisted `harness_profile_id` and record the resolved profile/attach metadata actually used.
+- Agents reference a persisted `launch_configuration_id` and record the resolved launch configuration/attach metadata actually used.
 
 ## Updates
 
 - Daemon `git` shim strips itself from `PATH` before delegating to `rn git` to avoid recursion.
 - Daemon can “adopt” pre-existing worktree paths when the branch matches (useful when the node worktree already exists).
-- Ad-hoc runs persist a `HarnessProfile` keyed by a stable hash of the resolved definition.
+- Ad-hoc runs persist a `LaunchConfiguration` keyed by a stable hash of the resolved definition.
 - Merge “session” into “agent” for v0: a task’s agent is the harness instance; do not model/require a separate AgentSession identity for orchestration UX.
 
 ### Final designs

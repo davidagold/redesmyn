@@ -325,7 +325,7 @@ These are enforced by the daemon and by `rn` when possible:
   - `agentId`
   - `taskId` (pinned; agent ids are `a-<task_id>`)
   - `displayName` (optional)
-  - `harnessProfileId` (resolved harness profile used to launch/attach)
+  - `launchConfigurationId` (resolved launch configuration used to launch/attach)
   - `capabilities` (optional; e.g., “can run tests”, “can open PRs”)
   - `lastSeenAt`
   - `status` (running/blocked/stopped/error)

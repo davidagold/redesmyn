@@ -11,7 +11,7 @@ node:
 
 ## Brief (local)
 
-- Add a Cursor harness profile (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
+- Add a Cursor launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Define the best-effort attach story (tmux if applicable; otherwise “open in worktree” semantics).
 - Document limitations where Cursor does not support hooks or terminal attach in a portable way.
 

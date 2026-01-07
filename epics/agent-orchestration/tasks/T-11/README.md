@@ -11,7 +11,7 @@ node:
 
 ## Brief (local)
 
-- Add a Claude Code harness profile (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
+- Add a Claude Code launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Use hooks if available to enrich session state and message/command integration (optional, best-effort).
 - Document limitations and the recommended UX when hooks/attach are constrained.
 

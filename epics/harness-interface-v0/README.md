@@ -52,13 +52,13 @@ We already have a working “harness” system, but the contract is implicit and
 
 - The **server** (and CLI) orchestrate agent session lifecycle and store `AgentSession` state in the DB (task-anchored; no persistent DB `Agent` identity).
 - The **executor** is effectively “local host” today (`LocalRunnerBackend`); the remote backend exists but is not yet a real implementation.
-- A “harness profile” is stored in `harness_profiles` and snapshotted onto sessions, but we don’t yet treat this as a stable, versioned **interface**.
+- A “launch configuration” is stored in `launch_configurations` and snapshotted onto sessions, but we don’t yet treat this as a stable, versioned **interface**.
 
 ### 2.1 Data model (DB)
 
 Hubs of harness-related state:
 
-- `HarnessProfile` (`harness_profiles` table; ORM: `redesmyn/db/models.py`):
+- `LaunchConfiguration` (`launch_configurations` table; ORM: `redesmyn/db/models.py`):
   - `id` (string PK)
   - `kind` (string)
   - `source` (`builtin`/`user`)
@@ -67,7 +67,7 @@ Hubs of harness-related state:
 - `AgentSession` (`agent_sessions` table; ORM: `redesmyn/db/models.py`):
   - sessions are **task-anchored** (`task_id`) and are the canonical runtime record for “agent state”
   - there is no persistent logical DB `Agent` identity (labels are derived from `task_id`, e.g. `a-<task_id>`)
-  - sessions snapshot `harness_profile_id`, `resolved_profile`, `attach`, `cwd_path`, and `prelude_rendered`
+  - sessions snapshot `launch_configuration_id`, `resolved_launch_configuration`, `attach`, `cwd_path`, and `prelude_rendered`
   - sessions also carry `started_at` / `ended_at` timestamps (derived from lifecycle)
 
 Related schema/API types live in `redesmyn/schemas/core.py`.
@@ -128,11 +128,11 @@ The harness plan in `epics/agent-orchestration/README.md` and its tasks was roug
 
 1) Define the harness integration model + runner boundary (profiles, attach, capabilities, doctor).
 2) Implement a generic runner/session model (tmux, logs, attach semantics).
-3) Add **data-driven harness profiles** + `rn agent doctor` validation tooling.
+3) Add **data-driven launch configurations** + `rn agent doctor` validation tooling.
 4) Add per-harness “adapters” that are mostly profiles + docs (Codex, Claude Code, Cursor, Amp, OpenCode).
 5) Add sandboxing support and surface it in the UI.
 
-Some of these ideas landed (tmux-first orchestration defaults, prelude plumbing, basic harness profile persistence), but the “interface” is still implicit and interleaved with local execution details.
+Some of these ideas landed (tmux-first orchestration defaults, prelude plumbing, basic launch configuration persistence), but the “interface” is still implicit and interleaved with local execution details.
 
 ### 3.1 The specific unfinished harness work (as expressed in tasks)
 

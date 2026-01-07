@@ -11,7 +11,7 @@ node:
 
 ## Brief (local)
 
-- Add an OpenCode harness profile (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
+- Add an OpenCode launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Identify any available hooks and use them opportunistically to enrich session state (optional).
 
 ## Acceptance Criteria

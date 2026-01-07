@@ -50,7 +50,7 @@ Split the concept into two explicit primitives:
    - Intended to be editable over time without corrupting run history.
    - Likely sources:
      - repo defaults (`config.toml`)
-     - harness profile definitions (argv/env/working_dir)
+     - launch configuration definitions (argv/env/working_dir)
      - (optional) per-task overrides
 
 2) `AgentSession` (or `AgentRun`)
@@ -60,7 +60,7 @@ Split the concept into two explicit primitives:
      - status (`running`/`blocked`/`stopped`/`error`)
      - start/end timestamps and exit code/reason
      - attach info (tmux session name/socket/log path)
-     - resolved profile snapshot (argv/env/working_dir)
+     - resolved launch configuration snapshot (argv/env/working_dir)
      - rendered prelude text (what we sent)
 
 The UI should talk primarily in terms of **sessions**:
@@ -155,8 +155,8 @@ Fields:
 
 - `id` (int, PK)
 - `agent_id` (int, FK → `agents.id`, unique)
-- `harness_profile_id` (str, FK → `harness_profiles.id`, nullable)
-- `definition` (JSON) — snapshot of `HarnessProfileDefinition` (argv/env/working_dir)
+- `launch_configuration_id` (str, FK → `launch_configurations.id`, nullable)
+- `definition` (JSON) — snapshot of `LaunchConfigurationDefinition` (argv/env/working_dir)
 - `created_at` (datetime)
 - `updated_at` (datetime)
 
@@ -177,7 +177,7 @@ Fields:
 - `cwd_path` (str, nullable)
 - `pid` (int, nullable)
 - `attach` (JSON, non-null) — `AttachInfo` (tmux/external/none) with session-scoped log path
-- `resolved_profile` (JSON, nullable) — immutable snapshot of `HarnessProfileDefinition`
+- `resolved_launch_configuration` (JSON, nullable) — immutable snapshot of `LaunchConfigurationDefinition`
 - `exit_code` (int, nullable)
 - `started_at` (datetime, nullable)
 - `ended_at` (datetime, nullable)
@@ -196,9 +196,9 @@ Fields:
 
 We treat each existing `agents` row as the **latest session projection** and backfill:
 
-1) Create `agent_configs` for agents that have a `resolved_profile`:
-   - `definition = agents.resolved_profile`
-   - `harness_profile_id = agents.harness_profile_id`
+1) Create `agent_configs` for agents that have a `resolved_launch_configuration`:
+   - `definition = agents.resolved_launch_configuration`
+   - `launch_configuration_id = agents.launch_configuration_id`
 
 2) Create a single `agent_sessions` row per agent that has any evidence of a run:
    - use existing `agents.started_at|ended_at|exit_code|attach|cwd_path|pid|status`
