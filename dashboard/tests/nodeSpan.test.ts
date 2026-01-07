@@ -39,25 +39,12 @@ function buildGraph() {
 test("computeNodeSpan: graph-viz topology", () => {
   const { nodesById, childrenByParent } = buildGraph()
 
+  assert.deepEqual(computeNodeSpan(4, nodesById, childrenByParent), [4])
+  assert.deepEqual(computeNodeSpan(5, nodesById, childrenByParent), [4, 5, 10])
   assert.deepEqual(
-    computeNodeSpan(4, nodesById, childrenByParent)?.focusPath,
-    [4],
-  )
-  assert.deepEqual(
-    computeNodeSpan(5, nodesById, childrenByParent)?.focusPath,
-    [4, 5, 10],
-  )
-  assert.deepEqual(
-    computeNodeSpan(6, nodesById, childrenByParent)?.focusPath,
+    computeNodeSpan(6, nodesById, childrenByParent),
     [4, 6, 8, 9],
   )
-  assert.deepEqual(
-    computeNodeSpan(7, nodesById, childrenByParent)?.focusPath,
-    [4, 7],
-  )
-  assert.deepEqual(
-    computeNodeSpan(10, nodesById, childrenByParent)?.focusPath,
-    [4, 5, 10],
-  )
+  assert.deepEqual(computeNodeSpan(7, nodesById, childrenByParent), [4, 7])
+  assert.deepEqual(computeNodeSpan(10, nodesById, childrenByParent), [4, 5, 10])
 })
-

@@ -12,14 +12,9 @@ import {
   ReactFlow,
   type DefaultEdgeOptions,
   type Edge,
+  type ReactFlowInstance,
 } from "@xyflow/react"
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type {
   AgentSession,
   GraphNode,
@@ -37,6 +32,9 @@ import { RoundedSmoothStepEdge } from "./RoundedSmoothStepEdge"
 import {
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
+  GRAPH_FIT_MAX_ZOOM,
+  GRAPH_FIT_MIN_ZOOM,
+  GRAPH_FIT_PADDING_PX,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
   GRAPH_PADDING,
@@ -151,6 +149,7 @@ export function GraphView({
   onClearSelection,
 }: GraphViewProps) {
   const setMergeReady = useSetTaskMergeReadyMutation()
+  const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
@@ -159,6 +158,8 @@ export function GraphView({
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
   const [selectionBarVisible, setSelectionBarVisible] = useState(false)
   const selectionBarHideTimerRef = useRef<number | null>(null)
+  const didInitialFitRef = useRef(false)
+  const fitSuppressedRef = useRef(false)
 
   const gitMutationsDisabledReason = useMemo(() => {
     const executor = repoExecutor ?? null
@@ -531,12 +532,16 @@ export function GraphView({
     if (!focusMode || selectedNodeId === null) {
       return null
     }
-    const span = computeNodeSpan(selectedNodeId, nodesById, childrenByParent)
-    if (!span) {
+    const focusPath = computeNodeSpan(
+      selectedNodeId,
+      nodesById,
+      childrenByParent,
+    )
+    if (!focusPath) {
       return null
     }
     const positions = new Map<number, FlowPosition>()
-    for (const nodeId of span.focusPath) {
+    for (const nodeId of focusPath) {
       const pos = basePositions.get(nodeId)
       if (pos) {
         positions.set(nodeId, pos)
@@ -546,6 +551,8 @@ export function GraphView({
   }, [basePositions, childrenByParent, focusMode, nodesById, selectedNodeId])
 
   useEffect(() => {
+    didInitialFitRef.current = false
+    fitSuppressedRef.current = false
     setElkPositions(null)
   }, [epicSlug])
 
@@ -617,6 +624,51 @@ export function GraphView({
       }
     }
   }, [targetPositions])
+
+  useEffect(() => {
+    if (!flow) {
+      return
+    }
+
+    if (didInitialFitRef.current || fitSuppressedRef.current) {
+      return
+    }
+
+    if (positions.size === 0) {
+      return
+    }
+
+    const hasSelection =
+      selectedNodeIds.size > 0 ||
+      selectedEdgeId !== null ||
+      selectedNodeId !== null
+
+    if (hasSelection) {
+      fitSuppressedRef.current = true
+      return
+    }
+
+    if (!positionsMatch(positions, targetPositions)) {
+      return
+    }
+
+    didInitialFitRef.current = true
+    window.requestAnimationFrame(() => {
+      flow.fitView({
+        padding: GRAPH_FIT_PADDING_PX,
+        minZoom: GRAPH_FIT_MIN_ZOOM,
+        maxZoom: GRAPH_FIT_MAX_ZOOM,
+        duration: 0,
+      })
+    })
+  }, [
+    flow,
+    positions,
+    selectedEdgeId,
+    selectedNodeId,
+    selectedNodeIds.size,
+    targetPositions,
+  ])
 
   const selectedEdgeNodeIds = useMemo(() => {
     if (!selectedEdgeId || !selectedEdgeId.startsWith("edge:")) {
@@ -885,6 +937,7 @@ export function GraphView({
           }}
           nodesDraggable={false}
           nodesConnectable={false}
+          onInit={setFlow}
           onPaneClick={onClearSelection}
           onEdgeClick={(e, edge) => {
             if (!edge.id.startsWith("edge:")) {

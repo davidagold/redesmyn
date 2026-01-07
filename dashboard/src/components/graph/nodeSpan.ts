@@ -3,18 +3,11 @@ export type NodeLike = {
   parentTaskId: number | null
 }
 
-export type NodeSpan = {
-  focusPath: number[]
-  focusSet: Set<number>
-  focusRootId: number
-  focusEndId: number
-}
-
 export function computeNodeSpan(
   selectedNodeId: number,
   nodesById: Map<number, NodeLike>,
   childrenByParent: Map<number | null, NodeLike[]>,
-): NodeSpan | null {
+): number[] | null {
   if (!nodesById.has(selectedNodeId)) {
     return null
   }
@@ -50,18 +43,15 @@ export function computeNodeSpan(
 
   const visitedDownstream = new Set<number>(focusPathUp)
   const focusPathDown: number[] = []
-  let endId: number = selectedNodeId
   let downId: number = selectedNodeId
 
   while (true) {
     const children = childrenByParent.get(downId) ?? []
     if (children.length !== 1) {
-      endId = downId
       break
     }
     const nextId = children[0].id
     if (visitedDownstream.has(nextId)) {
-      endId = downId
       break
     }
     focusPathDown.push(nextId)
@@ -69,12 +59,5 @@ export function computeNodeSpan(
     downId = nextId
   }
 
-  const focusPath = [...focusPathUp, ...focusPathDown]
-  return {
-    focusPath,
-    focusSet: new Set(focusPath),
-    focusRootId: rootId,
-    focusEndId: endId,
-  }
+  return [...focusPathUp, ...focusPathDown]
 }
-
