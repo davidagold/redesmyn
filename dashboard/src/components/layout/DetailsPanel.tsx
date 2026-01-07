@@ -130,6 +130,7 @@ function MergeRunDetails({
   const [cancelPromptOpen, setCancelPromptOpen] = useState(false)
   const [cancelAbortGit, setCancelAbortGit] = useState(false)
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
+  const conflictAssist = mergeRun.conflictAssist ?? null
 
   const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
   const operationLabel = mergeRun.operation === "restack" ? "Restack" : "Merge"
@@ -195,6 +196,15 @@ function MergeRunDetails({
 
   const attachCommand = remediation?.attachCommand ?? null
   const agentNote = remediation?.message ?? null
+  const assistNoteSent = conflictAssist?.messageSentAt ?? null
+  const assistTimedOut = conflictAssist?.state === "timed_out"
+  const assistUnsupported = conflictAssist?.state === "unsupported"
+  const assistResumed = conflictAssist?.state === "resumed"
+  const assistAgentTurnComplete =
+    conflictAssist?.state === "waiting_for_repo_clean" ||
+    conflictAssist?.state === "ready_to_resume" ||
+    conflictAssist?.state === "resumed"
+  const assistRepoClean = mergeRun.status === "resumable"
 
   const statusBadgeVariant =
     mergeRun.status === "blocked"
@@ -403,6 +413,39 @@ function MergeRunDetails({
                   <MessageSquareText className="size-3" />
                   Copy agent note
                 </Button>
+              </div>
+            ) : null}
+
+            {conflictAssist ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground/80">
+                  Conflict assist
+                </span>
+                <Badge variant={assistUnsupported ? "destructive" : "default"}>
+                  {assistTimedOut
+                    ? "Timed out"
+                    : assistUnsupported
+                      ? "Unavailable"
+                      : assistResumed
+                        ? "Resumed"
+                        : conflictAssist.active
+                          ? "Active"
+                          : "Inactive"}
+                </Badge>
+                <Badge variant={assistNoteSent ? "emerald" : "amber"}>
+                  {assistNoteSent ? "Note delivered" : "Note pending"}
+                </Badge>
+                <Badge variant={assistAgentTurnComplete ? "emerald" : "amber"}>
+                  {assistAgentTurnComplete ? "Agent done" : "Waiting for agent"}
+                </Badge>
+                <Badge variant={assistRepoClean ? "emerald" : "amber"}>
+                  {assistRepoClean ? "Repo clean" : "Waiting for repo"}
+                </Badge>
+                {conflictAssist.detail ? (
+                  <div className="w-full text-xs text-muted-foreground">
+                    {conflictAssist.detail}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
