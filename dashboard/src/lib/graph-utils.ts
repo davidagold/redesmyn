@@ -155,12 +155,49 @@ export function computeActiveMergeSpineTaskIds(
   tasksById: Map<number, Task>,
   leafTaskId: number,
 ): ActiveMergeSpineResult {
+  // Best-effort client-side spine walk used for UX (counts/confirmations).
+  // The server remains the source of truth for spine resolution.
   const { spineTaskIds, warnings } = resolveSpineTaskIds(tasksById, leafTaskId)
   if (warnings.length > 0) {
     return { activeSpineTaskIds: [leafTaskId], warnings }
   }
   const { active } = splitMergedSpinePrefix(tasksById, spineTaskIds)
   return { activeSpineTaskIds: active, warnings }
+}
+
+export type MergeReadySpinePreview = {
+  count: number
+  warnings: string[]
+}
+
+export function previewMergeReadySpineMarkCount(
+  tasksById: Map<number, Task>,
+  leafTaskId: number,
+): MergeReadySpinePreview {
+  const { activeSpineTaskIds, warnings } = computeActiveMergeSpineTaskIds(
+    tasksById,
+    leafTaskId,
+  )
+  if (warnings.length > 0) {
+    return { count: 1, warnings }
+  }
+
+  let count = 0
+  for (const taskId of activeSpineTaskIds) {
+    const task = tasksById.get(taskId) ?? null
+    if (!task || task.state === "done") {
+      continue
+    }
+    if (!task.branchName) {
+      continue
+    }
+    if (task.mergeReadyAt) {
+      continue
+    }
+    count += 1
+  }
+
+  return { count: Math.max(count, 1), warnings }
 }
 
 export function buildAgentSessionsByNodeId(

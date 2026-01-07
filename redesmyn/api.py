@@ -1498,6 +1498,9 @@ async def set_task_merge_ready(
             now = datetime.now(UTC)
 
             if request.scope == "spine":
+                # NOTE: For now we load the full epic's tasks to resolve the spine.
+                # If epic task counts grow, consider narrowing this to the ancestor
+                # chain query (or caching tasks-by-epic in-memory at the API layer).
                 tasks = list(
                     await session.scalars(
                         select(Task).where(Task.epic_id == task.epic_id)

@@ -142,6 +142,8 @@ export function useSetTaskMergeReadyMutation() {
     },
     onSuccess: (task, variables) => {
       if (variables.scope === "spine" && variables.ready) {
+        // TODO: For smoother UI, consider having the API return the list of updated
+        // task ids (or updated tasks) so we can patch the graph cache precisely.
         void queryClient.invalidateQueries({
           queryKey: queryKeys.epicGraph(task.epicId),
         })
