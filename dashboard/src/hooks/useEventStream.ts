@@ -88,6 +88,42 @@ export type TaskAgentActionEventData = {
   error?: string | null
 }
 
+export type TaskAgentSessionUpdateEventData = {
+  type: "task.agent_session_update"
+  taskId: number
+  agentSessionId: number
+  agentStatus: "stopped" | "running" | "blocked" | "error"
+  startedAt?: string | null
+  endedAt?: string | null
+  agentKindSelection: "auto" | "generic" | "codex" | "claude_code"
+  agentKind: "generic" | "codex" | "claude_code"
+  agentInterfaceMode: "interactive" | "structured"
+  agentCapabilities: {
+    canContinueInCwd: boolean
+    canDetectReadyForInput: boolean
+    canDetectTurnComplete: boolean
+    canInterrupt: boolean
+    canReceiveNotifications: boolean
+    canResumeById: boolean
+    canSendText: boolean
+    canStreamSemanticEvents: boolean
+  }
+  agentSemanticStatus: {
+    detail?: string | null
+    turnState: "unknown" | "ready" | "busy" | "blocked" | "completed"
+  }
+  externalSessionRef: { type: "none" } | {
+    type: "codex_thread"
+    threadId: string
+    turnId?: string | null
+  } | { type: "claude_session" sessionId: string }
+  agentPreview?: {
+    lastAssistantMessageAt?: string | null
+    lastAssistantMessagePreview?: string | null
+    lastMessageTurnId?: string | null
+  }
+}
+
 export type MergeRunEventData = {
   type: "merge.run"
   runId: string
@@ -171,7 +207,7 @@ export type UnknownEventData = {
   data: Record<string, unknown>
 }
 
-export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskMergeEventData | MergeRunEventData | TaskAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | AgentTurnStartedEventData | AgentTurnCompletedEventData | AgentAssistantMessageEventData | UnknownEventData
+export type StreamEventData = GitCommitEventData | WorktreeHealthEventData | TaskAgentRunEventData | TaskAgentActionEventData | TaskAgentSessionUpdateEventData | TaskMergeEventData | MergeRunEventData | TaskAgentSetEventData | BlockSetEventData | BlockClearedEventData | BlockAckEventData | AgentTurnStartedEventData | AgentTurnCompletedEventData | AgentAssistantMessageEventData | UnknownEventData
 
 export type StreamEventMessage = {
   type: "event"

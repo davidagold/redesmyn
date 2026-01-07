@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { queryKeys } from "@/api/queryKeys"
 import type { EpicGraph } from "@/api"
 import { type StreamEvent, useEventStream } from "@/hooks/useEventStream"
+import { applyTaskAgentSessionUpdate } from "@/lib/epic-graph-updates"
 
 export function useEpicCacheSync(options: {
   epicSlug: string | null
@@ -96,6 +97,21 @@ export function useEpicCacheSync(options: {
     [epicId, queryClient],
   )
 
+  const patchAgentSession = useCallback(
+    (event: StreamEvent) => {
+      const data = event.data
+      if (epicId === null || data.type !== "task.agent_session_update") {
+        return
+      }
+
+      queryClient.setQueryData<EpicGraph>(
+        queryKeys.epicGraph(epicId),
+        (graph) => applyTaskAgentSessionUpdate(graph, data),
+      )
+    },
+    [epicId, queryClient],
+  )
+
   const handleStreamEvent = useCallback(
     (event: StreamEvent) => {
       if (event.eventType.startsWith("daemon.")) {
@@ -114,6 +130,12 @@ export function useEpicCacheSync(options: {
       if (event.eventType === "merge.run") {
         patchMergeRun(event)
         invalidateEpicGraph(600)
+        onEvent?.(event)
+        return
+      }
+
+      if (event.eventType === "task.agent_session_update") {
+        patchAgentSession(event)
         onEvent?.(event)
         return
       }
@@ -141,7 +163,13 @@ export function useEpicCacheSync(options: {
 
       onEvent?.(event)
     },
-    [invalidateDaemons, invalidateEpicGraph, onEvent, patchMergeRun],
+    [
+      invalidateDaemons,
+      invalidateEpicGraph,
+      onEvent,
+      patchAgentSession,
+      patchMergeRun,
+    ],
   )
 
   const { status } = useEventStream({

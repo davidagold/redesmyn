@@ -239,6 +239,11 @@ export function TaskCard({
   const agentKindLabel = agentSession
     ? labelForAgentKind(agentSession.agentKind)
     : null
+  const agentMessagePreview = (() => {
+    const raw = agentSession?.agentPreview?.lastAssistantMessagePreview ?? null
+    const trimmed = raw?.trim() ?? ""
+    return trimmed ? trimmed : null
+  })()
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
@@ -1218,8 +1223,20 @@ export function TaskCard({
           </div>
         </div>
 
-        <div className="text-sm font-medium leading-tight">
-          {task?.title ?? "—"}
+        <div className="min-w-0 space-y-1">
+          <div
+            className={cn(
+              "text-sm font-medium leading-tight",
+              agentMessagePreview ? "line-clamp-1" : null,
+            )}
+          >
+            {task?.title ?? "—"}
+          </div>
+          {agentMessagePreview ? (
+            <div className="line-clamp-1 text-xs leading-snug text-muted-foreground/80">
+              {agentMessagePreview}
+            </div>
+          ) : null}
         </div>
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
           {agentSession ? (
