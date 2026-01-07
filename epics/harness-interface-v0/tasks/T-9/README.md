@@ -12,7 +12,7 @@ branch:
 
 ## Problem
 
-Once we implement Codex integration (T-3), we need a clear UI “upshot” that:
+Once we implement structured agent integration (T-10), we need a clear UI “upshot” that:
 
 - makes the graph feel alive (agent output is visible without attaching to tmux),
 - stays compact (no transcript blocks under every card), and
@@ -49,16 +49,19 @@ Implementation guidance:
 
 AgentDriver (T-7) is the single supervisor and should own:
 
-- consuming output (tmux log tail / programmatic stream),
-- interpreting it via the agent backend, and
+- consuming output (tmux log tail / structured exec stream),
+- interpreting it via the agent backend’s **structured semantic events**, and
 - persisting derived state onto the `AgentSession`.
 
 Codex backend (T-3) should surface assistant message text in a way the driver can consume without UI coupling.
 
-Suggested seam (additive to v0):
+Important: this task should **not** attempt to scrape transcripts from interactive tmux logs.
+If a session does not emit structured assistant-message events, the preview should simply remain absent.
 
-- extend `AgentEvent` with an optional message event (e.g. `agent_message` with `{role, text, external_turn_id?}`), or
-- add a dedicated backend property for “last assistant message” (but keep it session-scoped and edge-triggered).
+Required seam (v0):
+
+- extend `AgentEvent` with a typed `assistant_message` event (includes `text`, and optional `external_turn_id`/`session_id` metadata when available).
+- the preview should be derived **only** from these structured events.
 
 ### 3) UI: show a single-line preview on the task card
 
@@ -66,7 +69,7 @@ Update the graph node card UI to render a one-line preview when available:
 
 - always single line (line clamp 1),
 - truncation with subtle fade/ellipsis,
-- only shown when there is a recent assistant message preview,
+- only shown when there is a recent assistant message preview (no placeholder / “not available” state),
 - visually secondary to title/status (avoid heavy borders or chat bubbles).
 
 Copy/layout guidance:
@@ -85,8 +88,9 @@ Preview changes must update live without polling:
 
 Add tests that validate:
 
-- Codex backend extracts assistant message text from the chosen signal path(s) (stream-json / JSONL / heuristics).
+- Codex backend extracts assistant message text from structured signals (stream-json / JSONL).
 - AgentDriver persists preview only when changed (no thrash).
+- AgentDriver does not populate preview from interactive/tmux-only logs (no prompt scraping fallback).
 - UI renders preview safely and does not break layout when missing/empty.
 
 ## Acceptance criteria

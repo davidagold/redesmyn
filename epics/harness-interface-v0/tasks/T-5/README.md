@@ -33,6 +33,9 @@ But we lack one crucial capability:
 - knowing when the agent is ready to receive the remediation message
 - knowing when the agent has completed its turn, so resuming is safe and intentional
 
+Historically we attempted to infer this from interactive tmux logs (prompt heuristics), but that is not reliable enough to safely gate automation.
+This task is explicitly **structured-only**: automated conflict assist must depend on machine-readable turn boundaries.
+
 ## Goal
 
 Enable an automated “conflict assist” loop when the selected agent kind supports it:
@@ -49,24 +52,32 @@ If the selected agent kind cannot provide the needed capabilities, the behavior 
 
 ## Requirements
 
+### 0) Structured-only support
+
+Conflict assist automation is enabled only when the active agent session can provide structured semantic events.
+If the session is interactive / tmux-only (no structured stream), the system must fall back to the existing manual flow (no partial heuristics-based automation).
+
 ### 1) Gating rules (must enforce both)
 
 Auto-resume may happen only if:
 
 - repo executor validates the blocked worktree is unblocked and safe to continue, AND
-- agent interface implementation reports “turn complete” for the remediation turn
+- the agent semantic stream reports an explicit “turn complete” for the remediation turn (structured boundary events; not prompt heuristics)
 
 If either is not satisfied:
 
 - do not resume
-- surface an actionable state (“waiting for agent”, “waiting for conflicts resolved”, or “unknown”)
+- surface an actionable state (“waiting for agent”, “waiting for conflicts resolved”).
 
 ### 2) Delivery model
 
 The remediation message delivery should:
 
-- be queued and retried when the agent reports “ready for input”
-- include a timeout; if delivery cannot be confirmed, fall back to manual flow with guidance
+- be queued and retried when the agent reports “ready for input” (derived from structured signals)
+- use a transport that works for structured sessions (not tmux-specific send-keys)
+- after delivery, wait for the **next structured remediation turn** to complete before resuming:
+  - prefer correlating by `external_turn_id` when provided, else use a conservative “observed after send time” boundary.
+- include timeouts; on timeout, fall back to the manual flow with guidance.
 
 ### 3) UI behavior
 
@@ -80,6 +91,7 @@ In the task details (merge run callout):
 - This must not accidentally resume mid-edit.
 - If the user resolves conflicts manually and resumes, the system should gracefully stop the “assist” loop.
 - If the agent makes changes but does not resolve conflicts, repo validation must prevent auto-resume.
+- Do not use “assume complete after N seconds” fallbacks; use explicit turn boundary events or time out to manual.
 
 ## Acceptance criteria
 
