@@ -16,7 +16,6 @@ import {
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 import {
-  computeActiveMergeSpineTaskIds,
   type AgentSession,
   type GraphNode,
   type MergeRun,
@@ -45,20 +44,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Switch } from "@/components/ui/switch"
-import {
-  recordMergeReadySpineConfirmResult,
-  shouldShowMergeReadySpineConfirm,
-} from "@/lib/session-flags"
+import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
+import { useMergeReadySpineConfirm } from "@/hooks/useMergeReadySpineConfirm"
 import {
   ChevronDown,
   ChevronUp,
@@ -329,13 +316,9 @@ export function TaskCard({
     useState<AllowRunningPrompt | null>(null)
   const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
   const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
-  const [mergeReadyConfirmOpen, setMergeReadyConfirmOpen] = useState(false)
-  const [mergeReadyConfirmCount, setMergeReadyConfirmCount] = useState(0)
-  const [mergeReadyConfirmDontAskAgain, setMergeReadyConfirmDontAskAgain] =
-    useState(false)
-  const [mergeReadySpineNotice, setMergeReadySpineNotice] = useState<
-    string | null
-  >(null)
+  const [mergeReadySpineNotice, setMergeReadySpineNotice] =
+    useState<string | null>(null)
+  const mergeReadySpineConfirm = useMergeReadySpineConfirm()
 
   useEffect(() => {
     if (!mergeReadySpineNotice) {
@@ -386,34 +369,6 @@ export function TaskCard({
   const agentStatus = agentSession?.status ?? null
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
-  const mergeReadyActiveSpineTaskCount = useMemo(() => {
-    if (taskId === null) {
-      return 0
-    }
-    const { activeSpineTaskIds, warnings } = computeActiveMergeSpineTaskIds(
-      tasksById,
-      taskId,
-    )
-    if (warnings.length > 0) {
-      return 1
-    }
-
-    let count = 0
-    for (const spineTaskId of activeSpineTaskIds) {
-      const spineTask = tasksById.get(spineTaskId) ?? null
-      if (!spineTask || spineTask.state === "done") {
-        continue
-      }
-      if (!spineTask.branchName) {
-        continue
-      }
-      if (spineTask.mergeReadyAt) {
-        continue
-      }
-      count += 1
-    }
-    return Math.max(count, 1)
-  }, [taskId, tasksById])
 
   const quickActionsEnabled =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -525,21 +480,12 @@ export function TaskCard({
     if (taskId === null) {
       return
     }
-
-    const { warnings } = computeActiveMergeSpineTaskIds(tasksById, taskId)
-    if (warnings.length > 0) {
-      setMergeReadySpineNotice(warnings[0] ?? "Could not resolve merge spine.")
-      await commitMergeReady(true, "task")
-      return
-    }
-
-    if (shouldShowMergeReadySpineConfirm(mergeReadyActiveSpineTaskCount)) {
-      setMergeReadyConfirmCount(mergeReadyActiveSpineTaskCount)
-      setMergeReadyConfirmOpen(true)
-      return
-    }
-
-    await commitMergeReady(true, "spine")
+    await mergeReadySpineConfirm.requestMergeReadySpine({
+      tasksById,
+      leafTaskId: taskId,
+      onWarn: setMergeReadySpineNotice,
+      onProceed: (scope) => commitMergeReady(true, scope),
+    })
   }
 
   async function handleMerge({ cascade }: { cascade: boolean }) {
@@ -1693,66 +1639,15 @@ export function TaskCard({
         }}
         onProceed={() => void confirmAllowRunning()}
       />
-      <AlertDialog
-        open={mergeReadyConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMergeReadyConfirmOpen(false)
-          }
-        }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark merge-ready spine?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will mark{" "}
-              <span className="font-medium text-foreground/90">
-                {mergeReadyConfirmCount}
-              </span>{" "}
-              task{mergeReadyConfirmCount === 1 ? "" : "s"} ready to merge.
-              <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
-                <div className="text-xs text-muted-foreground">
-                  Don&apos;t ask again (this session)
-                </div>
-                <Switch
-                  checked={mergeReadyConfirmDontAskAgain}
-                  onCheckedChange={setMergeReadyConfirmDontAskAgain}
-                />
-              </div>
-              {mergeReadySpineNotice ? (
-                <div className="mt-2 text-xs text-muted-foreground">
-                  {mergeReadySpineNotice}
-                </div>
-              ) : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              disabledReason={pendingMerge !== null ? "Action in progress" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                setMergeReadyConfirmOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <AlertDialogAction
-              disabledReason={pendingMerge !== null ? "Action in progress" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                recordMergeReadySpineConfirmResult({
-                  suppressFuture: mergeReadyConfirmDontAskAgain,
-                })
-                setMergeReadyConfirmOpen(false)
-                void commitMergeReady(true, "spine")
-              }}
-            >
-              Mark ready
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <MergeReadySpineConfirmDialog
+        open={mergeReadySpineConfirm.dialog.open}
+        taskCount={mergeReadySpineConfirm.dialog.taskCount}
+        dontAskAgain={mergeReadySpineConfirm.dialog.dontAskAgain}
+        pendingReason={pendingMerge !== null ? "Action in progress" : null}
+        onOpenChange={mergeReadySpineConfirm.dialog.setOpen}
+        onDontAskAgainChange={mergeReadySpineConfirm.dialog.setDontAskAgain}
+        onConfirm={mergeReadySpineConfirm.dialog.confirm}
+      />
     </Card>
   )
 }

@@ -30,13 +30,13 @@ import {
   useStopTaskAgentMutation,
 } from "@/api/mutations"
 import {
-  computeActiveMergeSpineTaskIds,
   type AgentSession,
   type GraphNode,
   type MergeRun,
   type Task,
 } from "@/lib/graph-utils"
 import { useOrchestrationDefaults } from "@/hooks/useOrchestrationDefaults"
+import { useMergeReadySpineConfirm } from "@/hooks/useMergeReadySpineConfirm"
 import { copyToClipboard } from "@/lib/clipboard"
 import { getRebaseRemediation } from "@/lib/merge-remediation"
 import {
@@ -50,10 +50,7 @@ import { FloatingActions } from "@/components/ui/floating-actions"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { inferAgentKindFromCommand, labelForAgentKind } from "@/lib/agent-kind"
-import {
-  recordMergeReadySpineConfirmResult,
-  shouldShowMergeReadySpineConfirm,
-} from "@/lib/session-flags"
+import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
 import {
   ChevronDown,
   ChevronUp,
@@ -66,15 +63,6 @@ import {
   Terminal,
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
 
 type EdgeSelection = {
   id: string
@@ -455,11 +443,10 @@ function AgentActions({
   const [logsTruncated, setLogsTruncated] = useState<boolean>(false)
   const [oneTimePreludeOpen, setOneTimePreludeOpen] = useState(false)
   const [oneTimePrelude, setOneTimePrelude] = useState("")
-  const [mergeReadyConfirmOpen, setMergeReadyConfirmOpen] = useState(false)
-  const [mergeReadyConfirmCount, setMergeReadyConfirmCount] = useState(0)
-  const [mergeReadyConfirmDontAskAgain, setMergeReadyConfirmDontAskAgain] =
-    useState(false)
   const mergeReady = Boolean(task.mergeReadyAt)
+  const mergeReadySpineConfirm = useMergeReadySpineConfirm({
+    resetKey: task.id,
+  })
 
   useEffect(() => {
     setPending(null)
@@ -473,9 +460,6 @@ function AgentActions({
     setLogsTruncated(false)
     setOneTimePreludeOpen(false)
     setOneTimePrelude("")
-    setMergeReadyConfirmOpen(false)
-    setMergeReadyConfirmCount(0)
-    setMergeReadyConfirmDontAskAgain(false)
   }, [task.id])
 
   useEffect(() => {
@@ -633,32 +617,6 @@ function AgentActions({
     }
   }
 
-  const mergeReadyActiveSpineTaskCount = useMemo(() => {
-    const { activeSpineTaskIds, warnings } = computeActiveMergeSpineTaskIds(
-      tasksById,
-      taskId,
-    )
-    if (warnings.length > 0) {
-      return 1
-    }
-
-    let count = 0
-    for (const spineTaskId of activeSpineTaskIds) {
-      const spineTask = tasksById.get(spineTaskId) ?? null
-      if (!spineTask || spineTask.state === "done") {
-        continue
-      }
-      if (!spineTask.branchName) {
-        continue
-      }
-      if (spineTask.mergeReadyAt) {
-        continue
-      }
-      count += 1
-    }
-    return Math.max(count, 1)
-  }, [taskId, tasksById])
-
   async function commitMergeReady(next: boolean, scope?: "task" | "spine") {
     setError(null)
     try {
@@ -674,20 +632,12 @@ function AgentActions({
       return
     }
 
-    const { warnings } = computeActiveMergeSpineTaskIds(tasksById, taskId)
-    if (warnings.length > 0) {
-      setNotice(warnings[0] ?? "Could not resolve merge spine.")
-      await commitMergeReady(true, "task")
-      return
-    }
-
-    if (shouldShowMergeReadySpineConfirm(mergeReadyActiveSpineTaskCount)) {
-      setMergeReadyConfirmCount(mergeReadyActiveSpineTaskCount)
-      setMergeReadyConfirmOpen(true)
-      return
-    }
-
-    await commitMergeReady(true, "spine")
+    await mergeReadySpineConfirm.requestMergeReadySpine({
+      tasksById,
+      leafTaskId: taskId,
+      onWarn: setNotice,
+      onProceed: (scope) => commitMergeReady(true, scope),
+    })
   }
 
   const attachCommand = useMemo(
@@ -994,61 +944,15 @@ function AgentActions({
         </div>
       </div>
 
-      <AlertDialog
-        open={mergeReadyConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setMergeReadyConfirmOpen(false)
-          }
-        }}
-      >
-        <AlertDialogContent size="sm">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark merge-ready spine?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will mark{" "}
-              <span className="font-medium text-foreground/90">
-                {mergeReadyConfirmCount}
-              </span>{" "}
-              task{mergeReadyConfirmCount === 1 ? "" : "s"} ready to merge.
-              <div className="mt-2 flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2">
-                <div className="text-xs text-muted-foreground">
-                  Don&apos;t ask again (this session)
-                </div>
-                <Switch
-                  checked={mergeReadyConfirmDontAskAgain}
-                  onCheckedChange={setMergeReadyConfirmDontAskAgain}
-                />
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button
-              variant="outline"
-              disabledReason={setMergeReadyMutation.isPending ? "Saving…" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                setMergeReadyConfirmOpen(false)
-              }}
-            >
-              Cancel
-            </Button>
-            <AlertDialogAction
-              disabledReason={setMergeReadyMutation.isPending ? "Saving…" : null}
-              onClick={(e) => {
-                e.preventDefault()
-                recordMergeReadySpineConfirmResult({
-                  suppressFuture: mergeReadyConfirmDontAskAgain,
-                })
-                setMergeReadyConfirmOpen(false)
-                void commitMergeReady(true, "spine")
-              }}
-            >
-              Mark ready
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <MergeReadySpineConfirmDialog
+        open={mergeReadySpineConfirm.dialog.open}
+        taskCount={mergeReadySpineConfirm.dialog.taskCount}
+        dontAskAgain={mergeReadySpineConfirm.dialog.dontAskAgain}
+        pendingReason={setMergeReadyMutation.isPending ? "Saving…" : null}
+        onOpenChange={mergeReadySpineConfirm.dialog.setOpen}
+        onDontAskAgainChange={mergeReadySpineConfirm.dialog.setDontAskAgain}
+        onConfirm={mergeReadySpineConfirm.dialog.confirm}
+      />
 
       <div className="flex flex-wrap gap-2">
         <Button
