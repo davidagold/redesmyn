@@ -4,12 +4,48 @@
 
 ```yaml
 id: T-3
-stacked_on: T-2
+stacked_on: T-5
 node:
   branch: rn/v0-launch/T-3-remove-local-mode
 ```
 
-## Brief (local)
+## Plan
+
+The current “local mode” makes the control plane behave like an executor:
+
+- the server can start agents directly, and
+- the server runs repo/agent reconciliation loops in-process.
+
+This is the main source of confusion and architectural drift. After this task lands, the control plane must be runnable
+without repo filesystem access, and all repo-local behavior must flow through a daemon connection.
+
+This task must land only once daemon-owned execution is end-to-end functional (agent lifecycle + monitoring + telemetry),
+otherwise the product becomes unusable.
+
+### Work
+
+1) Remove `runner_mode=local` as a supported mode
+
+- Decide whether the setting is deleted vs deprecated-but-ignored (v0 likely deletes).
+- Ensure config/env surfaces do not imply a local execution mode.
+
+2) Delete server-owned repo-local loops
+
+- Remove server in-process repo observer loop.
+- Remove server in-process agent monitor/driver.
+- Remove server in-process “primary executor lease refresh” behavior.
+
+3) Harden “daemon required” pathways
+
+- Any endpoint that requires repo-local execution must:
+  - resolve an executor target, and
+  - fail with explicit guidance when no daemon is connected/attached (and/or when not primary).
+
+4) Ensure the server can run without repo FS
+
+- Audit server start-up to avoid touching repo paths beyond what is needed to locate DB/config.
+- Where repo path is currently required (e.g., to determine repo identity), ensure it’s derived from stored identity/DB,
+  not by walking the filesystem.
 
 Remove the hybrid “local mode” where the server can execute repo-local work:
 
@@ -25,4 +61,3 @@ Remove the hybrid “local mode” where the server can execute repo-local work:
 - The server process starts with no repo FS access (only DB access) and remains functional for read-only UI/API.
 - All endpoints that require repo-local execution fail with actionable guidance when no daemon is connected/attached.
 - No background tasks in the server process perform git/worktree inspection or agent supervision.
-

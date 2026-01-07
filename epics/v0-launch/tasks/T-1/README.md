@@ -9,16 +9,38 @@ node:
   branch: rn/v0-launch/T-1-cli-contract
 ```
 
-## Brief (local)
+## Plan
 
-Lock the v0 command surface so there is one coherent model:
+This epic is standardizing on a clean server/daemon split. For v0 to feel coherent, the CLI must:
 
-- Remove the user-facing `rn observer …` command family (observer becomes a daemon capability).
-- Remove `rn dev` from the CLI (dev HMR/reload stays in `just dev`).
-- Establish the high-level UX vocabulary:
-  - `rn up` / `rn down` as the user-facing “start/stop local system” entrypoints.
-  - `rn server …` for control plane management.
-  - `rn daemon …` for executor management (`up/down/status`, attach/registry, logs).
+- present a small, unsurprising command menu, and
+- avoid exposing “implementation detail” commands that imply alternate architectures.
+
+### Work
+
+1) Remove `rn observer`
+
+- Delete the `rn observer` command group from the CLI help/menu.
+- If we still need foreground observation for debugging, move it behind a clearly non-product namespace
+  (e.g. `rn debug observe …`) or a script entrypoint. It should not be required for normal operation.
+- Ensure all docs / errors route users to daemon lifecycle commands instead.
+
+2) Remove `rn dev`
+
+- Delete `rn dev` from the CLI help/menu.
+- Provide a clear error message if someone attempts to use it (either via a compatibility shim or release note),
+  pointing them to `just dev`.
+
+3) Establish the v0 vocabulary in help output
+
+- `rn server …`: control plane lifecycle.
+- `rn daemon …`: executor lifecycle (repo attach, agent lifecycle, telemetry).
+- `rn up/down`: user-facing “start/stop local system”.
+
+### Design notes
+
+- This task intentionally does not change runtime behavior (that’s later tasks); it narrows the surface area first so
+  subsequent changes land into a stable UX.
 
 ## Acceptance Criteria
 
@@ -27,4 +49,3 @@ Lock the v0 command surface so there is one coherent model:
 - The CLI help text makes the split explicit:
   - server = persistence/UI/API
   - daemon = repo executor (git/worktrees/agents/telemetry)
-

@@ -105,6 +105,10 @@ The implementation is split by domain so multiple agents can work independently.
 
 ## 6) Notes on doc conventions
 
-Many existing task docs in this repo include a “Brief (local)” section because `rn sync` can generate that heading as a stable, human-owned section (never overwritten by sync).
+Many existing task docs in this repo include a “Brief (local)” section because `rn sync` historically generated that
+heading as a stable, human-owned section (never overwritten by sync).
+
+New work should prefer a “Plan” section (detailed is good); tooling should treat “Plan” and “Brief (local)” as equivalent
+inputs where a stable, human-authored section is needed.
 
 For this epic, **do not treat “Brief” as a brevity constraint**: write as much detail as needed to make tasks implementable without extra context.
