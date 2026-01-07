@@ -735,7 +735,6 @@ export function EpicView() {
               repoDaemonStatus={repoDaemonStatus}
               epicId={selectedEpic?.id ?? null}
               epicSlug={epicSlug}
-              onSynced={handleRefresh}
               startCommand="rn daemon run"
             />
           ) : (
