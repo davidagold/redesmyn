@@ -242,7 +242,7 @@ export function EpicLinearProjectBadge({
                     <Loader2 className="size-4 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-4 px-1.5">
                     <div className="space-y-2">
                       <div className="flex items-center gap-1.5 text-xs font-medium">
                         <Tag className="size-3" />
