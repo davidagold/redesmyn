@@ -173,12 +173,22 @@ _DEBUG = False
 
 app = typer.Typer(
     add_completion=False,
-    help="Redesmyn CLI (`rn`).",
+    help=(
+        "Redesmyn CLI (`rn`). "
+        "`rn server …` = control plane (persistence/UI/API). "
+        "`rn daemon …` = executor (git/worktrees/agents/telemetry)."
+    ),
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
-daemon_app = typer.Typer(add_completion=False, help="Daemon management.")
-server_app = typer.Typer(add_completion=False, help="Control plane server management.")
+daemon_app = typer.Typer(
+    add_completion=False,
+    help="Executor daemon lifecycle (git/worktrees/agents/telemetry).",
+)
+server_app = typer.Typer(
+    add_completion=False,
+    help="Control plane server lifecycle (persistence/UI/API).",
+)
 config_app = typer.Typer(add_completion=False, help="Defaults and settings.")
 sandbox_app = typer.Typer(add_completion=False, help="Sandbox configuration + health.")
 block_app = typer.Typer(
@@ -189,7 +199,41 @@ epic_app = typer.Typer(add_completion=False, help="Epic management.")
 task_app = typer.Typer(add_completion=False, help="Task management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
-observer_app = typer.Typer(add_completion=False, help="Repo observer + telemetry.")
+debug_app = typer.Typer(add_completion=False, help="Debug-only commands.")
+
+observer_compat_app = typer.Typer(
+    add_completion=False,
+    invoke_without_command=True,
+    no_args_is_help=False,
+    hidden=True,
+    help=(
+        "Removed. Repo observation is a daemon capability.\n\n"
+        "Use `rn daemon run` (normal) or `rn debug observe` (foreground debug)."
+    ),
+)
+
+
+@observer_compat_app.callback()
+def _observer_removed(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand == "run":
+        return
+    typer.echo(
+        "error: `rn observer` has been removed; repo observation now runs via the daemon.\n"
+        "Use `rn daemon run` (normal) or `rn debug observe` (foreground debug).",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+@observer_compat_app.command("run", hidden=True)
+def observer_run_removed() -> None:
+    typer.echo(
+        "error: `rn observer run` has been removed; repo observation now runs via the daemon.\n"
+        "Use `rn daemon run` (normal) or `rn debug observe` (foreground debug).",
+        err=True,
+    )
+    raise typer.Exit(2)
+
 merge_run_app = typer.Typer(add_completion=False, help="Merge/restack run management.")
 
 
@@ -3298,14 +3342,25 @@ def _terminate_process(
         return
 
 
-@app.command()
-def dev(
+@app.command(hidden=True)
+def dev() -> None:
+    """Removed. Use `just dev`."""
+    typer.echo(
+        "error: `rn dev` has been removed.\n"
+        "Use `just dev` (recommended) or `rn debug dev`.",
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
+@debug_app.command("dev")
+def debug_dev(
     host: str = typer.Option("127.0.0.1", help="Bind host."),
     port: int = typer.Option(9234, help="Dashboard dev server port."),
     api_port: int = typer.Option(9235, help="Daemon bind port."),
     reload: bool = typer.Option(True, help="Auto-reload on code changes."),
 ) -> None:
-    """Run dashboard HMR + daemon reload on a single origin."""
+    """Run dashboard HMR + daemon reload on a single origin (debug-only)."""
     try:
         ctx = get_repo_context()
     except NotAGitRepositoryError as e:
@@ -3580,10 +3635,13 @@ app.add_typer(daemon_app, name="daemon")
 app.add_typer(server_app, name="server")
 app.add_typer(config_app, name="config")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(debug_app, name="debug")
+app.add_typer(observer_compat_app, name="observer", hidden=True)
+app.add_typer(merge_run_app, name="merge-run")
 
 
-@observer_app.command("run")
-def observer_run(
+@debug_app.command("observe")
+def debug_observe(
     interval: float = typer.Option(1.0, "--interval", help="Poll interval (seconds)."),
     emit_baseline: bool = typer.Option(
         False,
@@ -3592,7 +3650,7 @@ def observer_run(
     ),
     once: bool = typer.Option(False, "--once", help="Run one poll and exit."),
 ) -> None:
-    """Run the host-local repo observer in the foreground."""
+    """Run the host-local repo observer in the foreground (debug-only)."""
     try:
         ctx = get_repo_context()
         _ensure_initialized(ctx)
@@ -3614,10 +3672,6 @@ def observer_run(
         )
     except KeyboardInterrupt:
         raise typer.Exit(130) from None
-
-
-app.add_typer(observer_app, name="observer")
-app.add_typer(merge_run_app, name="merge-run")
 
 
 @merge_run_app.command("cancel")

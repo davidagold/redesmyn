@@ -123,11 +123,11 @@ async def init_db(engine: AsyncEngine, *, migrate: bool) -> None:
         if alembic_version != head:
             raise DatabaseMigrationRequiredError(
                 f"Database schema is out of date (current={alembic_version or 'unknown'}, head={head}). "
-                "Run `rn daemon run` (or `rn dev`) to migrate it."
+                "Run `rn daemon run` (or `just dev`) to migrate it."
             )
         return
 
-    # Only upgrade when explicitly requested (typically on `rn daemon run` / `rn dev`).
+    # Only upgrade when explicitly requested (typically on `rn daemon run` / `just dev`).
     upgrade_to_head(db_path=db_path)
 
 
