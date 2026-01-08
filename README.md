@@ -56,3 +56,7 @@ Limitations (today):
 - **Linear integration** — *Works for explicit sync; incomplete.* Expect gaps, schema churn, and occasional endpoint/API mismatches.
 - **OpenAPI** — *Internal; subject to change.* `openapi/openapi.json`.
 - **Issue scratchpad** — *Temporary.* `ISSUES.md`.
+
+## License
+
+Apache-2.0. See `LICENSE`.
