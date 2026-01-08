@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -86,6 +87,21 @@ class AgentPreviewResponse(ApiResponse):
     last_assistant_message_preview: str | None = None
     last_assistant_message_at: datetime | None = None
     last_message_turn_id: str | None = None
+
+    @model_validator(mode="after")
+    def _decode_preview_entities(self) -> "AgentPreviewResponse":
+        preview = self.last_assistant_message_preview
+        if not preview:
+            return self
+
+        current = preview
+        for _ in range(3):
+            decoded = html.unescape(current)
+            if decoded == current:
+                break
+            current = decoded
+        self.last_assistant_message_preview = current
+        return self
 
 
 class ExternalSessionNoneResponse(ApiResponse):
