@@ -66,6 +66,16 @@ def _as_codex_thread_ref(ref: ExternalSessionRef) -> ExternalSessionCodex | None
         return None
 
 
+class _CodexJsonlItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    type: str | None = None
+    text: str | None = None
+    message: str | None = None
+    content: str | None = None
+
+
 class _CodexJsonlEvent(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -82,6 +92,7 @@ class _CodexJsonlEvent(BaseModel):
     text: str | None = None
     message: str | None = None
     content: str | None = None
+    item: _CodexJsonlItem | None = None
 
 
 _CODEX_JSONL_EVENT_ADAPTER = TypeAdapter(_CodexJsonlEvent)
@@ -199,13 +210,10 @@ class CodexAgent:
             return emitted
 
         self._saw_structured_events = True
-        cap_updates: dict[str, bool] = {}
         if self._capabilities.can_stream_semantic_events is not True:
-            cap_updates["can_stream_semantic_events"] = True
-        if self._capabilities.can_detect_turn_complete is not True:
-            cap_updates["can_detect_turn_complete"] = True
-        if cap_updates:
-            self._capabilities = self._capabilities.model_copy(update=cap_updates)
+            self._capabilities = self._capabilities.model_copy(
+                update={"can_stream_semantic_events": True}
+            )
 
         if event_type == "thread.started":
             if event.thread_id:
@@ -217,6 +225,10 @@ class CodexAgent:
             return emitted
 
         if event_type == "turn.started":
+            if self._capabilities.can_detect_turn_complete is not True:
+                self._capabilities = self._capabilities.model_copy(
+                    update={"can_detect_turn_complete": True}
+                )
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
             if event.turn_id and existing_codex is not None:
                 self._set_external_session_ref(
@@ -230,6 +242,10 @@ class CodexAgent:
             return emitted
 
         if event_type == "turn.completed":
+            if self._capabilities.can_detect_turn_complete is not True:
+                self._capabilities = self._capabilities.model_copy(
+                    update={"can_detect_turn_complete": True}
+                )
             existing_codex = _as_codex_thread_ref(self._external_session_ref)
             if event.turn_id and existing_codex is not None:
                 self._set_external_session_ref(
@@ -242,6 +258,22 @@ class CodexAgent:
             self._busy_since_s = None
             self._output_since_prompt = False
             emitted.append(AgentTurnCompletedEvent())
+            return emitted
+
+        if event_type.startswith("item."):
+            # Codex exec --json streams a richer event model in newer builds,
+            # including item.* lifecycle events. These are still structured
+            # (machine-readable) signals, but they don't always include explicit
+            # turn boundaries.
+            self._note_busy()
+            if event_type == "item.completed" and event.item is not None:
+                item_type = (event.item.type or "").strip().lower()
+                if item_type in {"reasoning"}:
+                    text_value = (
+                        event.item.text or event.item.message or event.item.content
+                    )
+                    if isinstance(text_value, str) and text_value.strip():
+                        emitted.append(AgentAssistantMessageEvent(text=text_value))
             return emitted
 
         message_type = event_type.lower()

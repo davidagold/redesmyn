@@ -27,7 +27,7 @@ def test_codex_agent_parses_structured_turn_events() -> None:
     events = agent.consume_output('{"type":"thread.started","thread_id":"th_123"}\n')
     assert events == []
     assert agent.capabilities.can_stream_semantic_events is True
-    assert agent.capabilities.can_detect_turn_complete is True
+    assert agent.capabilities.can_detect_turn_complete is False
     assert agent.capabilities.can_resume_by_id is True
     codex_ref = ExternalSessionCodex.model_validate(
         agent.external_session_ref.model_dump(mode="python")
@@ -37,6 +37,7 @@ def test_codex_agent_parses_structured_turn_events() -> None:
 
     events = agent.consume_output('{"type":"turn.started","turn_id":"tu_1"}\n')
     assert any(isinstance(e, AgentTurnStartedEvent) for e in events)
+    assert agent.capabilities.can_detect_turn_complete is True
     assert agent.semantic_status.turn_state == AgentTurnState.Busy
     codex_ref = ExternalSessionCodex.model_validate(
         agent.external_session_ref.model_dump(mode="python")
@@ -98,3 +99,16 @@ def test_codex_agent_emits_assistant_message_events_from_structured_stream() -> 
         '{"type":"assistant.message","role":"assistant","text":"Hello there"}\n'
     )
     assert any(isinstance(e, AgentAssistantMessageEvent) for e in events)
+
+
+@pytest.mark.unit
+def test_codex_agent_emits_assistant_message_events_from_item_completed_reasoning() -> (
+    None
+):
+    agent = CodexAgent()
+    events = agent.consume_output(
+        '{"type":"item.completed","item":{"id":"item_88","type":"reasoning","text":"Hello world"}}\n'
+    )
+    assert any(isinstance(e, AgentAssistantMessageEvent) for e in events)
+    assert agent.capabilities.can_stream_semantic_events is True
+    assert agent.capabilities.can_detect_turn_complete is False
