@@ -7,6 +7,9 @@ id: T-2
 stacked_on: T-1
 node:
   branch: rn/revise-architecture/T-2-server-daemon-connection
+linear:
+  issue_id: a4a477b4-0c9f-4830-a4e8-5bde1c308107
+  identifier: RED-31
 ```
 
 ## Brief (local)

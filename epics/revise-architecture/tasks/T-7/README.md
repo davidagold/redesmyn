@@ -7,6 +7,9 @@ id: T-7
 stacked_on: T-1
 node:
   branch: rn/revise-architecture/T-7-remove-git-api
+linear:
+  issue_id: f4f4dd84-233e-4b7b-a9db-67ea1d7bce4f
+  identifier: RED-36
 ```
 
 ## Brief (local)

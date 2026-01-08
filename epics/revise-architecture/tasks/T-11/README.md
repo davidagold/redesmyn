@@ -7,6 +7,9 @@ id: T-11
 stacked_on: T-7
 node:
   branch: rn/revise-architecture/T-11-remove-rn-git
+linear:
+  issue_id: 8c20381d-f484-42d8-a126-2006535e4799
+  identifier: RED-29
 ```
 
 ## Motivation / context

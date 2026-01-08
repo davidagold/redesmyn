@@ -7,6 +7,9 @@ id: T-6
 stacked_on: T-1
 node:
   branch: rn/revise-architecture/T-6-merge-node-into-task
+linear:
+  issue_id: 531f7793-b301-4746-bdfb-b516946e2402
+  identifier: RED-35
 ```
 
 ## Brief (local)

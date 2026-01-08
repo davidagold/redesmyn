@@ -7,6 +7,9 @@ id: T-8
 stacked_on: T-1
 node:
   branch: rn/revise-architecture/T-8-agent-config-session
+linear:
+  issue_id: c0c8a260-e51c-479e-aa65-320effe4a6aa
+  identifier: RED-37
 ```
 
 ## Background / Motivation

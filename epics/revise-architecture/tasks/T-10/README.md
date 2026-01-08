@@ -7,6 +7,9 @@ id: T-10
 stacked_on: T-9
 node:
   branch: rn/revise-architecture/T-10-control-plane-repo-rootless
+linear:
+  issue_id: cc877a94-a6b7-4eea-bf0c-c39cf5c2f89e
+  identifier: RED-28
 ```
 
 ## Problem / Motivation
@@ -109,4 +112,3 @@ If needed, make `Repository.repo_root` optional or clearly “host-local metadat
 - Control plane can start in a mode where it has no git repo checkout and still serves the dashboard/API against the DB.
 - Control plane repo selection is by `RepoKey` (or an explicit stored default), not by `repo_root` path.
 - Local-first mode still works with minimal friction when started inside a repo.
-
