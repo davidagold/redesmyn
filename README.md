@@ -1,109 +1,58 @@
 # Redesmyn
 
-Redesmyn is a local-first cockpit for orchestrating multi-agent work on a git repo, using a task graph (stacked branches) and a real-time UI.
+## Summary
 
-It’s an experiment in what “project management” looks like when:
+Redesmyn is a local-first, remote-aspirational GUI + CLI for orchestrating multi-agent work on a git repository. It models work as an **epic-scoped task graph** where each task corresponds to a branch + worktree. Graph edges represent **merge sequencing** (what should land before what). A series of connections represents a **stack**. The dashboard is a realtime view + control surface for that graph.
 
-- work is actually merged via git branch sequencing, and
-- a fleet of agents (not just humans) is doing the work.
+Ticket hierarchies generally treat edges as composition (“part of”). Redesmyn uses edges for **sequencing** (“must land before”). The graph gives you a bird's eye view of a bespoke code production line, showing work along both the **agent execution** dimension and the **merge/product** dimension (changes landing on the base). 
 
-## Why a graph (and not just tickets)
+![Redesmyn dashboard](docs/assets/readme.jpg)
 
-Ticket systems typically treat parent/child as **constitution** (“this work is part of that work”).
-In Redesmyn, edges primarily represent **sequencing** (“this branch should land before that branch”).
+This project is not yet intended for public use (or stability), but it may still be interesting if you’re exploring agent-oriented engineering workflows.
 
-That distinction matters because:
+Feature overview:
 
-- representing fulfillment along the *sequencing* dimension calls for different views than lists/tables,
-- and the graph directly maps to merge behavior (what can land when, and onto what).
+- A graph-native UI for understanding merge readiness, conflicts, and agent activity.
+- Per-task agent sessions (tmux-first) with a configurable agent command + prelude, so you can run many task-bound agents without juggling many separate chat threads (and quickly attach to any session when you want to).
+- A CLI (`rn`) that shares the same core operations as the dashboard (API/DB/git mechanics), though the GUI has received more attention so far.
+- Worktree-aware git operations (merge, restack, merge and restack) with safety checks.
+- Explicit sync between Markdown task docs and the local DB.
+- Integrations (currently Linear) to align external tickets with the local graph.
 
-The graph is about **merge sequencing**, not “who can work on what”.
-Downstream tasks can be worked on simultaneously as long as contracts are clear and shared context stays coherent.
+Limitations (today):
 
-## Agents (worker layer + overseer layer)
+- Early-stage and opinionated; local single-user usage is the happy path.
+- “Distributed mode” (remote executors / control plane separation) is a work in progress.
+- Agent capability semantics (turn detection, richer status, adapters) are still being formalized.
+- Git state + concurrency can be sharp; conflicts are expected to require manual resolution.
+- Sandboxing is best-effort (primarily a safety rail against accidental writes), not a hardened security boundary.
+- Task docs use a nonstandard Markdown spec; creating tasks is ergonomic via Linear sync or by asking an agent, but manual authoring is still rough.
+- There is not yet a dedicated “Redesmyn skill” for agents; in practice you give an agent a short primer once (how tasks map to branches, and how to run/attach/merge/restack).
+- The CLI is functional and shares core logic with the GUI, but has not received as much product/UX attention yet.
+- There is no “cascading” execution yet: marking an upstream task complete/ready does not automatically start downstream agents.
+- Sync is manual/explicit by default; optional autosync configurations are not yet available.
+- Packaging/installation/running are not yet ergonomic outside this repository (dev-first setup).
 
-Redesmyn maintains a layer of *workers* (task-scoped agents) whose context is derived from:
+## Currently moving
 
-- the task itself,
-- its position in the graph (dependencies + dependents),
-- and the epic’s higher-level intent.
+- **Agent interface**: unifying multiple agent programs and multiple execution modes (interactive vs exec). Exec mode unlocks reliable output parsing for display in the frontend and for cross-agent communication, so users can use one chat/control surface to steer many task-bound agents. Communication also enables assisted/automatic conflict resolution during restack.
+- **Packaging + architecture**: making it easier to install/run outside this repo, and reducing “split brain” between control-plane concerns and repo-local execution.
+- **Polish + usability**: tightening the dashboard’s core loops (merge/restack, conflicts, selection/viewport behavior, configuration surfaces) so daily dogfooding feels reliable.
 
-This gives both low- and high-granularity context, and reduces the amount of context the human has to manually manage.
-The intent is that the user mostly interacts with a much smaller **overseer/meta** layer that reviews, communicates, and coordinates workers on their behalf.
+## Feature guide (and current state)
 
-The “agent harness” layer is intended to be extensible: users should be able to run whichever agent program they prefer, while Redesmyn standardizes the orchestration surface (status, capabilities, commands).
-
-## Architecture (today and where it’s going)
-
-The current architecture is a work in progress and somewhat baroque for local usage, but it’s moving toward remote/distributed orchestration:
-
-- **Control plane (server)**: state, APIs/UI, persistence, projections.
-- **Daemon / repo executor (host-local)**: repo/worktrees, git actions, telemetry, process/session lifecycle.
-
-Long-term, the goal is for the control plane to operate without assuming repo filesystem access, and to route git mutations to an explicit executor.
-
-## Integrations
-
-Tickets are still important (and they’re everywhere), so we integrate with them.
-The goal is a unified interface for external events agents can act on: GitHub, Linear, CloudWatch, etc.
-
-That orchestration is intentionally not fully generic: it stays close to (but not myopically eclipsed by) the code and the repo graph where work actually lands.
-
-## UI philosophy
-
-Most GUIs are lists, tables, and widget panels.
-Our hunch is this won’t be enough for understanding and steering an agent fleet: there’s too much information to distill uniformly.
-
-This project is an attempt to explore graph-native, realtime representations that make agent activity legible to humans.
-
-## Status / limitations
-
-There are many rough edges right now:
-
-- incomplete harness interfaces (turn detection, capability signaling, etc.)
-- partial distributed-mode story (still being refined)
-- sharp corners around git state, projections, and concurrency
-
-If you hit something confusing, assume it’s not you.
-
-Thanks for reading.
-
-## Development quickstart
-
-**Prereqs**
-
-- Python 3.11+
-- Node (see `.nvmrc`; Vite currently expects Node `>=22.12.0`)
-- `uv` (install via Homebrew: `brew install uv`)
-- Optional: `hk` (git hooks manager; install via Homebrew: `brew install hk`)
-
-**Dev (recommended): one command**
-
-- Run dashboard HMR + daemon reload on a single origin: `rn dev`
-  - If `rn` isn’t installed yet: `uv run rn dev`
-  - Dashboard: `http://127.0.0.1:9234/` (Vite)
-  - API: `http://127.0.0.1:9234/v1/*` (proxied to the daemon on `:9235`)
-- Install pre-commit formatting hooks (one-time): `just hooks` (or `hk install`)
-
-**Install + init**
-
-- Install: `just install` (runs `uv sync` + `uv tool install --editable . --force`)
-- Make `rn` available without `uv run` (pick one):
-  - Recommended (global install): `uv tool install --editable .` (one-time)
-  - Or per-shell: `source .venv/bin/activate`
-- Initialize repo state: `rn init`
-
-**Dashboard (alternate setup)**
-
-- `cd dashboard && npm install`
-- Run dev server (separate origin): `npm run dev` (proxies `/v1/*` to the daemon)
-- Or build + serve from daemon: `npm run build` then open `http://127.0.0.1:9234/`
-
-## Epics
-
-- `epics/README.md`
-- `epics/redesmyn/README.md` (bootstrapping epic; we dogfood Redesmyn to build Redesmyn)
-- `epics/revise-architecture/README.md` (control plane/daemon split)
-- `epics/agent-orchestration/README.md` (own agent lifecycle + harness integration)
-- `epics/messages-commands/README.md` (messages, commands, and agent control loop)
-- `epics/graph-viz/README.md` (graph UI improvements)
+- **Development (single-origin dev loop)** — *Works.*
+  - Prereqs: Python 3.11+, Node `22.12.0` (`.nvmrc`), `uv` (`brew install uv`), optional `hk` (`brew install hk`).
+  - Run dashboard HMR + daemon reload: `just dev`.
+  - One-time hooks: `just hooks` (or `hk install`).
+  - Install + init: `just install`, then `rn init`.
+- **Packaging / install** — *Not yet ergonomic.* Primarily designed to run from a source checkout (this repo), with a moving architecture and dev-first defaults.
+- **Dashboard (React/Vite)** — *Works.* `dashboard/README.md`.
+- **CLI** — *Works; evolving.* Primary entrypoints include `rn init`, `rn sync`, `rn merge`, `rn restack`.
+- **Git operations** — *Works; still sharp.* “Merge”, “Merge and Restack”, and “Merge then Restack” are intended to keep stacked branches coherent across worktrees; conflicts require manual resolution.
+- **Agent sessions** — *Works; contract in flux.* Task-scoped sessions with attach/log affordances; structured exec output + cross-agent communication are key unlocks in progress.
+- **Sandbox (agent sessions)** — *Best-effort; macOS-only today.* Optional “worktree sandbox” denies writes outside the worktree (plus required shared state like `.git`/temp) and can optionally deny all network; it still allows broad reads and may break some tools.
+- **Sync (docs ↔ DB)** — *Works; manual by default.* Today sync is explicit; autosync options are a planned improvement.
+- **Linear integration** — *Works for explicit sync; incomplete.* Expect gaps, schema churn, and occasional endpoint/API mismatches.
+- **OpenAPI** — *Internal; subject to change.* `openapi/openapi.json`.
+- **Issue scratchpad** — *Temporary.* `ISSUES.md`.
