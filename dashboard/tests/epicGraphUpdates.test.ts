@@ -150,6 +150,38 @@ test("applyTaskAgentSessionUpdate: preserves prior preview when update omits it"
   )
 })
 
+test("applyTaskAgentSessionUpdate: updates cached session id when matching by taskId", () => {
+  const graph = makeGraph({
+    agentSessions: [
+      makeAgentSession({
+        id: 11,
+        taskId: 123,
+        status: "error",
+      }),
+    ],
+  })
+
+  const update: TaskAgentSessionUpdateEventData = {
+    type: "task.agent_session_update",
+    taskId: 123,
+    agentSessionId: 99,
+    agentStatus: "running",
+    startedAt: "2026-01-07T12:00:00Z",
+    endedAt: null,
+    agentKindSelection: "codex",
+    agentKind: "codex",
+    agentInterfaceMode: "interactive",
+    agentCapabilities: graph.agentSessions[0]!.agentCapabilities,
+    agentSemanticStatus: { turnState: "busy", detail: null },
+    externalSessionRef: { type: "none" },
+  }
+
+  const next = applyTaskAgentSessionUpdate(graph, update)!
+  assert.equal(next.agentSessions.length, 1)
+  assert.equal(next.agentSessions[0]!.taskId, 123)
+  assert.equal(next.agentSessions[0]!.id, 99)
+})
+
 test("applyTaskAgentSessionUpdate: no-ops when session isn't in graph", () => {
   const graph = makeGraph({
     agentSessions: [makeAgentSession({ id: 13, taskId: 125 })],
