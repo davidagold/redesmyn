@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.responses import RedirectResponse
+from starlette.routing import BaseRoute, Match
+from starlette.types import ASGIApp
 from starlette.websockets import WebSocketDisconnect
 import typer
 
@@ -244,6 +246,27 @@ class DashboardStaticFiles(StaticFiles):
             if path and "." in Path(path).name:
                 raise
             return await super().get_response("index.html", scope)
+
+
+class DashboardRoute(BaseRoute):
+    def __init__(self, app: ASGIApp, *, excluded_prefixes: tuple[str, ...], name: str):
+        self.app = app
+        self.excluded_prefixes = excluded_prefixes
+        self.name = name
+
+    def matches(self, scope) -> tuple[Match, dict[str, Any]]:  # type: ignore[override]
+        if scope["type"] != "http":
+            return Match.NONE, {}
+
+        path = scope.get("path") or ""
+        for prefix in self.excluded_prefixes:
+            if path == prefix or path.startswith(prefix + "/"):
+                return Match.NONE, {}
+
+        return Match.FULL, {"endpoint": self.app}
+
+    async def handle(self, scope, receive, send) -> None:  # type: ignore[override]
+        await self.app(scope, receive, send)
 
 
 @asynccontextmanager
@@ -501,7 +524,13 @@ def maybe_mount_dashboard(
     app_.state.dashboard_dist_path = dist_path
     if dist_path is None:
         return
-    app_.mount("/", DashboardStaticFiles(directory=str(dist_path)), name="dashboard")
+    app_.router.routes.append(
+        DashboardRoute(
+            DashboardStaticFiles(directory=str(dist_path)),
+            excluded_prefixes=("/v1", "/docs", "/openapi.json", "/redoc"),
+            name="dashboard",
+        )
+    )
 
 
 v1 = APIRouter(prefix="/v1")
