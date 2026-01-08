@@ -109,7 +109,7 @@ def main() -> int:
     except OSError as e:
         print(f"error: could not bind OAuth callback listener on {host}:{port} ({e})")
         print(
-            "This usually means another process (often `rn dev` / the API server) is already listening.\n"
+            "This usually means another process (often `just dev` / the API server) is already listening.\n"
             "Stop whatever is using that port, then rerun this script.\n"
             "Tip: `lsof -nP -iTCP:9234 -sTCP:LISTEN`"
         )

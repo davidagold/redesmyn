@@ -99,7 +99,7 @@ The control plane persists an append-only event log and drives the UI’s realti
 
 Local-first workflows should remain ergonomic:
 
-- `rn dev` may run control plane + daemon co-located.
+- `just dev` may run control plane + daemon co-located.
 - Naming/structure should preserve the conceptual split even when co-located.
 
 ### 2.8 Multi-repo identity is explicit (workspace/repo keys)
@@ -352,7 +352,7 @@ See **Updates** for the current temporary mismatch (`stackInSync` computed in th
 
 #### 2.13.13 Local dev: co-located mode invariants
 
-When the control plane and daemon run on the same machine (for example via `rn dev`):
+When the control plane and daemon run on the same machine (for example via `just dev`):
 
 - They still communicate over the same WebSocket protocol (usually `ws://127.0.0.1`).
 - Repo identity remains `(workspace_id, repo_id)`; local paths are not substituted for identity.

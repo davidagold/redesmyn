@@ -24,7 +24,7 @@ node:
 
 ## Updates
 
-- Added `rn observer run` (polling) to emit `git.commit` + `worktree.health` events into `events`.
+- Added `rn debug observe` (polling; formerly `rn observer run`) to emit `git.commit` + `worktree.health` events into `events`.
 - Observer adopts an existing worktree path into `nodes.worktree_path` when the branch matches.
 - Treat observation as “one process per repo” (daemon capability): remove the need for `--epic`-scoped observation in normal usage.
 - The observer is a **client-host daemon capability**: start it from `rn daemon run` (embedded or subprocess), not as a separate “thing users must remember”.
@@ -44,7 +44,7 @@ node:
 
 - `rn daemon run` starts the observer automatically (default on for dogfooding).
   - Provide `--no-observer` (or env flag) for debugging.
-- Keep `rn observer run` as a debug command only (foreground run, custom interval), but not a required part of normal UX.
+- Keep `rn debug observe` as a debug command only (foreground run, custom interval), but not a required part of normal UX.
 
 #### C) Events after “session → agent” merge
 

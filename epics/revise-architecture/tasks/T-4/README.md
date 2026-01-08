@@ -43,7 +43,7 @@ linear:
 ## Acceptance Criteria
 
 - A new user can get to “daemon connected” with a single command (`rn daemon up`).
-- Existing local workflows remain usable (`rn dev` still works; no confusing duplicate processes).
+- Existing local workflows remain usable (`just dev` still works; no confusing duplicate processes).
 - `rn daemon status` answers “is my daemon online and feeding telemetry?” quickly.
 - When multiple daemons are attached to the same repo, `rn daemon status` (or a repo-scoped status subcommand) clearly indicates:
   - which host is **primary** for canonical repo mutations, and

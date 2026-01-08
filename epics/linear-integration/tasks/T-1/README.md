@@ -20,7 +20,7 @@ linear:
 
 ## Acceptance Criteria
 
-- `rn linear auth` completes successfully without requiring `rn dev` / daemon/API server to be running.
+- `rn linear auth` completes successfully without requiring `just dev` / daemon/API server to be running.
 - Tokens are stored in the machine OS keychain (not `.redesmyn/redesmyn.sqlite3`).
 - Existing repo-scoped credentials (if present) can be migrated to the machine credential store.
 - Token refresh is implemented and used automatically when the access token is expired/expiring.

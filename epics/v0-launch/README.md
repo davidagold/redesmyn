@@ -27,7 +27,7 @@ Today, the system is in a hybrid state that creates ambiguity:
 
 - The **server** can directly execute repo-local behavior in “local” mode (agent lifecycle + monitoring loops).
 - The **daemon** already implements repo-executor behavior for merge/restack plans and emits repo telemetry.
-- Dev entrypoints (`just run --local`, `rn dev`, `rn observer`) overlap in confusing ways, sometimes spawning multiple
+- Dev entrypoints (`just run --local`, `just dev`) overlap in confusing ways, sometimes spawning multiple
   processes with partially duplicated responsibilities.
 
 This epic resolves the overlap by cleanly separating concerns and removing the mode switch.

@@ -11,7 +11,7 @@ install:
     @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
 
 dev:
-    uv run rn dev
+    uv run rn debug dev
 
 hooks:
     hk install
