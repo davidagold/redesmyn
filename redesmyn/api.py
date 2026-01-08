@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
-from contextlib import suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
+from importlib import resources
 import logging
 import os
 import time
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, overload
@@ -203,6 +203,7 @@ class AppState(Protocol):
     daemon_connections: DaemonConnectionRegistry
     background_tasks: BackgroundTaskManager
     merge_conflict_assist: MergeConflictAssistSupervisor | None
+    dashboard_dist_path: Path | None
 
 
 class App(FastAPI):
@@ -247,6 +248,7 @@ class DashboardStaticFiles(StaticFiles):
 
 @asynccontextmanager
 async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
+    exit_stack = ExitStack()
     settings = settings_override
     env_repo_root: Path | None = None
     if settings is None:
@@ -282,7 +284,9 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     app.state.daemon_connections = DaemonConnectionRegistry()
     app.state.background_tasks = BackgroundTaskManager(logger=log)
     app.state.merge_conflict_assist = None
-    maybe_mount_dashboard(app, ctx.worktree_root)
+    maybe_mount_dashboard(
+        app, worktree_root=ctx.worktree_root, settings=settings, exit_stack=exit_stack
+    )
 
     if settings.runner_mode == "local":
         identity = load_or_create_host_identity(ctx)
@@ -429,6 +433,8 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     yield
     await app.state.background_tasks.cancel_and_await()
 
+    exit_stack.close()
+
     try:
         from redesmyn.integrations.linear_client import aclose_shared_graphql_client
 
@@ -439,11 +445,63 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
     await app.state.engine.dispose()
 
 
-def maybe_mount_dashboard(app_: FastAPI, worktree_root: Path) -> None:
-    if (dist_path := _dist_path(worktree_root)).is_dir():
-        app_.mount(
-            "/", DashboardStaticFiles(directory=str(dist_path)), name="dashboard"
-        )
+def _repo_dist_path(worktree_root: Path) -> Path:
+    return worktree_root / "dashboard" / "dist"
+
+
+def _packaged_dist_path(*, exit_stack: ExitStack) -> Path:
+    traversable = resources.files("redesmyn.dashboard_assets").joinpath("dist")
+    return exit_stack.enter_context(resources.as_file(traversable))
+
+
+def _resolve_dashboard_dist_path(
+    *,
+    settings: RedesmynSettings,
+    worktree_root: Path,
+    exit_stack: ExitStack,
+) -> Path | None:
+    if settings.dashboard_dist_path is not None:
+        candidate = settings.dashboard_dist_path
+        index_html = candidate / "index.html"
+        return candidate if candidate.is_dir() and index_html.is_file() else None
+
+    def _repo_candidate() -> Path | None:
+        candidate = _repo_dist_path(worktree_root)
+        index_html = candidate / "index.html"
+        return candidate if candidate.is_dir() and index_html.is_file() else None
+
+    def _package_candidate() -> Path | None:
+        try:
+            candidate = _packaged_dist_path(exit_stack=exit_stack)
+        except (ModuleNotFoundError, FileNotFoundError):
+            return None
+        index_html = candidate / "index.html"
+        return candidate if candidate.is_dir() and index_html.is_file() else None
+
+    if settings.dashboard_source == "repo":
+        return _repo_candidate()
+    if settings.dashboard_source == "package":
+        return _package_candidate()
+
+    return _package_candidate() or _repo_candidate()
+
+
+def maybe_mount_dashboard(
+    app_: App,
+    *,
+    worktree_root: Path,
+    settings: RedesmynSettings,
+    exit_stack: ExitStack,
+) -> None:
+    dist_path = _resolve_dashboard_dist_path(
+        settings=settings,
+        worktree_root=worktree_root,
+        exit_stack=exit_stack,
+    )
+    app_.state.dashboard_dist_path = dist_path
+    if dist_path is None:
+        return
+    app_.mount("/", DashboardStaticFiles(directory=str(dist_path)), name="dashboard")
 
 
 v1 = APIRouter(prefix="/v1")
@@ -2704,18 +2762,15 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
 @root.get("/", include_in_schema=False)
 async def index(request: Request) -> Response:
     app = _app_from_request(request)
-    ctx = app.state.ctx
-    index_html = ctx.worktree_root / "dashboard" / "dist" / "index.html"
-    if index_html.is_file():
-        return FileResponse(str(index_html))
+    dist_path = app.state.dashboard_dist_path
+    if dist_path is not None:
+        index_html = dist_path / "index.html"
+        if index_html.is_file():
+            return FileResponse(str(index_html))
 
     return HTMLResponse(
-        "<h1>Redesmyn</h1><p>Dashboard not built yet. Build with `cd dashboard && npm run build`.</p>"
+        "<h1>Redesmyn</h1><p>Dashboard assets not available. Use `just dev` for local UI dev.</p>"
     )
-
-
-def _dist_path(repo_root: Path) -> Path:
-    return repo_root / "dashboard" / "dist"
 
 
 @v1.get("/config", response_model=OrchestrationDefaultsResponse)

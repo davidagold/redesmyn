@@ -1,0 +1,2 @@
+recursive-include redesmyn/dashboard_assets/dist *
+

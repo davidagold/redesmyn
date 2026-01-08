@@ -8,6 +8,7 @@ install:
     @cd dashboard && if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || ! cmp -s package-lock.json node_modules/.package-lock.json; then npm ci && cp package-lock.json node_modules/.package-lock.json; fi
     cd dashboard && npm run api:update
     cd dashboard && npm run build
+    uv run python scripts/build_packaged_dashboard_assets.py --copy-only
     @echo "If 'rn' is not found, run: uv tool update-shell (then restart your terminal)"
 
 dev:

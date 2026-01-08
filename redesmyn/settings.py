@@ -23,6 +23,10 @@ class RedesmynSettings(BaseSettings):
     runner_mode: Literal["local", "remote"] = "local"
     daemon_auth_token: str = "dev"
 
+    dashboard_source: Literal["package", "repo", "auto"] = "package"
+    # Optional explicit directory for serving dashboard assets (expects an `index.html`).
+    dashboard_dist_path: Path | None = None
+
     # Local-only background loops. Prefer disabling these in tests unless a test
     # explicitly needs them.
     enable_repo_observer: bool = True
