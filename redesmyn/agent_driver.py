@@ -29,6 +29,7 @@ from redesmyn.agent_interface.v0 import (
     ExternalSessionRef,
 )
 from redesmyn.agent_runtime import (
+    agent_session_exit_code_path,
     agent_session_log_path,
     has_tmux,
     tmux_session_name_for_task,
@@ -51,6 +52,16 @@ from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
 
 log = structlog.get_logger("redesmyn.agent_driver")
+
+
+def _read_exit_code(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        return int(raw.splitlines()[0].strip())
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,12 +646,26 @@ async def supervise_once(
                             log_text=drained_text,
                         )
 
-                agent_session.status = (
-                    AgentStatus.Stopped
-                    if agent_session.agent_interface_mode
-                    == AgentInterfaceMode.Structured
-                    else AgentStatus.Error
+                exit_code: int | None = None
+                exit_code_path = agent_session_exit_code_path(
+                    ctx, task_id=task_id, session_id=agent_session.id
                 )
+                if exit_code_path.exists():
+                    exit_code = _read_exit_code(exit_code_path)
+                    if exit_code is not None:
+                        agent_session.exit_code = exit_code
+
+                if exit_code is None:
+                    agent_session.status = (
+                        AgentStatus.Stopped
+                        if agent_session.agent_interface_mode
+                        == AgentInterfaceMode.Structured
+                        else AgentStatus.Error
+                    )
+                else:
+                    agent_session.status = (
+                        AgentStatus.Stopped if exit_code == 0 else AgentStatus.Error
+                    )
                 agent_session.ended_at = now
                 await flush_session_update(agent_session)
                 runtime_by_session_id.pop(agent_session.id, None)

@@ -51,6 +51,7 @@ from redesmyn.integrations.linear_automation import maybe_push_task_state_to_lin
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.repo import (
     GitCommandError,
+    branch_exists,
     current_branch,
     git_is_ancestor,
     git_worktree_add,
@@ -125,6 +126,14 @@ def agent_session_dir(ctx: RepoContext, *, task_id: int, session_id: int) -> Pat
 
 def agent_session_log_path(ctx: RepoContext, *, task_id: int, session_id: int) -> Path:
     return agent_session_dir(ctx, task_id=task_id, session_id=session_id) / "output.log"
+
+
+def agent_session_exit_code_path(
+    ctx: RepoContext, *, task_id: int, session_id: int
+) -> Path:
+    return (
+        agent_session_dir(ctx, task_id=task_id, session_id=session_id) / "exit_code.txt"
+    )
 
 
 def _tail_text(path: Path, *, max_bytes: int = 8192) -> str | None:
@@ -220,11 +229,18 @@ def write_agent_launcher(
     session_id: int,
     argv: list[str],
     env: dict[str, str],
+    stdin_text: str | None = None,
 ) -> Path:
     run_dir = agent_session_dir(ctx, task_id=task_id, session_id=session_id)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     log_path = run_dir / "output.log"
+    exit_code_path = run_dir / "exit_code.txt"
+    stdin_path: Path | None = None
+    if stdin_text is not None:
+        stdin_path = run_dir / "stdin.txt"
+        text = stdin_text if stdin_text.endswith("\n") else stdin_text + "\n"
+        stdin_path.write_text(text, encoding="utf-8")
 
     lines = [
         "#!/bin/sh",
@@ -241,7 +257,16 @@ def write_agent_launcher(
     # Give tmux a beat to attach pipe-pane so we don't miss very early harness
     # output in the log.
     lines.append("sleep 0.2")
-    lines.append(f"exec {shlex.join(argv)} 1>&3 2>&4")
+    lines.append(f"EXIT_CODE_PATH={shlex.quote(str(exit_code_path))}")
+    lines.append("set +e")
+    if stdin_path is not None:
+        lines.append(f"STDIN_PATH={shlex.quote(str(stdin_path))}")
+        lines.append(f'{shlex.join(argv)} <"$STDIN_PATH" 1>&3 2>&4')
+    else:
+        lines.append(f"{shlex.join(argv)} 1>&3 2>&4")
+    lines.append("EXIT_CODE=$?")
+    lines.append('printf "%s\\n" "$EXIT_CODE" > "$EXIT_CODE_PATH" || true')
+    lines.append('exit "$EXIT_CODE"')
     script_path = run_dir / "run.sh"
     _write_executable(script_path, "\n".join(lines) + "\n")
     return script_path
@@ -614,6 +639,31 @@ class _BranchNameTask(Protocol):
     linear_identifier: str | None
 
 
+def _find_branch_namespace_collision(
+    *, repo_root: Path, branch_name: str
+) -> str | None:
+    parts = [p for p in branch_name.split("/") if p]
+    if len(parts) < 2:
+        return None
+    for i in range(1, len(parts)):
+        prefix = "/".join(parts[:i])
+        if branch_exists(repo_root, prefix):
+            return prefix
+    return None
+
+
+def _raise_branch_namespace_collision_error(
+    *, branch_name: str, prefix_branch: str
+) -> None:
+    raise RuntimeError(
+        f"Cannot create branch {branch_name!r}: a branch exists at prefix {prefix_branch!r}.\n"
+        "Git cannot create refs under an existing branch namespace.\n"
+        "Rename or delete the prefix branch, e.g.:\n"
+        f"  git branch -m {prefix_branch} {prefix_branch}-root\n"
+        f"  git branch -D {prefix_branch}"
+    )
+
+
 def _default_branch_name_for_task(*, epic_slug: str, task: _BranchNameTask) -> str:
     identifier = task.linear_identifier
     if not identifier:
@@ -649,6 +699,13 @@ async def ensure_task_worktree(
 ) -> Path:
     if task.branch_name is None:
         branch = _default_branch_name_for_task(epic_slug=epic.slug, task=task)
+        collision = _find_branch_namespace_collision(
+            repo_root=ctx.repo_root, branch_name=branch
+        )
+        if collision is not None:
+            _raise_branch_namespace_collision_error(
+                branch_name=branch, prefix_branch=collision
+            )
         existing = await session.scalar(
             select(Task).where(
                 Task.epic_id == epic.id,
@@ -718,6 +775,13 @@ async def ensure_task_worktree(
                 f"(expected {branch_name!r}): {worktree_path}"
             )
     else:
+        collision = _find_branch_namespace_collision(
+            repo_root=ctx.repo_root, branch_name=branch_name
+        )
+        if collision is not None:
+            _raise_branch_namespace_collision_error(
+                branch_name=branch_name, prefix_branch=collision
+            )
         try:
             git_worktree_add(
                 ctx.repo_root,
@@ -794,11 +858,17 @@ async def start_tmux_session(
     worktree_path: Path,
     argv: list[str],
     env: dict[str, str],
+    stdin_text: str | None = None,
 ) -> AttachTmux:
     tmux_name = tmux_session_name_for_task(task_id=task_id)
     log_path = agent_session_log_path(ctx, task_id=task_id, session_id=session_id)
     script_path = write_agent_launcher(
-        ctx=ctx, task_id=task_id, session_id=session_id, argv=argv, env=env
+        ctx=ctx,
+        task_id=task_id,
+        session_id=session_id,
+        argv=argv,
+        env=env,
+        stdin_text=stdin_text,
     )
 
     _tmux_kill_session(name=tmux_name)
@@ -1081,53 +1151,78 @@ async def start_task_agent(
                     network=defaults.sandbox.network,
                 )
 
-            if isinstance(sandbox_policy, WorktreeSandboxPolicy):
-                run_dir = task_agent_runtime_dir(ctx, task_id=task.id)
-                tmp_dir = run_dir / "tmp"
-                tmp_dir.mkdir(parents=True, exist_ok=True)
+            match sandbox_policy:
+                case WorktreeSandboxPolicy():
+                    run_dir = task_agent_runtime_dir(ctx, task_id=task.id)
+                    tmp_dir = run_dir / "tmp"
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
 
-                runtime_env["TMPDIR"] = str(tmp_dir)
-                runtime_env["TMP"] = str(tmp_dir)
-                runtime_env["TEMP"] = str(tmp_dir)
-                runtime_env["PATH"] = _sanitize_path_for_sandbox(
-                    runtime_env.get("PATH", "")
-                )
-
-                # Keep harness state (caches/config) inside Redesmyn state so it
-                # remains writable when sandboxing is enabled.
-                runtime_env["HOME"] = str(run_dir / "home")
-                runtime_env.setdefault(
-                    "CODEX_HOME", str(Path(runtime_env["HOME"]) / ".codex")
-                )
-                runtime_env.setdefault("XDG_CONFIG_HOME", str(run_dir / "xdg-config"))
-                runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
-                runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
-                runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
-
-                for key in (
-                    "HOME",
-                    "CODEX_HOME",
-                    "XDG_CONFIG_HOME",
-                    "XDG_CACHE_HOME",
-                    "XDG_DATA_HOME",
-                    "XDG_STATE_HOME",
-                ):
-                    value = runtime_env.get(key)
-                    if not value:
-                        continue
-                    path = Path(value)
-                    if path.is_relative_to(ctx.state_dir):
-                        path.mkdir(parents=True, exist_ok=True)
-
-                if Path(definition.argv[0]).name == "codex":
-                    src_codex = Path.home() / ".codex"
-                    _seed_codex_home(
-                        src_dir=src_codex,
-                        dst_dir=Path(runtime_env["CODEX_HOME"]),
-                        warnings=warnings,
+                    runtime_env["TMPDIR"] = str(tmp_dir)
+                    runtime_env["TMP"] = str(tmp_dir)
+                    runtime_env["TEMP"] = str(tmp_dir)
+                    runtime_env["PATH"] = _sanitize_path_for_sandbox(
+                        runtime_env.get("PATH", "")
                     )
 
+                    # Keep harness state (caches/config) inside Redesmyn state so it
+                    # remains writable when sandboxing is enabled.
+                    runtime_env["HOME"] = str(run_dir / "home")
+                    runtime_env.setdefault(
+                        "CODEX_HOME", str(Path(runtime_env["HOME"]) / ".codex")
+                    )
+                    runtime_env.setdefault(
+                        "XDG_CONFIG_HOME", str(run_dir / "xdg-config")
+                    )
+                    runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
+                    runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
+                    runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
+
+                    for key in (
+                        "HOME",
+                        "CODEX_HOME",
+                        "XDG_CONFIG_HOME",
+                        "XDG_CACHE_HOME",
+                        "XDG_DATA_HOME",
+                        "XDG_STATE_HOME",
+                    ):
+                        value = runtime_env.get(key)
+                        if not value:
+                            continue
+                        path = Path(value)
+                        if path.is_relative_to(ctx.state_dir):
+                            path.mkdir(parents=True, exist_ok=True)
+
+                    if Path(definition.argv[0]).name == "codex":
+                        src_codex = Path.home() / ".codex"
+                        _seed_codex_home(
+                            src_dir=src_codex,
+                            dst_dir=Path(runtime_env["CODEX_HOME"]),
+                            warnings=warnings,
+                        )
+                case _:
+                    pass
+
             sandbox_provider = make_sandbox_provider()
+            prelude = prelude_override
+            send_prelude = True
+            submit_prelude = True
+            if defaults is not None:
+                if prelude is None:
+                    prelude = defaults.harness.prelude
+                send_prelude = defaults.harness.send_prelude
+                submit_prelude = defaults.harness.submit_prelude
+
+            prelude_lines: list[str] | None = None
+            stdin_text: str | None = None
+            if send_prelude:
+                prelude_lines = _agent_prelude_lines(
+                    task=task,
+                    epic=epic,
+                    worktree_path=worktree_path,
+                    template=prelude,
+                )
+                if interface_mode == AgentInterfaceMode.Structured:
+                    stdin_text = "\n".join(prelude_lines)
             now = datetime.now(UTC)
             agent_session = AgentSession(
                 task_id=task.id,
@@ -1143,6 +1238,7 @@ async def start_task_agent(
                 exit_code=None,
                 started_at=now,
                 ended_at=None,
+                prelude_rendered="\n".join(prelude_lines) if prelude_lines else None,
             )
             session.add(agent_session)
             await session.flush()
@@ -1162,6 +1258,7 @@ async def start_task_agent(
                 worktree_path=worktree_path,
                 argv=wrapped.argv,
                 env=wrapped.env,
+                stdin_text=stdin_text,
             )
             agent_session.attach = attach.model_dump(mode="python")
 
@@ -1170,27 +1267,40 @@ async def start_task_agent(
                 log_path = agent_session_log_path(
                     ctx, task_id=task.id, session_id=agent_session.id
                 )
+                exit_code_path = agent_session_exit_code_path(
+                    ctx, task_id=task.id, session_id=agent_session.id
+                )
+                exit_code: int | None = None
+                if exit_code_path.exists():
+                    try:
+                        raw = exit_code_path.read_text(encoding="utf-8").strip()
+                        if raw:
+                            exit_code = int(raw.splitlines()[0].strip())
+                    except Exception:
+                        exit_code = None
                 tail = _tail_text(log_path)
-                if tail:
+                if tail and (exit_code is None or exit_code != 0):
                     warnings.append(
                         "Harness exited immediately:\n" + tail.strip("\n")[-4000:]
                     )
-                else:
+                elif exit_code is None or exit_code != 0:
                     warnings.append("Harness exited immediately (no logs captured).")
 
-                if interface_mode != AgentInterfaceMode.Structured:
-                    now = datetime.now(UTC)
-                    agent_session.status = AgentStatus.Error
-                    agent_session.ended_at = now
-                    await session.commit()
-                    await session.refresh(agent_session)
-                    return StartAgentResult(
-                        agent_label=agent_label,
-                        agent_session=agent_session,
-                        attach=attach,
-                        started=False,
-                        warnings=tuple(warnings),
-                    )
+                now = datetime.now(UTC)
+                agent_session.exit_code = exit_code
+                agent_session.status = (
+                    AgentStatus.Stopped if exit_code == 0 else AgentStatus.Error
+                )
+                agent_session.ended_at = now
+                await session.commit()
+                await session.refresh(agent_session)
+                return StartAgentResult(
+                    agent_label=agent_label,
+                    agent_session=agent_session,
+                    attach=attach,
+                    started=False,
+                    warnings=tuple(warnings),
+                )
 
             now = datetime.now(UTC)
             agent_session.status = AgentStatus.Running
@@ -1200,31 +1310,7 @@ async def start_task_agent(
             await session.commit()
             await session.refresh(agent_session)
             try:
-                prelude = None
-                send_prelude = True
-                submit_prelude = True
-                try:
-                    if defaults is None:
-                        defaults = load_orchestration_defaults(ctx)
-                    prelude = prelude_override or defaults.harness.prelude
-                    send_prelude = defaults.harness.send_prelude
-                    submit_prelude = defaults.harness.submit_prelude
-                except RuntimeError:
-                    prelude = prelude_override or None
-
-                if interface_mode == AgentInterfaceMode.Structured and prelude:
-                    warnings.append(
-                        "Prelude ignored: structured agent output must remain machine-readable"
-                    )
                 if send_prelude and interface_mode == AgentInterfaceMode.Interactive:
-                    prelude_lines = _agent_prelude_lines(
-                        task=task,
-                        epic=epic,
-                        worktree_path=worktree_path,
-                        template=prelude,
-                    )
-                    agent_session.prelude_rendered = "\n".join(prelude_lines)
-                    await session.commit()
                     await send_agent_prelude(
                         task=task,
                         epic=epic,
