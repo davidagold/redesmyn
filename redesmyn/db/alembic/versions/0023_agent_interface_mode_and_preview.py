@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0021_agent_interface_mode_and_preview"
-down_revision = "0020_rename_harness_profile_to_launch_configuration"
+revision = "0023_agent_interface_mode_and_preview"
+down_revision = "0022_linear_epic_defaults_label_name"
 branch_labels = None
 depends_on = None
 
