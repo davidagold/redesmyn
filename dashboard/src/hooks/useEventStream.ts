@@ -116,7 +116,10 @@ export type TaskAgentSessionUpdateEventData = {
     type: "codex_thread"
     threadId: string
     turnId?: string | null
-  } | { type: "claude_session" sessionId: string }
+  } | {
+    type: "claude_session"
+    sessionId: string
+  }
   agentPreview?: {
     lastAssistantMessageAt?: string | null
     lastAssistantMessagePreview?: string | null
