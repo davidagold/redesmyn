@@ -513,12 +513,14 @@ async def test_agent_driver_reuses_active_session_row_when_tmux_running(
 
     fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
     runtime: dict[int, object] = {}
+    driver_started_at = datetime.now(UTC)
     async with scenario.db.session() as session:
         await supervise_once(
             scenario.ctx,
             session,
             runtime_by_session_id=runtime,  # type: ignore[arg-type]
             tmux=fake_tmux,
+            driver_started_at=driver_started_at,
         )
 
     async with scenario.db.session() as session:
