@@ -112,3 +112,15 @@ def test_codex_agent_emits_assistant_message_events_from_item_completed_reasonin
     assert any(isinstance(e, AgentAssistantMessageEvent) for e in events)
     assert agent.capabilities.can_stream_semantic_events is True
     assert agent.capabilities.can_detect_turn_complete is False
+
+
+@pytest.mark.unit
+def test_codex_agent_treats_item_started_as_activity_signal() -> None:
+    agent = CodexAgent()
+    events = agent.consume_output(
+        '{"type":"item.started","item":{"id":"item_90","type":"command_execution","command":"/bin/zsh -lc \\"echo hi\\""}}\n'
+    )
+    assert any(isinstance(e, AgentTurnStartedEvent) for e in events)
+    assert agent.semantic_status.turn_state == AgentTurnState.Busy
+    assert agent.semantic_status.detail is not None
+    assert agent.capabilities.can_detect_turn_complete is False

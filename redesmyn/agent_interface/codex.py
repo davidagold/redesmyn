@@ -74,6 +74,7 @@ class _CodexJsonlItem(BaseModel):
     text: str | None = None
     message: str | None = None
     content: str | None = None
+    command: str | None = None
 
 
 class _CodexJsonlEvent(BaseModel):
@@ -168,10 +169,10 @@ class CodexAgent:
             return
         self._semantic_status = AgentSemanticStatus(turn_state=state, detail=detail)
 
-    def _note_busy(self) -> None:
+    def _note_busy(self, *, detail: str | None = None) -> None:
         if self._busy_since_s is None:
             self._busy_since_s = self.clock_s()
-        self._set_turn_state(AgentTurnState.Busy)
+        self._set_turn_state(AgentTurnState.Busy, detail=detail)
 
     def _note_prompt(self) -> None:
         if (
@@ -265,15 +266,34 @@ class CodexAgent:
             # including item.* lifecycle events. These are still structured
             # (machine-readable) signals, but they don't always include explicit
             # turn boundaries.
-            self._note_busy()
-            if event_type == "item.completed" and event.item is not None:
-                item_type = (event.item.type or "").strip().lower()
-                if item_type in {"reasoning"}:
+            item = event.item
+            item_type = (item.type or "").strip().lower() if item is not None else ""
+
+            if event_type == "item.started":
+                detail: str | None = None
+                if item_type == "command_execution" and item is not None:
+                    command = (item.command or "").strip()
+                    if command:
+                        detail = f"Running: {command[:200]}"
+
+                was_busy = self._semantic_status.turn_state == AgentTurnState.Busy
+                self._note_busy(detail=detail)
+                if not was_busy:
+                    emitted.append(AgentTurnStartedEvent())
+                return emitted
+
+            if event_type == "item.completed" and item is not None:
+                if item_type in {"reasoning", "agent_message", "assistant_message"}:
                     text_value = (
-                        event.item.text or event.item.message or event.item.content
-                    )
-                    if isinstance(text_value, str) and text_value.strip():
+                        item.text or item.message or item.content or ""
+                    ).strip()
+                    if text_value:
                         emitted.append(AgentAssistantMessageEvent(text=text_value))
+                        self._output_since_prompt = True
+                self._note_busy(detail=None)
+                return emitted
+
+            self._note_busy(detail=None)
             return emitted
 
         message_type = event_type.lower()
