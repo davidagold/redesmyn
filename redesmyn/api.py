@@ -84,6 +84,11 @@ from redesmyn.integrations.linear_credentials import (
     LinearCredentials,
     default_linear_credential_store,
 )
+from redesmyn.integrations.github_repo import (
+    GithubRepoRef,
+    detect_github_repo_ref,
+    parse_github_repo_ref,
+)
 from redesmyn.integrations.github_credentials import default_github_credential_store
 from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.orchestrator import init_repo
@@ -127,10 +132,13 @@ from redesmyn.schemas.core import (
     DaemonCommandResponse,
     DaemonPresenceResponse,
     EpicGraphResponse,
+    EpicGithubRepoConfigResponse,
+    EpicGithubRepoUpdateRequest,
     EpicLinearConfigResponse,
     EpicLinearConfigUpdateRequest,
     EpicLinearProjectUpdateRequest,
     EpicResponse,
+    GithubRepoResponse,
     LinearMilestoneResponse,
     EventResponse,
     LaunchConfigurationDefinitionResponse,
@@ -174,6 +182,7 @@ from redesmyn.schemas.core import (
     TaskMergeRequest,
     TaskMergeResponse,
     TaskRestackRequest,
+    TaskGithubRepoUpdateRequest,
     TaskRestackResponse,
     TrunkTimelineResponse,
 )
@@ -2116,6 +2125,119 @@ async def update_epic_linear_project(
         await session.commit()
         await session.refresh(epic_row)
         return EpicResponse.model_validate(epic_row, from_attributes=True)
+
+
+def _github_repo_ref_from_epic_row(epic: Epic) -> GithubRepoRef | None:
+    if (
+        epic.github_repo_host is None
+        or epic.github_repo_owner is None
+        or epic.github_repo_name is None
+    ):
+        return None
+    return GithubRepoRef(
+        host=epic.github_repo_host,
+        owner=epic.github_repo_owner,
+        repo=epic.github_repo_name,
+    )
+
+
+def _github_repo_response(repo: GithubRepoRef) -> GithubRepoResponse:
+    return GithubRepoResponse(host=repo.host, owner=repo.owner, repo=repo.repo)
+
+
+@v1.get("/epics/{epic}/github/repo", response_model=EpicGithubRepoConfigResponse)
+async def get_epic_github_repo(
+    epic: str, request: Request
+) -> EpicGithubRepoConfigResponse:
+    """Get epic-level GitHub repo mapping + auto-detected fallback."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    detected = detect_github_repo_ref(app.state.ctx.repo_root)
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+        configured = _github_repo_ref_from_epic_row(epic_row)
+
+    effective = configured or detected
+    return EpicGithubRepoConfigResponse(
+        configured=_github_repo_response(configured) if configured else None,
+        detected=_github_repo_response(detected) if detected else None,
+        effective=_github_repo_response(effective) if effective else None,
+    )
+
+
+@v1.patch("/epics/{epic}/github/repo", response_model=EpicGithubRepoConfigResponse)
+async def update_epic_github_repo(
+    epic: str,
+    request_body: EpicGithubRepoUpdateRequest,
+    request: Request,
+) -> EpicGithubRepoConfigResponse:
+    """Update or unset the epic-level GitHub repo mapping."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+        if request_body.repo is None:
+            epic_row.github_repo_host = None
+            epic_row.github_repo_owner = None
+            epic_row.github_repo_name = None
+        else:
+            parsed = parse_github_repo_ref(request_body.repo)
+            if parsed is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid GitHub repo (expected owner/repo or a GitHub remote URL).",
+                )
+            epic_row.github_repo_host = parsed.host
+            epic_row.github_repo_owner = parsed.owner
+            epic_row.github_repo_name = parsed.repo
+
+        session.add(epic_row)
+        await session.commit()
+        await session.refresh(epic_row)
+
+    detected = detect_github_repo_ref(app.state.ctx.repo_root)
+    configured = _github_repo_ref_from_epic_row(epic_row)
+    effective = configured or detected
+    return EpicGithubRepoConfigResponse(
+        configured=_github_repo_response(configured) if configured else None,
+        detected=_github_repo_response(detected) if detected else None,
+        effective=_github_repo_response(effective) if effective else None,
+    )
+
+
+@v1.patch("/tasks/{task_id}/github/repo", response_model=TaskResponse)
+async def update_task_github_repo_override(
+    task_id: int,
+    request_body: TaskGithubRepoUpdateRequest,
+    request: Request,
+) -> TaskResponse:
+    """Update or unset the per-task GitHub repo override."""
+    app = _app_from_request(request)
+    sessionmaker = app.state.sessionmaker
+
+    async with sessionmaker() as session:
+        task = await _require_task(session, task_id=task_id)
+        if request_body.repo is None:
+            task.github_repo_host = None
+            task.github_repo_owner = None
+            task.github_repo_name = None
+        else:
+            parsed = parse_github_repo_ref(request_body.repo)
+            if parsed is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid GitHub repo (expected owner/repo or a GitHub remote URL).",
+                )
+            task.github_repo_host = parsed.host
+            task.github_repo_owner = parsed.owner
+            task.github_repo_name = parsed.repo
+
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+        return TaskResponse.model_validate(task, from_attributes=True)
 
 
 @v1.get(

@@ -126,6 +126,7 @@ from redesmyn.integrations.linear_write_defaults import (
     ensure_linear_write_defaults,
     load_linear_write_defaults,
 )
+from redesmyn.integrations.github_repo import detect_github_repo_ref
 from redesmyn.git_proxy import (
     READ_ONLY_SUBCOMMANDS,
     detect_git_subcommand,
@@ -1655,12 +1656,16 @@ async def _sync_from_local(
                 raise typer.BadParameter(str(e)) from e
 
             if epic_row is None:
+                github_repo = detect_github_repo_ref(ctx.repo_root)
                 epic_row = Epic(
                     repository_id=repo.id,
                     name=epic_doc.metadata.name,
                     slug=epic_doc.metadata.slug,
                     root_branch=epic_doc.metadata.root_branch,
                     linear_project_id=epic_doc.metadata.linear_project_id,
+                    github_repo_host=github_repo.host if github_repo else None,
+                    github_repo_owner=github_repo.owner if github_repo else None,
+                    github_repo_name=github_repo.repo if github_repo else None,
                 )
                 session.add(epic_row)
                 await session.flush()
@@ -3838,12 +3843,16 @@ def epic_create(
                 if existing is not None:
                     return existing
 
+                github_repo = detect_github_repo_ref(ctx.repo_root)
                 epic_row = Epic(
                     repository_id=repo.id,
                     name=name,
                     slug=slug_value,
                     root_branch=root_branch or repo.default_branch,
                     linear_project_id=linear_project_id,
+                    github_repo_host=github_repo.host if github_repo else None,
+                    github_repo_owner=github_repo.owner if github_repo else None,
+                    github_repo_name=github_repo.repo if github_repo else None,
                 )
                 session.add(epic_row)
                 await session.commit()

@@ -273,11 +273,19 @@ class Epic(Base):
     slug: Mapped[str] = mapped_column(String, nullable=False)
     root_branch: Mapped[str] = mapped_column(String, nullable=False)
     linear_project_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_host: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_owner: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_name: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "(github_repo_host IS NULL AND github_repo_owner IS NULL AND github_repo_name IS NULL) "
+            "OR (github_repo_host IS NOT NULL AND github_repo_owner IS NOT NULL AND github_repo_name IS NOT NULL)",
+            name="ck_epics_github_repo_complete",
+        ),
         UniqueConstraint("repository_id", "slug", name="uq_epics_repo_slug"),
     )
 
@@ -316,6 +324,9 @@ class Task(Base):
     )
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
     github_pr_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_host: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_owner: Mapped[str | None] = mapped_column(String, nullable=True)
+    github_repo_name: Mapped[str | None] = mapped_column(String, nullable=True)
     stack_in_sync: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -363,6 +374,11 @@ class Task(Base):
         CheckConstraint(
             "merge_ready_at IS NULL OR branch_name IS NOT NULL",
             name="ck_tasks_merge_ready_requires_branch",
+        ),
+        CheckConstraint(
+            "(github_repo_host IS NULL AND github_repo_owner IS NULL AND github_repo_name IS NULL) "
+            "OR (github_repo_host IS NOT NULL AND github_repo_owner IS NOT NULL AND github_repo_name IS NOT NULL)",
+            name="ck_tasks_github_repo_complete",
         ),
         UniqueConstraint("epic_id", "branch_name", name="uq_tasks_epic_branch"),
     )

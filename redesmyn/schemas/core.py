@@ -42,6 +42,9 @@ class EpicResponse(ApiResponse):
     slug: str
     root_branch: str
     linear_project_id: str | None
+    github_repo_host: str | None
+    github_repo_owner: str | None
+    github_repo_name: str | None
     created_at: datetime
 
 
@@ -53,6 +56,9 @@ class TaskResponse(ApiResponse):
     stack_in_sync: bool | None = None
     worktree_path: str | None
     github_pr_id: str | None
+    github_repo_host: str | None
+    github_repo_owner: str | None
+    github_repo_name: str | None
     title: str
     readme: str | None = Field(validation_alias="body")
     source: TaskSource
@@ -853,6 +859,26 @@ class EpicLinearConfigUpdateRequest(ApiRequest):
 
 class EpicLinearProjectUpdateRequest(ApiRequest):
     linear_project_id: str | None = None
+
+
+class GithubRepoResponse(ApiResponse):
+    host: str
+    owner: str
+    repo: str
+
+
+class EpicGithubRepoConfigResponse(ApiResponse):
+    configured: GithubRepoResponse | None
+    detected: GithubRepoResponse | None
+    effective: GithubRepoResponse | None
+
+
+class EpicGithubRepoUpdateRequest(ApiRequest):
+    repo: str | None = None
+
+
+class TaskGithubRepoUpdateRequest(ApiRequest):
+    repo: str | None = None
 
 
 class SyncStatsResponse(ApiResponse):

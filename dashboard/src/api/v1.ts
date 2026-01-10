@@ -90,6 +90,30 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/epics/{epic}/github/repo": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /**
+     * Get Epic Github Repo
+     * @description Get epic-level GitHub repo mapping + auto-detected fallback.
+     */
+    get: operations["get_epic_github_repo_v1_epics__epic__github_repo_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /**
+     * Update Epic Github Repo
+     * @description Update or unset the epic-level GitHub repo mapping.
+     */
+    patch: operations["update_epic_github_repo_v1_epics__epic__github_repo_patch"]
+    trace?: never
+  }
   "/v1/epics/{epic}/graph": {
     parameters: {
       query?: never
@@ -532,6 +556,26 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/github/repo": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    /**
+     * Update Task Github Repo Override
+     * @description Update or unset the per-task GitHub repo override.
+     */
+    patch: operations["update_task_github_repo_override_v1_tasks__task_id__github_repo_patch"]
+    trace?: never
+  }
   "/v1/tasks/{task_id}/merge": {
     parameters: {
       query?: never
@@ -868,6 +912,17 @@ export interface components {
        */
       updatedAt: string
     }
+    /** EpicGithubRepoConfigResponse */
+    EpicGithubRepoConfigResponse: {
+      configured: components["schemas"]["GithubRepoResponse"] | null
+      detected: components["schemas"]["GithubRepoResponse"] | null
+      effective: components["schemas"]["GithubRepoResponse"] | null
+    }
+    /** EpicGithubRepoUpdateRequest */
+    EpicGithubRepoUpdateRequest: {
+      /** Repo */
+      repo?: string | null
+    }
     /** EpicGraphResponse */
     EpicGraphResponse: {
       /** Agentsessions */
@@ -917,6 +972,12 @@ export interface components {
        * Format: date-time
        */
       createdAt: string
+      /** Githubrepohost */
+      githubRepoHost: string | null
+      /** Githubreponame */
+      githubRepoName: string | null
+      /** Githubrepoowner */
+      githubRepoOwner: string | null
       /** Id */
       id: number
       /** Linearprojectid */
@@ -959,6 +1020,15 @@ export interface components {
        * @enum {string}
        */
       type: "none"
+    }
+    /** GithubRepoResponse */
+    GithubRepoResponse: {
+      /** Host */
+      host: string
+      /** Owner */
+      owner: string
+      /** Repo */
+      repo: string
     }
     /** GitHubStatusResponse */
     GitHubStatusResponse: {
@@ -1591,6 +1661,11 @@ export interface components {
      * @enum {string}
      */
     TaskAuthority: "local" | "linear" | "github"
+    /** TaskGithubRepoUpdateRequest */
+    TaskGithubRepoUpdateRequest: {
+      /** Repo */
+      repo?: string | null
+    }
     /** TaskMergePlanStepResponse */
     TaskMergePlanStepResponse: {
       /** Basebranch */
@@ -1689,6 +1764,12 @@ export interface components {
       githubIssueId: string | null
       /** Githubprid */
       githubPrId: string | null
+      /** Githubrepohost */
+      githubRepoHost: string | null
+      /** Githubreponame */
+      githubRepoName: string | null
+      /** Githubrepoowner */
+      githubRepoOwner: string | null
       /** Id */
       id: number
       /** Linearidentifier */
@@ -1969,6 +2050,72 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["EpicResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  get_epic_github_repo_v1_epics__epic__github_repo_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicGithubRepoConfigResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  update_epic_github_repo_v1_epics__epic__github_repo_patch: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        epic: string
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EpicGithubRepoUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["EpicGithubRepoConfigResponse"]
         }
       }
       /** @description Validation Error */
@@ -2734,6 +2881,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  update_task_github_repo_override_v1_tasks__task_id__github_repo_patch: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskGithubRepoUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskResponse"]
         }
       }
       /** @description Validation Error */

@@ -756,6 +756,64 @@
         "title": "DaemonPresenceResponse",
         "type": "object"
       },
+      "EpicGithubRepoConfigResponse": {
+        "properties": {
+          "configured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GithubRepoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detected": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GithubRepoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GithubRepoResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "detected",
+          "effective"
+        ],
+        "title": "EpicGithubRepoConfigResponse",
+        "type": "object"
+      },
+      "EpicGithubRepoUpdateRequest": {
+        "properties": {
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          }
+        },
+        "title": "EpicGithubRepoUpdateRequest",
+        "type": "object"
+      },
       "EpicGraphResponse": {
         "properties": {
           "agentSessions": {
@@ -939,6 +997,39 @@
             "title": "Createdat",
             "type": "string"
           },
+          "githubRepoHost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubrepohost"
+          },
+          "githubRepoName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubreponame"
+          },
+          "githubRepoOwner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubrepoowner"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -978,6 +1069,9 @@
           "slug",
           "rootBranch",
           "linearProjectId",
+          "githubRepoHost",
+          "githubRepoOwner",
+          "githubRepoName",
           "createdAt"
         ],
         "title": "EpicResponse",
@@ -1042,6 +1136,29 @@
           }
         },
         "title": "ExternalSessionNoneResponse",
+        "type": "object"
+      },
+      "GithubRepoResponse": {
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "owner",
+          "repo"
+        ],
+        "title": "GithubRepoResponse",
         "type": "object"
       },
       "GitHubStatusResponse": {
@@ -2873,6 +2990,23 @@
         "title": "TaskAuthority",
         "type": "string"
       },
+      "TaskGithubRepoUpdateRequest": {
+        "properties": {
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          }
+        },
+        "title": "TaskGithubRepoUpdateRequest",
+        "type": "object"
+      },
       "TaskMergePlanStepResponse": {
         "properties": {
           "baseBranch": {
@@ -3105,6 +3239,39 @@
             ],
             "title": "Githubprid"
           },
+          "githubRepoHost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubrepohost"
+          },
+          "githubRepoName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubreponame"
+          },
+          "githubRepoOwner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Githubrepoowner"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -3255,6 +3422,9 @@
           "parentTaskId",
           "worktreePath",
           "githubPrId",
+          "githubRepoHost",
+          "githubRepoOwner",
+          "githubRepoName",
           "title",
           "readme",
           "source",
@@ -3755,6 +3925,94 @@
           }
         },
         "summary": "Get Epic"
+      }
+    },
+    "/v1/epics/{epic}/github/repo": {
+      "get": {
+        "description": "Get epic-level GitHub repo mapping + auto-detected fallback.",
+        "operationId": "get_epic_github_repo_v1_epics__epic__github_repo_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicGithubRepoConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Epic Github Repo"
+      },
+      "patch": {
+        "description": "Update or unset the epic-level GitHub repo mapping.",
+        "operationId": "update_epic_github_repo_v1_epics__epic__github_repo_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epic",
+            "required": true,
+            "schema": {
+              "title": "Epic",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EpicGithubRepoUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpicGithubRepoConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Epic Github Repo"
       }
     },
     "/v1/epics/{epic}/graph": {
@@ -4685,6 +4943,56 @@
           }
         },
         "summary": "Stop Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/github/repo": {
+      "patch": {
+        "description": "Update or unset the per-task GitHub repo override.",
+        "operationId": "update_task_github_repo_override_v1_tasks__task_id__github_repo_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskGithubRepoUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Task Github Repo Override"
       }
     },
     "/v1/tasks/{task_id}/merge": {
