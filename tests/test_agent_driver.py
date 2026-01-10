@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import func, select
 
 from redesmyn.agent_driver import TmuxSessionSnapshot, TmuxSupervisor, supervise_once
+from redesmyn.agent_driver import _should_skip_log_history
 from redesmyn.agent_interface.v0 import (
     AgentCapabilities,
     AgentEvent,
@@ -169,6 +170,18 @@ async def test_agent_driver_creates_session_and_pipes_log(scenario: Scenario) ->
 
     assert fake_tmux.pipe_calls
     assert fake_tmux.pipe_calls[-1][0] == tmux_name
+
+
+@pytest.mark.unit
+def test_should_skip_log_history_accepts_naive_started_at() -> None:
+    session = AgentSession(task_id=1, started_at=datetime(2026, 1, 1, 0, 0, 0))
+    assert isinstance(
+        _should_skip_log_history(
+            agent_session=session,
+            driver_started_at=datetime(2026, 1, 2, 0, 0, 0, tzinfo=UTC),
+        ),
+        bool,
+    )
 
 
 @pytest.mark.integration

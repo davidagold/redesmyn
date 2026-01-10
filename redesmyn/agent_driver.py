@@ -54,6 +54,12 @@ from redesmyn.ws_runtime import JsonWebSocketHub
 log = structlog.get_logger("redesmyn.agent_driver")
 
 
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 def _read_exit_code(path: Path) -> int | None:
     try:
         raw = path.read_text(encoding="utf-8").strip()
@@ -193,7 +199,7 @@ def _should_skip_log_history(
     started_at = agent_session.started_at
     if started_at is None:
         return False
-    return started_at < driver_started_at
+    return _as_utc(started_at) < _as_utc(driver_started_at)
 
 
 def _runtime_kind_from_attach(attach: AttachInfo) -> AgentSessionRuntimeKind:
