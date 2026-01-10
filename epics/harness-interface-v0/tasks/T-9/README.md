@@ -51,7 +51,7 @@ Use `AgentSession.agent_preview.last_assistant_message_preview` (and optionally 
 
 - always single line (line clamp 1),
 - truncation with subtle fade/ellipsis,
-- only shown when preview is present (no placeholder / “not available” state),
+- only shown when preview is present; optionally show a subtle shimmer skeleton (no text) while a structured agent is running but has not yet emitted a preview,
 - visually secondary to title/status (avoid heavy borders or chat bubbles).
 
 ### 2) Live updates (no polling)
