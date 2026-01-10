@@ -918,6 +918,7 @@ export function TaskCard({
   return (
     <Card
       data-node-card
+      data-task-card-id={node.id}
       className={cn(
         "group",
         "relative overflow-visible",

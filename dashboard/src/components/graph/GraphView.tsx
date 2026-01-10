@@ -166,7 +166,6 @@ export function GraphView({
   const selectionBarHideTimerRef = useRef<number | null>(null)
   const didInitialFitRef = useRef(false)
   const fitSuppressedRef = useRef(false)
-  const detailsPanelWasOpenRef = useRef(false)
 
   const gitMutationsDisabledReason = useMemo(() => {
     return computeGitMutationsDisabledReason(repoExecutor)
@@ -674,16 +673,11 @@ export function GraphView({
   ])
 
   useEffect(() => {
-    const detailsPanelOpen = selectedNodeId !== null || selectedEdgeId !== null
-    const wasDetailsOpen = detailsPanelWasOpenRef.current
-    detailsPanelWasOpenRef.current = detailsPanelOpen
-
-    if (!flow || selectedNodeId === null || positionsRef.current.size === 0) {
+    if (!flow || !elkLayoutSettled || positions.size === 0) {
       return
     }
 
-    const pos = positionsRef.current.get(selectedNodeId) ?? null
-    if (!pos) {
+    if (selectedNodeId === null) {
       return
     }
 
@@ -692,38 +686,55 @@ export function GraphView({
       return
     }
 
-    const bounds = viewportEl.getBoundingClientRect()
-    if (!bounds.width || !bounds.height) {
-      return
+    const detailsPanelOpen = selectedNodeId !== null || selectedEdgeId !== null
+    const PAN_DURATION_MS = 200
+
+    let raf: number | null = null
+
+    const panToSelection = (durationMs: number) => {
+      const bounds = viewportEl.getBoundingClientRect()
+      if (!bounds.width || !bounds.height) {
+        return
+      }
+
+      const cardEl = viewportEl.querySelector<HTMLElement>(
+        `[data-task-card-id="${selectedNodeId}"]`,
+      )
+      if (!cardEl) {
+        return
+      }
+
+      const cardRect = cardEl.getBoundingClientRect()
+      const cardCenterX = cardRect.left - bounds.left + cardRect.width / 2
+      const cardCenterY = cardRect.top - bounds.top + cardRect.height / 2
+
+      const availableWidth = Math.max(
+        0,
+        bounds.width - (detailsPanelOpen ? DETAILS_PANEL_WIDTH_PX : 0),
+      )
+      const targetCenterX = availableWidth / 2
+      const targetCenterY = bounds.height / 2
+
+      const viewport = flow.getViewport()
+      flow.setViewport(
+        {
+          x: viewport.x + (targetCenterX - cardCenterX),
+          y: viewport.y + (targetCenterY - cardCenterY),
+          zoom: viewport.zoom,
+        },
+        { duration: durationMs },
+      )
     }
 
-    const { zoom } = flow.getViewport()
-    const nodeCenterX = pos.x + GRAPH_NODE_WIDTH / 2
-    const nodeCenterY = pos.y + GRAPH_NODE_HEIGHT / 2
+    raf = window.requestAnimationFrame(() => {
+      panToSelection(PAN_DURATION_MS)
+    })
 
-    const availableWidth = Math.max(
-      0,
-      bounds.width - (detailsPanelOpen ? DETAILS_PANEL_WIDTH_PX : 0),
-    )
-    const targetScreenX = availableWidth / 2
-    const targetScreenY = bounds.height / 2
-
-    const nextViewport = {
-      x: targetScreenX - nodeCenterX * zoom,
-      y: targetScreenY - nodeCenterY * zoom,
-      zoom,
+    return () => {
+      if (raf !== null) {
+        window.cancelAnimationFrame(raf)
+      }
     }
-
-    const applyPan = () => {
-      flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
-    }
-
-    if (detailsPanelOpen && !wasDetailsOpen) {
-      const id = window.setTimeout(applyPan, 200)
-      return () => window.clearTimeout(id)
-    }
-
-    applyPan()
   }, [elkLayoutSettled, flow, positions.size, selectedEdgeId, selectedNodeId])
 
   const selectedEdgeNodeIds = useMemo(() => {
