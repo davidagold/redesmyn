@@ -204,7 +204,9 @@ function MergeRunDetails({
     conflictAssist?.state === "waiting_for_repo_clean" ||
     conflictAssist?.state === "ready_to_resume" ||
     conflictAssist?.state === "resumed"
-  const assistRepoClean = mergeRun.status === "resumable"
+  const assistRepoClean =
+    conflictAssist?.state === "ready_to_resume" ||
+    conflictAssist?.state === "resumed"
 
   const statusBadgeVariant =
     mergeRun.status === "blocked"
