@@ -36,6 +36,7 @@ import {
   GRAPH_FIT_MAX_ZOOM,
   GRAPH_FIT_MIN_ZOOM,
   GRAPH_FIT_PADDING_PX,
+  DETAILS_PANEL_WIDTH_PX,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_HORIZONTAL_GAP,
   GRAPH_NODE_WIDTH,
@@ -153,6 +154,7 @@ export function GraphView({
 }: GraphViewProps) {
   const setMergeReady = useSetTaskMergeReadyMutation()
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
   const [elkPositions, setElkPositions] =
     useState<Map<number, FlowPosition> | null>(null)
@@ -164,6 +166,7 @@ export function GraphView({
   const selectionBarHideTimerRef = useRef<number | null>(null)
   const didInitialFitRef = useRef(false)
   const fitSuppressedRef = useRef(false)
+  const detailsPanelWasOpenRef = useRef(false)
 
   const gitMutationsDisabledReason = useMemo(() => {
     return computeGitMutationsDisabledReason(repoExecutor)
@@ -670,6 +673,59 @@ export function GraphView({
     targetPositions,
   ])
 
+  useEffect(() => {
+    const detailsPanelOpen = selectedNodeId !== null || selectedEdgeId !== null
+    const wasDetailsOpen = detailsPanelWasOpenRef.current
+    detailsPanelWasOpenRef.current = detailsPanelOpen
+
+    if (!flow || selectedNodeId === null || positionsRef.current.size === 0) {
+      return
+    }
+
+    const pos = positionsRef.current.get(selectedNodeId) ?? null
+    if (!pos) {
+      return
+    }
+
+    const viewportEl = viewportRef.current
+    if (!viewportEl) {
+      return
+    }
+
+    const bounds = viewportEl.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) {
+      return
+    }
+
+    const { zoom } = flow.getViewport()
+    const nodeCenterX = pos.x + GRAPH_NODE_WIDTH / 2
+    const nodeCenterY = pos.y + GRAPH_NODE_HEIGHT / 2
+
+    const availableWidth = Math.max(
+      0,
+      bounds.width - (detailsPanelOpen ? DETAILS_PANEL_WIDTH_PX : 0),
+    )
+    const targetScreenX = availableWidth / 2
+    const targetScreenY = bounds.height / 2
+
+    const nextViewport = {
+      x: targetScreenX - nodeCenterX * zoom,
+      y: targetScreenY - nodeCenterY * zoom,
+      zoom,
+    }
+
+    const applyPan = () => {
+      flow.setViewport(nextViewport, { duration: GRAPH_LAYOUT_ANIMATION_MS })
+    }
+
+    if (detailsPanelOpen && !wasDetailsOpen) {
+      const id = window.setTimeout(applyPan, 200)
+      return () => window.clearTimeout(id)
+    }
+
+    applyPan()
+  }, [elkLayoutSettled, flow, positions.size, selectedEdgeId, selectedNodeId])
+
   const selectedEdgeNodeIds = useMemo(() => {
     if (!selectedEdgeId || !selectedEdgeId.startsWith("edge:")) {
       return null
@@ -927,7 +983,7 @@ export function GraphView({
   return (
     <main className="relative min-w-0 flex-1 overflow-hidden">
       <DotGrid />
-      <div className="relative h-full">
+      <div ref={viewportRef} className="relative h-full">
         <ReactFlow
           nodes={nodes}
           edges={edges}
