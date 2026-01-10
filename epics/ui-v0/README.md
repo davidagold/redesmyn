@@ -52,3 +52,4 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 - `epics/ui-v0/tasks/T-8/README.md`: Simplify graph interactions (remove on-select viewport movement and diagonalization behavior).
 - `epics/ui-v0/tasks/T-9/README.md`: Left-align commit titles (keep trunk spacing invariant).
 - `epics/ui-v0/tasks/T-10/README.md`: Make epic menu hover background full width.
+- `epics/ui-v0/tasks/T-11/README.md`: Animate task card expansion (reflow graph layout for variable node heights).
