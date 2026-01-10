@@ -1044,6 +1044,76 @@
         "title": "ExternalSessionNoneResponse",
         "type": "object"
       },
+      "GitHubStatusResponse": {
+        "properties": {
+          "connected": {
+            "title": "Connected",
+            "type": "boolean"
+          },
+          "connectedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connectedat"
+          },
+          "grantedScopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grantedscopes"
+          },
+          "missingPrScopes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missingprscopes"
+          },
+          "repoFullName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repofullname"
+          },
+          "warning": {
+            "default": false,
+            "title": "Warning",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connected",
+          "connectedAt"
+        ],
+        "title": "GitHubStatusResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3940,6 +4010,42 @@
           }
         },
         "summary": "Sync To Linear"
+      }
+    },
+    "/v1/github/logout": {
+      "post": {
+        "operationId": "github_logout_v1_github_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Github Logout"
+      }
+    },
+    "/v1/github/status": {
+      "get": {
+        "operationId": "github_status_v1_github_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Github Status"
       }
     },
     "/v1/healthz": {

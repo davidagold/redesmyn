@@ -4,6 +4,7 @@ import {
   fetchEpicGraph,
   fetchEpicLinearConfig,
   fetchEpics,
+  fetchGitHubStatus,
   fetchHosts,
   fetchLinearMilestones,
   fetchLinearProjects,
@@ -67,6 +68,13 @@ export function useLinearStatusQuery() {
   return useQuery({
     queryKey: queryKeys.linearStatus(),
     queryFn: ({ signal }) => fetchLinearStatus({ signal }),
+  })
+}
+
+export function useGitHubStatusQuery() {
+  return useQuery({
+    queryKey: queryKeys.githubStatus(),
+    queryFn: ({ signal }) => fetchGitHubStatus({ signal }),
   })
 }
 

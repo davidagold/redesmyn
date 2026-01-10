@@ -185,6 +185,40 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/github/logout": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Github Logout */
+    post: operations["github_logout_v1_github_logout_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  "/v1/github/status": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Github Status */
+    get: operations["github_status_v1_github_status_get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/healthz": {
     parameters: {
       query?: never
@@ -925,6 +959,24 @@ export interface components {
        * @enum {string}
        */
       type: "none"
+    }
+    /** GitHubStatusResponse */
+    GitHubStatusResponse: {
+      /** Connected */
+      connected: boolean
+      /** Connectedat */
+      connectedAt: string | null
+      /** Grantedscopes */
+      grantedScopes?: string[] | null
+      /** Missingprscopes */
+      missingPrScopes?: string[] | null
+      /** Repofullname */
+      repoFullName?: string | null
+      /**
+       * Warning
+       * @default false
+       */
+      warning: boolean
     }
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -2120,6 +2172,46 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  github_logout_v1_github_logout_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubStatusResponse"]
+        }
+      }
+    }
+  }
+  github_status_v1_github_status_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubStatusResponse"]
         }
       }
     }

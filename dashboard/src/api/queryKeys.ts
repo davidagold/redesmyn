@@ -7,6 +7,7 @@ export const queryKeys = {
   daemons: () => ["daemons"] as const,
   orchestrationDefaults: () => ["config", "orchestrationDefaults"] as const,
   linearStatus: () => ["linear", "status"] as const,
+  githubStatus: () => ["github", "status"] as const,
   linearProjects: () => ["linear", "projects"] as const,
   linearMilestones: (projectId: string) =>
     ["linear", "projects", projectId, "milestones"] as const,

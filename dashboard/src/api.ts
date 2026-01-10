@@ -9,6 +9,7 @@ export type Host = components["schemas"]["HostResponse"]
 export type DaemonPresence = components["schemas"]["DaemonPresenceResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type LinearStatus = components["schemas"]["LinearStatusResponse"]
+export type GitHubStatus = components["schemas"]["GitHubStatusResponse"]
 export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
 
@@ -250,8 +251,18 @@ export async function fetchLinearStatus(options?: {
   return requestJson("/v1/linear/status", { signal: options?.signal })
 }
 
+export async function fetchGitHubStatus(options?: {
+  signal?: AbortSignal
+}): Promise<GitHubStatus> {
+  return requestJson("/v1/github/status", { signal: options?.signal })
+}
+
 export async function postLinearLogout(): Promise<LinearStatus> {
   return requestJson("/v1/linear/logout", { method: "POST" })
+}
+
+export async function postGitHubLogout(): Promise<GitHubStatus> {
+  return requestJson("/v1/github/logout", { method: "POST" })
 }
 
 export async function postSyncFromLinear(epic: string): Promise<SyncStats> {
