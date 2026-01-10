@@ -310,7 +310,6 @@ export function TaskCard({
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [agentComposerExpanded, setAgentComposerExpanded] = useState(false)
-  const [agentComposerRevealed, setAgentComposerRevealed] = useState(false)
   const [agentComposerDraft, setAgentComposerDraft] = useState("")
   const mergeReady = Boolean(task?.mergeReadyAt)
   const expectedLinearStateType =
@@ -383,17 +382,6 @@ export function TaskCard({
       setBlockedRebaseExpanded(false)
     }
   }, [blockingMergeRunBlockedRebase])
-
-  useEffect(() => {
-    if (!agentComposerExpanded) {
-      setAgentComposerRevealed(false)
-      return
-    }
-
-    setAgentComposerRevealed(false)
-    const id = window.setTimeout(() => setAgentComposerRevealed(true), 220)
-    return () => window.clearTimeout(id)
-  }, [agentComposerExpanded])
 
   useEffect(() => {
     if (!isSelected) {
@@ -1305,6 +1293,7 @@ export function TaskCard({
             aria-expanded={agentComposerExpanded}
             className={cn(
               "nodrag nopan",
+              "w-full max-w-[296px]",
               "mt-2 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
               "transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
               agentPreviewDimmed ? "opacity-60" : null,
@@ -1313,19 +1302,11 @@ export function TaskCard({
             onClick={(e) => {
               e.stopPropagation()
               onSelect({ additive: e.metaKey || e.ctrlKey })
-              setAgentComposerRevealed(false)
               setAgentComposerExpanded((current) => !current)
             }}
           >
             <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
-            <div
-              className={cn(
-                "min-w-0",
-                agentComposerExpanded && !agentComposerRevealed
-                  ? "max-w-[264px]"
-                  : "flex-1",
-              )}
-            >
+            <div className="min-w-0 flex-1">
               {agentPreviewTitle ? (
                 <div className="line-clamp-1 font-medium text-foreground/80">
                   <MarkdownInline content={agentPreviewTitle} />
@@ -1333,14 +1314,11 @@ export function TaskCard({
               ) : null}
               <div
                 className={cn(
-                  agentComposerExpanded && agentComposerRevealed
+                  agentComposerExpanded
                     ? "line-clamp-4"
                     : agentPreviewTitle
                       ? "line-clamp-1"
                       : "line-clamp-2",
-                  agentComposerExpanded && agentComposerRevealed
-                    ? "animate-in fade-in-0 duration-150"
-                    : null,
                 )}
               >
                 {showAgentPreviewShimmer ? (
@@ -1363,7 +1341,7 @@ export function TaskCard({
         <div
           className={cn(
             "nodrag nopan overflow-hidden transition-[max-height,opacity] duration-200 ease-out",
-            agentComposerExpanded && agentComposerRevealed
+            agentComposerExpanded
               ? "max-h-64 opacity-100"
               : "max-h-0 opacity-0 pointer-events-none",
           )}
