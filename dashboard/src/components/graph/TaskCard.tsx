@@ -105,9 +105,12 @@ interface RestackAllowRunningPrompt {
 
 type AllowRunningPrompt = MergeAllowRunningPrompt | ResumeAllowRunningPrompt | RestackAllowRunningPrompt
 
-function splitMarkdownLeadingBold(
-  preview: string,
-): { title: string | null body: string } {
+type MarkdownLeadingBoldSplit = {
+  title: string | null
+  body: string
+}
+
+function splitMarkdownLeadingBold(preview: string): MarkdownLeadingBoldSplit {
   const trimmed = preview.trim()
   if (!trimmed) {
     return { title: null, body: "" }
