@@ -170,12 +170,11 @@ def _scopes_satisfy_pr(
         return None, None, "GitHub repo unknown (could not parse local git remote)"
 
     if repo.private:
-        required = {"repo"}
+        ok = "repo" in granted_scopes
+        return ok, (("repo",) if not ok else None), None
     else:
-        required = {"repo", "public_repo"}
-
-    missing = tuple(sorted(required - set(granted_scopes)))
-    return (len(missing) == 0), (missing or None), None
+        ok = ("repo" in granted_scopes) or ("public_repo" in granted_scopes)
+        return ok, (("repo", "public_repo") if not ok else None), None
 
 
 async def github_auth_status(
