@@ -7,14 +7,18 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 import structlog
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 from sqlalchemy import select
+from sqlalchemy import desc
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redesmyn.agent_runtime import send_task_agent_text
+from redesmyn.agent_interface.v0 import AgentSemanticStatus
 from redesmyn.db import AgentSession, Event, MergeRun, Repository
-from redesmyn.db.models import AttachInfo
-from redesmyn.domain.enums import AgentStatus, AgentTurnState, MergeRunStatus
+from redesmyn.domain.enums import (
+    AgentInterfaceMode,
+    AgentTurnState,
+    MergeRunStatus,
+)
 from redesmyn.repo import git_has_in_progress_operation, git_status_porcelain
 from redesmyn.repo_executor import RepoExecutor, RepoExecutorTarget
 from redesmyn.repo_executor_leases import (
@@ -22,6 +26,7 @@ from redesmyn.repo_executor_leases import (
     get_primary_host_key,
 )
 from redesmyn.repo_identity import RepoKey
+from redesmyn.runner_backend import RunnerBackend
 from redesmyn.schemas.core import (
     MergeConflictAssistStatusResponse,
     MergeRunResumeRequest,
@@ -30,44 +35,19 @@ from redesmyn.schemas.core import (
 log = structlog.get_logger("redesmyn.merge_conflict_assist")
 
 
-class AgentTextSender(Protocol):
-    async def send(self, *, agent_session: AgentSession, text: str) -> bool: ...
+class ContinuationTurnLauncher(Protocol):
+    async def launch(
+        self,
+        *,
+        task_id: int,
+        prompt: str,
+        detach: bool,
+        idempotency_key: str,
+    ) -> int: ...
 
 
 class MergeRunResumer(Protocol):
     async def resume(self, *, run: MergeRun) -> bool: ...
-
-
-def _parse_attach(agent_session: AgentSession) -> AttachInfo | None:
-    try:
-        return TypeAdapter(AttachInfo).validate_python(agent_session.attach)
-    except ValidationError:
-        return None
-
-
-def _supports_conflict_assist(agent_session: AgentSession) -> bool:
-    caps = agent_session.agent_capabilities or {}
-    return (
-        bool(caps.get("can_send_text"))
-        and bool(caps.get("can_detect_ready_for_input"))
-        and bool(caps.get("can_detect_turn_complete"))
-    )
-
-
-def _turn_state(agent_session: AgentSession) -> AgentTurnState:
-    raw = agent_session.agent_semantic_status or {}
-    value = raw.get("turn_state")
-    try:
-        return AgentTurnState(value)  # type: ignore[arg-type]
-    except Exception:
-        return AgentTurnState.Unknown
-
-
-def _is_ready_for_input(agent_session: AgentSession) -> bool:
-    return _turn_state(agent_session) in {
-        AgentTurnState.Ready,
-        AgentTurnState.Completed,
-    }
 
 
 def _rebase_remediation_message(run: MergeRun) -> str | None:
@@ -125,6 +105,86 @@ def _worktree_is_clean_for_resume(worktree_path: str) -> tuple[bool, str | None]
     return True, None
 
 
+async def _has_resumable_structured_session(
+    session: AsyncSession, *, task_id: int
+) -> tuple[bool, str | None]:
+    latest_sessions = list(
+        await session.scalars(
+            select(AgentSession)
+            .where(AgentSession.task_id == task_id)
+            .order_by(desc(AgentSession.id))
+            .limit(25)
+        )
+    )
+    if not latest_sessions:
+        return False, "No prior agent session found; start an agent first."
+
+    base_session = next(
+        (
+            row
+            for row in latest_sessions
+            if row.resolved_launch_configuration is not None
+            and row.agent_interface_mode == AgentInterfaceMode.Structured
+        ),
+        None,
+    )
+    if base_session is None:
+        return (
+            False,
+            "No prior structured agent session found; start in structured mode first.",
+        )
+
+    resume_session = next(
+        (
+            row
+            for row in latest_sessions
+            if row.external_session_ref is not None
+            and row.external_session_ref.get("type") != "none"
+        ),
+        None,
+    )
+    if resume_session is None:
+        return (
+            False,
+            "No external session id recorded yet; cannot run resume-by-id turn.",
+        )
+
+    return True, None
+
+
+async def _turn_completed_for_session(
+    session: AsyncSession, *, agent_session_id: int
+) -> tuple[bool, int | None]:
+    # Prefer the explicit semantic event.
+    events = list(
+        await session.scalars(
+            select(Event)
+            .where(Event.event_type == "agent.turn_completed")
+            .order_by(desc(Event.id))
+            .limit(250)
+        )
+    )
+    for event in events:
+        if event.data.get("agent_session_id") == agent_session_id:
+            return True, event.id
+
+    # Fallback: observe the session ended + semantic status completed.
+    row = await session.get(AgentSession, agent_session_id)
+    if row is None or row.ended_at is None:
+        return False, None
+    try:
+        status = TypeAdapter(AgentSemanticStatus).validate_python(
+            row.agent_semantic_status
+        )
+    except Exception:
+        status = AgentSemanticStatus()
+    return status.turn_state == AgentTurnState.Completed, None
+
+
+def _idempotency_key_for_run(run_id: str) -> str:
+    return f"merge_conflict_assist:{run_id}"
+
+
 @dataclass(slots=True)
 class _AssistRuntime:
     run_id: str
@@ -149,14 +209,25 @@ class _AssistRuntime:
     detail: str | None = None
 
 
-class DefaultAgentTextSender:
-    async def send(self, *, agent_session: AgentSession, text: str) -> bool:
-        if agent_session.task_id is None:
-            return False
-        attach = _parse_attach(agent_session)
-        if attach is None or attach.type != "tmux":
-            return False
-        return await send_task_agent_text(task_id=agent_session.task_id, text=text)
+@dataclass(slots=True)
+class DefaultContinuationTurnLauncher:
+    runner_backend: RunnerBackend
+
+    async def launch(
+        self,
+        *,
+        task_id: int,
+        prompt: str,
+        detach: bool,
+        idempotency_key: str,
+    ) -> int:
+        result = await self.runner_backend.run_task_agent_resume_by_id_turn(
+            task_id=task_id,
+            prompt=prompt,
+            detach=detach,
+            idempotency_key=idempotency_key,
+        )
+        return result.agent_session.id
 
 
 @dataclass(slots=True)
@@ -234,7 +305,7 @@ class DefaultMergeRunResumer:
 class MergeConflictAssistSupervisor:
     """In-memory conflict assist state machine keyed by merge run id."""
 
-    sender: AgentTextSender
+    launcher: ContinuationTurnLauncher
     resumer: MergeRunResumer
     delivery_timeout: timedelta = timedelta(minutes=2)
     overall_timeout: timedelta = timedelta(hours=2)
@@ -309,8 +380,6 @@ class MergeConflictAssistSupervisor:
         for run in merge_runs:
             if run.blocked_step_kind != "rebase":
                 continue
-            if not run.blocked_task_id:
-                continue
             active_run_ids.add(run.run_id)
             runtime = self.ensure_tracking(run_id=run.run_id, now=now)
 
@@ -322,34 +391,8 @@ class MergeConflictAssistSupervisor:
                 runtime.detail = "Timed out waiting for conflict assist completion; use manual resume."
                 continue
 
-            candidate_task_ids: list[int] = [run.blocked_task_id]
-            if run.requested_task_id not in candidate_task_ids:
-                candidate_task_ids.append(run.requested_task_id)
-
-            agent_session: AgentSession | None = None
-            runtime.agent_task_id = None
-            runtime.agent_session_id = None
-
-            for task_id in candidate_task_ids:
-                row = await session.scalar(
-                    select(AgentSession)
-                    .where(AgentSession.task_id == task_id)
-                    .order_by(AgentSession.id.desc())
-                    .limit(1)
-                )
-                if row is None or row.status != AgentStatus.Running:
-                    continue
-                if not _supports_conflict_assist(row):
-                    continue
-                agent_session = row
-                runtime.agent_task_id = task_id
-                runtime.agent_session_id = row.id
-                break
-
-            if agent_session is None:
-                runtime.state = "unsupported"
-                runtime.detail = "No running agent session supports conflict assist."
-                continue
+            assist_task_id = run.blocked_task_id or run.requested_task_id
+            runtime.agent_task_id = assist_task_id
 
             message = _rebase_remediation_message(run)
             if not message:
@@ -359,69 +402,53 @@ class MergeConflictAssistSupervisor:
                 )
                 continue
 
+            ok, reason = await _has_resumable_structured_session(
+                session, task_id=assist_task_id
+            )
+            if not ok:
+                runtime.state = "unsupported"
+                runtime.detail = reason
+                continue
+
             if runtime.sent_at is None:
                 if now >= runtime.delivery_deadline_at:
                     runtime.state = "timed_out"
                     runtime.detail = "Timed out waiting to deliver remediation message; use manual copy."
                     continue
-                if not _is_ready_for_input(agent_session):
-                    runtime.state = "waiting_for_agent_ready"
-                    runtime.detail = None
-                    continue
-
-                baseline_event_id: int | None = None
-                recent_events = list(
-                    await session.scalars(
-                        select(Event)
-                        .where(Event.event_type == "agent.turn_completed")
-                        .order_by(Event.id.desc())
-                        .limit(200)
+                try:
+                    runtime.agent_session_id = await self.launcher.launch(
+                        task_id=assist_task_id,
+                        prompt=message,
+                        detach=True,
+                        idempotency_key=_idempotency_key_for_run(run.run_id),
                     )
-                )
-                for ev in recent_events:
-                    if ev.data.get("agent_session_id") == agent_session.id:
-                        baseline_event_id = ev.id
-                        break
-
-                delivered = await self.sender.send(
-                    agent_session=agent_session, text=message
-                )
-                if not delivered:
+                except Exception as exc:
                     runtime.state = "waiting_for_agent_ready"
-                    runtime.detail = (
-                        "Failed to deliver remediation message (no transport)."
-                    )
+                    runtime.detail = str(exc) or "Failed to launch continuation turn."
                     continue
 
                 runtime.sent_at = now
-                runtime.baseline_turn_completed_event_id = baseline_event_id
                 runtime.state = "sent_waiting_for_turn_complete"
                 runtime.detail = None
                 continue
 
-            baseline = runtime.baseline_turn_completed_event_id or 0
-            recent_events = list(
-                await session.scalars(
-                    select(Event)
-                    .where(Event.event_type == "agent.turn_completed")
-                    .where(Event.id > baseline)
-                    .order_by(Event.id.desc())
-                    .limit(200)
-                )
+            if runtime.agent_session_id is None:
+                runtime.state = "waiting_for_agent_ready"
+                runtime.detail = "Missing continuation agent_session_id."
+                continue
+
+            completed, event_id = await _turn_completed_for_session(
+                session, agent_session_id=runtime.agent_session_id
             )
-            for ev in recent_events:
-                if ev.data.get("agent_session_id") == runtime.agent_session_id:
-                    runtime.observed_turn_completed_event_id = ev.id
-                    break
-
-            if runtime.observed_turn_completed_event_id is None:
+            if not completed:
                 runtime.state = "sent_waiting_for_turn_complete"
                 runtime.detail = None
                 continue
+            runtime.observed_turn_completed_event_id = event_id
 
             if run.status != MergeRunStatus.Resumable:
                 runtime.state = "waiting_for_repo_clean"
-                runtime.detail = "Waiting for conflicts resolved / worktree unblocked."
+                runtime.detail = "Waiting for merge run to become resumable."
                 continue
 
             if not run.blocked_worktree_path:
@@ -478,13 +505,14 @@ async def run_merge_conflict_assist(
 def make_default_supervisor(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
+    runner_backend: RunnerBackend,
     repo_executor: RepoExecutor,
     runner_mode: str,
     local_host_key: str | None,
     repo_root: Path,
 ) -> MergeConflictAssistSupervisor:
     return MergeConflictAssistSupervisor(
-        sender=DefaultAgentTextSender(),
+        launcher=DefaultContinuationTurnLauncher(runner_backend=runner_backend),
         resumer=DefaultMergeRunResumer(
             sessionmaker=sessionmaker,
             repo_executor=repo_executor,

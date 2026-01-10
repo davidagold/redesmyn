@@ -993,22 +993,6 @@ async def send_agent_prelude(
         _tmux_send_enter(name=tmux_name)
 
 
-async def send_task_agent_text(
-    *,
-    task_id: int,
-    text: str,
-    submit: bool = True,
-) -> bool:
-    """Best-effort send to a task's tmux-backed agent session."""
-    tmux_name = tmux_session_name_for_task(task_id=task_id)
-    if not (has_tmux() and _tmux_has_session(name=tmux_name)):
-        return False
-    _tmux_send_lines(name=tmux_name, lines=text.splitlines())
-    if submit:
-        _tmux_send_enter(name=tmux_name)
-    return True
-
-
 async def start_task_agent(
     ctx: RepoContext,
     *,

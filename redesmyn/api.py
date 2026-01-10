@@ -408,6 +408,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
 
         app.state.merge_conflict_assist = make_default_supervisor(
             sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
             repo_executor=app.state.repo_executor,
             runner_mode=app.state.runner_mode,
             local_host_key=app.state.local_host_key,
