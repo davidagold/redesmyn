@@ -812,6 +812,15 @@ class LinearStatusResponse(ApiResponse):
     connected_at: datetime | None
 
 
+class GitHubStatusResponse(ApiResponse):
+    connected: bool
+    connected_at: datetime | None
+    granted_scopes: list[str] | None = None
+    warning: bool = False
+    missing_pr_scopes: list[str] | None = None
+    repo_full_name: str | None = None
+
+
 class LinearProjectResponse(ApiResponse):
     id: str
     name: str

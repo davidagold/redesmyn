@@ -84,6 +84,8 @@ from redesmyn.integrations.linear_credentials import (
     LinearCredentials,
     default_linear_credential_store,
 )
+from redesmyn.integrations.github_credentials import default_github_credential_store
+from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import (
     load_orchestration_defaults,
@@ -137,6 +139,7 @@ from redesmyn.schemas.core import (
     HostResponse,
     HostUpsertRequest,
     ExternalSessionRefResponse,
+    GitHubStatusResponse,
     LinearProjectResponse,
     LinearStatusResponse,
     LinearPushStatsResponse,
@@ -2026,6 +2029,44 @@ async def linear_status(request: Request) -> LinearStatusResponse:
         connected=creds is not None,
         connected_at=creds.connected_at if creds is not None else None,
     )
+
+
+@v1.get("/github/status", response_model=GitHubStatusResponse)
+async def github_status(request: Request) -> GitHubStatusResponse:
+    app = _app_from_request(request)
+    store = default_github_credential_store()
+    creds = store.get()
+    if creds is None:
+        return GitHubStatusResponse(connected=False, connected_at=None)
+
+    try:
+        status = await github_auth_status(
+            access_token=creds.access_token,
+            connected_at=creds.connected_at,
+            repo_root=app.state.ctx.repo_root,
+        )
+    except Exception:
+        return GitHubStatusResponse(connected=False, connected_at=creds.connected_at)
+
+    return GitHubStatusResponse(
+        connected=status.connected,
+        connected_at=creds.connected_at,
+        granted_scopes=sorted(status.granted_scopes)
+        if status.granted_scopes is not None
+        else None,
+        warning=status.warning,
+        missing_pr_scopes=list(status.missing_pr_scopes)
+        if status.missing_pr_scopes is not None
+        else None,
+        repo_full_name=status.repo.full_name if status.repo is not None else None,
+    )
+
+
+@v1.post("/github/logout", response_model=GitHubStatusResponse)
+async def github_logout() -> GitHubStatusResponse:
+    store = default_github_credential_store()
+    store.clear()
+    return GitHubStatusResponse(connected=False, connected_at=None)
 
 
 @v1.post("/linear/logout", response_model=LinearStatusResponse)
