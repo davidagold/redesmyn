@@ -942,7 +942,7 @@ export function TaskCard({
         const additive = e.metaKey || e.ctrlKey
         onSelect({ additive })
         if (!additive) {
-          setAgentComposerExpanded(true)
+          setAgentComposerExpanded((current) => !current)
         }
       }}
       role="button"
@@ -954,7 +954,7 @@ export function TaskCard({
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           onSelect({ additive: false })
-          setAgentComposerExpanded(true)
+          setAgentComposerExpanded((current) => !current)
         }
       }}
     >
