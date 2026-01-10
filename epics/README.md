@@ -20,6 +20,7 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/revise-architecture/README.md`
 - `epics/git-mechanics-v0/README.md`
 - `epics/linear-integration/README.md`
+- `epics/github-integration/README.md`
 - `epics/tests-v0/README.md`
 - `epics/v0-launch/README.md`
 - `epics/backlog/README.md`
