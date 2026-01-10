@@ -411,3 +411,24 @@ def git_worktree_add(
     proc = _run_git(args, cwd=repo_root, timeout_s=None)
     if proc.returncode != 0:
         raise GitCommandError(proc.stderr.strip() or f"git {' '.join(args)} failed")
+
+
+def git_push(
+    repo_root: Path,
+    *,
+    remote: str,
+    branch_name: str,
+    set_upstream: bool = False,
+    force_with_lease: bool = False,
+) -> None:
+    args = ["push"]
+    if force_with_lease:
+        args.append("--force-with-lease")
+    if set_upstream:
+        args.append("--set-upstream")
+    args.extend([remote, f"{branch_name}:{branch_name}"])
+
+    proc = _run_git(args, cwd=repo_root, timeout_s=None)
+    if proc.returncode != 0:
+        output = (proc.stdout + "\n" + proc.stderr).strip()
+        raise GitCommandError(output or f"git {' '.join(args)} failed")

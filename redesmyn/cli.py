@@ -86,6 +86,7 @@ from redesmyn.integrations.linear import (
     fetch_issue,
     fetch_issue_project_milestone_id,
     fetch_issue_team_id,
+    fetch_issue_url,
     fetch_project,
     fetch_project_issue_relations,
     fetch_project_issues,
@@ -117,7 +118,22 @@ from redesmyn.integrations.github_oauth import (
     poll_device_token,
     request_device_code,
 )
-from redesmyn.integrations.github_status import github_auth_status
+from redesmyn.integrations.github_pr import (
+    GitHubPullRequestError,
+    GitHubPullRequestInfo,
+    GitHubPullRequestRef,
+    create_pull_request,
+    detect_pull_request_for_branch,
+)
+from redesmyn.integrations.github_config import (
+    load_github_integration_config,
+    update_github_integration_config,
+    GitHubIntegrationConfigUpdate,
+)
+from redesmyn.integrations.github_status import (
+    github_auth_status,
+    try_parse_current_repo_owner_repo,
+)
 from redesmyn.integrations.linear_state import (
     linear_state_type_from_task_state,
     task_state_from_linear_state_type,
@@ -150,6 +166,8 @@ from redesmyn.repo import (
     NotAGitRepositoryError,
     branch_exists,
     current_branch,
+    git_is_ancestor,
+    git_push,
     git_rename_current_branch,
     git_worktree_add,
 )
@@ -212,6 +230,8 @@ task_app = typer.Typer(add_completion=False, help="Task management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
 github_app = typer.Typer(add_completion=False, help="GitHub integration.")
+github_pr_app = typer.Typer(add_completion=False, help="GitHub pull requests.")
+github_config_app = typer.Typer(add_completion=False, help="GitHub integration config.")
 debug_app = typer.Typer(add_completion=False, help="Debug-only commands.")
 
 observer_compat_app = typer.Typer(
@@ -853,6 +873,12 @@ def merge(
                     ),
                 )
             )
+            _force_push_branches_after_stack_rewrite(
+                ctx,
+                branch_names=[
+                    step.branch_name for step in plan.steps if step.kind == "rebase"
+                ],
+            )
         except GitCommandError:
             # `record_merge_run_step_update` already recorded blocked/failed status.
             raise
@@ -1015,6 +1041,12 @@ def restack(
                         update=update,
                     ),
                 )
+            )
+            _force_push_branches_after_stack_rewrite(
+                ctx,
+                branch_names=[
+                    step.branch_name for step in plan.steps if step.kind == "rebase"
+                ],
             )
         except GitCommandError:
             raise
@@ -4491,6 +4523,443 @@ def github_logout() -> None:
     typer.echo("GitHub: logged out")
 
 
+def _require_github_credentials() -> GitHubCredentials:
+    store = default_github_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise typer.BadParameter("GitHub: not connected (run `rn github auth`)")
+    return creds
+
+
+def _require_current_repo_owner_repo(ctx: RepoContext) -> tuple[str, str]:
+    owner_repo = try_parse_current_repo_owner_repo(ctx.repo_root)
+    if owner_repo is None:
+        raise typer.BadParameter(
+            "Could not infer GitHub owner/repo from local git remotes. "
+            "Ensure your remote is `github.com:<owner>/<repo>` (v0)."
+        )
+    return owner_repo
+
+
+def _effective_upstream_branch_for_task(
+    *, ctx: RepoContext, task: Task, base_branch: str, tasks_by_id: dict[int, Task]
+) -> str:
+    if task.parent_task_id is None:
+        return base_branch
+
+    seen: set[int] = set()
+    current_parent_id = task.parent_task_id
+    while current_parent_id is not None and current_parent_id not in seen:
+        seen.add(current_parent_id)
+        parent = tasks_by_id.get(current_parent_id)
+        if parent is None or parent.branch_name is None:
+            return base_branch
+        try:
+            merged = git_is_ancestor(ctx.repo_root, parent.branch_name, base_branch)
+        except Exception:
+            merged = None
+        if merged is True:
+            current_parent_id = parent.parent_task_id
+            continue
+        return parent.branch_name
+
+    return base_branch
+
+
+def _is_non_fast_forward_push_error(message: str) -> bool:
+    text = message.lower()
+    return (
+        "non-fast-forward" in text
+        or ("fetch first" in text and "rejected" in text)
+        or ("would be overwritten by merge" in text and "rejected" in text)
+    )
+
+
+def _push_branch_for_github_pr(
+    ctx: RepoContext,
+    *,
+    branch_name: str,
+    allow_force_with_lease: bool,
+) -> None:
+    try:
+        git_push(
+            ctx.repo_root,
+            remote="origin",
+            branch_name=branch_name,
+            set_upstream=True,
+        )
+    except GitCommandError as e:
+        if _is_non_fast_forward_push_error(str(e)) and not allow_force_with_lease:
+            raise typer.BadParameter(
+                f"git push rejected for {branch_name!r} (non-fast-forward). "
+                "Push manually with `git push --force-with-lease`, or enable "
+                "`rn github config set auto_force_push true`."
+            ) from e
+        if allow_force_with_lease and _is_non_fast_forward_push_error(str(e)):
+            git_push(
+                ctx.repo_root,
+                remote="origin",
+                branch_name=branch_name,
+                set_upstream=True,
+                force_with_lease=True,
+            )
+            return
+        raise
+
+
+def _force_push_branches_after_stack_rewrite(
+    ctx: RepoContext,
+    *,
+    branch_names: list[str],
+) -> None:
+    cfg = load_github_integration_config(ctx)
+    if not cfg.auto_force_push:
+        return
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for branch_name in branch_names:
+        if not branch_name or branch_name in seen:
+            continue
+        seen.add(branch_name)
+        unique.append(branch_name)
+
+    for branch_name in unique:
+        try:
+            git_push(
+                ctx.repo_root,
+                remote="origin",
+                branch_name=branch_name,
+                set_upstream=True,
+                force_with_lease=True,
+            )
+        except GitCommandError as e:
+            raise RuntimeError(
+                f"Auto force-push failed for {branch_name!r}: {e}"
+            ) from e
+
+
+async def _maybe_linear_issue_url(ctx: RepoContext, *, task: Task) -> str | None:
+    if task.linear_issue_id is None:
+        return None
+    try:
+        creds = await _require_fresh_linear_credentials(ctx=ctx)
+    except typer.BadParameter:
+        return None
+    try:
+        client = LinearClient(access_token=creds.access_token)
+        return await fetch_issue_url(client, issue_id=task.linear_issue_id)
+    except Exception:
+        return None
+
+
+def _default_github_pr_body(*, task: Task, linear_issue_url: str | None) -> str | None:
+    lines: list[str] = []
+    if linear_issue_url is not None:
+        lines.append(f"Linear: {linear_issue_url}")
+    if not lines:
+        return None
+    return "\n".join(lines) + "\n"
+
+
+async def _resolve_task_for_github_pr(
+    ctx: RepoContext,
+    *,
+    epic: str | None,
+    task: str | None,
+    task_id: int | None,
+) -> tuple[Task, Epic]:
+    resolved_task_id = task_id
+    if resolved_task_id is None and task is None:
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            resolved_task_id = await _resolve_task_id_for_current_context(
+                sessionmaker=sessionmaker,
+                explicit_task_id=None,
+            )
+        finally:
+            await engine.dispose()
+
+    resolved_task, resolved_epic, _ = await _resolve_task_for_shell(
+        ctx,
+        epic=epic,
+        task=task,
+        task_id=resolved_task_id,
+    )
+    return resolved_task, resolved_epic
+
+
+@github_config_app.command("get")
+def github_config_get() -> None:
+    """Print effective GitHub integration settings (global + repo)."""
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    cfg = load_github_integration_config(ctx)
+    typer.echo(f"Global: {global_config_path()}")
+    typer.echo(f"Repo:   {repo_config_path(ctx)}")
+    typer.echo("")
+    typer.echo(f"auto_force_push = {str(cfg.auto_force_push).lower()}")
+
+
+@github_config_app.command("set")
+def github_config_set(
+    key: str = typer.Argument(..., help="Config key (v0: auto_force_push)."),
+    value: str = typer.Argument(..., help="Value (true/false)."),
+    scope: str = typer.Option(
+        "repo",
+        "--scope",
+        help="Where to write (repo|global).",
+        show_choices=True,
+        case_sensitive=False,
+    ),
+) -> None:
+    """Set a GitHub integration setting in the repo or global layer."""
+    normalized_scope = scope.strip().lower()
+    if normalized_scope not in {"repo", "global"}:
+        raise typer.BadParameter("--scope must be one of: repo, global")
+
+    normalized_key = key.strip()
+    if normalized_key not in {"auto_force_push"}:
+        raise typer.BadParameter("Unknown key (v0): auto_force_push")
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    parsed = _parse_bool(value)
+    update_github_integration_config(
+        ctx,
+        scope=normalized_scope,  # type: ignore[arg-type]
+        update=GitHubIntegrationConfigUpdate(auto_force_push=parsed),
+    )
+    cfg = load_github_integration_config(ctx)
+    typer.echo(f"auto_force_push = {str(cfg.auto_force_push).lower()}")
+
+
+@github_pr_app.command("create")
+def github_pr_create(
+    task: str | None = typer.Argument(
+        None, help="Epic-scoped task number (e.g. 4 or T-4)."
+    ),
+    epic: str | None = typer.Option(
+        None, "--epic", "-e", help="Epic slug or id (defaults if only one epic)."
+    ),
+    task_id: int | None = typer.Option(
+        None, "--task-id", help="Developer: task id (DB primary key)."
+    ),
+    open_in_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the PR in a browser after linking/creating.",
+    ),
+) -> None:
+    """Create (or link) a GitHub PR for a task branch."""
+    if task_id is not None and (task is not None or epic is not None):
+        typer.echo("error: pass only one of --task-id or epic/task args", err=True)
+        raise typer.Exit(2)
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _run() -> GitHubPullRequestInfo:
+        resolved_task, resolved_epic = await _resolve_task_for_github_pr(
+            ctx,
+            epic=epic,
+            task=task,
+            task_id=task_id,
+        )
+        if resolved_task.branch_name is None:
+            raise typer.BadParameter(
+                "Task has no branch backing (branch_name is null). "
+                "Run `rn sync --from local --create-branches`."
+            )
+
+        creds = _require_github_credentials()
+        owner, repo = _require_current_repo_owner_repo(ctx)
+        cfg = load_github_integration_config(ctx)
+
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                tasks = list(
+                    await session.scalars(
+                        select(Task).where(Task.epic_id == resolved_epic.id)
+                    )
+                )
+                tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+                task_row = tasks_by_id.get(resolved_task.id)
+                if task_row is None:
+                    raise typer.BadParameter("Task not found")
+                if task_row.branch_name is None:
+                    raise typer.BadParameter(
+                        "Task has no branch backing (branch_name is null). "
+                        "Run `rn sync --from local --create-branches`."
+                    )
+
+                base_branch = _effective_upstream_branch_for_task(
+                    ctx=ctx,
+                    task=task_row,
+                    base_branch=resolved_epic.root_branch,
+                    tasks_by_id=tasks_by_id,
+                )
+
+                # v0: always push the head branch before PR creation.
+                _push_branch_for_github_pr(
+                    ctx,
+                    branch_name=task_row.branch_name,
+                    allow_force_with_lease=cfg.auto_force_push,
+                )
+
+                # Best-effort: ensure stacked bases exist on the remote, so GitHub can accept the PR base.
+                if base_branch != resolved_epic.root_branch and branch_exists(
+                    ctx.repo_root, base_branch
+                ):
+                    _push_branch_for_github_pr(
+                        ctx,
+                        branch_name=base_branch,
+                        allow_force_with_lease=cfg.auto_force_push,
+                    )
+
+                existing = await detect_pull_request_for_branch(
+                    owner=owner,
+                    repo=repo,
+                    head_branch=task_row.branch_name,
+                    access_token=creds.access_token,
+                )
+                if existing is not None:
+                    task_row.github_pr_id = existing.ref.to_id()
+                    await session.commit()
+                    return existing
+
+                linear_url = await _maybe_linear_issue_url(ctx, task=task_row)
+                pr = await create_pull_request(
+                    owner=owner,
+                    repo=repo,
+                    title=task_row.title,
+                    body=_default_github_pr_body(
+                        task=task_row,
+                        linear_issue_url=linear_url,
+                    ),
+                    head_branch=task_row.branch_name,
+                    base_branch=base_branch,
+                    access_token=creds.access_token,
+                )
+                task_row.github_pr_id = pr.ref.to_id()
+                await session.commit()
+                return pr
+        finally:
+            await engine.dispose()
+
+    try:
+        pr = asyncio.run(_run())
+    except (typer.BadParameter, GitCommandError, GitHubPullRequestError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"PR: {pr.ref.to_id()}")
+    typer.echo(pr.url)
+    if not open_in_browser:
+        return
+    if sys.stdout.isatty():
+        if not webbrowser.open(pr.url):
+            typer.echo(pr.url)
+
+
+@github_pr_app.command("open")
+def github_pr_open(
+    task: str | None = typer.Argument(
+        None, help="Epic-scoped task number (e.g. 4 or T-4)."
+    ),
+    epic: str | None = typer.Option(
+        None, "--epic", "-e", help="Epic slug or id (defaults if only one epic)."
+    ),
+    task_id: int | None = typer.Option(
+        None, "--task-id", help="Developer: task id (DB primary key)."
+    ),
+) -> None:
+    """Open (or discover) a GitHub PR for a task branch."""
+    if task_id is not None and (task is not None or epic is not None):
+        typer.echo("error: pass only one of --task-id or epic/task args", err=True)
+        raise typer.Exit(2)
+
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    async def _run() -> str:
+        resolved_task, _ = await _resolve_task_for_github_pr(
+            ctx,
+            epic=epic,
+            task=task,
+            task_id=task_id,
+        )
+        if resolved_task.github_pr_id:
+            try:
+                ref = GitHubPullRequestRef.parse(resolved_task.github_pr_id)
+            except ValueError as e:
+                raise typer.BadParameter(str(e)) from e
+            return ref.url
+
+        if resolved_task.branch_name is None:
+            raise typer.BadParameter(
+                "Task has no branch backing (branch_name is null). "
+                "Run `rn sync --from local --create-branches`."
+            )
+
+        creds = _require_github_credentials()
+        owner, repo = _require_current_repo_owner_repo(ctx)
+
+        engine = create_engine(ctx.db_path)
+        try:
+            sessionmaker = create_sessionmaker(engine)
+            async with sessionmaker() as session:
+                task_row = await session.get(Task, resolved_task.id)
+                if task_row is None:
+                    raise typer.BadParameter("Task not found")
+                existing = await detect_pull_request_for_branch(
+                    owner=owner,
+                    repo=repo,
+                    head_branch=resolved_task.branch_name,
+                    access_token=creds.access_token,
+                )
+                if existing is None:
+                    raise typer.BadParameter(
+                        f"No PR found for branch {resolved_task.branch_name!r}; run `rn github pr create`."
+                    )
+                task_row.github_pr_id = existing.ref.to_id()
+                await session.commit()
+                return existing.url
+        finally:
+            await engine.dispose()
+
+    try:
+        url = asyncio.run(_run())
+    except (typer.BadParameter, GitHubPullRequestError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(url)
+    if sys.stdout.isatty():
+        webbrowser.open(url)
+
+
 @linear_app.command("auth")
 def linear_auth(
     timeout_seconds: int = typer.Option(180, help="Max time to wait for auth."),
@@ -5043,6 +5512,8 @@ def linear_import(
 
 
 app.add_typer(linear_app, name="linear")
+github_app.add_typer(github_pr_app, name="pr")
+github_app.add_typer(github_config_app, name="config")
 app.add_typer(github_app, name="github")
 
 
