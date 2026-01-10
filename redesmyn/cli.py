@@ -118,6 +118,11 @@ from redesmyn.integrations.github_oauth import (
     poll_device_token,
     request_device_code,
 )
+from redesmyn.integrations.github_config import (
+    GitHubIntegrationConfigUpdate,
+    load_github_integration_config,
+    update_github_integration_config,
+)
 from redesmyn.integrations.github_pr import (
     GitHubPullRequestError,
     GitHubPullRequestInfo,
@@ -125,14 +130,7 @@ from redesmyn.integrations.github_pr import (
     create_pull_request,
     detect_pull_request_for_branch,
 )
-from redesmyn.integrations.github_config import (
-    load_github_integration_config,
-    update_github_integration_config,
-    GitHubIntegrationConfigUpdate,
-)
-from redesmyn.integrations.github_status import (
-    github_auth_status,
-)
+from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.integrations.linear_state import (
     linear_state_type_from_task_state,
     task_state_from_linear_state_type,
@@ -5022,7 +5020,6 @@ def github_pr_open(
     typer.echo(url)
     if sys.stdout.isatty():
         webbrowser.open(url)
-
 
 @linear_app.command("auth")
 def linear_auth(
