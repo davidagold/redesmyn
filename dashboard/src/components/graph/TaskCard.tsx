@@ -52,6 +52,7 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronRight,
+  ArrowUp,
   EllipsisVertical,
   AlertTriangle,
   GitBranch,
@@ -921,7 +922,8 @@ export function TaskCard({
         "group",
         "relative overflow-visible",
         "py-0",
-        "cursor-pointer transition-[background-color,box-shadow] duration-200 hover:bg-accent/40",
+        "cursor-pointer transition-[background-color,box-shadow,width,height] duration-200 hover:bg-accent/40",
+        agentComposerExpanded ? "z-[60] w-[480px]" : "w-full",
         actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done"
           ? "ring-green-950/80"
@@ -1224,7 +1226,7 @@ export function TaskCard({
           </DropdownMenu>
         </div>
       ) : null}
-      <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
+      <CardContent className="flex h-full flex-col gap-2 p-3">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div
             className={cn(
@@ -1289,7 +1291,7 @@ export function TaskCard({
             aria-expanded={agentComposerExpanded}
             className={cn(
               "nodrag nopan",
-              "mt-1 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
+              "mt-2 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
               "transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
               agentPreviewDimmed ? "opacity-60" : null,
             )}
@@ -1309,11 +1311,15 @@ export function TaskCard({
               ) : null}
               <div
                 className={cn(
-                  agentPreviewTitle ? "line-clamp-1" : "line-clamp-2",
+                  agentComposerExpanded
+                    ? "line-clamp-4"
+                    : agentPreviewTitle
+                      ? "line-clamp-1"
+                      : "line-clamp-2",
                 )}
               >
                 {showAgentPreviewShimmer ? (
-                  <Shimmer as="span" className="inline">
+                  <Shimmer as="span" className="inline" duration={3}>
                     {(
                       agentPreviewBody ??
                       agentMessagePreview ??
@@ -1328,6 +1334,37 @@ export function TaskCard({
               </div>
             </div>
           </button>
+        ) : null}
+        {agentComposerExpanded ? (
+          <div
+            className="nodrag nopan mt-2"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="relative rounded-md border border-border/60 bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
+              <Textarea
+                value={agentComposerDraft}
+                onChange={(event) => setAgentComposerDraft(event.target.value)}
+                placeholder="Write a message…"
+                rows={3}
+                className="min-h-20 w-full resize-none border-0 bg-transparent pr-10 shadow-none focus-visible:ring-0"
+              />
+              <div className="absolute bottom-2 right-2">
+                <Button
+                  variant="secondary"
+                  size="icon-sm"
+                  className="rounded-full"
+                  disabledReason="Sending messages will be wired up in T-11."
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                  }}
+                >
+                  <ArrowUp className="size-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
         ) : null}
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           {agentSession ? (
@@ -1367,33 +1404,6 @@ export function TaskCard({
           ) : null}
         </div>
       </CardContent>
-      {agentComposerExpanded ? (
-        <div
-          className="nodrag nopan absolute left-3 top-full z-[60] mt-2 w-[440px] space-y-2"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Textarea
-            value={agentComposerDraft}
-            onChange={(event) => setAgentComposerDraft(event.target.value)}
-            placeholder="Write a message…"
-            rows={4}
-            className="w-full bg-background"
-          />
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              disabledReason="Sending messages will be wired up in T-11."
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-              }}
-            >
-              Send
-            </Button>
-          </div>
-        </div>
-      ) : null}
       {actionError ||
       shouldShowResumeButton ||
       blockingMergeRunBlockedRebase ||
