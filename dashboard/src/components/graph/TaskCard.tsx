@@ -938,7 +938,13 @@ export function TaskCard({
             ? "ring-1 ring-ring/60"
             : null,
       )}
-      onClick={(e) => onSelect({ additive: e.metaKey || e.ctrlKey })}
+      onClick={(e) => {
+        const additive = e.metaKey || e.ctrlKey
+        onSelect({ additive })
+        if (!additive) {
+          setAgentComposerExpanded(true)
+        }
+      }}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
@@ -948,6 +954,7 @@ export function TaskCard({
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           onSelect({ additive: false })
+          setAgentComposerExpanded(true)
         }
       }}
     >
@@ -1291,22 +1298,15 @@ export function TaskCard({
           </div>
         </div>
         {agentMessagePreview || showAgentPreviewShimmer ? (
-          <button
-            type="button"
+          <div
             aria-expanded={agentComposerExpanded}
             className={cn(
               "nodrag nopan",
               "w-full",
               "mt-2 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
-              "transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+              "transition-colors hover:text-muted-foreground",
               agentPreviewDimmed ? "opacity-60" : null,
             )}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              onSelect({ additive: e.metaKey || e.ctrlKey })
-              setAgentComposerExpanded((current) => !current)
-            }}
           >
             <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
             <div className="min-w-0 flex-1">
@@ -1339,7 +1339,7 @@ export function TaskCard({
                 </div>
               ) : null}
             </div>
-          </button>
+          </div>
         ) : null}
         <div
           className={cn(
