@@ -4,7 +4,8 @@
 
 ```yaml
 id: T-2
-stacked_on: T-1
+stacked_on: null
+must_land_after: []
 node:
   branch: rn/github-integration/T-2-github-repo-association
 ```
@@ -30,4 +31,3 @@ node:
 
 - This ticket is intentionally about *identity + mapping*, not PR operations.
 - Prefer explicit-but-unobtrusive override controls (auto-detection should cover the common case).
-

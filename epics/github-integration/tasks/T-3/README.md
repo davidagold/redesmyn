@@ -4,7 +4,9 @@
 
 ```yaml
 id: T-3
-stacked_on: T-2
+stacked_on: T-1
+must_land_after:
+  - T-2
 node:
   branch: rn/github-integration/T-3-github-pr-actions
 ```
@@ -37,4 +39,3 @@ node:
 
 - v0 may use GitHub REST API; GraphQL can be added later for richer PR state.
 - Prefer “force-with-lease” and make the default conservative (off).
-

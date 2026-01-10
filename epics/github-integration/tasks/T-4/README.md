@@ -5,6 +5,7 @@
 ```yaml
 id: T-4
 stacked_on: T-3
+must_land_after: []
 node:
   branch: rn/github-integration/T-4-dashboard-github-ui
 ```
@@ -32,4 +33,3 @@ node:
 
 - Prefer small, non-noisy UI: integration affordances should not compete with run/stop controls.
 - Avoid chevrons for icon-only menus; treat the icon itself as the button.
-

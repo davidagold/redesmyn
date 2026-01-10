@@ -5,6 +5,7 @@
 ```yaml
 id: T-1
 stacked_on: null
+must_land_after: []
 node:
   branch: rn/github-integration/T-1-github-auth
 ```
@@ -29,4 +30,3 @@ node:
 
 - Prefer OAuth with PKCE or an equivalent approach that avoids requiring a client secret for basic local use.
 - “Connected” should be tolerant: if a token exists and authenticates, keep “connected” but show a warning when required scopes are missing.
-

@@ -4,7 +4,9 @@
 
 ```yaml
 id: T-5
-stacked_on: T-4
+stacked_on: null
+must_land_after:
+  - T-4
 node:
   branch: rn/github-integration/T-5-pr-status-details
 ```
@@ -20,4 +22,3 @@ node:
 
 - Dashboard can display a compact, non-noisy PR status summary on the task card and/or in the details panel.
 - Actions remain constrained: v0 does not attempt “merge PR”.
-
