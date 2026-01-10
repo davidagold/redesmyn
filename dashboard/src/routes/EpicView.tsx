@@ -6,6 +6,7 @@ import { EpicSelector } from "@/components/layout/EpicSelector"
 import { DetailsPanel } from "@/components/layout/DetailsPanel"
 import { ConnectionsCluster } from "@/components/layout/ConnectionsCluster"
 import { EpicLinearProjectBadge } from "@/components/linear/EpicLinearProjectBadge"
+import { EpicGithubRepoBadge } from "@/components/github/EpicGithubRepoBadge"
 import { GraphView } from "@/components/graph/GraphView"
 import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
 import { Button } from "@/components/ui/button"
@@ -721,6 +722,8 @@ export function EpicView() {
               linearConnected={linearStatus?.connected ?? false}
             />
           ) : null}
+
+          {selectedEpic ? <EpicGithubRepoBadge epic={selectedEpic} /> : null}
 
           {selectedLabel ? (
             <>

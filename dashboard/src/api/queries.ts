@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import {
   fetchDaemons,
   fetchEpicGraph,
+  fetchEpicGithubRepoConfig,
   fetchEpicLinearConfig,
   fetchEpics,
   fetchGitHubStatus,
@@ -119,6 +120,25 @@ export function useEpicLinearConfigQuery(
         throw new Error("Epic slug missing for Linear config query.")
       }
       return fetchEpicLinearConfig(epicSlug, { signal })
+    },
+    enabled: (options?.enabled ?? true) && epicSlug !== null,
+  })
+}
+
+export function useEpicGithubRepoConfigQuery(
+  epicSlug: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey:
+      epicSlug === null
+        ? ["epics", "none", "github", "repo"]
+        : queryKeys.epicGithubRepoConfig(epicSlug),
+    queryFn: ({ signal }) => {
+      if (epicSlug === null) {
+        throw new Error("Epic slug missing for GitHub repo query.")
+      }
+      return fetchEpicGithubRepoConfig(epicSlug, { signal })
     },
     enabled: (options?.enabled ?? true) && epicSlug !== null,
   })

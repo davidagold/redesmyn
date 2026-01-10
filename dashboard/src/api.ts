@@ -12,6 +12,8 @@ export type LinearStatus = components["schemas"]["LinearStatusResponse"]
 export type GitHubStatus = components["schemas"]["GitHubStatusResponse"]
 export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
+export type GithubRepo = components["schemas"]["GithubRepoResponse"]
+export type EpicGithubRepoConfig = components["schemas"]["EpicGithubRepoConfigResponse"]
 
 export type LinearProject = {
   id: string
@@ -438,6 +440,25 @@ export async function fetchEpicLinearConfig(
 ): Promise<EpicLinearConfig> {
   return requestJson(`/v1/epics/${epicSlug}/linear/config`, {
     signal: options?.signal,
+  })
+}
+
+export async function fetchEpicGithubRepoConfig(
+  epicSlug: string,
+  options?: { signal?: AbortSignal },
+): Promise<EpicGithubRepoConfig> {
+  return requestJson(`/v1/epics/${epicSlug}/github/repo`, {
+    signal: options?.signal,
+  })
+}
+
+export async function updateEpicGithubRepo(
+  epicSlug: string,
+  repo: string | null,
+): Promise<EpicGithubRepoConfig> {
+  return requestJson(`/v1/epics/${epicSlug}/github/repo`, {
+    method: "PATCH",
+    body: { repo },
   })
 }
 

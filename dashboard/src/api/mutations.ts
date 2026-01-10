@@ -26,6 +26,7 @@ import {
   setTaskMergeReady,
   startTaskAgent,
   stopTaskAgent,
+  updateEpicGithubRepo,
   updateEpicLinearConfig,
   updateEpicLinearProject,
   updateOrchestrationDefaults,
@@ -398,6 +399,21 @@ export function useUpdateEpicLinearConfigMutation() {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.epicLinearConfig(variables.epicSlug),
       })
+    },
+  })
+}
+
+export function useUpdateEpicGithubRepoMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variables: { epicSlug: string repo: string | null }) =>
+      updateEpicGithubRepo(variables.epicSlug, variables.repo),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.epicGithubRepoConfig(variables.epicSlug),
+      })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.epics() })
     },
   })
 }

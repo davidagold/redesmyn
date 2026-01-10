@@ -3,6 +3,8 @@ export const queryKeys = {
   epicGraph: (epic: number | string) => ["epics", epic, "graph"] as const,
   epicLinearConfig: (epic: string) =>
     ["epics", epic, "linear", "config"] as const,
+  epicGithubRepoConfig: (epic: string) =>
+    ["epics", epic, "github", "repo"] as const,
   hosts: () => ["hosts"] as const,
   daemons: () => ["daemons"] as const,
   orchestrationDefaults: () => ["config", "orchestrationDefaults"] as const,
