@@ -6,6 +6,10 @@ type MarkdownProps = {
   omitMetadataSection?: boolean
 }
 
+export type MarkdownInlineProps = {
+  content: string
+}
+
 type Block = {
   type: "heading"
   level: number
@@ -233,6 +237,11 @@ function renderInline(text: string): ReactNode[] {
   }
 
   return parts
+}
+
+export function MarkdownInline({ content }: MarkdownInlineProps) {
+  const normalized = content.replaceAll("\r\n", "\n").replaceAll("\n", " ")
+  return <Fragment>{renderInline(normalized)}</Fragment>
 }
 
 export function Markdown({

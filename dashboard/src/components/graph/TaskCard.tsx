@@ -28,8 +28,10 @@ import {
 } from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { LinearIcon } from "@/components/linear/LinearIcon"
+import { MarkdownInline } from "@/components/markdown"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { labelForAgentKind } from "@/lib/agent-kind"
+import { Shimmer } from "@/components/ui/shimmer"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -110,31 +112,27 @@ type MarkdownLeadingBoldSplit = {
   body: string
 }
 
-function splitMarkdownLeadingBold(preview: string): MarkdownLeadingBoldSplit {
+function splitAgentPreviewHeading(preview: string): MarkdownLeadingBoldSplit {
   const trimmed = preview.trim()
   if (!trimmed) {
     return { title: null, body: "" }
   }
 
-  const match = trimmed.match(/^\\*\\*(.+?)\\*\\*(.*)$/s)
+  const match =
+    /^(?:[-*]\s*)?(?:[|:—–-]\s*)?(?:\*\*|__)([^*_][\s\S]*?)(?:\*\*|__)\s*([\s\S]*)$/.exec(
+      trimmed,
+    )
   if (!match) {
     return { title: null, body: trimmed }
   }
 
-  const title = match[1]?.trim() ?? ""
-  let body = match[2]?.trim() ?? ""
-  if (body.startsWith(":")) {
-    body = body.slice(1).trim()
-  }
-  if (body.startsWith("-")) {
-    body = body.slice(1).trim()
-  }
+  const title = (match[1] ?? "").trim() || null
+  let body = (match[2] ?? "").trimStart()
 
-  if (!title) {
-    return { title: null, body: trimmed }
-  }
+  body = body.replace(/^(?:[|:—–-])\s+/, "")
+  body = body.replace(/^\|\s*/, "")
 
-  return { title, body }
+  return { title, body: body.trim() }
 }
 
 function linearStateTypeFromTaskState(state: Task["state"]) {
@@ -277,13 +275,16 @@ export function TaskCard({
     const trimmed = raw?.trim() ?? ""
     return trimmed ? trimmed : null
   })()
-  const agentMessagePreviewParts = agentMessagePreview
-    ? splitMarkdownLeadingBold(agentMessagePreview)
+  const agentMessageSplit = agentMessagePreview
+    ? splitAgentPreviewHeading(agentMessagePreview)
     : null
+  const agentPreviewTitle = agentMessageSplit?.title ?? null
+  const agentPreviewBody = agentMessageSplit?.body ?? null
+  const agentTurnState = agentSession?.agentSemanticStatus.turnState ?? null
   const showAgentPreviewShimmer =
-    agentMessagePreview === null &&
-    agentSession?.status === "running" &&
-    agentSession.agentInterfaceMode === "structured"
+    agentSession?.status === "running" && agentTurnState === "busy"
+  const agentPreviewDimmed =
+    agentSession?.status === "stopped" || agentSession?.status === "error"
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
@@ -1273,28 +1274,35 @@ export function TaskCard({
             {task?.title ?? "—"}
           </div>
         </div>
-        {agentMessagePreviewParts ? (
-          <div className="flex min-w-0 items-start gap-1.5">
-            <Ghost className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
-            <div className="min-w-0 flex-1 line-clamp-1 text-xs leading-snug text-muted-foreground/80">
-              {agentMessagePreviewParts.title ? (
+        {agentMessagePreview || showAgentPreviewShimmer ? (
+          <div
+            className={cn(
+              "flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground/80",
+              agentPreviewDimmed ? "opacity-60" : null,
+            )}
+          >
+            <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
+            <div className="min-w-0 flex-1 line-clamp-1">
+              {agentPreviewTitle ? (
                 <span className="font-medium text-foreground/80">
-                  {agentMessagePreviewParts.title}
+                  <MarkdownInline content={agentPreviewTitle} />
                 </span>
               ) : null}
-              {agentMessagePreviewParts.body ? (
-                <span>
-                  {agentMessagePreviewParts.title
-                    ? ` — ${agentMessagePreviewParts.body}`
-                    : agentMessagePreviewParts.body}
-                </span>
+              {agentPreviewTitle && agentPreviewBody ? <span> | </span> : null}
+              {showAgentPreviewShimmer ? (
+                <Shimmer as="span" className="inline">
+                  {(
+                    agentPreviewBody ??
+                    agentMessagePreview ??
+                    "Thinking…"
+                  ).slice(0, 200)}
+                </Shimmer>
+              ) : agentPreviewBody ? (
+                <MarkdownInline content={agentPreviewBody} />
+              ) : agentMessagePreview ? (
+                <MarkdownInline content={agentMessagePreview} />
               ) : null}
             </div>
-          </div>
-        ) : showAgentPreviewShimmer ? (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Ghost className="size-3.5 shrink-0 text-muted-foreground/50" />
-            <div className="h-3 w-5/6 rounded bg-foreground/10 animate-pulse" />
           </div>
         ) : null}
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
