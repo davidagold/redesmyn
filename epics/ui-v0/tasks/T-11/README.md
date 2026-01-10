@@ -33,6 +33,7 @@ Support variable-height task nodes in the graph layout so a task card can expand
 - Expanded content lives inside the card (not absolute callouts) so it participates in layout sizing.
 - Expanded state should be scoped to selection (collapse when deselected) unless explicitly pinned (optional follow-up).
 - Keep the UI visually calm: avoid adding borders around the expanded region; prefer spacing and subtle affordances.
+- Composer UI should use the shared shadcn-style `Textarea` component; keep the send button below the textarea so the input can take full width.
 - Avoid layout jitter:
   - changes should be deterministic and stable across repeated expand/collapse,
   - avoid oscillations caused by measurement feedback loops.
@@ -56,4 +57,3 @@ Support variable-height task nodes in the graph layout so a task card can expand
 - Expand/collapse feels smooth (positions and card height animate).
 - No significant performance regression on ~100 node graphs.
 - `just check` remains green.
-

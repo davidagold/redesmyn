@@ -50,6 +50,7 @@ import { FloatingActions } from "@/components/ui/floating-actions"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
+import { Textarea } from "@/components/ui/textarea"
 import {
   inferAgentKindFromCommand,
   inferStructuredAgentFromCommand,
@@ -957,8 +958,8 @@ function AgentActions({
         ) : null}
         {oneTimePreludeOpen ? (
           <>
-            <textarea
-              className="min-h-20 resize-y rounded-md border bg-background/40 px-2 py-2 font-mono text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            <Textarea
+              className="min-h-20 font-mono"
               value={oneTimePrelude}
               onChange={(e) => setOneTimePrelude(e.target.value)}
               placeholder="Optional. Sent once on the next Start/Restart. Supports placeholders like {task_id}, {task_title}, {epic_slug}."

@@ -13,6 +13,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import type { OrchestrationDefaults } from "@/api"
 import { AgentKindSelect } from "@/components/agents/AgentKindSelect"
 import { useUpdateOrchestrationDefaultsMutation } from "@/api/mutations"
@@ -398,8 +399,8 @@ export function OrchestrationConfigPanel({
                       </PopoverContent>
                     </Popover>
                   </div>
-                  <textarea
-                    className="min-h-[10rem] resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                  <Textarea
+                    className="min-h-[10rem]"
                     value={configPrelude}
                     onChange={(e) => setConfigPrelude(e.target.value)}
                     placeholder="Optional. Leave blank to use the built-in prelude."
