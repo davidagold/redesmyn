@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { ResourceBadge } from "@/components/ui/resource-badge"
+import { Textarea } from "@/components/ui/textarea"
 import { ApiHttpError } from "@/api"
 import {
   useMergeTaskMutation,
@@ -307,6 +308,8 @@ export function TaskCard({
       null,
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const [agentComposerExpanded, setAgentComposerExpanded] = useState(false)
+  const [agentComposerDraft, setAgentComposerDraft] = useState("")
   const mergeReady = Boolean(task?.mergeReadyAt)
   const expectedLinearStateType =
     task === undefined
@@ -378,6 +381,12 @@ export function TaskCard({
       setBlockedRebaseExpanded(false)
     }
   }, [blockingMergeRunBlockedRebase])
+
+  useEffect(() => {
+    if (!isSelected) {
+      setAgentComposerExpanded(false)
+    }
+  }, [isSelected])
 
   function clearActionError() {
     setActionError(null)
@@ -1215,7 +1224,7 @@ export function TaskCard({
           </DropdownMenu>
         </div>
       ) : null}
-      <CardContent className="flex h-full flex-col gap-2 p-3">
+      <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
         <div className="flex min-w-0 items-center justify-between gap-2">
           <div
             className={cn(
@@ -1275,37 +1284,52 @@ export function TaskCard({
           </div>
         </div>
         {agentMessagePreview || showAgentPreviewShimmer ? (
-          <div
+          <button
+            type="button"
+            aria-expanded={agentComposerExpanded}
             className={cn(
-              "flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground/80",
+              "nodrag nopan",
+              "mt-1 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
+              "transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
               agentPreviewDimmed ? "opacity-60" : null,
             )}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect({ additive: e.metaKey || e.ctrlKey })
+              setAgentComposerExpanded((current) => !current)
+            }}
           >
             <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
-            <div className="min-w-0 flex-1 line-clamp-1">
+            <div className="min-w-0 flex-1">
               {agentPreviewTitle ? (
-                <span className="font-medium text-foreground/80">
+                <div className="line-clamp-1 font-medium text-foreground/80">
                   <MarkdownInline content={agentPreviewTitle} />
-                </span>
+                </div>
               ) : null}
-              {agentPreviewTitle && agentPreviewBody ? <span> | </span> : null}
-              {showAgentPreviewShimmer ? (
-                <Shimmer as="span" className="inline">
-                  {(
-                    agentPreviewBody ??
-                    agentMessagePreview ??
-                    "Thinking…"
-                  ).slice(0, 200)}
-                </Shimmer>
-              ) : agentPreviewBody ? (
-                <MarkdownInline content={agentPreviewBody} />
-              ) : agentMessagePreview ? (
-                <MarkdownInline content={agentMessagePreview} />
-              ) : null}
+              <div
+                className={cn(
+                  agentPreviewTitle ? "line-clamp-1" : "line-clamp-2",
+                )}
+              >
+                {showAgentPreviewShimmer ? (
+                  <Shimmer as="span" className="inline">
+                    {(
+                      agentPreviewBody ??
+                      agentMessagePreview ??
+                      "Thinking…"
+                    ).slice(0, 200)}
+                  </Shimmer>
+                ) : agentPreviewBody ? (
+                  <MarkdownInline content={agentPreviewBody} />
+                ) : agentMessagePreview ? (
+                  <MarkdownInline content={agentMessagePreview} />
+                ) : null}
+              </div>
             </div>
-          </div>
+          </button>
         ) : null}
-        <div className="mt-auto flex items-end justify-between gap-2 pt-1">
+        <div className="mt-auto flex items-end justify-between gap-2 pt-2">
           {agentSession ? (
             <div className="flex flex-wrap items-end justify-start gap-2">
               <ResourceBadge
@@ -1343,6 +1367,33 @@ export function TaskCard({
           ) : null}
         </div>
       </CardContent>
+      {agentComposerExpanded ? (
+        <div
+          className="nodrag nopan absolute left-3 top-full z-[60] mt-2 w-[440px] space-y-2"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Textarea
+            value={agentComposerDraft}
+            onChange={(event) => setAgentComposerDraft(event.target.value)}
+            placeholder="Write a message…"
+            rows={4}
+            className="w-full bg-background"
+          />
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabledReason="Sending messages will be wired up in T-11."
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+            >
+              Send
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {actionError ||
       shouldShowResumeButton ||
       blockingMergeRunBlockedRebase ||
