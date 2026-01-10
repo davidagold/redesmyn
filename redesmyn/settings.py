@@ -38,6 +38,11 @@ class RedesmynSettings(BaseSettings):
     # Linear expects a comma-separated list of scopes (e.g. "read,write").
     linear_scopes: str = "read,write"
 
+    # Machine-scoped GitHub OAuth (device flow).
+    github_client_id: str | None = None
+    # GitHub expects a space-separated list of scopes (e.g. "repo read:user").
+    github_scopes: str = "repo"
+
 
 def load_settings(*, repo_root: Path | None = None) -> RedesmynSettings:
     env_file = repo_root / ".env" if repo_root is not None else None
