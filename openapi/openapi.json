@@ -1161,8 +1161,41 @@
         "title": "GithubRepoResponse",
         "type": "object"
       },
+      "GitHubIntegrationConfigResponse": {
+        "properties": {
+          "autoForcePush": {
+            "default": false,
+            "title": "Autoforcepush",
+            "type": "boolean"
+          }
+        },
+        "title": "GitHubIntegrationConfigResponse",
+        "type": "object"
+      },
+      "GitHubIntegrationConfigUpdateRequest": {
+        "properties": {
+          "autoForcePush": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Autoforcepush"
+          }
+        },
+        "title": "GitHubIntegrationConfigUpdateRequest",
+        "type": "object"
+      },
       "GitHubStatusResponse": {
         "properties": {
+          "autoForcePush": {
+            "default": false,
+            "title": "Autoforcepush",
+            "type": "boolean"
+          },
           "connected": {
             "title": "Connected",
             "type": "boolean"
@@ -4268,6 +4301,60 @@
           }
         },
         "summary": "Sync To Linear"
+      }
+    },
+    "/v1/github/config": {
+      "get": {
+        "operationId": "github_config_v1_github_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubIntegrationConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Github Config"
+      },
+      "post": {
+        "operationId": "github_config_update_v1_github_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitHubIntegrationConfigUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubIntegrationConfigResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Github Config Update"
       }
     },
     "/v1/github/logout": {

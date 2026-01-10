@@ -90,6 +90,11 @@ from redesmyn.integrations.github_repo import (
     parse_github_repo_ref,
 )
 from redesmyn.integrations.github_credentials import default_github_credential_store
+from redesmyn.integrations.github_config import (
+    GitHubIntegrationConfigUpdate,
+    load_github_integration_config,
+    update_github_integration_config,
+)
 from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import (
@@ -147,6 +152,8 @@ from redesmyn.schemas.core import (
     HostResponse,
     HostUpsertRequest,
     ExternalSessionRefResponse,
+    GitHubIntegrationConfigResponse,
+    GitHubIntegrationConfigUpdateRequest,
     GitHubStatusResponse,
     LinearProjectResponse,
     LinearStatusResponse,
@@ -2043,10 +2050,15 @@ async def linear_status(request: Request) -> LinearStatusResponse:
 @v1.get("/github/status", response_model=GitHubStatusResponse)
 async def github_status(request: Request) -> GitHubStatusResponse:
     app = _app_from_request(request)
+    cfg = load_github_integration_config(app.state.ctx)
     store = default_github_credential_store()
     creds = store.get()
     if creds is None:
-        return GitHubStatusResponse(connected=False, connected_at=None)
+        return GitHubStatusResponse(
+            connected=False,
+            connected_at=None,
+            auto_force_push=cfg.auto_force_push,
+        )
 
     try:
         status = await github_auth_status(
@@ -2055,7 +2067,11 @@ async def github_status(request: Request) -> GitHubStatusResponse:
             repo_root=app.state.ctx.repo_root,
         )
     except Exception:
-        return GitHubStatusResponse(connected=False, connected_at=creds.connected_at)
+        return GitHubStatusResponse(
+            connected=False,
+            connected_at=creds.connected_at,
+            auto_force_push=cfg.auto_force_push,
+        )
 
     return GitHubStatusResponse(
         connected=status.connected,
@@ -2068,6 +2084,7 @@ async def github_status(request: Request) -> GitHubStatusResponse:
         if status.missing_pr_scopes is not None
         else None,
         repo_full_name=status.repo.full_name if status.repo is not None else None,
+        auto_force_push=cfg.auto_force_push,
     )
 
 
@@ -2076,6 +2093,31 @@ async def github_logout() -> GitHubStatusResponse:
     store = default_github_credential_store()
     store.clear()
     return GitHubStatusResponse(connected=False, connected_at=None)
+
+
+@v1.get("/github/config", response_model=GitHubIntegrationConfigResponse)
+async def github_config(request: Request) -> GitHubIntegrationConfigResponse:
+    app = _app_from_request(request)
+    cfg = load_github_integration_config(app.state.ctx)
+    return GitHubIntegrationConfigResponse(auto_force_push=cfg.auto_force_push)
+
+
+@v1.post("/github/config", response_model=GitHubIntegrationConfigResponse)
+async def github_config_update(
+    http_request: Request, request: GitHubIntegrationConfigUpdateRequest
+) -> GitHubIntegrationConfigResponse:
+    app = _app_from_request(http_request)
+    ctx = app.state.ctx
+    if request.auto_force_push is not None:
+        update_github_integration_config(
+            ctx,
+            scope="repo",
+            update=GitHubIntegrationConfigUpdate(
+                auto_force_push=request.auto_force_push
+            ),
+        )
+    cfg = load_github_integration_config(ctx)
+    return GitHubIntegrationConfigResponse(auto_force_push=cfg.auto_force_push)
 
 
 @v1.post("/linear/logout", response_model=LinearStatusResponse)

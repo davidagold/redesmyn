@@ -209,6 +209,24 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/github/config": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Github Config */
+    get: operations["github_config_v1_github_config_get"]
+    put?: never
+    /** Github Config Update */
+    post: operations["github_config_update_v1_github_config_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/github/logout": {
     parameters: {
       query?: never
@@ -1030,8 +1048,26 @@ export interface components {
       /** Repo */
       repo: string
     }
+    /** GitHubIntegrationConfigResponse */
+    GitHubIntegrationConfigResponse: {
+      /**
+       * Autoforcepush
+       * @default false
+       */
+      autoForcePush: boolean
+    }
+    /** GitHubIntegrationConfigUpdateRequest */
+    GitHubIntegrationConfigUpdateRequest: {
+      /** Autoforcepush */
+      autoForcePush?: boolean | null
+    }
     /** GitHubStatusResponse */
     GitHubStatusResponse: {
+      /**
+       * Autoforcepush
+       * @default false
+       */
+      autoForcePush: boolean
       /** Connected */
       connected: boolean
       /** Connectedat */
@@ -2310,6 +2346,59 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["LinearPushStatsResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  github_config_v1_github_config_get: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubIntegrationConfigResponse"]
+        }
+      }
+    }
+  }
+  github_config_update_v1_github_config_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["GitHubIntegrationConfigUpdateRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubIntegrationConfigResponse"]
         }
       }
       /** @description Validation Error */

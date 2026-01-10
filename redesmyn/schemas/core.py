@@ -825,6 +825,15 @@ class GitHubStatusResponse(ApiResponse):
     warning: bool = False
     missing_pr_scopes: list[str] | None = None
     repo_full_name: str | None = None
+    auto_force_push: bool = False
+
+
+class GitHubIntegrationConfigResponse(ApiResponse):
+    auto_force_push: bool = False
+
+
+class GitHubIntegrationConfigUpdateRequest(ApiRequest):
+    auto_force_push: bool | None = None
 
 
 class LinearProjectResponse(ApiResponse):
