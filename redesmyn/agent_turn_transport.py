@@ -139,6 +139,10 @@ def _build_codex_exec_resume_argv(
 
     prefix = list(base_argv[: exec_idx + 1])
     rest = list(base_argv[exec_idx + 1 :])
+    if "--json" not in rest:
+        raise StructuredTurnTransportError(
+            "Codex argv must include `--json` for structured resume-by-id turns."
+        )
 
     codex_exec_flags_with_values = {
         "-c",

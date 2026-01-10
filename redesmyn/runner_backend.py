@@ -52,6 +52,7 @@ class RunnerBackend(Protocol):
         task_id: int,
         prompt: str,
         detach: bool,
+        idempotency_key: str | None = None,
     ) -> StartAgentResult: ...
 
 
@@ -116,9 +117,14 @@ class LocalRunnerBackend:
         task_id: int,
         prompt: str,
         detach: bool,
+        idempotency_key: str | None = None,
     ) -> StartAgentResult:
         return await run_task_agent_resume_by_id_turn(
-            self.ctx, task_id=task_id, prompt=prompt, detach=detach
+            self.ctx,
+            task_id=task_id,
+            prompt=prompt,
+            detach=detach,
+            idempotency_key=idempotency_key,
         )
 
 
@@ -174,6 +180,7 @@ class RemoteRunnerBackend:
         task_id: int,
         prompt: str,
         detach: bool,
+        idempotency_key: str | None = None,
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; resume-by-id turns via the daemon are not implemented yet.",

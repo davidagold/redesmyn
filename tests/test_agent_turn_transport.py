@@ -125,3 +125,18 @@ def test_build_resume_by_id_turn_claude_requires_print_mode() -> None:
             },
             prompt="hi",
         )
+
+
+@pytest.mark.unit
+def test_build_resume_by_id_turn_codex_requires_json_flag() -> None:
+    with pytest.raises(StructuredTurnTransportError, match="must include `--json`"):
+        build_resume_by_id_turn(
+            base_argv=["codex", "exec"],
+            agent_kind=AgentKind.Codex,
+            external_session_ref_raw={
+                "type": "codex_thread",
+                "thread_id": "th_123",
+                "turn_id": None,
+            },
+            prompt="hello",
+        )

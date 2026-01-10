@@ -20,10 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from redesmyn.agent_kind import resolve_agent_kind
 from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.branch_naming import default_task_branch_name
+from redesmyn.agent_interface.v0 import AgentSemanticStatus
 from redesmyn.context import RepoContext
 from redesmyn.host_identity import HostIdentity, load_or_create_host_identity
 from redesmyn.db import (
     AgentSession,
+    Event,
     Epic,
     LaunchConfiguration,
     Host,
@@ -48,6 +50,7 @@ from redesmyn.domain.enums import (
     AgentKind,
     AgentKindSelection,
     AgentStatus,
+    AgentTurnState,
     LaunchConfigurationSource,
     TaskState,
 )
@@ -823,6 +826,15 @@ class StartAgentResult:
     attach: AttachInfo
     started: bool = True
     warnings: tuple[str, ...] = ()
+    continuation: StructuredContinuationTurn | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StructuredContinuationTurn:
+    """Correlation/idempotency metadata for a structured continuation turn."""
+
+    idempotency_key: str | None
+    baseline_turn_completed_event_id: int | None
 
 
 async def start_tmux_session(
@@ -1488,6 +1500,7 @@ async def run_task_agent_resume_by_id_turn(
     task_id: int,
     prompt: str,
     detach: bool,
+    idempotency_key: str | None = None,
 ) -> StartAgentResult:
     """Run a single structured turn by resuming the prior external session id.
 
@@ -1510,6 +1523,28 @@ async def run_task_agent_resume_by_id_turn(
             task, epic = await _load_task_and_epic(session, task_id=task_id)
             host = await ensure_host_row(session, ctx)
             agent_label = agent_label_for_task_id(task.id)
+            tmux_name = tmux_session_name_for_task(task_id=task.id)
+            if _tmux_has_session(name=tmux_name):
+                raise RuntimeError(
+                    "Refusing to run a resume-by-id turn because a tmux session is active for this task."
+                )
+
+            active_session = await load_active_task_agent_session_row(
+                session, task_id=task.id
+            )
+            if active_session is not None:
+                try:
+                    status = TypeAdapter(AgentSemanticStatus).validate_python(
+                        active_session.agent_semantic_status
+                    )
+                except Exception:
+                    status = AgentSemanticStatus()
+                if active_session.status == AgentStatus.Running and (
+                    status.turn_state == AgentTurnState.Busy
+                ):
+                    raise RuntimeError(
+                        "Refusing to run a resume-by-id turn because an agent turn is currently running for this task."
+                    )
 
             latest_sessions = list(
                 await session.scalars(
@@ -1557,6 +1592,27 @@ async def run_task_agent_resume_by_id_turn(
                     "No external session id recorded yet; cannot run resume-by-id turn."
                 )
 
+            baseline_turn_completed_event_id: int | None = None
+            if idempotency_key is not None:
+                existing = await _find_idempotent_continuation_session(
+                    session,
+                    task_id=task.id,
+                    idempotency_key=idempotency_key,
+                )
+                if existing is not None:
+                    attach = TypeAdapter(AttachInfo).validate_python(existing.attach)
+                    return StartAgentResult(
+                        agent_label=agent_label,
+                        agent_session=existing,
+                        attach=attach,
+                        started=False,
+                        warnings=(),
+                        continuation=StructuredContinuationTurn(
+                            idempotency_key=idempotency_key,
+                            baseline_turn_completed_event_id=None,
+                        ),
+                    )
+
             try:
                 turn = build_resume_by_id_turn(
                     base_argv=base_definition.argv,
@@ -1566,6 +1622,11 @@ async def run_task_agent_resume_by_id_turn(
                 )
             except StructuredTurnTransportError as exc:
                 raise RuntimeError(str(exc)) from exc
+
+            baseline_turn_completed_event_id = await _latest_turn_completed_event_id(
+                session,
+                task_id=task.id,
+            )
 
             warnings: list[str] = []
             worktree_path = await ensure_task_worktree(
@@ -1662,6 +1723,20 @@ async def run_task_agent_resume_by_id_turn(
             await session.flush()
             runtime_env["REDESMYN_AGENT_SESSION_ID"] = str(agent_session.id)
 
+            session.add(
+                Event(
+                    event_type="agent.continuation_turn_requested",
+                    data={
+                        "task_id": task.id,
+                        "agent_session_id": agent_session.id,
+                        "idempotency_key": idempotency_key,
+                        "baseline_turn_completed_event_id": baseline_turn_completed_event_id,
+                        "external_session_ref": resume_session.external_session_ref,
+                    },
+                    created_at=now,
+                )
+            )
+
             wrapped = sandbox_provider.wrap(
                 argv=turn.argv,
                 cwd=worktree_path,
@@ -1698,6 +1773,60 @@ async def run_task_agent_resume_by_id_turn(
                 attach=attach,
                 started=True,
                 warnings=tuple(warnings),
+                continuation=StructuredContinuationTurn(
+                    idempotency_key=idempotency_key,
+                    baseline_turn_completed_event_id=baseline_turn_completed_event_id,
+                ),
             )
     finally:
         await engine.dispose()
+
+
+async def _latest_turn_completed_event_id(
+    session: AsyncSession,
+    *,
+    task_id: int,
+) -> int | None:
+    """Best-effort baseline event id for correlating a follow-on turn."""
+
+    events = list(
+        await session.scalars(
+            select(Event)
+            .where(Event.event_type == "agent.turn_completed")
+            .order_by(desc(Event.id))
+            .limit(250)
+        )
+    )
+    for event in events:
+        if event.data.get("task_id") == task_id:
+            return event.id
+    return None
+
+
+async def _find_idempotent_continuation_session(
+    session: AsyncSession,
+    *,
+    task_id: int,
+    idempotency_key: str,
+) -> AgentSession | None:
+    events = list(
+        await session.scalars(
+            select(Event)
+            .where(Event.event_type == "agent.continuation_turn_requested")
+            .order_by(desc(Event.id))
+            .limit(250)
+        )
+    )
+    for event in events:
+        if event.data.get("task_id") != task_id:
+            continue
+        if event.data.get("idempotency_key") != idempotency_key:
+            continue
+        session_id = event.data.get("agent_session_id")
+        if session_id is None:
+            continue
+        try:
+            return await session.get(AgentSession, int(session_id))
+        except (TypeError, ValueError):
+            continue
+    return None
