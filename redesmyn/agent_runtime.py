@@ -1533,6 +1533,28 @@ async def run_task_agent_resume_by_id_turn(
             task, epic = await _load_task_and_epic(session, task_id=task_id)
             host = await ensure_host_row(session, ctx)
             agent_label = agent_label_for_task_id(task.id)
+            tmux_name = tmux_session_name_for_task(task_id=task.id)
+            if _tmux_has_session(name=tmux_name):
+                raise RuntimeError(
+                    "Refusing to run a resume-by-id turn because a tmux session is active for this task."
+                )
+
+            active_session = await load_active_task_agent_session_row(
+                session, task_id=task.id
+            )
+            if active_session is not None:
+                try:
+                    status = TypeAdapter(AgentSemanticStatus).validate_python(
+                        active_session.agent_semantic_status
+                    )
+                except Exception:
+                    status = AgentSemanticStatus()
+                if active_session.status == AgentStatus.Running and (
+                    status.turn_state == AgentTurnState.Busy
+                ):
+                    raise RuntimeError(
+                        "Refusing to run a resume-by-id turn because an agent turn is currently running for this task."
+                    )
 
             latest_sessions = list(
                 await session.scalars(
@@ -1746,7 +1768,7 @@ async def run_task_agent_resume_by_id_turn(
 
             session.add(
                 Event(
-                    event_type="internal.agent.continuation_turn_requested",
+                    event_type="agent.continuation_turn_requested",
                     data={
                         "task_id": task.id,
                         "agent_session_id": agent_session.id,
@@ -1833,7 +1855,7 @@ async def _find_idempotent_continuation_session(
     events = list(
         await session.scalars(
             select(Event)
-            .where(Event.event_type == "internal.agent.continuation_turn_requested")
+            .where(Event.event_type == "agent.continuation_turn_requested")
             .order_by(desc(Event.id))
             .limit(250)
         )
