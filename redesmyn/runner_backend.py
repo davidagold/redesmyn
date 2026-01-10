@@ -7,6 +7,7 @@ from redesmyn.domain.enums import AgentKindSelection
 from redesmyn.agent_runtime import (
     StartAgentResult,
     restart_task_agent,
+    run_task_agent_resume_by_id_turn,
     start_task_agent,
     stop_task_agent,
 )
@@ -43,6 +44,14 @@ class RunnerBackend(Protocol):
         default_agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
+    ) -> StartAgentResult: ...
+
+    async def run_task_agent_resume_by_id_turn(
+        self,
+        *,
+        task_id: int,
+        prompt: str,
+        detach: bool,
     ) -> StartAgentResult: ...
 
 
@@ -101,6 +110,17 @@ class LocalRunnerBackend:
             default_agent_kind_selection=default_agent_kind_selection,
         )
 
+    async def run_task_agent_resume_by_id_turn(
+        self,
+        *,
+        task_id: int,
+        prompt: str,
+        detach: bool,
+    ) -> StartAgentResult:
+        return await run_task_agent_resume_by_id_turn(
+            self.ctx, task_id=task_id, prompt=prompt, detach=detach
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RemoteRunnerBackend:
@@ -145,6 +165,18 @@ class RemoteRunnerBackend:
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; restart via the daemon is not implemented yet.",
+            status_code=501,
+        )
+
+    async def run_task_agent_resume_by_id_turn(
+        self,
+        *,
+        task_id: int,
+        prompt: str,
+        detach: bool,
+    ) -> StartAgentResult:
+        raise RunnerBackendError(
+            "Runner backend is remote; resume-by-id turns via the daemon are not implemented yet.",
             status_code=501,
         )
 

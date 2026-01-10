@@ -39,6 +39,10 @@ from redesmyn.db.models import (
     HostCapabilities,
 )
 from redesmyn.agent_prelude import DEFAULT_AGENT_PRELUDE_TEMPLATE
+from redesmyn.agent_turn_transport import (
+    StructuredTurnTransportError,
+    build_resume_by_id_turn,
+)
 from redesmyn.domain.enums import (
     AgentInterfaceMode,
     AgentKind,
@@ -1476,3 +1480,224 @@ def attach_agent_session(*, agent_session_row: AgentSession) -> int:
     if isinstance(attach, AttachTmux):
         return _tmux_attach(name=attach.session)
     raise RuntimeError("Attach is not available for this agent")
+
+
+async def run_task_agent_resume_by_id_turn(
+    ctx: RepoContext,
+    *,
+    task_id: int,
+    prompt: str,
+    detach: bool,
+) -> StartAgentResult:
+    """Run a single structured turn by resuming the prior external session id.
+
+    This is a best-effort v0 transport for automation workflows (e.g. conflict
+    assist) where we need to send a message into an existing structured session
+    without relying on tmux keystrokes.
+    """
+
+    if not detach:
+        raise RuntimeError("v0 requires tmux-backed detached agents (omit --no-detach)")
+    if not has_tmux():
+        raise RuntimeError(
+            "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
+        )
+
+    engine = create_engine(ctx.db_path)
+    try:
+        sessionmaker = create_sessionmaker(engine)
+        async with sessionmaker() as session:
+            task, epic = await _load_task_and_epic(session, task_id=task_id)
+            host = await ensure_host_row(session, ctx)
+            agent_label = agent_label_for_task_id(task.id)
+
+            latest_sessions = list(
+                await session.scalars(
+                    select(AgentSession)
+                    .where(AgentSession.task_id == task.id)
+                    .order_by(desc(AgentSession.id))
+                    .limit(25)
+                )
+            )
+            if not latest_sessions:
+                raise RuntimeError(
+                    "No prior agent session found; start an agent first."
+                )
+
+            base_session = next(
+                (
+                    row
+                    for row in latest_sessions
+                    if row.resolved_launch_configuration is not None
+                    and row.agent_interface_mode == AgentInterfaceMode.Structured
+                ),
+                None,
+            )
+            if base_session is None:
+                raise RuntimeError(
+                    "No prior structured agent session found; start in structured mode first."
+                )
+
+            base_definition = TypeAdapter(
+                LaunchConfigurationDefinition
+            ).validate_python(base_session.resolved_launch_configuration)
+            agent_kind = base_session.agent_kind
+
+            resume_session = next(
+                (
+                    row
+                    for row in latest_sessions
+                    if row.external_session_ref is not None
+                    and row.external_session_ref.get("type") != "none"
+                ),
+                None,
+            )
+            if resume_session is None:
+                raise RuntimeError(
+                    "No external session id recorded yet; cannot run resume-by-id turn."
+                )
+
+            try:
+                turn = build_resume_by_id_turn(
+                    base_argv=base_definition.argv,
+                    agent_kind=agent_kind,
+                    external_session_ref_raw=resume_session.external_session_ref,
+                    prompt=prompt,
+                )
+            except StructuredTurnTransportError as exc:
+                raise RuntimeError(str(exc)) from exc
+
+            warnings: list[str] = []
+            worktree_path = await ensure_task_worktree(
+                session, ctx, task=task, epic=epic
+            )
+
+            shim_path = shutil.which("rn")
+            runtime_env = {
+                "REDESMYN_AGENT_SESSION_ID": "",
+                "REDESMYN_TASK_ID": str(task.id),
+                "REDESMYN_HOST_KEY": host.host_key,
+                "PATH": os.environ.get("PATH", ""),
+            }
+            if shim_path is not None:
+                shim = create_git_shim(ctx=ctx, task_id=task.id)
+                runtime_env["PATH"] = f"{shim.dir}{os.pathsep}{runtime_env['PATH']}"
+            else:
+                warnings.append(
+                    "`rn` not found on PATH; skipping git shim injection (agent git will bypass blocks)"
+                )
+            runtime_env |= base_definition.env
+
+            defaults = None
+            try:
+                defaults = load_orchestration_defaults(ctx)
+            except RuntimeError:
+                defaults = None
+
+            sandbox_policy = NullSandboxPolicy()
+            if defaults is not None and defaults.sandbox.type == "worktree":
+                shared_state_paths: list[Path] = [ctx.state_dir]
+                repo_git_dir = ctx.repo_root / ".git"
+                if repo_git_dir.exists():
+                    shared_state_paths.append(repo_git_dir)
+                tmp_root = Path(tempfile.gettempdir())
+                if tmp_root.is_dir():
+                    shared_state_paths.append(tmp_root)
+
+                sandbox_policy = WorktreeSandboxPolicy(
+                    worktree_path=worktree_path,
+                    shared_state_paths=shared_state_paths,
+                    network=defaults.sandbox.network,
+                )
+
+            match sandbox_policy:
+                case WorktreeSandboxPolicy():
+                    run_dir = task_agent_runtime_dir(ctx, task_id=task.id)
+                    tmp_dir = run_dir / "tmp"
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+                    runtime_env["TMPDIR"] = str(tmp_dir)
+                    runtime_env["TMP"] = str(tmp_dir)
+                    runtime_env["TEMP"] = str(tmp_dir)
+                    runtime_env["PATH"] = _sanitize_path_for_sandbox(
+                        runtime_env.get("PATH", "")
+                    )
+
+                    if agent_kind == AgentKind.Codex:
+                        runtime_env.setdefault(
+                            "CODEX_HOME", str(run_dir / "codex-home")
+                        )
+                        src_codex = Path.home() / ".codex"
+                        _seed_codex_home(
+                            src_dir=src_codex,
+                            dst_dir=Path(runtime_env["CODEX_HOME"]),
+                            warnings=warnings,
+                        )
+                case _:
+                    pass
+
+            sandbox_provider = make_sandbox_provider()
+
+            now = datetime.now(UTC)
+            agent_session = AgentSession(
+                task_id=task.id,
+                status=AgentStatus.Running,
+                agent_kind_selection=base_session.agent_kind_selection,
+                agent_kind=agent_kind,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                host_id=host.id,
+                launch_configuration_id=base_session.launch_configuration_id,
+                cwd_path=str(worktree_path),
+                pid=None,
+                resolved_launch_configuration=base_definition.model_copy(
+                    update={"argv": turn.argv}
+                ).model_dump(mode="python"),
+                exit_code=None,
+                started_at=now,
+                ended_at=None,
+                prelude_rendered=None,
+                external_session_ref=resume_session.external_session_ref,
+            )
+            session.add(agent_session)
+            await session.flush()
+            runtime_env["REDESMYN_AGENT_SESSION_ID"] = str(agent_session.id)
+
+            wrapped = sandbox_provider.wrap(
+                argv=turn.argv,
+                cwd=worktree_path,
+                env=runtime_env,
+                policy=sandbox_policy,
+            )
+
+            attach = await start_tmux_session(
+                ctx,
+                task_id=task.id,
+                session_id=agent_session.id,
+                worktree_path=worktree_path,
+                argv=wrapped.argv,
+                env=wrapped.env,
+                stdin_text=turn.stdin_prompt,
+            )
+            agent_session.attach = attach.model_dump(mode="python")
+
+            agent_session.status = AgentStatus.Running
+            if task.state != TaskState.Done:
+                task.state = TaskState.InProgress
+
+            await session.commit()
+            await session.refresh(agent_session)
+            await maybe_push_task_state_to_linear(
+                ctx,
+                sessionmaker=sessionmaker,
+                task_id=task.id,
+                desired_task_state=TaskState.InProgress,
+            )
+            return StartAgentResult(
+                agent_label=agent_label,
+                agent_session=agent_session,
+                attach=attach,
+                started=True,
+                warnings=tuple(warnings),
+            )
+    finally:
+        await engine.dispose()
