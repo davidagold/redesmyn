@@ -53,6 +53,7 @@ import {
   AlertTriangle,
   GitBranch,
   GitMerge,
+  Ghost,
   Layers,
   Loader2,
   MessageSquareText,
@@ -244,6 +245,7 @@ export function TaskCard({
     const trimmed = raw?.trim() ?? ""
     return trimmed ? trimmed : null
   })()
+  const [agentPreviewExpanded, setAgentPreviewExpanded] = useState(false)
   const linearIssueId = task?.linearIssueId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
@@ -267,6 +269,18 @@ export function TaskCard({
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const mergeReady = Boolean(task?.mergeReadyAt)
+  const agentSessionId = agentSession?.id ?? null
+  const [agentDraft, setAgentDraft] = useState("")
+  const sendAgentMessageDisabledReason = (() => {
+    if (!agentSession) {
+      return "Start an agent to send messages."
+    }
+    const turnState = agentSession.agentSemanticStatus.turnState
+    if (turnState !== "ready") {
+      return `Agent is ${turnState}.`
+    }
+    return "Sending messages from the card is coming soon."
+  })()
   const expectedLinearStateType =
     task === undefined
       ? null
@@ -337,6 +351,22 @@ export function TaskCard({
       setBlockedRebaseExpanded(false)
     }
   }, [blockingMergeRunBlockedRebase])
+
+  useEffect(() => {
+    if (!isSelected) {
+      setAgentPreviewExpanded(false)
+    }
+  }, [isSelected])
+
+  useEffect(() => {
+    if (!agentMessagePreview) {
+      setAgentPreviewExpanded(false)
+    }
+  }, [agentMessagePreview])
+
+  useEffect(() => {
+    setAgentDraft("")
+  }, [agentSessionId])
 
   function clearActionError() {
     setActionError(null)
@@ -1223,7 +1253,7 @@ export function TaskCard({
           </div>
         </div>
 
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0">
           <div
             className={cn(
               "text-sm font-medium leading-tight",
@@ -1232,12 +1262,30 @@ export function TaskCard({
           >
             {task?.title ?? "—"}
           </div>
-          {agentMessagePreview ? (
-            <div className="line-clamp-1 text-xs leading-snug text-muted-foreground/80">
-              {agentMessagePreview}
-            </div>
-          ) : null}
         </div>
+        {agentMessagePreview ? (
+          <button
+            type="button"
+            className={cn(
+              "nodrag nopan group/agent-preview flex min-w-0 items-center gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
+              "rounded-sm px-1 py-0.5",
+              "transition-colors hover:bg-foreground/5 hover:text-foreground/80",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+            )}
+            aria-expanded={agentPreviewExpanded}
+            onClick={() => setAgentPreviewExpanded((open) => !open)}
+          >
+            <Ghost className="size-3.5 shrink-0 text-muted-foreground/60" />
+            <span className="min-w-0 flex-1 line-clamp-1">
+              {agentMessagePreview}
+            </span>
+            {agentPreviewExpanded ? (
+              <ChevronUp className="size-3.5 shrink-0 text-muted-foreground/60" />
+            ) : (
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground/60" />
+            )}
+          </button>
+        ) : null}
         <div className="mt-auto flex items-end justify-between gap-2 pt-1">
           {agentSession ? (
             <div className="flex flex-wrap items-end justify-start gap-2">
@@ -1279,12 +1327,40 @@ export function TaskCard({
       {actionError ||
       shouldShowResumeButton ||
       blockingMergeRunBlockedRebase ||
-      mergeReadySpineNotice ? (
+      mergeReadySpineNotice ||
+      agentPreviewExpanded ? (
         <div
           className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-full space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
+          {agentPreviewExpanded && agentMessagePreview ? (
+            <div className="rounded-lg bg-background/40 p-2 shadow-lg ring-1 ring-foreground/10 backdrop-blur">
+              <div className="flex items-start gap-2">
+                <Ghost className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
+                <div className="min-w-0 flex-1">
+                  <div className="max-h-36 overflow-auto whitespace-pre-wrap break-words text-xs leading-snug text-foreground/80">
+                    {agentMessagePreview}
+                  </div>
+                  <div className="mt-2 flex items-end gap-2">
+                    <textarea
+                      className="min-h-16 flex-1 resize-y rounded-md border bg-background/40 px-2 py-2 text-xs text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                      value={agentDraft}
+                      onChange={(e) => setAgentDraft(e.target.value)}
+                      placeholder="Message the agent (send is coming soon)."
+                    />
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabledReason={sendAgentMessageDisabledReason}
+                    >
+                      Send
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {mergeReadySpineNotice ? (
             <Alert variant="amber" className="gap-2 shadow-lg">
               <div className="flex items-start justify-between gap-2">
