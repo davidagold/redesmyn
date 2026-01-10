@@ -1309,28 +1309,32 @@ export function TaskCard({
             <div className="min-w-0 flex-1">
               {agentPreviewTitle ? (
                 <div className="line-clamp-1 font-semibold text-foreground/80">
-                  <MarkdownInline content={agentPreviewTitle} />
+                  {showAgentPreviewShimmer ? (
+                    <Shimmer as="span" className="inline" duration={3.5}>
+                      {agentPreviewTitle.slice(0, 200)}
+                    </Shimmer>
+                  ) : (
+                    <MarkdownInline content={agentPreviewTitle} />
+                  )}
                 </div>
               ) : null}
-              <div
-                className={cn(
-                  agentComposerExpanded ? "line-clamp-4" : "line-clamp-1",
-                )}
-              >
-                {showAgentPreviewShimmer ? (
-                  <Shimmer as="span" className="inline" duration={3.5}>
-                    {(
-                      agentPreviewBody ??
-                      agentMessagePreview ??
-                      "Thinking…"
-                    ).slice(0, 200)}
-                  </Shimmer>
-                ) : agentPreviewBody ? (
-                  <MarkdownInline content={agentPreviewBody} />
-                ) : agentMessagePreview ? (
-                  <MarkdownInline content={agentMessagePreview} />
-                ) : null}
-              </div>
+              {agentPreviewBody || !agentPreviewTitle ? (
+                <div className="line-clamp-1">
+                  {showAgentPreviewShimmer && !agentPreviewTitle ? (
+                    <Shimmer as="span" className="inline" duration={3.5}>
+                      {(
+                        agentPreviewBody ??
+                        agentMessagePreview ??
+                        "Thinking…"
+                      ).slice(0, 200)}
+                    </Shimmer>
+                  ) : agentPreviewBody ? (
+                    <MarkdownInline content={agentPreviewBody} />
+                  ) : !agentPreviewTitle && agentMessagePreview ? (
+                    <MarkdownInline content={agentMessagePreview} />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </button>
         ) : null}
