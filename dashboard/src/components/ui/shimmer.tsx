@@ -5,16 +5,16 @@ export type ShimmerProps = {
   children: string
   as?: ElementType
   className?: string
-  durationSeconds?: number
-  spreadPx?: number
+  duration?: number
+  spread?: number
 }
 
 export function Shimmer({
   children,
   as: Component = "span",
   className,
-  durationSeconds = 1.75,
-  spreadPx = 28,
+  duration = 1.75,
+  spread = 28,
 }: ShimmerProps) {
   return (
     <Component
@@ -26,8 +26,8 @@ export function Shimmer({
       )}
       style={
         {
-          "--spread": `${spreadPx}px`,
-          "--duration": `${durationSeconds}s`,
+          "--spread": `${spread}px`,
+          "--duration": `${duration}s`,
           backgroundImage:
             "var(--bg), linear-gradient(var(--color-muted-foreground), var(--color-muted-foreground))",
         } as CSSProperties
