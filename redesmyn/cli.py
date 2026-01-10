@@ -108,6 +108,16 @@ from redesmyn.integrations.linear_credentials import (
     default_linear_credential_store,
     is_expiring_soon,
 )
+from redesmyn.integrations.github_credentials import (
+    GitHubCredentials,
+    default_github_credential_store,
+)
+from redesmyn.integrations.github_oauth import (
+    GitHubOAuthError,
+    poll_device_token,
+    request_device_code,
+)
+from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.integrations.linear_state import (
     linear_state_type_from_task_state,
     task_state_from_linear_state_type,
@@ -200,6 +210,7 @@ epic_app = typer.Typer(add_completion=False, help="Epic management.")
 task_app = typer.Typer(add_completion=False, help="Task management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
+github_app = typer.Typer(add_completion=False, help="GitHub integration.")
 debug_app = typer.Typer(add_completion=False, help="Debug-only commands.")
 
 observer_compat_app = typer.Typer(
@@ -4276,6 +4287,12 @@ def _load_settings_for_linear(ctx: RepoContext | None) -> RedesmynSettings:
     return load_settings(repo_root=ctx.repo_root if ctx else None)
 
 
+def _load_settings_for_github(ctx: RepoContext | None) -> RedesmynSettings:
+    from redesmyn.settings import load_settings
+
+    return load_settings(repo_root=ctx.repo_root if ctx else None)
+
+
 async def _require_fresh_linear_credentials(
     *,
     ctx: RepoContext | None,
@@ -4352,6 +4369,117 @@ def linear_status(
             typer.echo(str(data.get("viewer")))
 
         asyncio.run(_run())
+
+
+@github_app.command("status")
+def github_status() -> None:
+    ctx: RepoContext | None
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+
+    store = default_github_credential_store()
+    creds = store.get()
+    if creds is None:
+        typer.echo("GitHub: not connected")
+        raise typer.Exit(1)
+
+    status = asyncio.run(
+        github_auth_status(
+            access_token=creds.access_token,
+            connected_at=creds.connected_at,
+            repo_root=ctx.repo_root if ctx is not None else None,
+        )
+    )
+
+    if not status.connected:
+        typer.echo("GitHub: disconnected (token rejected)")
+        raise typer.Exit(1)
+
+    typer.echo("GitHub: connected")
+    typer.echo(f"Connected at: {creds.connected_at.isoformat()}")
+    if status.viewer is not None:
+        typer.echo(f"Account: {status.viewer.login}")
+
+    if status.granted_scopes is None:
+        typer.echo("Granted scopes: (unknown)")
+    else:
+        typer.echo(f"Granted scopes: {', '.join(sorted(status.granted_scopes))}")
+
+    if status.warning:
+        if status.repo is not None:
+            typer.echo(f"Warning: missing scopes for PRs in {status.repo.full_name}")
+        else:
+            typer.echo("Warning: missing scopes for PRs in this repo")
+        if status.missing_pr_scopes:
+            typer.echo(f"Missing: {', '.join(status.missing_pr_scopes)}")
+
+
+@github_app.command("auth")
+def github_auth(
+    timeout_seconds: int = typer.Option(
+        180, help="Max time to wait for device authorization."
+    ),
+) -> None:
+    ctx: RepoContext | None
+    try:
+        ctx = get_repo_context()
+    except NotAGitRepositoryError:
+        ctx = None
+
+    settings = _load_settings_for_github(ctx)
+    if not settings.github_client_id:
+        typer.echo(
+            "error: GitHub OAuth is not configured. Create a GitHub OAuth app and set:\n"
+            "  REDESMYN_GITHUB_CLIENT_ID\n"
+            "in `.env` (see `.env.example`).\n",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    try:
+        device = asyncio.run(request_device_code(settings))
+    except GitHubOAuthError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"GitHub user code: {device.user_code}")
+    typer.echo(f"Verify at: {device.verification_uri}")
+    start_url = device.verification_uri_complete or device.verification_uri
+    if not webbrowser.open(start_url):
+        typer.echo(start_url)
+
+    timeout = min(timeout_seconds, device.expires_in)
+    try:
+        token = asyncio.run(
+            poll_device_token(
+                settings,
+                device_code=device.device_code,
+                timeout_seconds=timeout,
+                interval_seconds=device.interval,
+            )
+        )
+    except GitHubOAuthError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    store = default_github_credential_store()
+    store.set(
+        GitHubCredentials(
+            access_token=token.access_token,
+            token_type=token.token_type,
+            connected_at=datetime.now(UTC),
+        )
+    )
+    typer.echo("GitHub: connected")
+
+
+@github_app.command("logout")
+def github_logout() -> None:
+    store = default_github_credential_store()
+    store.clear()
+    typer.echo("GitHub: logged out")
 
 
 @linear_app.command("auth")
@@ -4906,6 +5034,7 @@ def linear_import(
 
 
 app.add_typer(linear_app, name="linear")
+app.add_typer(github_app, name="github")
 
 
 @block_app.command("lax")
