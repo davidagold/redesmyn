@@ -1064,9 +1064,12 @@ export function TaskCard({
     if (!blockingMergeRunBlockedRebase) {
       return null
     }
+    const agentRunning = agentStatus === "running"
     const assist = blockingConflictAssist
     if (!assist) {
-      return "Resolve conflicts, then resume."
+      return agentRunning
+        ? "Auto-resolving… agent working."
+        : "Resolve conflicts, then resume."
     }
 
     if (assist.state === "timed_out") {
@@ -1074,9 +1077,6 @@ export function TaskCard({
     }
     if (assist.state === "unsupported") {
       return "Manual resolution needed (unavailable)."
-    }
-    if (!assist.active) {
-      return "Resolve conflicts, then resume."
     }
 
     switch (assist.state) {
@@ -1093,9 +1093,28 @@ export function TaskCard({
       case "resumed":
         return "Auto-resolving… resumed."
       default:
-        return "Auto-resolving…"
+        return assist.active || agentRunning
+          ? "Auto-resolving…"
+          : "Resolve conflicts, then resume."
     }
-  }, [blockingConflictAssist, blockingMergeRunBlockedRebase])
+  }, [agentStatus, blockingConflictAssist, blockingMergeRunBlockedRebase])
+
+  const blockedRebaseBadgeLabel = useMemo(() => {
+    if (!blockingMergeRunBlockedRebase) {
+      return null
+    }
+    const assist = blockingConflictAssist
+    if (assist?.state === "timed_out" || assist?.state === "unsupported") {
+      return "Rebase blocked"
+    }
+    if (assist && assist.state !== "resumed") {
+      return "Rebase blocked (auto)"
+    }
+    if (agentStatus === "running") {
+      return "Rebase blocked (auto)"
+    }
+    return "Rebase blocked"
+  }, [agentStatus, blockingConflictAssist, blockingMergeRunBlockedRebase])
 
   return (
     <Card
@@ -1889,7 +1908,7 @@ export function TaskCard({
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <Badge variant="amber" size="xs">
-                    Rebase blocked
+                    {blockedRebaseBadgeLabel ?? "Rebase blocked"}
                   </Badge>
                   <div className="truncate text-[11px] text-foreground/70">
                     {blockedRebaseSummary ?? "Resolve conflicts, then resume."}
