@@ -5,6 +5,7 @@ import {
   fetchEpicGithubRepoConfig,
   fetchEpicLinearConfig,
   fetchEpics,
+  fetchGitHubPullRequest,
   fetchGitHubStatus,
   fetchHosts,
   fetchLinearMilestones,
@@ -76,6 +77,31 @@ export function useGitHubStatusQuery() {
   return useQuery({
     queryKey: queryKeys.githubStatus(),
     queryFn: ({ signal }) => fetchGitHubStatus({ signal }),
+  })
+}
+
+export function useGitHubPullRequestQuery(
+  owner: string | null,
+  repo: string | null,
+  number: number | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey:
+      owner === null || repo === null || number === null
+        ? ["github", "pulls", "none"]
+        : queryKeys.githubPullRequest(owner, repo, number),
+    queryFn: ({ signal }) => {
+      if (owner === null || repo === null || number === null) {
+        throw new Error("GitHub PR ref missing for pull request query.")
+      }
+      return fetchGitHubPullRequest(owner, repo, number, { signal })
+    },
+    enabled:
+      (options?.enabled ?? true) &&
+      owner !== null &&
+      repo !== null &&
+      number !== null,
   })
 }
 

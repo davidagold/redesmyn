@@ -18,6 +18,17 @@ export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
 export type GithubRepo = components["schemas"]["GithubRepoResponse"]
 export type EpicGithubRepoConfig = components["schemas"]["EpicGithubRepoConfigResponse"]
 
+export type GitHubPullRequest = {
+  owner: string
+  repo: string
+  number: number
+  url: string
+  state: "open" | "closed"
+  draft: boolean
+  merged: boolean
+  title: string | null
+}
+
 export type LinearProject = {
   id: string
   name: string
@@ -260,6 +271,17 @@ export async function fetchGitHubStatus(options?: {
   signal?: AbortSignal
 }): Promise<GitHubStatus> {
   return requestJson("/v1/github/status", { signal: options?.signal })
+}
+
+export async function fetchGitHubPullRequest(
+  owner: string,
+  repo: string,
+  number: number,
+  options?: { signal?: AbortSignal },
+): Promise<GitHubPullRequest> {
+  return requestJson(`/v1/github/pulls/${owner}/${repo}/${number}`, {
+    signal: options?.signal,
+  })
 }
 
 export async function postLinearLogout(): Promise<LinearStatus> {

@@ -95,7 +95,7 @@ from redesmyn.integrations.github_config import (
     load_github_integration_config,
     update_github_integration_config,
 )
-from redesmyn.integrations.github_pr import GitHubPullRequestError
+from redesmyn.integrations.github_pr import GitHubPullRequestError, fetch_pull_request
 from redesmyn.integrations.github_pr_actions import (
     GitHubPullRequestActionError,
     ensure_task_pull_request,
@@ -160,6 +160,7 @@ from redesmyn.schemas.core import (
     GitHubIntegrationConfigResponse,
     GitHubIntegrationConfigUpdateRequest,
     GitHubPullRequestOpenResponse,
+    GitHubPullRequestResponse,
     GitHubStatusResponse,
     LinearProjectResponse,
     LinearStatusResponse,
@@ -2177,6 +2178,43 @@ async def open_task_github_pr(
         task=TaskResponse.model_validate(task, from_attributes=True),
         pr_id=pr.ref.to_id(),
         url=pr.url,
+    )
+
+
+@v1.get(
+    "/github/pulls/{owner}/{repo}/{number}",
+    response_model=GitHubPullRequestResponse,
+)
+async def github_pull_request(
+    owner: str, repo: str, number: int
+) -> GitHubPullRequestResponse:
+    store = default_github_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="GitHub is not connected")
+
+    try:
+        pr = await fetch_pull_request(
+            owner=owner,
+            repo=repo,
+            number=number,
+            access_token=creds.access_token,
+        )
+    except GitHubPullRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    state: Literal["open", "closed"] = "open"
+    if pr.state == "closed":
+        state = "closed"
+    return GitHubPullRequestResponse(
+        owner=owner,
+        repo=repo,
+        number=pr.ref.number,
+        url=pr.url,
+        state=state,
+        draft=bool(pr.draft) if pr.draft is not None else False,
+        merged=bool(pr.merged) if pr.merged is not None else False,
+        title=pr.title,
     )
 
 

@@ -51,6 +51,8 @@ class GitHubPullRequestInfo:
     url: str
     state: str | None = None
     title: str | None = None
+    draft: bool | None = None
+    merged: bool | None = None
 
 
 def _headers(access_token: str) -> dict[str, str]:
@@ -71,11 +73,26 @@ def _parse_pr_payload(
         url = f"https://github.com/{owner}/{repo}/pull/{number}"
     state = payload.get("state")
     title = payload.get("title")
+
+    draft = payload.get("draft")
+    draft_value = draft if isinstance(draft, bool) else None
+
+    merged_at = payload.get("merged_at")
+    merged_value: bool | None
+    if merged_at is None:
+        merged_value = False if "merged_at" in payload else None
+    elif isinstance(merged_at, str):
+        merged_value = True
+    else:
+        merged_value = None
+
     return GitHubPullRequestInfo(
         ref=GitHubPullRequestRef(owner=owner, repo=repo, number=number),
         url=url,
         state=state if isinstance(state, str) else None,
         title=title if isinstance(title, str) else None,
+        draft=draft_value,
+        merged=merged_value,
     )
 
 
@@ -163,4 +180,33 @@ async def create_pull_request(
 
     if not isinstance(raw, dict):
         raise GitHubPullRequestError("GitHub PR create response is not an object")
+    return _parse_pr_payload(owner, repo, raw)
+
+
+async def fetch_pull_request(
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    access_token: str,
+) -> GitHubPullRequestInfo:
+    if number <= 0:
+        raise GitHubPullRequestError("PR number must be > 0")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.get(
+            f"{GITHUB_API_BASE_URL}/repos/{owner}/{repo}/pulls/{number}",
+            headers=_headers(access_token),
+        )
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            detail = (resp.text or "").strip()
+            raise GitHubPullRequestError(
+                f"GitHub PR fetch failed ({resp.status_code}): {detail or e}"
+            ) from e
+        raw = resp.json()
+
+    if not isinstance(raw, dict):
+        raise GitHubPullRequestError("GitHub PR fetch response is not an object")
     return _parse_pr_payload(owner, repo, raw)

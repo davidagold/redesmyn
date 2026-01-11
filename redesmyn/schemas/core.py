@@ -836,6 +836,17 @@ class GitHubIntegrationConfigUpdateRequest(ApiRequest):
     auto_force_push: bool | None = None
 
 
+class GitHubPullRequestResponse(ApiResponse):
+    owner: str
+    repo: str
+    number: int
+    url: str
+    state: Literal["open", "closed"]
+    draft: bool = False
+    merged: bool = False
+    title: str | None = None
+
+
 class GitHubPullRequestOpenResponse(ApiResponse):
     task: TaskResponse
     pr_id: str

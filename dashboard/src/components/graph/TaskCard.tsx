@@ -39,6 +39,7 @@ import {
 } from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { GithubIcon } from "@/components/github/GithubIcon"
+import { GitHubPullRequestBadge } from "@/components/github/GitHubPullRequestBadge"
 import { LinearIcon } from "@/components/linear/LinearIcon"
 import { Markdown, MarkdownInline } from "@/components/markdown"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
@@ -387,6 +388,7 @@ export function TaskCard({
   const agentPreviewDimmed =
     agentSession?.status === "stopped" || agentSession?.status === "error"
   const linearIssueId = task?.linearIssueId ?? null
+  const githubPrId = task?.githubPrId ?? null
   const linearIdentifier = task?.linearIdentifier ?? null
   const linearPillLabel = linearIdentifier ?? "Linear"
   const linearStateType = task?.linearStateType ?? null
@@ -1617,7 +1619,7 @@ export function TaskCard({
         }
       }}
     >
-      {linearIssueId ? (
+      {linearIssueId || githubPrId ? (
         <div
           className={cn(
             "nodrag nopan absolute left-0 top-0 z-40 flex items-center gap-1 -translate-y-[calc(100%+8px)]",
@@ -1625,58 +1627,68 @@ export function TaskCard({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
-          <Tooltip>
-            <TooltipTrigger
-              render={(tooltipTriggerProps) => (
-                <button
-                  {...tooltipTriggerProps}
-                  type="button"
-                  className={cn(
-                    "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border-2 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
-                    "transition-colors duration-200",
-                    actionsMenuOpen
-                      ? "bg-accent/40"
-                      : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
-                    linearPillBorderClass,
-                    linearObservedOld ? "border-opacity-70" : null,
-                    linearStateMismatch ? "ring-1 ring-amber-300/25" : null,
-                  )}
-                  aria-label={linearPillLabel}
-                  onClick={() => {
-                    window.open(
-                      `/v1/linear/issues/${linearIssueId}/open`,
-                      "_blank",
-                      "noreferrer",
-                    )
-                  }}
-                >
-                  <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
-                    <LinearIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                  <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
-                    {linearPillLabel}
-                  </span>
-                </button>
-              )}
-            />
-            <TooltipContent side="bottom" sideOffset={10}>
-              <div className="space-y-1">
-                <div className="text-xs">
-                  Linear: {linearStateLabel(linearStateName, linearStateType)}
+          {linearIssueId ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={(tooltipTriggerProps) => (
+                  <button
+                    {...tooltipTriggerProps}
+                    type="button"
+                    className={cn(
+                      "group/linear inline-flex h-6 max-w-48 items-center overflow-hidden whitespace-nowrap rounded-full border-2 shadow-sm backdrop-blur focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+                      "transition-colors duration-200",
+                      actionsMenuOpen
+                        ? "bg-accent/40"
+                        : "bg-transparent group-hover:bg-accent/40 group-focus-within:bg-accent/40",
+                      linearPillBorderClass,
+                      linearObservedOld ? "border-opacity-70" : null,
+                      linearStateMismatch ? "ring-1 ring-amber-300/25" : null,
+                    )}
+                    aria-label={linearPillLabel}
+                    onClick={() => {
+                      window.open(
+                        `/v1/linear/issues/${linearIssueId}/open`,
+                        "_blank",
+                        "noreferrer",
+                      )
+                    }}
+                  >
+                    <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
+                      <LinearIcon className="size-3.5 text-muted-foreground" />
+                    </span>
+                    <span className="min-w-0 truncate pr-2 font-mono text-[0.625rem] leading-none text-muted-foreground">
+                      {linearPillLabel}
+                    </span>
+                  </button>
+                )}
+              />
+              <TooltipContent side="bottom" sideOffset={10}>
+                <div className="space-y-1">
+                  <div className="text-xs">
+                    Linear: {linearStateLabel(linearStateName, linearStateType)}
+                  </div>
+                  {linearStateMismatch ? (
+                    <div className="text-xs text-muted-foreground">
+                      Out of sync with local
+                    </div>
+                  ) : null}
+                  {linearObservedAtLabel ? (
+                    <div className="text-xs text-muted-foreground">
+                      Last observed {linearObservedAtLabel}
+                    </div>
+                  ) : null}
                 </div>
-                {linearStateMismatch ? (
-                  <div className="text-xs text-muted-foreground">
-                    Out of sync with local
-                  </div>
-                ) : null}
-                {linearObservedAtLabel ? (
-                  <div className="text-xs text-muted-foreground">
-                    Last observed {linearObservedAtLabel}
-                  </div>
-                ) : null}
-              </div>
-            </TooltipContent>
-          </Tooltip>
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
+
+          {githubPrId ? (
+            <GitHubPullRequestBadge
+              prId={githubPrId}
+              taskState={task?.state ?? "todo"}
+              activeBackground={actionsMenuOpen}
+            />
+          ) : null}
         </div>
       ) : null}
       {taskId !== null ? (

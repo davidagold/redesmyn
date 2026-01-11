@@ -10,6 +10,8 @@ export const queryKeys = {
   orchestrationDefaults: () => ["config", "orchestrationDefaults"] as const,
   linearStatus: () => ["linear", "status"] as const,
   githubStatus: () => ["github", "status"] as const,
+  githubPullRequest: (owner: string, repo: string, number: number) =>
+    ["github", "pulls", owner, repo, number] as const,
   linearProjects: () => ["linear", "projects"] as const,
   linearMilestones: (projectId: string) =>
     ["linear", "projects", projectId, "milestones"] as const,
