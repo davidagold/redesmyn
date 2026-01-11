@@ -40,15 +40,7 @@ type DismissibleCalloutProps = {
 
 function BranchReadyLeading() {
   return (
-    <span
-      className={cn(
-        "inline-flex size-5 shrink-0 items-center justify-center rounded-sm",
-        "bg-emerald-400/10 text-emerald-100",
-      )}
-      aria-hidden="true"
-    >
-      <Play className="size-3" />
-    </span>
+    <Play className="size-4 shrink-0 text-emerald-200" aria-hidden="true" />
   )
 }
 
