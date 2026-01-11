@@ -7,9 +7,7 @@ import {
 } from "react"
 import { useIsFetching } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
-import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiHttpError } from "@/api"
@@ -44,6 +42,14 @@ import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import { labelForAgentKind } from "@/lib/agent-kind"
 import { Shimmer } from "@/components/ui/shimmer"
 import {
+  ActionErrorCallout,
+  BlockedRebaseCallout,
+  MergeReadySpineWarningCallout,
+  ResumableMergeCallout,
+  SuccessToastCallout,
+  type TaskCardActionError,
+} from "@/components/graph/TaskCardCallouts"
+import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -62,22 +68,17 @@ import {
 import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
 import { useMergeReadySpineConfirm } from "@/hooks/useMergeReadySpineConfirm"
 import {
-  ChevronDown,
-  ChevronUp,
   ArrowUp,
-  CheckCircle2,
   EllipsisVertical,
   AlertTriangle,
   GitBranch,
   GitMerge,
   Ghost,
   Layers,
-  MessageSquareText,
   Play,
   RotateCcw,
   Square,
   Terminal,
-  X,
 } from "lucide-react"
 
 interface TaskCardProps {
@@ -373,17 +374,12 @@ export function TaskCard({
     }
     return "border-border/60"
   })()
-  const [actionErrorExpanded, setActionErrorExpanded] = useState(false)
-  const [actionError, setActionError] = useState<{
-    title: string
-    summary: string
-    raw: string
-  } | null>(null)
+  const [actionError, setActionError] = useState<TaskCardActionError | null>(
+    null,
+  )
   const [allowRunningPrompt, setAllowRunningPrompt] =
     useState<AllowRunningPrompt | null>(null)
   const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
-  const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
-  const [resumableMergeExpanded, setResumableMergeExpanded] = useState(false)
   const [blockedRebaseCompletionNotice, setBlockedRebaseCompletionNotice] =
     useState<string | null>(null)
   const [mergeReadySpineNotice, setMergeReadySpineNotice] =
@@ -535,12 +531,6 @@ export function TaskCard({
   ])
 
   useEffect(() => {
-    if (!blockingMergeRunBlockedRebase) {
-      setBlockedRebaseExpanded(false)
-    }
-  }, [blockingMergeRunBlockedRebase])
-
-  useEffect(() => {
     if (!isSelected) {
       setAgentComposerExpanded(false)
     }
@@ -548,15 +538,12 @@ export function TaskCard({
 
   function clearActionError() {
     setActionError(null)
-    setActionErrorExpanded(false)
   }
 
   function setActionErrorFromException(
     actionLabel: string,
     exception: unknown,
   ) {
-    setActionErrorExpanded(false)
-
     if (exception instanceof ApiHttpError) {
       const summary = exception.detail?.trim() || exception.message
       setActionError({
@@ -604,12 +591,6 @@ export function TaskCard({
       !blockingMergeRunBlockedRebase
     )
   }, [blockingMergeRunBlockedRebase, canResumeMerge, mergeRun, node.id])
-
-  useEffect(() => {
-    if (!showResumableMergeCallout) {
-      setResumableMergeExpanded(false)
-    }
-  }, [showResumableMergeCallout])
 
   const quickActionsEnabled =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -1937,407 +1918,64 @@ export function TaskCard({
           onClick={(e) => e.stopPropagation()}
         >
           {mergeReadySpineNotice ? (
-            <Alert variant="amber" className="gap-2 shadow-lg">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <AlertTriangle className="size-3.5 text-amber-400" />
-                  <div className="text-xs font-medium text-foreground">
-                    Merge spine warning
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Dismiss warning"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setMergeReadySpineNotice(null)
-                  }}
-                >
-                  <X className="size-3" />
-                </Button>
-              </div>
-              <div className="text-xs text-foreground/80">
-                {mergeReadySpineNotice}
-              </div>
-            </Alert>
+            <MergeReadySpineWarningCallout
+              notice={mergeReadySpineNotice}
+              onDismiss={() => setMergeReadySpineNotice(null)}
+            />
           ) : null}
           {actionError ? (
-            <Alert variant="destructive" className="gap-2 shadow-lg">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <AlertTriangle className="size-3.5 text-destructive" />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={(triggerProps) => (
-                        <div
-                          {...triggerProps}
-                          className={cn(
-                            "truncate text-xs font-medium text-foreground",
-                            triggerProps.className,
-                          )}
-                        >
-                          {actionError.title}
-                        </div>
-                      )}
-                    />
-                    <TooltipContent side="top" sideOffset={8}>
-                      {actionError.title}
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <Button
-                        {...triggerProps}
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Dismiss error"
-                        className={cn(triggerProps.className)}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          clearActionError()
-                        }}
-                      >
-                        <X className="size-3" />
-                      </Button>
-                    )}
-                  />
-                  <TooltipContent side="bottom" sideOffset={10}>
-                    Dismiss error
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-
-              <div
-                className={cn(
-                  "break-words text-xs text-foreground/80",
-                  actionErrorExpanded ? "whitespace-pre-wrap" : "line-clamp-2",
-                )}
-              >
-                {actionError.summary}
-              </div>
-
-              {mergeRunBlockedRebase ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      rebaseAttachCommand
-                        ? null
-                        : "No task id recorded for this blocked step."
-                    }
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!rebaseAttachCommand) {
-                        return
-                      }
-                      void copyToClipboard(rebaseAttachCommand)
-                    }}
-                  >
-                    <Terminal className="size-3" />
-                    Copy attach
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    disabledReason={
-                      rebaseRemediationMessage
-                        ? null
-                        : "No remediation message available."
-                    }
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!rebaseRemediationMessage) {
-                        return
-                      }
-                      void copyToClipboard(rebaseRemediationMessage)
-                    }}
-                  >
-                    <MessageSquareText className="size-3" />
-                    Copy agent note
-                  </Button>
-                </div>
-              ) : null}
-
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setActionErrorExpanded((current) => !current)
-                  }}
-                >
-                  {actionErrorExpanded ? (
-                    <ChevronUp className="size-3" />
-                  ) : (
-                    <ChevronDown className="size-3" />
-                  )}
-                  {actionErrorExpanded ? "Hide" : "Show"} details
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void copyToClipboard(actionError.raw)
-                  }}
-                >
-                  Copy
-                </Button>
-              </div>
-
-              {actionErrorExpanded ? (
-                <div className="mt-1 max-h-40 overflow-auto rounded-md bg-background/40 px-2 py-1.5 font-mono text-[0.625rem] text-foreground/80">
-                  <div className="whitespace-pre-wrap break-words">
-                    {actionError.raw}
-                  </div>
-                </div>
-              ) : null}
-            </Alert>
+            <ActionErrorCallout
+              error={actionError}
+              mergeRunBlockedRebase={mergeRunBlockedRebase}
+              rebaseAttachCommand={rebaseAttachCommand}
+              rebaseRemediationMessage={rebaseRemediationMessage}
+              onDismiss={clearActionError}
+            />
           ) : null}
 
           {blockingMergeRunBlockedRebase ? (
-            <Alert
+            <BlockedRebaseCallout
               variant={blockedRebaseVariant}
-              className={cn(
-                "group gap-1 shadow-none ring-0",
-                "max-w-full overflow-hidden",
-                "cursor-pointer select-none",
-              )}
-              role="button"
-              tabIndex={0}
-              aria-expanded={blockedRebaseExpanded}
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setBlockedRebaseExpanded((current) => !current)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setBlockedRebaseExpanded((current) => !current)
-                }
-              }}
-            >
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <Badge variant={blockedRebaseVariant} size="xs">
-                    {blockedRebaseBadgeLabel ?? "Rebase blocked"}
-                  </Badge>
-                  <div className="truncate text-[11px] text-foreground/70">
-                    {blockedRebaseSummary ?? "Resolve conflicts, then resume."}
-                  </div>
-                </div>
-                <div
-                  className={cn(
-                    "flex shrink-0 items-center gap-1 transition-opacity",
-                    blockedRebaseExpanded
-                      ? "opacity-100"
-                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                  )}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {blockingMergeRunStatus === "resumable" &&
-                  blockingConflictAssist?.active !== true ? (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        void handleResumeBlockingMerge()
-                      }}
-                    >
-                      <Play className="size-3" />
-                      {blockingMergeRun?.operation === "restack"
-                        ? "Resume restack"
-                        : "Resume merge"}
-                    </Button>
-                  ) : null}
-
-                  {blockingMergeRunStatus === "blocked" &&
-                  blockingAttachCommand ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <Button
-                            {...triggerProps}
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label="Copy attach command"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              void copyToClipboard(blockingAttachCommand)
-                            }}
-                          >
-                            <Terminal />
-                          </Button>
-                        )}
-                      />
-                      <TooltipContent
-                        side="bottom"
-                        sideOffset={10}
-                        showArrow={false}
-                      >
-                        Copy attach
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
-
-                  {blockingMergeRunStatus === "blocked" &&
-                  blockingRemediationMessage ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <Button
-                            {...triggerProps}
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label="Copy agent note"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              void copyToClipboard(blockingRemediationMessage)
-                            }}
-                          >
-                            <MessageSquareText />
-                          </Button>
-                        )}
-                      />
-                      <TooltipContent
-                        side="bottom"
-                        sideOffset={10}
-                        showArrow={false}
-                      >
-                        Copy agent note
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
-                </div>
-              </div>
-
-              {blockedRebaseExpanded && blockingConflictAssist?.detail ? (
-                <div className="text-[11px] text-foreground/70">
-                  {blockingConflictAssist.detail}
-                </div>
-              ) : null}
-            </Alert>
+              badgeLabel={blockedRebaseBadgeLabel ?? "Rebase blocked"}
+              summary={
+                blockedRebaseSummary ?? "Resolve conflicts, then resume."
+              }
+              detail={blockingConflictAssist?.detail ?? null}
+              status={
+                blockingMergeRunStatus === "resumable" ? "resumable" : "blocked"
+              }
+              assistActive={blockingConflictAssist?.active === true}
+              operation={
+                blockingMergeRun?.operation === "restack" ? "restack" : "merge"
+              }
+              attachCommand={blockingAttachCommand}
+              remediationMessage={blockingRemediationMessage}
+              onResume={() => void handleResumeBlockingMerge()}
+            />
           ) : null}
 
           {showResumableMergeCallout ? (
-            <Alert
+            <ResumableMergeCallout
               variant={resumableMergeVariant}
-              className={cn(
-                "group gap-1 shadow-none ring-0",
-                "max-w-full overflow-hidden",
-                "cursor-pointer select-none",
-              )}
-              role="button"
-              tabIndex={0}
-              aria-expanded={resumableMergeExpanded}
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setResumableMergeExpanded((current) => !current)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setResumableMergeExpanded((current) => !current)
-                }
-              }}
-            >
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <Badge variant={resumableMergeVariant} size="xs">
-                    {resumableMergeBadgeLabel ?? "Ready to resume"}
-                  </Badge>
-                  <div className="truncate text-[11px] text-foreground/70">
-                    {resumableMergeSummary ??
-                      "Conflicts resolved; ready to resume."}
-                  </div>
-                </div>
-                <div
-                  className={cn(
-                    "flex shrink-0 items-center gap-1 transition-opacity",
-                    resumableMergeExpanded
-                      ? "opacity-100"
-                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                  )}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {mergeConflictAssist?.active !== true ? (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                      disabledReason={
-                        pendingMerge !== null
-                          ? "Action in progress"
-                          : gitDisabledReason
-                            ? gitDisabledReason
-                            : null
-                      }
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        void handleResumeMerge()
-                      }}
-                    >
-                      <Play className="size-3" />
-                      {mergeRunOperation === "restack"
-                        ? "Resume restack"
-                        : "Resume merge"}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-
-              {resumableMergeExpanded && mergeConflictAssist?.detail ? (
-                <div className="text-[11px] text-foreground/70">
-                  {mergeConflictAssist.detail}
-                </div>
-              ) : null}
-            </Alert>
+              badgeLabel={resumableMergeBadgeLabel ?? "Ready to resume"}
+              summary={
+                resumableMergeSummary ?? "Conflicts resolved; ready to resume."
+              }
+              detail={mergeConflictAssist?.detail ?? null}
+              assistActive={mergeConflictAssist?.active === true}
+              operation={mergeRunOperation}
+              disabledReason={
+                pendingMerge !== null ? "Action in progress" : gitDisabledReason
+              }
+              onResume={() => void handleResumeMerge()}
+            />
           ) : null}
 
           {blockedRebaseCompletionNotice ? (
-            <Alert variant="emerald" className="gap-1 shadow-lg">
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <CheckCircle2 className="size-3.5 text-emerald-300" />
-                  <div className="truncate text-[11px] text-foreground/80">
-                    {blockedRebaseCompletionNotice}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Dismiss notice"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setBlockedRebaseCompletionNotice(null)
-                  }}
-                >
-                  <X className="size-3" />
-                </Button>
-              </div>
-            </Alert>
+            <SuccessToastCallout
+              message={blockedRebaseCompletionNotice}
+              onDismiss={() => setBlockedRebaseCompletionNotice(null)}
+            />
           ) : null}
         </div>
       ) : null}
