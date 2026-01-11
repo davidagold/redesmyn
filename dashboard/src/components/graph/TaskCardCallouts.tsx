@@ -38,6 +38,20 @@ type DismissibleCalloutProps = {
   onDismiss: () => void
 }
 
+function BranchReadyLeading() {
+  return (
+    <span
+      className={cn(
+        "inline-flex size-5 shrink-0 items-center justify-center rounded-sm",
+        "bg-emerald-400/10 text-emerald-100",
+      )}
+      aria-hidden="true"
+    >
+      <Play className="size-3" />
+    </span>
+  )
+}
+
 function DismissibleCallout({
   variant,
   icon,
@@ -402,24 +416,34 @@ export function BlockedRebaseCallout({
   remediationMessage: string | null
   onResume: () => void
 }) {
+  if (status === "resumable" && !assistActive) {
+    return (
+      <ExpandableStatusCallout
+        variant={variant}
+        leading={<BranchReadyLeading />}
+        summary="Branch is ready"
+        detail={null}
+        actions={
+          <Button
+            variant="outline"
+            size="xs"
+            className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onResume()
+            }}
+          >
+            {operation === "restack" ? "Resume restack" : "Resume merge"}
+          </Button>
+        }
+        actionsVisibility="always"
+      />
+    )
+  }
+
   const actions = (
     <>
-      {status === "resumable" && !assistActive ? (
-        <Button
-          variant="outline"
-          size="xs"
-          className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onResume()
-          }}
-        >
-          <Play className="size-3" />
-          {operation === "restack" ? "Resume restack" : "Resume merge"}
-        </Button>
-      ) : null}
-
       {status === "blocked" && attachCommand ? (
         <Tooltip>
           <TooltipTrigger
@@ -489,7 +513,7 @@ export function BlockedRebaseCallout({
 
 export function ResumableMergeCallout({
   variant,
-  detail,
+  detail: _detail,
   operation,
   disabledReason,
   onResume,
@@ -519,19 +543,9 @@ export function ResumableMergeCallout({
   return (
     <ExpandableStatusCallout
       variant={variant}
-      leading={
-        <span
-          className={cn(
-            "inline-flex size-5 shrink-0 items-center justify-center rounded-sm border",
-            "border-emerald-400/25 bg-emerald-400/10 text-emerald-100",
-          )}
-          aria-hidden="true"
-        >
-          <Play className="size-3" />
-        </span>
-      }
+      leading={<BranchReadyLeading />}
       summary="Branch is ready"
-      detail={detail}
+      detail={null}
       actions={actions}
       actionsVisibility="always"
     />
