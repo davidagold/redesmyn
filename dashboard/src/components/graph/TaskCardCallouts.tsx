@@ -326,9 +326,9 @@ export function ExpandableStatusCallout({
         "max-w-full overflow-hidden",
         canExpand ? "cursor-pointer select-none" : "cursor-default",
       )}
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
+      role={canExpand ? "button" : undefined}
+      tabIndex={canExpand ? 0 : undefined}
+      aria-expanded={canExpand ? expanded : undefined}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
