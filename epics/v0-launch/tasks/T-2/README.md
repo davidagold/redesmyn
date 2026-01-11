@@ -5,8 +5,6 @@
 ```yaml
 id: T-2
 stacked_on: T-1
-node:
-  branch: rn/v0-launch/T-2-repo-selector
 ```
 
 ## Plan

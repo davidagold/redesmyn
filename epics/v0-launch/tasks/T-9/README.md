@@ -7,8 +7,6 @@ id: T-9
 stacked_on: T-7
 must_land_after:
   - T-8
-node:
-  branch: rn/v0-launch/T-9-justfile-coherence
 ```
 
 ## Plan

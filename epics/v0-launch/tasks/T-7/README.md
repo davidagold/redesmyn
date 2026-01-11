@@ -7,8 +7,6 @@ id: T-7
 stacked_on: T-6
 must_land_after:
   - T-3
-node:
-  branch: rn/v0-launch/T-7-rn-up-down
 ```
 
 ## Plan

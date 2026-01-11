@@ -5,8 +5,6 @@
 ```yaml
 id: T-6
 stacked_on: T-2
-node:
-  branch: rn/v0-launch/T-6-daemon-up-down-status
 ```
 
 ## Plan

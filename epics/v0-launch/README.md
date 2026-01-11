@@ -59,6 +59,10 @@ The server must not execute repo-local work. This removes the current hybrid beh
 - “Observer” is a daemon capability (debug-only tooling may exist, but not as a required product command).
 - Dev HMR/reload is `just dev` (or equivalent), not `rn dev`.
 
+### 5.3 Task-doc branch metadata is not canonical
+
+Task docs may include branch hints, but v0 treats the DB + git state as the source of truth for branch/worktree names.
+
 ## 6) Deliverables (definition of “done”)
 
 - A user can:

@@ -5,8 +5,6 @@
 ```yaml
 id: T-8
 stacked_on: T-1
-node:
-  branch: rn/v0-launch/T-8-packaged-dashboard
 ```
 
 ## Plan

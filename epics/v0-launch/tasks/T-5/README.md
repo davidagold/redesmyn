@@ -5,8 +5,6 @@
 ```yaml
 id: T-5
 stacked_on: T-4
-node:
-  branch: rn/v0-launch/T-5-daemon-observation
 ```
 
 ## Plan

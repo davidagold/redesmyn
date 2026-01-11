@@ -5,8 +5,6 @@
 ```yaml
 id: T-1
 stacked_on: null
-node:
-  branch: rn/v0-launch/T-1-cli-contract
 ```
 
 ## Plan

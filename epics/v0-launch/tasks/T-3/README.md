@@ -5,8 +5,6 @@
 ```yaml
 id: T-3
 stacked_on: T-5
-node:
-  branch: rn/v0-launch/T-3-remove-local-mode
 ```
 
 ## Plan

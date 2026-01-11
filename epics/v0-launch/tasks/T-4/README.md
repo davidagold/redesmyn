@@ -5,8 +5,6 @@
 ```yaml
 id: T-4
 stacked_on: T-1
-node:
-  branch: rn/v0-launch/T-4-daemon-agent-lifecycle
 ```
 
 ## Plan
