@@ -14,6 +14,7 @@ from typing import Any, Protocol, cast
 import structlog
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from redesmyn.agent_kind import resolve_agent_backend
@@ -537,7 +538,22 @@ async def supervise_once(
                 ended_at=None,
             )
             session.add(agent_session)
-            await session.flush()
+            try:
+                await session.flush()
+            except IntegrityError as exc:
+                message = str(getattr(exc, "orig", exc))
+                if "UNIQUE constraint failed: agent_sessions.task_id" not in message:
+                    raise
+                # Another writer may have inserted the active session row after
+                # we started this supervise tick (e.g. concurrent start/restart).
+                # Roll back and let the next tick reconcile without crashing the driver.
+                await session.rollback()
+                log.warning(
+                    "agent_session.insert.raced",
+                    task_id=task_id,
+                    error=message,
+                )
+                return 0
             active_session_by_task_id[task_id] = agent_session
             changed = True
         else:

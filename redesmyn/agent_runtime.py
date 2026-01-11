@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.agent_kind import resolve_agent_kind
@@ -819,7 +820,18 @@ async def ensure_active_task_agent_session_row(
             ended_at=None,
         )
         session.add(current)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            message = str(getattr(exc, "orig", exc))
+            if "UNIQUE constraint failed: agent_sessions.task_id" not in message:
+                raise
+            # A concurrent start may have created the active session row after we
+            # checked. Roll back and reuse the committed row.
+            await session.rollback()
+            current = await load_active_task_agent_session_row(session, task_id=task_id)
+            if current is None:
+                raise
         return current
 
     if current.started_at is None:
