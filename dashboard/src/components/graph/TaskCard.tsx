@@ -265,6 +265,7 @@ export function TaskCard({
   const outOfSync = stackInSync === false
   const mergeRunStatus = mergeRun?.status ?? null
   const mergeRunOperation = mergeRun?.operation ?? "merge"
+  const mergeConflictAssist = mergeRun?.conflictAssist ?? null
   const mergeRunBlocked = mergeRunStatus === "blocked"
   const rebaseRemediation = getRebaseRemediation(mergeRun, node.branchName)
   const mergeRunBlockedRebase = rebaseRemediation !== null
@@ -439,7 +440,13 @@ export function TaskCard({
     return () => window.clearTimeout(id)
   }, [gitActionInProgress])
 
-  const showGitActionGlow = gitActionInProgress !== null
+  const mergeAutoResumeActive =
+    mergeRunStatus === "resumable" &&
+    mergeConflictAssist?.active === true &&
+    mergeConflictAssist.state !== "timed_out" &&
+    mergeConflictAssist.state !== "unsupported"
+  const showGitActionGlow =
+    gitActionInProgress !== null || mergeAutoResumeActive
 
   useEffect(() => {
     if (!mergeReadySpineNotice) {
@@ -1981,7 +1988,9 @@ export function TaskCard({
                 disabledReason={
                   pendingMerge !== null
                     ? "Action in progress"
-                    : gitDisabledReason
+                    : mergeAutoResumeActive
+                      ? "Auto-resume in progress"
+                      : gitDisabledReason
                 }
                 onClick={(e) => {
                   e.preventDefault()
@@ -1990,9 +1999,11 @@ export function TaskCard({
                 }}
               >
                 <Play className="size-3" />
-                {mergeRunOperation === "restack"
-                  ? "Resume restack"
-                  : "Resume merge"}
+                {mergeAutoResumeActive
+                  ? "Auto-resuming…"
+                  : mergeRunOperation === "restack"
+                    ? "Resume restack"
+                    : "Resume merge"}
               </Button>
             </div>
           ) : null}
