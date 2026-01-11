@@ -6,6 +6,7 @@ import { ResourceBadge } from "@/components/ui/resource-badge"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiHttpError } from "@/api"
 import {
+  useCancelMergeRunMutation,
   useMergeTaskMutation,
   useRestartTaskAgentMutation,
   useRestackTaskMutation,
@@ -254,6 +255,7 @@ export function TaskCard({
   const mergeTaskMutation = useMergeTaskMutation()
   const restackTaskMutation = useRestackTaskMutation()
   const resumeMergeRunMutation = useResumeMergeRunMutation()
+  const cancelMergeRunMutation = useCancelMergeRunMutation()
 
   const now = Date.now()
   const stackInSync = node.stackInSync ?? null
@@ -305,7 +307,7 @@ export function TaskCard({
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [pendingMerge, setPendingMerge] =
-    useState<"ready" | "merge" | "mergeStack" | "restack" | "resume" | null>(
+    useState<"ready" | "merge" | "mergeStack" | "restack" | "resume" | "cancel" | null>(
       null,
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
@@ -424,6 +426,12 @@ export function TaskCard({
   const agentStatus = agentSession?.status ?? null
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
+  const canCancelMergeRun =
+    mergeRunStatus === "running" ||
+    mergeRunStatus === "blocked" ||
+    mergeRunStatus === "resumable"
+  const canCancelMergeRunAbortGit =
+    mergeRunStatus === "blocked" && Boolean(mergeRun?.blockedWorktreePath)
 
   const quickActionsEnabled =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -636,6 +644,28 @@ export function TaskCard({
       }
       setActionErrorFromException(
         mergeRunOperation === "restack" ? "Resume restack" : "Resume merge",
+        e,
+      )
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
+  async function handleCancelMergeRun({ abortGit }: { abortGit: boolean }) {
+    if (!mergeRun?.runId) {
+      return
+    }
+    setPendingMerge("cancel")
+    clearActionError()
+    try {
+      await cancelMergeRunMutation.mutateAsync({
+        epicId: node.epicId,
+        runId: mergeRun.runId,
+        request: { abortGit },
+      })
+    } catch (e) {
+      setActionErrorFromException(
+        abortGit ? "Cancel + abort git" : "Cancel run",
         e,
       )
     } finally {
@@ -1148,6 +1178,62 @@ export function TaskCard({
                         } run after resolving conflicts.`}
                     </TooltipContent>
                   </Tooltip>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              {canCancelMergeRun ? (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <DropdownMenuItem
+                          {...triggerProps}
+                          variant="destructive"
+                          disabled={pendingMerge !== null}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            void handleCancelMergeRun({ abortGit: false })
+                          }}
+                        >
+                          <Square className="size-3.5" />
+                          Cancel run
+                        </DropdownMenuItem>
+                      )}
+                    />
+                    <TooltipContent side="right" sideOffset={12} align="center">
+                      Cancel the in-progress merge/restack run.
+                    </TooltipContent>
+                  </Tooltip>
+                  {canCancelMergeRunAbortGit ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <DropdownMenuItem
+                            {...triggerProps}
+                            variant="destructive"
+                            disabled={pendingMerge !== null}
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void handleCancelMergeRun({ abortGit: true })
+                            }}
+                          >
+                            <RotateCcw className="size-3.5" />
+                            Cancel + abort git
+                          </DropdownMenuItem>
+                        )}
+                      />
+                      <TooltipContent
+                        side="right"
+                        sideOffset={12}
+                        align="center"
+                      >
+                        Cancel the run and attempt to abort the git operation in
+                        the blocked worktree (best-effort).
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   <DropdownMenuSeparator />
                 </>
               ) : null}

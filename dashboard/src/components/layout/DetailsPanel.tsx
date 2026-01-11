@@ -53,6 +53,12 @@ import { ResourceBadge } from "@/components/ui/resource-badge"
 import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   inferAgentKindFromCommand,
   inferStructuredAgentFromCommand,
   labelForAgentKind,
@@ -279,18 +285,48 @@ function MergeRunDetails({
                   </Button>
                 ) : null}
 
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabledReason={cancelPending ? "Action in progress" : null}
-                  onClick={() => {
-                    setCancelAbortGit(false)
-                    setCancelPromptOpen(true)
-                  }}
-                >
-                  <Square className="size-3" />
-                  Cancel run
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={(triggerProps) => (
+                      <Button {...triggerProps} variant="ghost" size="xs">
+                        {cancelPending ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          <Square className="size-3" />
+                        )}
+                        Cancel
+                        <ChevronDown className="size-3" />
+                      </Button>
+                    )}
+                  />
+                  <DropdownMenuContent align="end" sideOffset={10}>
+                    <DropdownMenuItem
+                      disabled={cancelPending}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setCancelAbortGit(false)
+                        setCancelPromptOpen(true)
+                      }}
+                    >
+                      <Square className="size-3.5" />
+                      Cancel run
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={cancelPending || !blockedWorktree}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setCancelAbortGit(true)
+                        setCancelPromptOpen(true)
+                      }}
+                    >
+                      <Square className="size-3.5" />
+                      Cancel + abort git
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 <CollapsibleTrigger
                   render={(triggerProps) => (
@@ -366,20 +402,6 @@ function MergeRunDetails({
                 >
                   <MessageSquareText className="size-3" />
                   Copy agent note
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabledReason={
-                    blockedWorktree ? null : "No blocked worktree recorded."
-                  }
-                  onClick={() => {
-                    setCancelAbortGit(true)
-                    setCancelPromptOpen(true)
-                  }}
-                >
-                  <Square className="size-3" />
-                  Cancel + abort git
                 </Button>
               </div>
             ) : null}
