@@ -54,3 +54,4 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 - `epics/ui-v0/tasks/T-10/README.md`: Make epic menu hover background full width.
 - `epics/ui-v0/tasks/T-11/README.md`: Animate task card expansion (reflow graph layout for variable node heights).
 - `epics/ui-v0/tasks/T-12/README.md`: Show tasteful in-flight progress indicators for all user actions (no silent requests).
+- `epics/ui-v0/tasks/T-13/README.md`: Revise git action status indicators to reflect run scope and the true blocker (avoid misattribution to the initiating task).
