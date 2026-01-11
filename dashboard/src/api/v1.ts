@@ -244,6 +244,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/github/pulls/{owner}/{repo}/{number}": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Github Pull Request */
+    get: operations["github_pull_request_v1_github_pulls__owner___repo___number__get"]
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/github/status": {
     parameters: {
       query?: never
@@ -1077,6 +1094,34 @@ export interface components {
       /** Prid */
       prId: string
       task: components["schemas"]["TaskResponse"]
+      /** Url */
+      url: string
+    }
+    /** GitHubPullRequestResponse */
+    GitHubPullRequestResponse: {
+      /**
+       * Draft
+       * @default false
+       */
+      draft: boolean
+      /**
+       * Merged
+       * @default false
+       */
+      merged: boolean
+      /** Number */
+      number: number
+      /** Owner */
+      owner: string
+      /** Repo */
+      repo: string
+      /**
+       * State
+       * @enum {string}
+       */
+      state: "open" | "closed"
+      /** Title */
+      title?: string | null
       /** Url */
       url: string
     }
@@ -2456,6 +2501,39 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["GitHubStatusResponse"]
+        }
+      }
+    }
+  }
+  github_pull_request_v1_github_pulls__owner___repo___number__get: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        owner: string
+        repo: string
+        number: number
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubPullRequestResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
         }
       }
     }

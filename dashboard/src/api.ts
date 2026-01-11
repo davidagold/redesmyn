@@ -17,17 +17,7 @@ export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
 export type GithubRepo = components["schemas"]["GithubRepoResponse"]
 export type EpicGithubRepoConfig = components["schemas"]["EpicGithubRepoConfigResponse"]
-
-export type GitHubPullRequest = {
-  owner: string
-  repo: string
-  number: number
-  url: string
-  state: "open" | "closed"
-  draft: boolean
-  merged: boolean
-  title: string | null
-}
+export type GitHubPullRequest = components["schemas"]["GitHubPullRequestResponse"]
 
 export type LinearProject = {
   id: string
