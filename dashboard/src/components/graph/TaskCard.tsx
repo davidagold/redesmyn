@@ -440,13 +440,32 @@ export function TaskCard({
     return () => window.clearTimeout(id)
   }, [gitActionInProgress])
 
-  const mergeAutoResumeActive =
+  const mergeAutoAssistActive =
     mergeRunStatus === "resumable" &&
     mergeConflictAssist?.active === true &&
     mergeConflictAssist.state !== "timed_out" &&
     mergeConflictAssist.state !== "unsupported"
+
+  const mergeAutoAssistStatusLabel = (() => {
+    if (!mergeAutoAssistActive) {
+      return null
+    }
+    switch (mergeConflictAssist?.state) {
+      case "waiting_for_agent_ready":
+        return "Starting agent…"
+      case "sent_waiting_for_turn_complete":
+        return "Waiting for agent…"
+      case "waiting_for_repo_clean":
+        return "Waiting for repo clean…"
+      case "ready_to_resume":
+        return "Auto-resuming…"
+      default:
+        return "Auto-resuming…"
+    }
+  })()
+
   const showGitActionGlow =
-    gitActionInProgress !== null || mergeAutoResumeActive
+    gitActionInProgress !== null || mergeAutoAssistActive
 
   useEffect(() => {
     if (!mergeReadySpineNotice) {
@@ -1981,30 +2000,83 @@ export function TaskCard({
 
           {shouldShowResumeButton ? (
             <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                disabledReason={
-                  pendingMerge !== null
-                    ? "Action in progress"
-                    : mergeAutoResumeActive
-                      ? "Auto-resume in progress"
+              {pendingMerge !== null || gitDisabledReason ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+                  disabledReason={
+                    pendingMerge !== null
+                      ? "Action in progress"
                       : gitDisabledReason
-                }
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void handleResumeMerge()
-                }}
-              >
-                <Play className="size-3" />
-                {mergeAutoResumeActive
-                  ? "Auto-resuming…"
-                  : mergeRunOperation === "restack"
-                    ? "Resume restack"
-                    : "Resume merge"}
-              </Button>
+                  }
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void handleResumeMerge()
+                  }}
+                >
+                  <Play className="size-3" />
+                  {mergeAutoAssistStatusLabel
+                    ? mergeAutoAssistStatusLabel
+                    : mergeRunOperation === "restack"
+                      ? "Resume restack"
+                      : "Resume merge"}
+                </Button>
+              ) : mergeConflictAssist?.detail ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={(triggerProps) => (
+                      <Button
+                        {...triggerProps}
+                        variant="outline"
+                        size="sm"
+                        className={cn(
+                          "border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50",
+                          triggerProps.className,
+                        )}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          void handleResumeMerge()
+                        }}
+                      >
+                        <Play className="size-3" />
+                        {mergeAutoAssistStatusLabel
+                          ? mergeAutoAssistStatusLabel
+                          : mergeRunOperation === "restack"
+                            ? "Resume restack"
+                            : "Resume merge"}
+                      </Button>
+                    )}
+                  />
+                  <TooltipContent
+                    side="bottom"
+                    sideOffset={10}
+                    showArrow={false}
+                  >
+                    {mergeConflictAssist.detail}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void handleResumeMerge()
+                  }}
+                >
+                  <Play className="size-3" />
+                  {mergeAutoAssistStatusLabel
+                    ? mergeAutoAssistStatusLabel
+                    : mergeRunOperation === "restack"
+                      ? "Resume restack"
+                      : "Resume merge"}
+                </Button>
+              )}
             </div>
           ) : null}
         </div>
