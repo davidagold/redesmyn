@@ -199,14 +199,83 @@ function MergeRunDetails({
   const assistNoteSent = conflictAssist?.messageSentAt ?? null
   const assistTimedOut = conflictAssist?.state === "timed_out"
   const assistUnsupported = conflictAssist?.state === "unsupported"
-  const assistResumed = conflictAssist?.state === "resumed"
-  const assistAgentTurnComplete =
-    conflictAssist?.state === "waiting_for_repo_clean" ||
-    conflictAssist?.state === "ready_to_resume" ||
-    conflictAssist?.state === "resumed"
-  const assistRepoClean =
-    conflictAssist?.state === "ready_to_resume" ||
-    conflictAssist?.state === "resumed"
+
+  const assistSummary = useMemo(() => {
+    if (!conflictAssist) {
+      return null
+    }
+
+    const state = conflictAssist.state
+
+    if (state === "timed_out") {
+      return {
+        label: "Timed out",
+        variant: "destructive" as const,
+        secondary: conflictAssist.detail ?? "Timed out; use manual controls.",
+      }
+    }
+
+    if (state === "unsupported") {
+      return {
+        label: "Unavailable",
+        variant: "destructive" as const,
+        secondary:
+          conflictAssist.detail ??
+          "Start a structured agent turn to enable conflict assist.",
+      }
+    }
+
+    if (state === "resumed") {
+      return { label: "Resumed", variant: "emerald" as const, secondary: null }
+    }
+
+    if (!conflictAssist.active) {
+      return { label: "Inactive", variant: "muted" as const, secondary: null }
+    }
+
+    if (state === "waiting_for_agent_ready") {
+      return {
+        label: "Active",
+        variant: "amber" as const,
+        secondary: "Sending note; retrying…",
+      }
+    }
+
+    if (state === "sent_waiting_for_turn_complete") {
+      return {
+        label: "Active",
+        variant: "amber" as const,
+        secondary: assistNoteSent
+          ? "Sent note; waiting for agent."
+          : "Waiting for agent.",
+      }
+    }
+
+    if (state === "waiting_for_repo_clean") {
+      return {
+        label: "Active",
+        variant: "amber" as const,
+        secondary: "Agent done; waiting for repo clean.",
+      }
+    }
+
+    if (state === "ready_to_resume") {
+      return {
+        label: "Active",
+        variant: "amber" as const,
+        secondary: "Ready to resume.",
+      }
+    }
+
+    return { label: "Active", variant: "amber" as const, secondary: null }
+  }, [assistNoteSent, conflictAssist])
+
+  const showAssistDetailLine = !!conflictAssist?.detail && calloutExpanded
+  const showAssistTooltip =
+    !!conflictAssist?.detail &&
+    !showAssistDetailLine &&
+    !assistTimedOut &&
+    !assistUnsupported
 
   const statusBadgeVariant =
     mergeRun.status === "blocked"
@@ -418,33 +487,55 @@ function MergeRunDetails({
               </div>
             ) : null}
 
-            {conflictAssist ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground/80">
-                  Conflict assist
-                </span>
-                <Badge variant={assistUnsupported ? "destructive" : "default"}>
-                  {assistTimedOut
-                    ? "Timed out"
-                    : assistUnsupported
-                      ? "Unavailable"
-                      : assistResumed
-                        ? "Resumed"
-                        : conflictAssist.active
-                          ? "Active"
-                          : "Inactive"}
-                </Badge>
-                <Badge variant={assistNoteSent ? "emerald" : "amber"}>
-                  {assistNoteSent ? "Note delivered" : "Note pending"}
-                </Badge>
-                <Badge variant={assistAgentTurnComplete ? "emerald" : "amber"}>
-                  {assistAgentTurnComplete ? "Agent done" : "Waiting for agent"}
-                </Badge>
-                <Badge variant={assistRepoClean ? "emerald" : "amber"}>
-                  {assistRepoClean ? "Repo clean" : "Waiting for repo"}
-                </Badge>
-                {conflictAssist.detail ? (
-                  <div className="w-full text-xs text-muted-foreground">
+            {conflictAssist && assistSummary ? (
+              <div className="mt-2 border-t border-border/20 pt-2 text-xs text-muted-foreground">
+                {showAssistTooltip ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={(triggerProps) => (
+                        <div
+                          {...triggerProps}
+                          className={cn(
+                            "flex flex-wrap items-center gap-2",
+                            triggerProps.className,
+                          )}
+                        >
+                          <span className="font-medium text-foreground/70">
+                            Conflict assist
+                          </span>
+                          <Badge variant={assistSummary.variant}>
+                            {assistSummary.label}
+                          </Badge>
+                          {assistSummary.secondary ? (
+                            <span className="text-muted-foreground/90">
+                              — {assistSummary.secondary}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                    />
+                    <TooltipContent side="bottom" sideOffset={10}>
+                      {conflictAssist.detail}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-foreground/70">
+                      Conflict assist
+                    </span>
+                    <Badge variant={assistSummary.variant}>
+                      {assistSummary.label}
+                    </Badge>
+                    {assistSummary.secondary ? (
+                      <span className="text-muted-foreground/90">
+                        — {assistSummary.secondary}
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+
+                {showAssistDetailLine ? (
+                  <div className="mt-1 text-xs text-muted-foreground/90">
                     {conflictAssist.detail}
                   </div>
                 ) : null}
