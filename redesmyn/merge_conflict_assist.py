@@ -192,10 +192,17 @@ async def _turn_completed_for_session(
         if event.data.get("agent_session_id") == agent_session_id:
             return True, event.id
 
-    # Fallback: observe the session ended + semantic status completed.
+    # Fallback: observe the session ended.
     row = await session.get(AgentSession, agent_session_id)
     if row is None or row.ended_at is None:
         return False, None
+
+    # For structured exec-style turns, the process ending implies there's nothing
+    # left to wait for. Semantic events are best-effort (driver could miss them),
+    # and repo cleanliness is still required before resuming.
+    if row.agent_interface_mode == AgentInterfaceMode.Structured:
+        return True, None
+
     try:
         status = TypeAdapter(AgentSemanticStatus).validate_python(
             row.agent_semantic_status
