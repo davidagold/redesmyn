@@ -1,4 +1,5 @@
-import { useEffect, useState, type ComponentProps } from "react"
+import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import { useIsFetching } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -6,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiHttpError } from "@/api"
+import { queryKeys } from "@/api/queryKeys"
 import {
   useCancelMergeRunMutation,
   useMergeTaskMutation,
@@ -63,7 +65,6 @@ import {
   GitMerge,
   Ghost,
   Layers,
-  Loader2,
   MessageSquareText,
   Play,
   RotateCcw,
@@ -272,6 +273,7 @@ export function TaskCard({
     node.branchName,
   )
   const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
+  const blockingConflictAssist = blockingMergeRun?.conflictAssist ?? null
   const gitDisabledReason = gitMutationsDisabledReason ?? null
   const agentKindLabel = agentSession
     ? labelForAgentKind(agentSession.agentKind)
@@ -371,7 +373,73 @@ export function TaskCard({
   const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
   const [mergeReadySpineNotice, setMergeReadySpineNotice] =
     useState<string | null>(null)
+  const [gitActionInProgress, setGitActionInProgress] = useState<{
+    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready"
+    startedAt: number
+    initialMergeRunId: string | null
+    initialMergeRunStatus: string | null
+    initialMergeReadyAt: string | null
+  } | null>(null)
   const mergeReadySpineConfirm = useMergeReadySpineConfirm()
+
+  const epicGraphIsFetching =
+    useIsFetching({ queryKey: queryKeys.epicGraph(node.epicId) }) > 0
+
+  function beginGitAction(
+    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready",
+  ) {
+    setGitActionInProgress({
+      kind,
+      startedAt: Date.now(),
+      initialMergeRunId: mergeRun?.runId ?? null,
+      initialMergeRunStatus: mergeRun?.status ?? null,
+      initialMergeReadyAt: task?.mergeReadyAt ?? null,
+    })
+  }
+
+  useEffect(() => {
+    if (!gitActionInProgress) {
+      return
+    }
+
+    const elapsedMs = Date.now() - gitActionInProgress.startedAt
+    if (elapsedMs > 15_000) {
+      setGitActionInProgress(null)
+      return
+    }
+
+    if (gitActionInProgress.kind === "ready") {
+      const currentReadyAt = task?.mergeReadyAt ?? null
+      if (currentReadyAt !== gitActionInProgress.initialMergeReadyAt) {
+        setGitActionInProgress(null)
+      }
+      return
+    }
+
+    const currentRunId = mergeRun?.runId ?? null
+    const currentStatus = mergeRun?.status ?? null
+    if (
+      currentRunId !== gitActionInProgress.initialMergeRunId ||
+      currentStatus !== gitActionInProgress.initialMergeRunStatus
+    ) {
+      setGitActionInProgress(null)
+    }
+  }, [
+    gitActionInProgress,
+    mergeRun?.runId,
+    mergeRun?.status,
+    task?.mergeReadyAt,
+  ])
+
+  useEffect(() => {
+    if (!gitActionInProgress) {
+      return
+    }
+    const id = window.setTimeout(() => setGitActionInProgress(null), 15_000)
+    return () => window.clearTimeout(id)
+  }, [gitActionInProgress])
+
+  const showGitActionGlow = gitActionInProgress !== null
 
   useEffect(() => {
     if (!mergeReadySpineNotice) {
@@ -531,11 +599,13 @@ export function TaskCard({
     if (setMergeReadyMutation.isPending) {
       return
     }
+    beginGitAction("ready")
     setPendingMerge("ready")
     clearActionError()
     try {
       await setMergeReadyMutation.mutateAsync({ taskId, ready: next, scope })
     } catch (e) {
+      setGitActionInProgress(null)
       setActionErrorFromException("Set merge readiness", e)
     } finally {
       setPendingMerge(null)
@@ -562,6 +632,7 @@ export function TaskCard({
     if (taskId === null) {
       return
     }
+    beginGitAction(cascade ? "mergeStack" : "merge")
     setPendingMerge(cascade ? "mergeStack" : "merge")
     clearActionError()
 
@@ -574,6 +645,7 @@ export function TaskCard({
         request: { cascade, restackMode },
       })
     } catch (e) {
+      setGitActionInProgress(null)
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
           setAllowRunningPrompt({
@@ -596,6 +668,7 @@ export function TaskCard({
     if (taskId === null) {
       return
     }
+    beginGitAction("mergeStack")
     setPendingMerge("mergeStack")
     clearActionError()
     const actionLabel = "Merge then Restack"
@@ -607,6 +680,7 @@ export function TaskCard({
         request: { cascade: true, restackMode },
       })
     } catch (e) {
+      setGitActionInProgress(null)
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
           setAllowRunningPrompt({
@@ -629,6 +703,7 @@ export function TaskCard({
     if (!mergeRun?.runId) {
       return
     }
+    beginGitAction("resume")
     setPendingMerge("resume")
     clearActionError()
     try {
@@ -638,6 +713,7 @@ export function TaskCard({
         request: {},
       })
     } catch (e) {
+      setGitActionInProgress(null)
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
           setAllowRunningPrompt({
@@ -684,6 +760,7 @@ export function TaskCard({
     if (taskId === null) {
       return
     }
+    beginGitAction("restack")
     setPendingMerge("restack")
     clearActionError()
     const actionLabel = "Restack"
@@ -694,6 +771,7 @@ export function TaskCard({
         request: { scope },
       })
     } catch (e) {
+      setGitActionInProgress(null)
       if (e instanceof ApiHttpError && e.status === 409) {
         if (isRunningAgentsConflict(e)) {
           setAllowRunningPrompt({
@@ -737,6 +815,7 @@ export function TaskCard({
         if (taskId === null) {
           throw new Error("Task id missing for merge confirmation.")
         }
+        beginGitAction(allowRunningPrompt.cascade ? "mergeStack" : "merge")
         setPendingMerge(allowRunningPrompt.cascade ? "mergeStack" : "merge")
         await mergeTaskMutation.mutateAsync({
           epicId: node.epicId,
@@ -751,6 +830,7 @@ export function TaskCard({
         if (taskId === null) {
           throw new Error("Task id missing for restack confirmation.")
         }
+        beginGitAction("restack")
         setPendingMerge("restack")
         await restackTaskMutation.mutateAsync({
           epicId: node.epicId,
@@ -758,6 +838,7 @@ export function TaskCard({
           request: { scope: allowRunningPrompt.scope, allowRunning: true },
         })
       } else {
+        beginGitAction("resume")
         setPendingMerge("resume")
         await resumeMergeRunMutation.mutateAsync({
           epicId: node.epicId,
@@ -768,6 +849,7 @@ export function TaskCard({
       setAllowRunningPrompt(null)
     } catch (e) {
       setAllowRunningPrompt(null)
+      setGitActionInProgress(null)
       setActionErrorFromException(actionLabel, e)
     } finally {
       setPendingMerge(null)
@@ -952,6 +1034,43 @@ export function TaskCard({
             : "Resume merge"
           : null
 
+  const blockedRebaseSummary = useMemo(() => {
+    if (!blockingMergeRunBlockedRebase) {
+      return null
+    }
+    const assist = blockingConflictAssist
+    if (!assist) {
+      return "Resolve conflicts, then resume."
+    }
+
+    if (assist.state === "timed_out") {
+      return "Manual resolution needed (timed out)."
+    }
+    if (assist.state === "unsupported") {
+      return "Manual resolution needed (unavailable)."
+    }
+    if (!assist.active) {
+      return "Resolve conflicts, then resume."
+    }
+
+    switch (assist.state) {
+      case "waiting_for_agent_ready":
+        return "Auto-resolving… starting agent turn."
+      case "sent_waiting_for_turn_complete":
+        return assist.messageSentAt
+          ? "Auto-resolving… waiting for agent."
+          : "Auto-resolving…"
+      case "waiting_for_repo_clean":
+        return "Auto-resolving… waiting for repo clean."
+      case "ready_to_resume":
+        return "Auto-resolving… resuming."
+      case "resumed":
+        return "Auto-resolving… resumed."
+      default:
+        return "Auto-resolving…"
+    }
+  }, [blockingConflictAssist, blockingMergeRunBlockedRebase])
+
   return (
     <Card
       data-node-card
@@ -964,6 +1083,19 @@ export function TaskCard({
         agentComposerExpanded
           ? "z-[60] w-[480px] bg-card shadow-lg hover:bg-card"
           : "w-full bg-transparent",
+        showGitActionGlow
+          ? cn(
+              "before:pointer-events-none before:absolute before:inset-0 before:rounded-lg before:p-[2px]",
+              "before:opacity-90 before:bg-[length:250%_100%] before:[background-repeat:no-repeat]",
+              "before:[--spread:22px] before:[--bg:linear-gradient(90deg,#0000_calc(50%_-_var(--spread)),var(--color-ring),#0000_calc(50%_+_var(--spread)))]",
+              "before:[background-image:var(--bg)]",
+              epicGraphIsFetching
+                ? "before:[animation:rn-shimmer_2.4s_linear_infinite]"
+                : "before:opacity-60",
+              "before:[mask:linear-gradient(#000_0_0)_content-box,linear-gradient(#000_0_0)] before:[mask-composite:exclude]",
+              "before:[-webkit-mask-composite:xor]",
+            )
+          : null,
         actionsMenuOpen ? "bg-accent/40" : null,
         task?.state === "done"
           ? "ring-green-950/80"
@@ -1530,7 +1662,7 @@ export function TaskCard({
       blockingMergeRunBlockedRebase ||
       mergeReadySpineNotice ? (
         <div
-          className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-full space-y-2"
+          className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-[min(100%,480px)] space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1734,7 +1866,7 @@ export function TaskCard({
                     Rebase blocked
                   </Badge>
                   <div className="truncate text-[11px] text-foreground/70">
-                    Resolve conflicts, then resume.
+                    {blockedRebaseSummary ?? "Resolve conflicts, then resume."}
                   </div>
                 </div>
                 <div
@@ -1832,24 +1964,9 @@ export function TaskCard({
                 </div>
               </div>
 
-              {blockedRebaseExpanded ? (
-                <div className="space-y-1 text-[11px] text-foreground/80">
-                  {blockingMergeRun?.blockedBranchName ? (
-                    <div className="min-w-0">
-                      <div className="text-foreground/70">Blocked branch</div>
-                      <div className="line-clamp-2 break-all font-mono text-foreground/90">
-                        {blockingMergeRun.blockedBranchName}
-                      </div>
-                    </div>
-                  ) : null}
-                  {blockingMergeRun?.blockedWorktreePath ? (
-                    <div className="min-w-0">
-                      <div className="text-foreground/70">Worktree</div>
-                      <div className="line-clamp-2 break-all font-mono text-foreground/90">
-                        {blockingMergeRun.blockedWorktreePath}
-                      </div>
-                    </div>
-                  ) : null}
+              {blockedRebaseExpanded && blockingConflictAssist?.detail ? (
+                <div className="text-[11px] text-foreground/70">
+                  {blockingConflictAssist.detail}
                 </div>
               ) : null}
             </Alert>
@@ -1872,11 +1989,7 @@ export function TaskCard({
                   void handleResumeMerge()
                 }}
               >
-                {pendingMerge === "resume" ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Play className="size-3" />
-                )}
+                <Play className="size-3" />
                 {mergeRunOperation === "restack"
                   ? "Resume restack"
                   : "Resume merge"}
