@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.agent_kind import resolve_agent_kind
 from redesmyn.agent_label import agent_label_for_task_id
+from redesmyn.branch_naming import default_task_branch_name
 from redesmyn.context import RepoContext
 from redesmyn.host_identity import HostIdentity, load_or_create_host_identity
 from redesmyn.db import (
@@ -630,15 +631,6 @@ def launch_configuration_id_for_definition(
     return f"{slugify(kind)}/sha256-{digest}"
 
 
-_TASK_TITLE_ID_RE = re.compile(r"^(T-\d+)\b")
-
-
-class _BranchNameTask(Protocol):
-    id: int
-    title: str
-    linear_identifier: str | None
-
-
 def _find_branch_namespace_collision(
     *, repo_root: Path, branch_name: str
 ) -> str | None:
@@ -664,32 +656,6 @@ def _raise_branch_namespace_collision_error(
     )
 
 
-def _default_branch_name_for_task(*, epic_slug: str, task: _BranchNameTask) -> str:
-    identifier = task.linear_identifier
-    if not identifier:
-        match = _TASK_TITLE_ID_RE.match(task.title.strip())
-        identifier = match.group(1) if match else f"task-{task.id}"
-
-    title = (task.title or "").strip()
-    title_remainder = title
-    if identifier and title.startswith(identifier):
-        title_remainder = title[len(identifier) :].strip()
-    if title_remainder.startswith("-"):
-        title_remainder = title_remainder[1:].strip()
-
-    # Prefer a concise "task abbreviation" (similar to the UI branch label):
-    # - drop parenthetical detail
-    # - take the first '+'-separated segment
-    # - drop common boilerplate suffixes
-    title_remainder = re.sub(r"\([^)]*\)", " ", title_remainder).strip()
-    title_remainder = title_remainder.split("+", 1)[0].strip()
-    title_remainder = re.sub(r"\bimplementation\b", "", title_remainder, flags=re.I)
-    title_remainder = re.sub(r"\s+", " ", title_remainder).strip()
-
-    short = slugify(title_remainder or title, fallback="task")[:60].strip("-") or "task"
-    return f"rn/{epic_slug}/{identifier}-{short}"
-
-
 async def ensure_task_worktree(
     session: AsyncSession,
     ctx: RepoContext,
@@ -698,7 +664,13 @@ async def ensure_task_worktree(
     epic: Epic,
 ) -> Path:
     if task.branch_name is None:
-        branch = _default_branch_name_for_task(epic_slug=epic.slug, task=task)
+        branch = default_task_branch_name(
+            epic_slug=epic.slug,
+            task_id=task.id,
+            title=task.title,
+            linear_identifier=task.linear_identifier,
+            local_path=task.local_path,
+        )
         collision = _find_branch_namespace_collision(
             repo_root=ctx.repo_root, branch_name=branch
         )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import pytest
 
-from redesmyn.agent_runtime import _default_branch_name_for_task
+from redesmyn.branch_naming import default_task_branch_name
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,13 @@ def test_default_branch_name_for_task_generates_expected_format(
 ) -> None:
     task = TaskStub(id=74, title=title, linear_identifier=None)
     assert (
-        _default_branch_name_for_task(epic_slug="harness-interface-v0", task=task)
+        default_task_branch_name(
+            epic_slug="harness-interface-v0",
+            task_id=task.id,
+            title=task.title,
+            linear_identifier=task.linear_identifier,
+            local_path=None,
+        )
         == expected
     )
 
@@ -53,6 +59,12 @@ def test_default_branch_name_for_task_prefers_linear_identifier() -> None:
         linear_identifier="RED-12",
     )
     assert (
-        _default_branch_name_for_task(epic_slug="linear-integration", task=task)
+        default_task_branch_name(
+            epic_slug="linear-integration",
+            task_id=task.id,
+            title=task.title,
+            linear_identifier=task.linear_identifier,
+            local_path=None,
+        )
         == "rn/linear-integration/RED-12-linear-client-write-support"
     )

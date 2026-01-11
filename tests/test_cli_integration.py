@@ -26,8 +26,8 @@ def test_sync_from_local_imports_tasks_and_sets_parent_links_without_creating_br
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
         tasks=[
-            TaskSpec(task_id="T-1", title="Parent", branch="task-1"),
-            TaskSpec(task_id="T-2", title="Child", branch="task-2", stacked_on="T-1"),
+            TaskSpec(task_id="T-1", title="Parent"),
+            TaskSpec(task_id="T-2", title="Child", stacked_on="T-1"),
         ],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
@@ -59,7 +59,7 @@ def test_shell_print_outputs_worktree_path_and_exits_zero(tmp_path: Path) -> Non
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
@@ -75,19 +75,24 @@ def test_shell_print_outputs_worktree_path_and_exits_zero(tmp_path: Path) -> Non
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
     )
     task_id = task.id
+    assert task.branch_name == "rn/cli-epic/T-1-task"
 
     shell_proc = run_rn(repo.repo_root, ["shell", "--task-id", str(task_id), "--print"])
     assert shell_proc.returncode == 0, shell_proc.stderr
     worktree_path = Path(shell_proc.stdout.strip())
-    assert worktree_path == repo.repo_root / ".redesmyn" / "worktrees" / "task-1"
+    assert (
+        worktree_path
+        == repo.repo_root / ".redesmyn" / "worktrees" / "rn" / "cli-epic" / "T-1-task"
+    )
     assert worktree_path.exists()
     assert (
-        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path) == "task-1"
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+        == "rn/cli-epic/T-1-task"
     )
 
 
 @pytest.mark.integration
-def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
+def test_sync_from_local_does_not_rename_worktree_branch_when_title_changes(
     tmp_path: Path,
 ) -> None:
     repo = ScenarioRepo.init(tmp_path)
@@ -95,7 +100,7 @@ def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
@@ -111,18 +116,21 @@ def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
     )
     task_id = task.id
+    original_branch = task.branch_name
+    assert original_branch == "rn/cli-epic/T-1-task"
 
     shell_proc = run_rn(repo.repo_root, ["shell", "--task-id", str(task_id), "--print"])
     assert shell_proc.returncode == 0, shell_proc.stderr
     worktree_path = Path(shell_proc.stdout.strip())
     assert (
-        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path) == "task-1"
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+        == original_branch
     )
 
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Renamed Task", branch=None)],
+        tasks=[TaskSpec(task_id="T-1", title="Renamed Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "rename task"], cwd=repo.repo_root)
@@ -133,10 +141,10 @@ def test_sync_from_local_renames_worktree_branch_when_branch_name_changes(
     updated = db_task_row(
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
     )
-    assert updated.branch_name == "rn/cli-epic/T-1-renamed-task"
+    assert updated.branch_name == original_branch
     assert (
         repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
-        == updated.branch_name
+        == original_branch
     )
 
 
@@ -149,7 +157,7 @@ def test_sync_from_local_repairs_worktree_branch_mismatch_without_db_change(
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
@@ -164,7 +172,7 @@ def test_sync_from_local_repairs_worktree_branch_mismatch_without_db_change(
     task = db_task_row(
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
     )
-    assert task.branch_name == "task-1"
+    assert task.branch_name == "rn/cli-epic/T-1-task"
 
     shell_proc = run_rn(repo.repo_root, ["shell", "--task-id", str(task.id), "--print"])
     assert shell_proc.returncode == 0, shell_proc.stderr
@@ -182,9 +190,10 @@ def test_sync_from_local_repairs_worktree_branch_mismatch_without_db_change(
     task2 = db_task_row(
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-1/README.md"
     )
-    assert task2.branch_name == "task-1"
+    assert task2.branch_name == "rn/cli-epic/T-1-task"
     assert (
-        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path) == "task-1"
+        repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+        == "rn/cli-epic/T-1-task"
     )
 
 
@@ -195,7 +204,7 @@ def test_shell_no_create_errors_when_worktree_missing(tmp_path: Path) -> None:
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
@@ -227,7 +236,7 @@ def test_shell_refuses_nesting_by_default_and_allows_nested(tmp_path: Path) -> N
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
-        tasks=[TaskSpec(task_id="T-1", title="Task", branch="task-1")],
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
@@ -271,13 +280,13 @@ def test_shell_refuses_nesting_by_default_and_allows_nested(tmp_path: Path) -> N
 
 def _seed_stack_for_merge_or_restack(
     *, repo: ScenarioRepo, epic_slug: str
-) -> tuple[int, int]:
+) -> tuple[int, int, str, str]:
     write_docs(
         repo_root=repo.repo_root,
         epic_slug=epic_slug,
         tasks=[
-            TaskSpec(task_id="T-1", title="Parent", branch="task-1"),
-            TaskSpec(task_id="T-2", title="Child", branch="task-2", stacked_on="T-1"),
+            TaskSpec(task_id="T-1", title="Parent"),
+            TaskSpec(task_id="T-2", title="Child", stacked_on="T-1"),
         ],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
@@ -296,23 +305,25 @@ def _seed_stack_for_merge_or_restack(
     child = db_task_row(
         epic_db_path, local_path=f"epics/{epic_slug}/tasks/T-2/README.md"
     )
-    return parent.id, child.id
+    assert parent.branch_name is not None
+    assert child.branch_name is not None
+    return parent.id, child.id, parent.branch_name, child.branch_name
 
 
 @pytest.mark.integration
 def test_merge_prompts_for_confirmation_and_supports_yes_flag(tmp_path: Path) -> None:
     repo = ScenarioRepo.init(tmp_path)
     epic_slug = "cli-epic"
-    parent_id, child_id = _seed_stack_for_merge_or_restack(
-        repo=repo, epic_slug=epic_slug
+    parent_id, child_id, parent_branch, _child_branch = (
+        _seed_stack_for_merge_or_restack(repo=repo, epic_slug=epic_slug)
     )
 
-    repo.git(["checkout", "-b", "task-1"], cwd=repo.repo_root)
+    repo.git(["checkout", "-b", parent_branch], cwd=repo.repo_root)
     (repo.repo_root / "parent.txt").write_text("parent\n", encoding="utf-8")
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "parent change"], cwd=repo.repo_root)
     repo.git(["checkout", "main"], cwd=repo.repo_root)
-    repo.git(["merge", "--ff-only", "task-1"], cwd=repo.repo_root)
+    repo.git(["merge", "--ff-only", parent_branch], cwd=repo.repo_root)
 
     shell_proc = run_rn(
         repo.repo_root, ["shell", "--task-id", str(child_id), "--print"]
@@ -353,16 +364,16 @@ def test_merge_prompts_for_confirmation_and_supports_yes_flag(tmp_path: Path) ->
 def test_restack_prompts_for_confirmation_and_supports_yes_flag(tmp_path: Path) -> None:
     repo = ScenarioRepo.init(tmp_path)
     epic_slug = "cli-epic"
-    parent_id, child_id = _seed_stack_for_merge_or_restack(
-        repo=repo, epic_slug=epic_slug
+    parent_id, child_id, parent_branch, _child_branch = (
+        _seed_stack_for_merge_or_restack(repo=repo, epic_slug=epic_slug)
     )
 
-    repo.git(["checkout", "-b", "task-1"], cwd=repo.repo_root)
+    repo.git(["checkout", "-b", parent_branch], cwd=repo.repo_root)
     (repo.repo_root / "parent.txt").write_text("parent\n", encoding="utf-8")
     repo.git(["add", "-A"], cwd=repo.repo_root)
     repo.git(["commit", "-m", "parent change"], cwd=repo.repo_root)
     repo.git(["checkout", "main"], cwd=repo.repo_root)
-    repo.git(["merge", "--ff-only", "task-1"], cwd=repo.repo_root)
+    repo.git(["merge", "--ff-only", parent_branch], cwd=repo.repo_root)
 
     shell_proc = run_rn(
         repo.repo_root, ["shell", "--task-id", str(child_id), "--print"]

@@ -41,6 +41,7 @@ from redesmyn.blocks import (
     list_blocks,
     set_manual_block,
 )
+from redesmyn.branch_naming import default_task_branch_name
 from redesmyn.context import RepoContext, get_repo_context
 from redesmyn.db import (
     DatabaseMigrationRequiredError,
@@ -1640,7 +1641,7 @@ async def _sync_from_local(
             task_by_ref: dict[str, Task] = {}
             task_by_path: dict[Path, Task] = {}
 
-            def _maybe_rename_task_worktree_branch(
+            def _maybe_repair_task_worktree_branch(
                 *, task: Task, desired_branch: str
             ) -> None:
                 if not task.worktree_path:
@@ -1751,13 +1752,15 @@ async def _sync_from_local(
                 if not create_branches:
                     continue
 
-                branch = meta.node.branch if meta.node and meta.node.branch else None
+                branch = task.branch_name
                 if not branch:
-                    identifier = linear_identifier or meta.id or f"task-{task.id}"
-                    short = (
-                        slugify(doc.title, fallback="task")[:60].strip("-") or "task"
+                    branch = default_task_branch_name(
+                        epic_slug=epic_row.slug,
+                        task_id=task.id,
+                        title=doc.title,
+                        linear_identifier=linear_identifier,
+                        local_path=rel_path,
                     )
-                    branch = f"rn/{epic_row.slug}/{identifier}-{short}"
 
                 existing = await session.scalar(
                     select(Task).where(
@@ -1771,15 +1774,13 @@ async def _sync_from_local(
                         f"Ambiguous branch {branch!r}; assigned to multiple tasks ({existing.id} and {task.id})"
                     )
 
-                _maybe_rename_task_worktree_branch(task=task, desired_branch=branch)
-                if task.branch_name != branch:
-                    if task.branch_name is None and branch is not None:
-                        stats.branches_created += 1
-                    else:
-                        stats.branches_updated += 1
+                if task.branch_name is None:
+                    stats.branches_created += 1
                     task.branch_name = branch
                     if task.id not in created_task_ids:
                         updated_task_ids.add(task.id)
+                else:
+                    _maybe_repair_task_worktree_branch(task=task, desired_branch=branch)
 
             for doc in task_docs:
                 task = task_by_path.get(doc.path)
@@ -2129,14 +2130,6 @@ async def _sync_from_linear(
             existing_meta["linear"] = linear_meta
         linear_meta["issue_id"] = issue.id
         linear_meta["identifier"] = issue.identifier
-
-        node_meta = existing_meta.get("node")
-        if not isinstance(node_meta, dict):
-            node_meta = {}
-            existing_meta["node"] = node_meta
-        branch = node_meta.get("branch")
-        if not isinstance(branch, str) or not branch.strip():
-            node_meta["branch"] = _branch_name(issue.identifier, issue.title)
 
         markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
 
