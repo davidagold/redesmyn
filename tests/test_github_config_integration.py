@@ -16,18 +16,18 @@ async def test_github_config_round_trips_via_api(
 
     resp = await scenario.app.client.get("/v1/github/config")
     resp.raise_for_status()
-    assert resp.json()["auto_force_push"] is False
+    assert resp.json()["autoForcePush"] is False
 
     resp = await scenario.app.client.post(
         "/v1/github/config",
-        json={"auto_force_push": True},
+        json={"autoForcePush": True},
     )
     resp.raise_for_status()
-    assert resp.json()["auto_force_push"] is True
+    assert resp.json()["autoForcePush"] is True
 
     resp = await scenario.app.client.get("/v1/github/config")
     resp.raise_for_status()
-    assert resp.json()["auto_force_push"] is True
+    assert resp.json()["autoForcePush"] is True
 
     raw = repo_config_path(scenario.ctx).read_text(encoding="utf-8")
     assert "github" in raw
@@ -41,10 +41,10 @@ async def test_github_status_includes_auto_force_push_when_disconnected(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     await scenario.app.client.post(
         "/v1/github/config",
-        json={"auto_force_push": True},
+        json={"autoForcePush": True},
     )
     resp = await scenario.app.client.get("/v1/github/status")
     resp.raise_for_status()
     payload = resp.json()
     assert payload["connected"] is False
-    assert payload["auto_force_push"] is True
+    assert payload["autoForcePush"] is True

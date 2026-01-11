@@ -12,7 +12,7 @@ class GitHubPullRequestError(RuntimeError):
     pass
 
 
-_PR_ID_RE = re.compile(r"^(?P<owner>[^/]+)/(?P<repo>[^#]+)#(?P<number>\\d+)$")
+_PR_ID_RE = re.compile(r"^(?P<owner>[^/]+)/(?P<repo>[^#]+)#(?P<number>\d+)$")
 
 
 @dataclass(frozen=True, slots=True)

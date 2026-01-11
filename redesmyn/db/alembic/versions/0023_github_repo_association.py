@@ -1,7 +1,7 @@
 """GitHub repo association (epic defaults + task override).
 
-Revision ID: 0003_github_repo_association
-Revises: 0002_merge_node_into_task
+Revision ID: 0023_github_repo_association
+Revises: 0022_linear_epic_defaults_label_name
 Create Date: 2026-01-10
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0003_github_repo_association"
-down_revision = "0002_merge_node_into_task"
+revision = "0023_github_repo_association"
+down_revision = "0022_linear_epic_defaults_label_name"
 branch_labels = None
 depends_on = None
 
