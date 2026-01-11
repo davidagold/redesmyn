@@ -15,7 +15,7 @@ from redesmyn.db import Epic
 from redesmyn.db import MergeRun
 from redesmyn.db import Repository
 from redesmyn.db import Task
-from redesmyn.domain.enums import AgentStatus
+from redesmyn.domain.enums import AgentInterfaceMode, AgentStatus
 from redesmyn.domain.enums import MergeRunStatus
 from redesmyn.domain.enums import TaskState
 
@@ -120,6 +120,30 @@ async def test_merge_returns_409_with_running_agents_prefix_contract(
     detail = response.json()["detail"]
     assert isinstance(detail, str)
     assert detail.startswith("RUNNING_AGENTS:")
+
+
+@pytest.mark.integration
+async def test_merge_allows_structured_agent_session_after_turn_completed(
+    scenario: Scenario,
+) -> None:
+    seeded = await seed_merged_parent(scenario)
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=seeded.child_task_id,
+                status=AgentStatus.Running,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                agent_semantic_status={"turn_state": "completed"},
+            )
+        )
+        await session.commit()
+
+    response = await scenario.app.client.post(
+        f"/v1/tasks/{seeded.child_task_id}/merge",
+        json={},
+    )
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.integration

@@ -7,11 +7,18 @@ from typing import Awaitable, Callable, Literal, Sequence
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from pydantic import TypeAdapter
 
+from redesmyn.agent_interface.v0 import AgentSemanticStatus
 from redesmyn.agent_label import agent_label_for_task_id
 from redesmyn.context import RepoContext
 from redesmyn.db import AgentSession, Epic, Task
-from redesmyn.domain.enums import AgentStatus, TaskState
+from redesmyn.domain.enums import (
+    AgentInterfaceMode,
+    AgentStatus,
+    AgentTurnState,
+    TaskState,
+)
 from redesmyn.integrations.linear_automation import maybe_push_task_state_to_linear
 from redesmyn.repo import (
     GitCommandError,
@@ -407,6 +414,15 @@ async def build_merge_cascade_plan(
                     continue
                 if agent_session.ended_at is not None:
                     continue
+                if agent_session.agent_interface_mode == AgentInterfaceMode.Structured:
+                    try:
+                        status = TypeAdapter(AgentSemanticStatus).validate_python(
+                            agent_session.agent_semantic_status
+                        )
+                    except Exception:
+                        status = AgentSemanticStatus()
+                    if status.turn_state == AgentTurnState.Completed:
+                        continue
                 task_row = tasks_by_id.get(task_id)
                 running_agents.append(
                     RunningAgentInfo(
