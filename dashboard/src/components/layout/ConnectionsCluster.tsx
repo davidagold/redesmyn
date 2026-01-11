@@ -1,5 +1,9 @@
 import { useCallback, useMemo, useState } from "react"
 import { RepoDaemonStatusChip } from "@/components/daemon/RepoDaemonStatusChip"
+import {
+  GitHubMenuButton,
+  type GitHubStatusChange,
+} from "@/components/github/GitHubMenuButton"
 import { LinearSyncMenuButton } from "@/components/linear/LinearSyncMenuButton"
 import {
   Tooltip,
@@ -14,6 +18,8 @@ type LinearStatusSummary = {
   loading: boolean
 }
 
+type GitHubStatusSummary = GitHubStatusChange
+
 function linearLabel(status: LinearStatusSummary) {
   if (status.loading) {
     return "Checking…"
@@ -21,11 +27,22 @@ function linearLabel(status: LinearStatusSummary) {
   return status.connected ? "Connected" : "Not connected"
 }
 
+function githubLabel(status: GitHubStatusSummary) {
+  if (status.loading) {
+    return "Checking…"
+  }
+  if (!status.connected) {
+    return "Not connected"
+  }
+  return status.warning ? "Connected (missing scopes)" : "Connected"
+}
+
 function connectionsDotClass(options: {
   repoDaemonStatus: RepoDaemonStatus
   linearStatus: LinearStatusSummary
+  githubStatus: GitHubStatusSummary
 }) {
-  const { repoDaemonStatus, linearStatus } = options
+  const { repoDaemonStatus, linearStatus, githubStatus } = options
 
   if (
     repoDaemonStatus.kind === "offline" ||
@@ -39,10 +56,15 @@ function connectionsDotClass(options: {
   if (repoDaemonStatus.kind === "unknown") {
     return "bg-muted-foreground/50"
   }
-  if (linearStatus.loading) {
+  if (linearStatus.loading || githubStatus.loading) {
     return "bg-muted-foreground/40"
   }
-  return linearStatus.connected ? "bg-emerald-400" : "bg-muted-foreground/40"
+  if (githubStatus.warning) {
+    return "bg-amber-300"
+  }
+  return linearStatus.connected || githubStatus.connected
+    ? "bg-emerald-400"
+    : "bg-muted-foreground/40"
 }
 
 export type ConnectionsClusterProps = {
@@ -64,15 +86,26 @@ export function ConnectionsCluster({
     connected: false,
     loading: true,
   })
+  const [githubStatus, setGitHubStatus] = useState<GitHubStatusSummary>({
+    connected: false,
+    loading: true,
+    warning: false,
+  })
 
   const handleLinearStatusChange = useCallback((next: LinearStatusSummary) => {
     setLinearStatus(next)
   }, [])
 
+  const handleGitHubStatusChange = useCallback((next: GitHubStatusSummary) => {
+    setGitHubStatus(next)
+  }, [])
+
   const tooltipSummary = useMemo(
     () =>
-      `Executor: ${repoDaemonStatus.label}. Linear: ${linearLabel(linearStatus)}.`,
-    [linearStatus, repoDaemonStatus.label],
+      `Executor: ${repoDaemonStatus.label}. Linear: ${linearLabel(
+        linearStatus,
+      )}. GitHub: ${githubLabel(githubStatus)}.`,
+    [githubStatus, linearStatus, repoDaemonStatus.label],
   )
 
   const dotClass = useMemo(
@@ -80,8 +113,9 @@ export function ConnectionsCluster({
       connectionsDotClass({
         repoDaemonStatus,
         linearStatus,
+        githubStatus,
       }),
-    [linearStatus, repoDaemonStatus],
+    [githubStatus, linearStatus, repoDaemonStatus],
   )
 
   return (
@@ -123,9 +157,15 @@ export function ConnectionsCluster({
         epicSlug={epicSlug}
         variant="epic"
         onSynced={onSynced}
-        showStatusDot={false}
+        showStatusDot
         buttonClassName="border-0"
         onStatusChange={handleLinearStatusChange}
+      />
+
+      <GitHubMenuButton
+        showStatusDot
+        buttonClassName="border-0"
+        onStatusChange={handleGitHubStatusChange}
       />
     </div>
   )

@@ -17,6 +17,7 @@ import {
   cancelMergeRun,
   openTaskGithubPullRequest,
   mergeTask,
+  postGitHubLogout,
   postLinearLogout,
   postTaskAgentMessage,
   postSyncFromLinear,
@@ -28,6 +29,7 @@ import {
   startTaskAgent,
   stopTaskAgent,
   updateEpicGithubRepo,
+  updateGitHubIntegrationConfig,
   updateEpicLinearConfig,
   updateEpicLinearProject,
   updateOrchestrationDefaults,
@@ -90,6 +92,30 @@ export function useUpdateOrchestrationDefaultsMutation() {
       updateOrchestrationDefaults(request),
     onSuccess: (defaults: OrchestrationDefaults) => {
       queryClient.setQueryData(queryKeys.orchestrationDefaults(), defaults)
+    },
+  })
+}
+
+export function useGitHubLogoutMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => postGitHubLogout(),
+    onSuccess: (status) => {
+      queryClient.setQueryData(queryKeys.githubStatus(), status)
+    },
+  })
+}
+
+export function useUpdateGitHubIntegrationConfigMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: updateGitHubIntegrationConfig,
+    onSuccess: (config) => {
+      queryClient.setQueryData(queryKeys.githubStatus(), (current) =>
+        current ? { ...current, autoForcePush: config.autoForcePush } : current,
+      )
     },
   })
 }

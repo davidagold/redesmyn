@@ -10,6 +10,8 @@ export type DaemonPresence = components["schemas"]["DaemonPresenceResponse"]
 export type AgentSession = components["schemas"]["AgentSessionResponse"]
 export type LinearStatus = components["schemas"]["LinearStatusResponse"]
 export type GitHubStatus = components["schemas"]["GitHubStatusResponse"]
+export type GitHubIntegrationConfig = components["schemas"]["GitHubIntegrationConfigResponse"]
+export type GitHubIntegrationConfigUpdateRequest = components["schemas"]["GitHubIntegrationConfigUpdateRequest"]
 export type GitHubPullRequestOpenResponse = components["schemas"]["GitHubPullRequestOpenResponse"]
 export type SyncStats = components["schemas"]["SyncStatsResponse"]
 export type LinearPushStats = components["schemas"]["LinearPushStatsResponse"]
@@ -266,6 +268,15 @@ export async function postLinearLogout(): Promise<LinearStatus> {
 
 export async function postGitHubLogout(): Promise<GitHubStatus> {
   return requestJson("/v1/github/logout", { method: "POST" })
+}
+
+export async function updateGitHubIntegrationConfig(
+  request: GitHubIntegrationConfigUpdateRequest,
+): Promise<GitHubIntegrationConfig> {
+  return requestJson("/v1/github/config", {
+    method: "POST",
+    body: request,
+  })
 }
 
 export async function openTaskGithubPullRequest(

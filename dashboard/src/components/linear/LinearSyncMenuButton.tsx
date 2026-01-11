@@ -12,7 +12,6 @@ import type { Task } from "@/lib/graph-utils"
 import {
   ArrowDownToLine,
   ArrowUpToLine,
-  ChevronDown,
   ExternalLink,
   LogIn,
   LogOut,
@@ -247,24 +246,26 @@ export function LinearSyncMenuButton({
     <div className="relative">
       <Button
         variant="ghost"
-        size="sm"
-        className={cn("h-7 gap-2 px-2", buttonClassName)}
+        size="icon"
+        className={cn("h-7 w-7", buttonClassName)}
         onClick={() => setMenuOpen((open) => !open)}
         aria-expanded={menuOpen}
+        aria-label={`Linear (${statusLabel})`}
         disabledReason={busyAction ? "Working…" : null}
         title={`Linear (${statusLabel})`}
       >
-        <span className="inline-flex items-center gap-2">
+        <span className="relative inline-flex items-center justify-center">
           <LinearIcon className="size-3.5 text-muted-foreground" />
-          <span>Linear</span>
           {showStatusDot ? (
             <span
-              className={cn("size-2 rounded-full", statusDotClass)}
+              className={cn(
+                "absolute -right-0.5 -top-0.5 size-2 rounded-full border border-background",
+                statusDotClass,
+              )}
               aria-hidden="true"
             />
           ) : null}
         </span>
-        <ChevronDown className="h-3 w-3 text-muted-foreground" />
       </Button>
 
       {notice ? (
