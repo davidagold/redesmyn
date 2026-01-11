@@ -1709,6 +1709,7 @@ export function TaskCard({
               variant="amber"
               className={cn(
                 "group gap-1 shadow-none ring-0",
+                "max-w-full overflow-hidden",
                 "cursor-pointer select-none",
               )}
               role="button"
@@ -1727,8 +1728,8 @@ export function TaskCard({
                 }
               }}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                   <Badge variant="amber" size="xs">
                     Rebase blocked
                   </Badge>
@@ -1834,19 +1835,19 @@ export function TaskCard({
               {blockedRebaseExpanded ? (
                 <div className="space-y-1 text-[11px] text-foreground/80">
                   {blockingMergeRun?.blockedBranchName ? (
-                    <div className="truncate">
-                      Blocked branch:{" "}
-                      <span className="font-mono text-foreground/90">
+                    <div className="min-w-0">
+                      <div className="text-foreground/70">Blocked branch</div>
+                      <div className="line-clamp-2 break-all font-mono text-foreground/90">
                         {blockingMergeRun.blockedBranchName}
-                      </span>
+                      </div>
                     </div>
                   ) : null}
                   {blockingMergeRun?.blockedWorktreePath ? (
-                    <div className="truncate">
-                      Worktree:{" "}
-                      <span className="font-mono text-foreground/90">
+                    <div className="min-w-0">
+                      <div className="text-foreground/70">Worktree</div>
+                      <div className="line-clamp-2 break-all font-mono text-foreground/90">
                         {blockingMergeRun.blockedWorktreePath}
-                      </span>
+                      </div>
                     </div>
                   ) : null}
                 </div>
