@@ -679,8 +679,11 @@ async def ensure_task_worktree(
     task: Task,
     epic: Epic,
 ) -> Path:
-    if task.branch_name is None:
-        branch = default_task_branch_name(
+    branch_name = task.branch_name
+    assigned_branch = False
+
+    if branch_name is None:
+        branch_name = default_task_branch_name(
             epic_slug=epic.slug,
             task_id=task.id,
             title=task.title,
@@ -688,34 +691,32 @@ async def ensure_task_worktree(
             local_path=task.local_path,
         )
         collision = _find_branch_namespace_collision(
-            repo_root=ctx.repo_root, branch_name=branch
+            repo_root=ctx.repo_root, branch_name=branch_name
         )
         if collision is not None:
             _raise_branch_namespace_collision_error(
-                branch_name=branch, prefix_branch=collision
+                branch_name=branch_name, prefix_branch=collision
             )
         existing = await session.scalar(
             select(Task).where(
                 Task.epic_id == epic.id,
-                Task.branch_name == branch,
+                Task.branch_name == branch_name,
                 Task.id != task.id,
             )
         )
         if existing is not None:
-            branch = f"{branch}-{task.id}"
-        task.branch_name = branch
-        await session.flush()
+            branch_name = f"{branch_name}-{task.id}"
+        assigned_branch = True
 
-    branch_name = task.branch_name
     if branch_name is None:
         raise RuntimeError("Task branch name missing after branch assignment")
 
     if task.worktree_path:
         path = Path(task.worktree_path)
         if path.exists():
+            if assigned_branch:
+                task.branch_name = branch_name
             return path
-        task.worktree_path = None
-        await session.flush()
 
     parent_task: Task | None = None
     if task.parent_task_id is not None:
@@ -741,16 +742,13 @@ async def ensure_task_worktree(
         base_ref = base_task.branch_name
         break
 
-    branch_name = task.branch_name
-    if branch_name is None:
-        raise RuntimeError("Task branch_name missing after allocation")
-
     existing_path = find_existing_worktree_path_for_branch(
         ctx.repo_root, branch=branch_name
     )
     if existing_path is not None:
+        if assigned_branch:
+            task.branch_name = branch_name
         task.worktree_path = str(existing_path)
-        await session.flush()
         return existing_path
 
     worktree_path = default_worktree_path(ctx, branch=branch_name)
@@ -780,8 +778,9 @@ async def ensure_task_worktree(
         except GitCommandError as e:
             raise RuntimeError(str(e)) from e
 
+    if assigned_branch:
+        task.branch_name = branch_name
     task.worktree_path = str(worktree_path)
-    await session.flush()
     return worktree_path
 
 

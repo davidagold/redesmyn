@@ -162,113 +162,120 @@ async def update_git_projections_in_session(
 
     ref_moved_events = 0
 
-    existing_state = await session.get(GitRefStateByInstance, (repo.id, host_key))
-    if existing_state is None:
-        session.add(
-            GitRefStateByInstance(
-                repository_id=repo.id,
-                host_key=host_key,
-                refs=refs,
-                observed_at=created_at,
-                updated_at=created_at,
-            )
-        )
-    else:
-        changes = _diff_refs(existing_state.refs, refs)
-        for change in changes:
+    # Avoid implicit flushes (and therefore long-lived SQLite write transactions)
+    # while we execute git commands. Autoflush-triggered writes can hold the
+    # single-writer lock long enough to trip the busy timeout in unrelated API
+    # requests (e.g. agent restart emits).
+    with session.no_autoflush:
+        existing_state = await session.get(GitRefStateByInstance, (repo.id, host_key))
+        if existing_state is None:
             session.add(
-                Event(
-                    event_type="git.ref_moved",
-                    data={
-                        **change,
-                        "workspace_id": repo.workspace_id,
-                        "repo_id": repo.repo_id,
-                        "host_key": host_key,
-                    },
-                    created_at=created_at,
+                GitRefStateByInstance(
+                    repository_id=repo.id,
+                    host_key=host_key,
+                    refs=refs,
+                    observed_at=created_at,
+                    updated_at=created_at,
                 )
             )
-            ref_moved_events += 1
-        existing_state.refs = refs
-        existing_state.observed_at = created_at
-        existing_state.updated_at = created_at
-
-    epic_rows: Sequence[Epic]
-    if epics is None:
-        epic_rows = list(
-            await session.scalars(
-                select(Epic).where(Epic.repository_id == repo.id).order_by(Epic.id)
-            )
-        )
-    else:
-        epic_rows = epics
-
-    if not epic_rows:
-        return ref_moved_events
-
-    all_tasks: Sequence[Task]
-    if tasks is None:
-        all_tasks = list(
-            await session.scalars(
-                select(Task).where(Task.epic_id.in_([e.id for e in epic_rows]))
-            )
-        )
-    else:
-        all_tasks = tasks
-
-    tasks_by_epic: dict[int, list[Task]] = {}
-    for task in all_tasks:
-        tasks_by_epic.setdefault(task.epic_id, []).append(task)
-
-    for epic in epic_rows:
-        epic_tasks = tasks_by_epic.get(epic.id, [])
-        root_tasks = [t for t in epic_tasks if t.parent_task_id is None]
-        root_task_branches = [t.branch_name for t in root_tasks if t.branch_name]
-
-        trunk = compute_trunk_timeline_snapshot(
-            repo_root=ctx.repo_root,
-            root_branch=epic.root_branch,
-            root_task_branches=root_task_branches,
-        )
-        if trunk is not None:
-            existing_trunk = await session.get(
-                GitTrunkTimelineByInstance, (epic.id, host_key)
-            )
-            if existing_trunk is None:
+        else:
+            changes = _diff_refs(existing_state.refs, refs)
+            for change in changes:
                 session.add(
-                    GitTrunkTimelineByInstance(
-                        epic_id=epic.id,
-                        host_key=host_key,
-                        data=trunk,
-                        observed_at=created_at,
-                        updated_at=created_at,
+                    Event(
+                        event_type="git.ref_moved",
+                        data={
+                            **change,
+                            "workspace_id": repo.workspace_id,
+                            "repo_id": repo.repo_id,
+                            "host_key": host_key,
+                        },
+                        created_at=created_at,
                     )
                 )
-            else:
-                existing_trunk.data = trunk
-                existing_trunk.observed_at = created_at
-                existing_trunk.updated_at = created_at
+                ref_moved_events += 1
+            existing_state.refs = refs
+            existing_state.observed_at = created_at
+            existing_state.updated_at = created_at
 
-        for task in epic_tasks:
-            mb = (
-                git_merge_base(ctx.repo_root, epic.root_branch, task.branch_name)
-                if task.branch_name
-                else None
-            )
-            existing_mb = await session.get(GitMergeBaseByInstance, (task.id, host_key))
-            if existing_mb is None:
-                session.add(
-                    GitMergeBaseByInstance(
-                        task_id=task.id,
-                        host_key=host_key,
-                        merge_base_sha=mb,
-                        observed_at=created_at,
-                        updated_at=created_at,
-                    )
+        epic_rows: Sequence[Epic]
+        if epics is None:
+            epic_rows = list(
+                await session.scalars(
+                    select(Epic).where(Epic.repository_id == repo.id).order_by(Epic.id)
                 )
-            else:
-                existing_mb.merge_base_sha = mb
-                existing_mb.observed_at = created_at
-                existing_mb.updated_at = created_at
+            )
+        else:
+            epic_rows = epics
+
+        if not epic_rows:
+            return ref_moved_events
+
+        all_tasks: Sequence[Task]
+        if tasks is None:
+            all_tasks = list(
+                await session.scalars(
+                    select(Task).where(Task.epic_id.in_([e.id for e in epic_rows]))
+                )
+            )
+        else:
+            all_tasks = tasks
+
+        tasks_by_epic: dict[int, list[Task]] = {}
+        for task in all_tasks:
+            tasks_by_epic.setdefault(task.epic_id, []).append(task)
+
+        for epic in epic_rows:
+            epic_tasks = tasks_by_epic.get(epic.id, [])
+            root_tasks = [t for t in epic_tasks if t.parent_task_id is None]
+            root_task_branches = [t.branch_name for t in root_tasks if t.branch_name]
+
+            trunk = compute_trunk_timeline_snapshot(
+                repo_root=ctx.repo_root,
+                root_branch=epic.root_branch,
+                root_task_branches=root_task_branches,
+            )
+            if trunk is not None:
+                existing_trunk = await session.get(
+                    GitTrunkTimelineByInstance, (epic.id, host_key)
+                )
+                if existing_trunk is None:
+                    session.add(
+                        GitTrunkTimelineByInstance(
+                            epic_id=epic.id,
+                            host_key=host_key,
+                            data=trunk,
+                            observed_at=created_at,
+                            updated_at=created_at,
+                        )
+                    )
+                else:
+                    existing_trunk.data = trunk
+                    existing_trunk.observed_at = created_at
+                    existing_trunk.updated_at = created_at
+
+            for task in epic_tasks:
+                mb = (
+                    git_merge_base(ctx.repo_root, epic.root_branch, task.branch_name)
+                    if task.branch_name
+                    else None
+                )
+                existing_mb = await session.get(
+                    GitMergeBaseByInstance, (task.id, host_key)
+                )
+                if existing_mb is None:
+                    session.add(
+                        GitMergeBaseByInstance(
+                            task_id=task.id,
+                            host_key=host_key,
+                            merge_base_sha=mb,
+                            observed_at=created_at,
+                            updated_at=created_at,
+                        )
+                    )
+                else:
+                    existing_mb.merge_base_sha = mb
+                    existing_mb.observed_at = created_at
+                    existing_mb.updated_at = created_at
 
     return ref_moved_events

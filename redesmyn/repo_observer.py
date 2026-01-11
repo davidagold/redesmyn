@@ -280,249 +280,260 @@ async def observe_once(
     tasks_updated = 0
     projections_refreshed = False
 
-    new_shas: list[str] = []
-    new_commits: list[tuple[Task, str]] = []
-    for task in tasks:
-        if task.branch_name is None:
-            continue
-        sha = heads.get(task.branch_name)
-        if not sha:
-            continue
-        prev = state.last_head_by_task_id.get(task.id)
-        if prev is None:
+    # This function does non-trivial git I/O (merge-base checks, worktree
+    # inspection) and also records observations into SQLite. Ensure we do not
+    # trigger autoflush mid-loop; flushing early can open a write transaction and
+    # hold the single-writer lock long enough to trip the busy timeout in
+    # unrelated API requests.
+    with session.no_autoflush:
+        new_shas: list[str] = []
+        new_commits: list[tuple[Task, str]] = []
+        for task in tasks:
+            if task.branch_name is None:
+                continue
+            sha = heads.get(task.branch_name)
+            if not sha:
+                continue
+            prev = state.last_head_by_task_id.get(task.id)
+            if prev is None:
+                state.last_head_by_task_id[task.id] = sha
+                if emit_baseline:
+                    new_shas.append(sha)
+                    new_commits.append((task, sha))
+                continue
+            if prev == sha:
+                continue
             state.last_head_by_task_id[task.id] = sha
-            if emit_baseline:
-                new_shas.append(sha)
-                new_commits.append((task, sha))
-            continue
-        if prev == sha:
-            continue
-        state.last_head_by_task_id[task.id] = sha
-        new_shas.append(sha)
-        new_commits.append((task, sha))
+            new_shas.append(sha)
+            new_commits.append((task, sha))
 
-    summaries = read_commit_summaries(ctx.repo_root, shas=new_shas)
-    for task, sha in new_commits:
-        summary = summaries.get(sha)
-        data = GitCommitEventData(
-            task_id=task.id,
-            branch_name=task.branch_name or "",
-            sha=sha,
-            author_name=summary.author_name if summary else None,
-            author_email=summary.author_email if summary else None,
-            authored_at=summary.authored_at if summary else None,
-            subject=summary.subject if summary else None,
-            agent_session_id=active_agent_session_id_by_task_id.get(task.id),
+        summaries = read_commit_summaries(ctx.repo_root, shas=new_shas)
+        for task, sha in new_commits:
+            summary = summaries.get(sha)
+            data = GitCommitEventData(
+                task_id=task.id,
+                branch_name=task.branch_name or "",
+                sha=sha,
+                author_name=summary.author_name if summary else None,
+                author_email=summary.author_email if summary else None,
+                authored_at=summary.authored_at if summary else None,
+                subject=summary.subject if summary else None,
+                agent_session_id=active_agent_session_id_by_task_id.get(task.id),
+            )
+            payload = {
+                **data.model_dump(mode="python"),
+                "workspace_id": repo.workspace_id,
+                "repo_id": repo.repo_id,
+                "host_key": host_key,
+            }
+            session.add(
+                Event(
+                    event_type="git.commit",
+                    data=payload,
+                    created_at=now,
+                )
+            )
+            events_added += 1
+
+        should_refresh_git_projections = (
+            state.last_git_projections_refresh_at is None
+            or (now - state.last_git_projections_refresh_at).total_seconds() >= 5.0
         )
-        payload = {
-            **data.model_dump(mode="python"),
-            "workspace_id": repo.workspace_id,
-            "repo_id": repo.repo_id,
-            "host_key": host_key,
-        }
-        session.add(
-            Event(
-                event_type="git.commit",
-                data=payload,
-                created_at=now,
+        if should_refresh_git_projections:
+            try:
+                await update_git_projections_in_session(
+                    ctx=ctx,
+                    session=session,
+                    repo=repo,
+                    host_key=host_key,
+                    now=now,
+                    tasks=tasks,
+                )
+                projections_refreshed = True
+                state.last_git_projections_refresh_at = now
+            except Exception:
+                log.exception("repo_observer.git_projections_failed")
+
+        # Compute stack_in_sync for each task
+        epic_ids = {t.epic_id for t in tasks}
+        epics_by_id: dict[int, Epic] = {}
+        if epic_ids:
+            epic_rows = list(
+                await session.scalars(select(Epic).where(Epic.id.in_(epic_ids)))
+            )
+            epics_by_id = {e.id: e for e in epic_rows}
+
+        tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
+        sync_rows = list(
+            await session.scalars(
+                select(TaskStackInSyncState).where(
+                    TaskStackInSyncState.host_key == host_key,
+                    TaskStackInSyncState.task_id.in_(task_ids),
+                )
             )
         )
-        events_added += 1
+        sync_by_task_id = {r.task_id: r for r in sync_rows}
 
-    should_refresh_git_projections = (
-        state.last_git_projections_refresh_at is None
-        or (now - state.last_git_projections_refresh_at).total_seconds() >= 5.0
-    )
-    if should_refresh_git_projections:
-        try:
-            await update_git_projections_in_session(
-                ctx=ctx,
-                session=session,
-                repo=repo,
-                host_key=host_key,
-                now=now,
-                tasks=tasks,
-            )
-            projections_refreshed = True
-            state.last_git_projections_refresh_at = now
-        except Exception:
-            log.exception("repo_observer.git_projections_failed")
+        merged_into_base_by_task_id: dict[int, bool | None] = {}
 
-    # Compute stack_in_sync for each task
-    epic_ids = {t.epic_id for t in tasks}
-    epics_by_id: dict[int, Epic] = {}
-    if epic_ids:
-        epic_rows = list(
-            await session.scalars(select(Epic).where(Epic.id.in_(epic_ids)))
-        )
-        epics_by_id = {e.id: e for e in epic_rows}
-
-    tasks_by_id: dict[int, Task] = {t.id: t for t in tasks}
-    sync_rows = list(
-        await session.scalars(
-            select(TaskStackInSyncState).where(
-                TaskStackInSyncState.host_key == host_key,
-                TaskStackInSyncState.task_id.in_(task_ids),
-            )
-        )
-    )
-    sync_by_task_id = {r.task_id: r for r in sync_rows}
-
-    merged_into_base_by_task_id: dict[int, bool | None] = {}
-
-    def effective_upstream_branch_for_task(task: Task) -> str | None:
-        epic = epics_by_id.get(task.epic_id)
-        base_branch = epic.root_branch if epic else None
-        if base_branch is None:
-            return None
-
-        if task.parent_task_id is None:
-            return base_branch
-
-        if base_branch not in heads:
-            return None
-
-        seen: set[int] = set()
-        current_parent_id = task.parent_task_id
-        while current_parent_id is not None and current_parent_id not in seen:
-            seen.add(current_parent_id)
-            parent = tasks_by_id.get(current_parent_id)
-            if parent is None or parent.branch_name is None:
-                return base_branch
-            if parent.branch_name not in heads:
+        def effective_upstream_branch_for_task(task: Task) -> str | None:
+            epic = epics_by_id.get(task.epic_id)
+            base_branch = epic.root_branch if epic else None
+            if base_branch is None:
                 return None
 
-            merged = merged_into_base_by_task_id.get(current_parent_id)
-            if merged is None and current_parent_id not in merged_into_base_by_task_id:
-                try:
-                    merged = git_is_ancestor(
-                        ctx.repo_root, parent.branch_name, base_branch
-                    )
-                except Exception:
-                    merged = None
-                merged_into_base_by_task_id[current_parent_id] = merged
+            if task.parent_task_id is None:
+                return base_branch
 
-            if merged is True:
-                current_parent_id = parent.parent_task_id
-                continue
+            if base_branch not in heads:
+                return None
 
-            return parent.branch_name
+            seen: set[int] = set()
+            current_parent_id = task.parent_task_id
+            while current_parent_id is not None and current_parent_id not in seen:
+                seen.add(current_parent_id)
+                parent = tasks_by_id.get(current_parent_id)
+                if parent is None or parent.branch_name is None:
+                    return base_branch
+                if parent.branch_name not in heads:
+                    return None
 
-        return base_branch
+                merged = merged_into_base_by_task_id.get(current_parent_id)
+                if (
+                    merged is None
+                    and current_parent_id not in merged_into_base_by_task_id
+                ):
+                    try:
+                        merged = git_is_ancestor(
+                            ctx.repo_root, parent.branch_name, base_branch
+                        )
+                    except Exception:
+                        merged = None
+                    merged_into_base_by_task_id[current_parent_id] = merged
 
-    for task in tasks:
-        in_sync: bool | None
+                if merged is True:
+                    current_parent_id = parent.parent_task_id
+                    continue
 
-        if task.branch_name is None or task.branch_name not in heads:
-            in_sync = None
-        else:
-            upstream = effective_upstream_branch_for_task(task)
-            if upstream is None:
+                return parent.branch_name
+
+            return base_branch
+
+        for task in tasks:
+            in_sync: bool | None
+
+            if task.branch_name is None or task.branch_name not in heads:
                 in_sync = None
             else:
-                try:
-                    in_sync = git_is_ancestor(ctx.repo_root, upstream, task.branch_name)
-                except Exception:
+                upstream = effective_upstream_branch_for_task(task)
+                if upstream is None:
                     in_sync = None
+                else:
+                    try:
+                        in_sync = git_is_ancestor(
+                            ctx.repo_root, upstream, task.branch_name
+                        )
+                    except Exception:
+                        in_sync = None
 
-        sync_state = sync_by_task_id.get(task.id)
-        if sync_state is None:
-            sync_state = TaskStackInSyncState(
-                task_id=task.id,
-                host_key=host_key,
-                stack_in_sync=in_sync,
-                observed_at=now,
-                updated_at=now,
-            )
-            session.add(sync_state)
-            sync_by_task_id[task.id] = sync_state
-        else:
-            sync_state.stack_in_sync = in_sync
-            sync_state.observed_at = now
-            sync_state.updated_at = now
+            sync_state = sync_by_task_id.get(task.id)
+            if sync_state is None:
+                sync_state = TaskStackInSyncState(
+                    task_id=task.id,
+                    host_key=host_key,
+                    stack_in_sync=in_sync,
+                    observed_at=now,
+                    updated_at=now,
+                )
+                session.add(sync_state)
+                sync_by_task_id[task.id] = sync_state
+            else:
+                sync_state.stack_in_sync = in_sync
+                sync_state.observed_at = now
+                sync_state.updated_at = now
 
-        if not is_primary:
-            continue
-        if task.stack_in_sync != in_sync:
-            task.stack_in_sync = in_sync
-            tasks_updated += 1
-
-    for task in tasks:
-        observed = observe_worktree(task=task, ctx=ctx)
-        if (
-            task.worktree_path is None
-            and observed.exists
-            and observed.current_branch == task.branch_name
-        ):
-            task.worktree_path = observed.worktree_path
-            tasks_updated += 1
-
-        prev = state.last_worktree_by_task_id.get(task.id)
-        if prev is None:
-            state.last_worktree_by_task_id[task.id] = observed
-            if not emit_baseline:
+            if not is_primary:
                 continue
-        elif prev == observed:
-            continue
+            if task.stack_in_sync != in_sync:
+                task.stack_in_sync = in_sync
+                tasks_updated += 1
 
-        state.last_worktree_by_task_id[task.id] = observed
-        data = WorktreeHealthEventData(
-            task_id=task.id,
-            branch_name=task.branch_name or "",
-            worktree_path=observed.worktree_path,
-            exists=observed.exists,
-            current_branch=observed.current_branch,
-            dirty=observed.dirty,
-            branch_mismatch=observed.branch_mismatch,
-        )
-        payload = {
-            **data.model_dump(mode="python"),
-            "workspace_id": repo.workspace_id,
-            "repo_id": repo.repo_id,
-            "host_key": host_key,
-        }
-        session.add(
-            Event(
-                event_type="worktree.health",
-                data=payload,
-                created_at=now,
+        for task in tasks:
+            observed = observe_worktree(task=task, ctx=ctx)
+            if (
+                task.worktree_path is None
+                and observed.exists
+                and observed.current_branch == task.branch_name
+            ):
+                task.worktree_path = observed.worktree_path
+                tasks_updated += 1
+
+            prev = state.last_worktree_by_task_id.get(task.id)
+            if prev is None:
+                state.last_worktree_by_task_id[task.id] = observed
+                if not emit_baseline:
+                    continue
+            elif prev == observed:
+                continue
+
+            state.last_worktree_by_task_id[task.id] = observed
+            data = WorktreeHealthEventData(
+                task_id=task.id,
+                branch_name=task.branch_name or "",
+                worktree_path=observed.worktree_path,
+                exists=observed.exists,
+                current_branch=observed.current_branch,
+                dirty=observed.dirty,
+                branch_mismatch=observed.branch_mismatch,
+            )
+            payload = {
+                **data.model_dump(mode="python"),
+                "workspace_id": repo.workspace_id,
+                "repo_id": repo.repo_id,
+                "host_key": host_key,
+            }
+            session.add(
+                Event(
+                    event_type="worktree.health",
+                    data=payload,
+                    created_at=now,
+                )
+            )
+            events_added += 1
+
+        blocked_runs = list(
+            await session.scalars(
+                select(MergeRun).where(MergeRun.status == MergeRunStatus.Blocked)
             )
         )
-        events_added += 1
-
-    blocked_runs = list(
-        await session.scalars(
-            select(MergeRun).where(MergeRun.status == MergeRunStatus.Blocked)
-        )
-    )
-    for run in blocked_runs:
-        if not run.blocked_worktree_path or not run.blocked_task_id:
-            continue
-        path = Path(run.blocked_worktree_path)
-        if not path.exists():
-            continue
-        if git_has_in_progress_operation(path):
-            continue
-        run.status = MergeRunStatus.Resumable
-        merge_runs_updated += 1
-        session.add(
-            Event(
-                event_type="merge.run",
-                data={
-                    "run_id": run.run_id,
-                    "task_id": run.blocked_task_id,
-                    "epic_id": run.epic_id,
-                    "requested_task_id": run.requested_task_id,
-                    "status": run.status,
-                    "operation": run.operation,
-                    "workspace_id": repo.workspace_id,
-                    "repo_id": repo.repo_id,
-                    "host_key": host_key,
-                },
-                created_at=now,
+        for run in blocked_runs:
+            if not run.blocked_worktree_path or not run.blocked_task_id:
+                continue
+            path = Path(run.blocked_worktree_path)
+            if not path.exists():
+                continue
+            if git_has_in_progress_operation(path):
+                continue
+            run.status = MergeRunStatus.Resumable
+            merge_runs_updated += 1
+            session.add(
+                Event(
+                    event_type="merge.run",
+                    data={
+                        "run_id": run.run_id,
+                        "task_id": run.blocked_task_id,
+                        "epic_id": run.epic_id,
+                        "requested_task_id": run.requested_task_id,
+                        "status": run.status,
+                        "operation": run.operation,
+                        "workspace_id": repo.workspace_id,
+                        "repo_id": repo.repo_id,
+                        "host_key": host_key,
+                    },
+                    created_at=now,
+                )
             )
-        )
-        events_added += 1
+            events_added += 1
 
     if events_added or tasks_updated or merge_runs_updated or projections_refreshed:
         await session.commit()
