@@ -132,7 +132,6 @@ from redesmyn.integrations.github_config import (
 )
 from redesmyn.integrations.github_status import (
     github_auth_status,
-    try_parse_current_repo_owner_repo,
 )
 from redesmyn.integrations.linear_state import (
     linear_state_type_from_task_state,
@@ -142,7 +141,7 @@ from redesmyn.integrations.linear_write_defaults import (
     ensure_linear_write_defaults,
     load_linear_write_defaults,
 )
-from redesmyn.integrations.github_repo import detect_github_repo_ref
+from redesmyn.integrations.github_repo import GithubRepoRef, detect_github_repo_ref
 from redesmyn.git_proxy import (
     READ_ONLY_SUBCOMMANDS,
     detect_git_subcommand,
@@ -4531,14 +4530,56 @@ def _require_github_credentials() -> GitHubCredentials:
     return creds
 
 
-def _require_current_repo_owner_repo(ctx: RepoContext) -> tuple[str, str]:
-    owner_repo = try_parse_current_repo_owner_repo(ctx.repo_root)
-    if owner_repo is None:
+def _github_repo_ref_from_epic(epic: Epic) -> GithubRepoRef | None:
+    if (
+        epic.github_repo_host is None
+        or epic.github_repo_owner is None
+        or epic.github_repo_name is None
+    ):
+        return None
+    return GithubRepoRef(
+        host=epic.github_repo_host,
+        owner=epic.github_repo_owner,
+        repo=epic.github_repo_name,
+    )
+
+
+def _github_repo_ref_from_task(task: Task) -> GithubRepoRef | None:
+    if (
+        task.github_repo_host is None
+        or task.github_repo_owner is None
+        or task.github_repo_name is None
+    ):
+        return None
+    return GithubRepoRef(
+        host=task.github_repo_host,
+        owner=task.github_repo_owner,
+        repo=task.github_repo_name,
+    )
+
+
+def _require_detected_github_repo_ref(ctx: RepoContext) -> GithubRepoRef:
+    detected = detect_github_repo_ref(ctx.repo_root)
+    if detected is None:
         raise typer.BadParameter(
             "Could not infer GitHub owner/repo from local git remotes. "
-            "Ensure your remote is `github.com:<owner>/<repo>` (v0)."
+            "Ensure your remote points at github.com (e.g. "
+            "`git@github.com:owner/repo.git`)."
         )
-    return owner_repo
+    return detected
+
+
+def _effective_github_repo_ref_for_task(
+    ctx: RepoContext,
+    *,
+    epic: Epic,
+    task: Task,
+) -> GithubRepoRef:
+    return (
+        _github_repo_ref_from_task(task)
+        or _github_repo_ref_from_epic(epic)
+        or _require_detected_github_repo_ref(ctx)
+    )
 
 
 def _effective_upstream_branch_for_task(
@@ -4788,13 +4829,16 @@ def github_pr_create(
             )
 
         creds = _require_github_credentials()
-        owner, repo = _require_current_repo_owner_repo(ctx)
         cfg = load_github_integration_config(ctx)
 
         engine = create_engine(ctx.db_path)
         try:
             sessionmaker = create_sessionmaker(engine)
             async with sessionmaker() as session:
+                epic_row = await session.get(Epic, resolved_epic.id)
+                if epic_row is None:
+                    raise typer.BadParameter("Epic not found")
+
                 tasks = list(
                     await session.scalars(
                         select(Task).where(Task.epic_id == resolved_epic.id)
@@ -4816,6 +4860,13 @@ def github_pr_create(
                     base_branch=resolved_epic.root_branch,
                     tasks_by_id=tasks_by_id,
                 )
+
+                repo_ref = _effective_github_repo_ref_for_task(
+                    ctx,
+                    epic=epic_row,
+                    task=task_row,
+                )
+                owner, repo = repo_ref.owner, repo_ref.repo
 
                 # v0: always push the head branch before PR creation.
                 _push_branch_for_github_pr(
@@ -4924,7 +4975,6 @@ def github_pr_open(
             )
 
         creds = _require_github_credentials()
-        owner, repo = _require_current_repo_owner_repo(ctx)
 
         engine = create_engine(ctx.db_path)
         try:
@@ -4933,6 +4983,16 @@ def github_pr_open(
                 task_row = await session.get(Task, resolved_task.id)
                 if task_row is None:
                     raise typer.BadParameter("Task not found")
+                epic_row = await session.get(Epic, task_row.epic_id)
+                if epic_row is None:
+                    raise typer.BadParameter("Epic not found")
+
+                repo_ref = _effective_github_repo_ref_for_task(
+                    ctx,
+                    epic=epic_row,
+                    task=task_row,
+                )
+                owner, repo = repo_ref.owner, repo_ref.repo
                 existing = await detect_pull_request_for_branch(
                     owner=owner,
                     repo=repo,
