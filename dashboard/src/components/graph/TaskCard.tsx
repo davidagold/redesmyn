@@ -1175,20 +1175,37 @@ export function TaskCard({
     }
   }, [mergeConflictAssist, showResumableMergeCallout])
 
-  const resumableMergeBadgeLabel = useMemo(() => {
+  const resumableMergeDetail = useMemo(() => {
     if (!showResumableMergeCallout) {
       return null
     }
 
-    if (
-      mergeConflictAssist?.active &&
-      mergeConflictAssist.state !== "timed_out" &&
-      mergeConflictAssist.state !== "unsupported"
-    ) {
-      return "Auto-resolving"
+    const summary = resumableMergeSummary
+    const extra = mergeConflictAssist?.detail?.trim() ?? ""
+
+    if (extra) {
+      if (!summary || extra === summary) {
+        return extra
+      }
+      return `${summary}\n${extra}`
     }
-    return "Ready to resume"
-  }, [mergeConflictAssist, showResumableMergeCallout])
+
+    if (
+      mergeConflictAssist?.active === true ||
+      mergeConflictAssist?.state === "timed_out" ||
+      mergeConflictAssist?.state === "unsupported"
+    ) {
+      return summary
+    }
+
+    return null
+  }, [
+    mergeConflictAssist?.active,
+    mergeConflictAssist?.detail,
+    mergeConflictAssist?.state,
+    resumableMergeSummary,
+    showResumableMergeCallout,
+  ])
 
   const resumableMergeVariant = useMemo(() => {
     if (!showResumableMergeCallout) {
@@ -1957,12 +1974,7 @@ export function TaskCard({
           {showResumableMergeCallout ? (
             <ResumableMergeCallout
               variant={resumableMergeVariant}
-              badgeLabel={resumableMergeBadgeLabel ?? "Ready to resume"}
-              summary={
-                resumableMergeSummary ?? "Conflicts resolved; ready to resume."
-              }
-              detail={mergeConflictAssist?.detail ?? null}
-              assistActive={mergeConflictAssist?.active === true}
+              detail={resumableMergeDetail}
               operation={mergeRunOperation}
               disabledReason={
                 pendingMerge !== null ? "Action in progress" : gitDisabledReason

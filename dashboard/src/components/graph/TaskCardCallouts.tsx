@@ -302,18 +302,21 @@ export function ActionErrorCallout({
 
 export function ExpandableStatusCallout({
   variant,
-  badgeLabel,
+  leading,
   summary,
   detail = null,
   actions = null,
+  actionsVisibility = "hover",
 }: {
   variant: AlertVariant
-  badgeLabel: string
+  leading: ReactNode
   summary: string
   detail?: string | null
   actions?: ReactNode
+  actionsVisibility?: "hover" | "always"
 }) {
   const [expanded, setExpanded] = useState(false)
+  const canExpand = detail !== null && detail.trim() !== ""
 
   return (
     <Alert
@@ -321,7 +324,7 @@ export function ExpandableStatusCallout({
       className={cn(
         "group gap-1 shadow-none ring-0",
         "max-w-full overflow-hidden",
-        "cursor-pointer select-none",
+        canExpand ? "cursor-pointer select-none" : "cursor-default",
       )}
       role="button"
       tabIndex={0}
@@ -329,21 +332,25 @@ export function ExpandableStatusCallout({
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
+        if (!canExpand) {
+          return
+        }
         setExpanded((current) => !current)
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           e.stopPropagation()
+          if (!canExpand) {
+            return
+          }
           setExpanded((current) => !current)
         }
       }}
     >
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Badge variant={variant} size="xs">
-            {badgeLabel}
-          </Badge>
+          {leading}
           <div className="truncate text-[11px] text-foreground/70">
             {summary}
           </div>
@@ -352,9 +359,11 @@ export function ExpandableStatusCallout({
           <div
             className={cn(
               "flex shrink-0 items-center gap-1 transition-opacity",
-              expanded
+              actionsVisibility === "always"
                 ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                : expanded
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
             )}
             onClick={(event) => event.stopPropagation()}
           >
@@ -363,7 +372,7 @@ export function ExpandableStatusCallout({
         ) : null}
       </div>
 
-      {expanded && detail ? (
+      {expanded && canExpand ? (
         <div className="text-[11px] text-foreground/70">{detail}</div>
       ) : null}
     </Alert>
@@ -466,7 +475,11 @@ export function BlockedRebaseCallout({
   return (
     <ExpandableStatusCallout
       variant={variant}
-      badgeLabel={badgeLabel}
+      leading={
+        <Badge variant={variant} size="xs">
+          {badgeLabel}
+        </Badge>
+      }
       summary={summary}
       detail={detail}
       actions={actions}
@@ -476,24 +489,18 @@ export function BlockedRebaseCallout({
 
 export function ResumableMergeCallout({
   variant,
-  badgeLabel,
-  summary,
   detail,
-  assistActive,
   operation,
   disabledReason,
   onResume,
 }: {
   variant: AlertVariant
-  badgeLabel: string
-  summary: string
   detail: string | null
-  assistActive: boolean
   operation: "merge" | "restack"
   disabledReason: string | null
   onResume: () => void
 }) {
-  const actions = assistActive ? null : (
+  const actions = (
     <Button
       variant="outline"
       size="xs"
@@ -505,7 +512,6 @@ export function ResumableMergeCallout({
         onResume()
       }}
     >
-      <Play className="size-3" />
       {operation === "restack" ? "Resume restack" : "Resume merge"}
     </Button>
   )
@@ -513,10 +519,21 @@ export function ResumableMergeCallout({
   return (
     <ExpandableStatusCallout
       variant={variant}
-      badgeLabel={badgeLabel}
-      summary={summary}
+      leading={
+        <span
+          className={cn(
+            "inline-flex size-5 shrink-0 items-center justify-center rounded-sm border",
+            "border-emerald-400/25 bg-emerald-400/10 text-emerald-100",
+          )}
+          aria-hidden="true"
+        >
+          <Play className="size-3" />
+        </span>
+      }
+      summary="Branch is ready"
       detail={detail}
       actions={actions}
+      actionsVisibility="always"
     />
   )
 }
