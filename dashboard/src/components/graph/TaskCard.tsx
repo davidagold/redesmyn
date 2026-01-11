@@ -383,6 +383,7 @@ export function TaskCard({
     useState<AllowRunningPrompt | null>(null)
   const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
   const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
+  const [resumableMergeExpanded, setResumableMergeExpanded] = useState(false)
   const [blockedRebaseCompletionNotice, setBlockedRebaseCompletionNotice] =
     useState<string | null>(null)
   const [mergeReadySpineNotice, setMergeReadySpineNotice] =
@@ -467,24 +468,6 @@ export function TaskCard({
     mergeConflictAssist.state !== "unsupported" &&
     ((mergeRun?.blockedTaskId ?? null) === null ||
       (mergeRun?.blockedTaskId ?? null) === node.id)
-
-  const mergeAutoAssistStatusLabel = (() => {
-    if (!mergeAutoAssistActive) {
-      return null
-    }
-    switch (mergeConflictAssist?.state) {
-      case "waiting_for_agent_ready":
-        return "Starting agent…"
-      case "sent_waiting_for_turn_complete":
-        return "Waiting for agent…"
-      case "waiting_for_repo_clean":
-        return "Waiting for repo clean…"
-      case "ready_to_resume":
-        return "Auto-resuming…"
-      default:
-        return "Auto-resuming…"
-    }
-  })()
 
   const blockingAutoAssistActive =
     blockingMergeRunBlockedRebase &&
@@ -609,6 +592,24 @@ export function TaskCard({
     mergeRunStatus === "resumable"
   const canCancelMergeRunAbortGit =
     mergeRunStatus === "blocked" && Boolean(mergeRun?.blockedWorktreePath)
+
+  const showResumableMergeCallout = useMemo(() => {
+    if (!canResumeMerge || !mergeRun) {
+      return false
+    }
+
+    const blockedTaskId = mergeRun.blockedTaskId ?? null
+    return (
+      (blockedTaskId === null || blockedTaskId === node.id) &&
+      !blockingMergeRunBlockedRebase
+    )
+  }, [blockingMergeRunBlockedRebase, canResumeMerge, mergeRun, node.id])
+
+  useEffect(() => {
+    if (!showResumableMergeCallout) {
+      setResumableMergeExpanded(false)
+    }
+  }, [showResumableMergeCallout])
 
   const quickActionsEnabled =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
@@ -1153,15 +1154,74 @@ export function TaskCard({
 
   const gitAttentionIcon = mergeAttentionIcon || syncAttentionIcon
 
-  const showResumeButtonOnCard = useMemo(() => {
-    if (!canResumeMerge || !mergeRun) {
-      return false
+  const resumableMergeSummary = useMemo(() => {
+    if (!showResumableMergeCallout) {
+      return null
     }
-    const blockedTaskId = mergeRun.blockedTaskId ?? null
-    return blockedTaskId === null || blockedTaskId === node.id
-  }, [canResumeMerge, mergeRun, node.id])
 
-  const shouldShowResumeButton = showResumeButtonOnCard
+    if (!mergeConflictAssist) {
+      return "Conflicts resolved; ready to resume."
+    }
+
+    if (mergeConflictAssist.state === "timed_out") {
+      return "Manual resolution needed (timed out)."
+    }
+    if (mergeConflictAssist.state === "unsupported") {
+      return "Manual resolution needed (unavailable)."
+    }
+
+    if (!mergeConflictAssist.active) {
+      return "Conflicts resolved; ready to resume."
+    }
+
+    switch (mergeConflictAssist.state) {
+      case "waiting_for_agent_ready":
+        return mergeConflictAssist.detail
+          ? "Auto-resolving… unable to start agent."
+          : "Auto-resolving… starting agent turn."
+      case "sent_waiting_for_turn_complete":
+        return mergeConflictAssist.messageSentAt
+          ? "Auto-resolving… waiting for agent."
+          : "Auto-resolving…"
+      case "waiting_for_repo_clean":
+        return "Auto-resolving… waiting for repo clean."
+      case "ready_to_resume":
+        return "Auto-resolving… resuming."
+      case "resumed":
+        return "Auto-resolving… resumed."
+      default:
+        return "Auto-resolving…"
+    }
+  }, [mergeConflictAssist, showResumableMergeCallout])
+
+  const resumableMergeBadgeLabel = useMemo(() => {
+    if (!showResumableMergeCallout) {
+      return null
+    }
+
+    if (
+      mergeConflictAssist?.active &&
+      mergeConflictAssist.state !== "timed_out" &&
+      mergeConflictAssist.state !== "unsupported"
+    ) {
+      return "Auto-resolving"
+    }
+    return "Ready to resume"
+  }, [mergeConflictAssist, showResumableMergeCallout])
+
+  const resumableMergeVariant = useMemo(() => {
+    if (!showResumableMergeCallout) {
+      return "emerald" as const
+    }
+    if (
+      mergeConflictAssist?.active &&
+      mergeConflictAssist.state !== "timed_out" &&
+      mergeConflictAssist.state !== "unsupported"
+    ) {
+      return "amber" as const
+    }
+    return "emerald" as const
+  }, [mergeConflictAssist, showResumableMergeCallout])
 
   const allowRunningActionLabel =
     allowRunningPrompt?.kind === "merge"
@@ -1867,7 +1927,7 @@ export function TaskCard({
         </div>
       </CardContent>
       {actionError ||
-      shouldShowResumeButton ||
+      showResumableMergeCallout ||
       blockingMergeRunBlockedRebase ||
       mergeReadySpineNotice ||
       blockedRebaseCompletionNotice ? (
@@ -2177,6 +2237,84 @@ export function TaskCard({
             </Alert>
           ) : null}
 
+          {showResumableMergeCallout ? (
+            <Alert
+              variant={resumableMergeVariant}
+              className={cn(
+                "group gap-1 shadow-none ring-0",
+                "max-w-full overflow-hidden",
+                "cursor-pointer select-none",
+              )}
+              role="button"
+              tabIndex={0}
+              aria-expanded={resumableMergeExpanded}
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setResumableMergeExpanded((current) => !current)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setResumableMergeExpanded((current) => !current)
+                }
+              }}
+            >
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <Badge variant={resumableMergeVariant} size="xs">
+                    {resumableMergeBadgeLabel ?? "Ready to resume"}
+                  </Badge>
+                  <div className="truncate text-[11px] text-foreground/70">
+                    {resumableMergeSummary ??
+                      "Conflicts resolved; ready to resume."}
+                  </div>
+                </div>
+                <div
+                  className={cn(
+                    "flex shrink-0 items-center gap-1 transition-opacity",
+                    resumableMergeExpanded
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                  )}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {mergeConflictAssist?.active !== true ? (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+                      disabledReason={
+                        pendingMerge !== null
+                          ? "Action in progress"
+                          : gitDisabledReason
+                            ? gitDisabledReason
+                            : null
+                      }
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleResumeMerge()
+                      }}
+                    >
+                      <Play className="size-3" />
+                      {mergeRunOperation === "restack"
+                        ? "Resume restack"
+                        : "Resume merge"}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+
+              {resumableMergeExpanded && mergeConflictAssist?.detail ? (
+                <div className="text-[11px] text-foreground/70">
+                  {mergeConflictAssist.detail}
+                </div>
+              ) : null}
+            </Alert>
+          ) : null}
+
           {blockedRebaseCompletionNotice ? (
             <Alert variant="emerald" className="gap-1 shadow-lg">
               <div className="flex min-w-0 items-center justify-between gap-2">
@@ -2200,94 +2338,6 @@ export function TaskCard({
                 </Button>
               </div>
             </Alert>
-          ) : null}
-
-          {shouldShowResumeButton ? (
-            <div className="flex justify-end">
-              {pendingMerge !== null ||
-              gitDisabledReason ||
-              mergeAutoAssistStatusLabel ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                  disabledReason={
-                    pendingMerge !== null
-                      ? "Action in progress"
-                      : gitDisabledReason
-                        ? gitDisabledReason
-                        : mergeAutoAssistStatusLabel
-                          ? "Conflict assist is active"
-                          : null
-                  }
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void handleResumeMerge()
-                  }}
-                >
-                  <Play className="size-3" />
-                  {mergeAutoAssistStatusLabel
-                    ? mergeAutoAssistStatusLabel
-                    : mergeRunOperation === "restack"
-                      ? "Resume restack"
-                      : "Resume merge"}
-                </Button>
-              ) : mergeConflictAssist?.detail ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={(triggerProps) => (
-                      <Button
-                        {...triggerProps}
-                        variant="outline"
-                        size="sm"
-                        className={cn(
-                          "border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50",
-                          triggerProps.className,
-                        )}
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          void handleResumeMerge()
-                        }}
-                      >
-                        <Play className="size-3" />
-                        {mergeAutoAssistStatusLabel
-                          ? mergeAutoAssistStatusLabel
-                          : mergeRunOperation === "restack"
-                            ? "Resume restack"
-                            : "Resume merge"}
-                      </Button>
-                    )}
-                  />
-                  <TooltipContent
-                    side="bottom"
-                    sideOffset={10}
-                    showArrow={false}
-                  >
-                    {mergeConflictAssist.detail}
-                  </TooltipContent>
-                </Tooltip>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    void handleResumeMerge()
-                  }}
-                >
-                  <Play className="size-3" />
-                  {mergeAutoAssistStatusLabel
-                    ? mergeAutoAssistStatusLabel
-                    : mergeRunOperation === "restack"
-                      ? "Resume restack"
-                      : "Resume merge"}
-                </Button>
-              )}
-            </div>
           ) : null}
         </div>
       ) : null}
