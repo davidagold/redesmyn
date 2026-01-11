@@ -44,6 +44,23 @@ local precommit_steps = (formatters) {
             "openapi/openapi.json",
         )
     }
+
+    ["dashboard_packaged_assets"] {
+        glob = List(
+            "dashboard/src/**",
+            "dashboard/public/**",
+            "dashboard/index.html",
+            "dashboard/vite.config.ts",
+            "dashboard/tailwind.config.ts",
+            "dashboard/components.json",
+            "dashboard/tsconfig*.json",
+            "dashboard/package.json",
+            "dashboard/package-lock.json",
+        )
+        dir = "dashboard"
+        fix = "npm run build && uv run python ../scripts/build_packaged_dashboard_assets.py --copy-only"
+        stage = List("redesmyn/dashboard_assets/dist/**")
+    }
 }
 
 hooks {
