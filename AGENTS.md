@@ -24,3 +24,8 @@
 
 - Avoid adding borders to every card/panel; too many lines makes the UI feel busy and distracts from the information. Prefer spacing and subtle rules/separators; reserve borders for elements that truly need to pop against their background.
 - Avoid inert property enumerations (e.g. “From/To” blocks that restate what the graph already shows). Prefer structured UI that leverages the graph (highlighting, selection states, breadcrumbs) and dedicate the Details panel to actionable content (contracts, messages, controls).
+- Never initiate a user-visible action (API request, daemon command, git action) without an immediate and clearly visible “in progress” indication (no “silent” dead air after a click).
+- No spinner wheels. Shimmering text is reserved only for LLM generation.
+- Prefer calm-but-visible progress affordances: animated ellipses, subtle glow/pulse, or similar low-noise motion.
+- Prevent accidental duplicate requests: disable the triggering control while in flight unless concurrent actions are explicitly safe.
+- Keep progress indicators accessible (visible in light/dark, keyboard-safe, no focus traps); on error, keep messages actionable and preserve user input when possible (e.g. don’t drop drafts).
