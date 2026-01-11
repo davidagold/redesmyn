@@ -403,11 +403,16 @@ export function useUpdateEpicLinearConfigMutation() {
   })
 }
 
+type UpdateEpicGithubRepoVariables = {
+  epicSlug: string
+  repo: string | null
+}
+
 export function useUpdateEpicGithubRepoMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (variables: { epicSlug: string repo: string | null }) =>
+    mutationFn: (variables: UpdateEpicGithubRepoVariables) =>
       updateEpicGithubRepo(variables.epicSlug, variables.repo),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
