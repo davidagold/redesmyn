@@ -273,7 +273,11 @@ export function TaskCard({
     blockingMergeRun,
     node.branchName,
   )
-  const blockingMergeRunBlockedRebase = blockingRebaseRemediation !== null
+  const blockingMergeRunStatus = blockingMergeRun?.status ?? null
+  const blockingMergeRunBlockedRebase =
+    blockingMergeRun?.blockedStepKind === "rebase" &&
+    (blockingMergeRunStatus === "blocked" ||
+      blockingMergeRunStatus === "resumable")
   const blockingConflictAssist = blockingMergeRun?.conflictAssist ?? null
   const gitDisabledReason = gitMutationsDisabledReason ?? null
   const agentKindLabel = agentSession
@@ -444,7 +448,9 @@ export function TaskCard({
     mergeRunStatus === "resumable" &&
     mergeConflictAssist?.active === true &&
     mergeConflictAssist.state !== "timed_out" &&
-    mergeConflictAssist.state !== "unsupported"
+    mergeConflictAssist.state !== "unsupported" &&
+    ((mergeRun?.blockedTaskId ?? null) === null ||
+      (mergeRun?.blockedTaskId ?? null) === node.id)
 
   const mergeAutoAssistStatusLabel = (() => {
     if (!mergeAutoAssistActive) {
@@ -464,8 +470,16 @@ export function TaskCard({
     }
   })()
 
+  const blockingAutoAssistActive =
+    blockingMergeRunBlockedRebase &&
+    blockingConflictAssist?.active === true &&
+    blockingConflictAssist.state !== "timed_out" &&
+    blockingConflictAssist.state !== "unsupported"
+
   const showGitActionGlow =
-    gitActionInProgress !== null || mergeAutoAssistActive
+    gitActionInProgress !== null ||
+    mergeAutoAssistActive ||
+    blockingAutoAssistActive
 
   useEffect(() => {
     if (!mergeReadySpineNotice) {
@@ -760,6 +774,40 @@ export function TaskCard({
     }
   }
 
+  async function handleResumeBlockingMerge() {
+    if (!blockingMergeRun?.runId) {
+      return
+    }
+    setPendingMerge("resume")
+    clearActionError()
+    const operation = blockingMergeRun.operation ?? "merge"
+    try {
+      await resumeMergeRunMutation.mutateAsync({
+        epicId: node.epicId,
+        runId: blockingMergeRun.runId,
+        request: {},
+      })
+    } catch (e) {
+      if (e instanceof ApiHttpError && e.status === 409) {
+        if (isRunningAgentsConflict(e)) {
+          setAllowRunningPrompt({
+            kind: "resume",
+            runId: blockingMergeRun.runId,
+            operation,
+            detail: runningAgentsSummary(e),
+          })
+          return
+        }
+      }
+      setActionErrorFromException(
+        operation === "restack" ? "Resume restack" : "Resume merge",
+        e,
+      )
+    } finally {
+      setPendingMerge(null)
+    }
+  }
+
   async function handleCancelMergeRun({ abortGit }: { abortGit: boolean }) {
     if (!mergeRun?.runId) {
       return
@@ -1043,7 +1091,15 @@ export function TaskCard({
 
   const gitAttentionIcon = mergeAttentionIcon || syncAttentionIcon
 
-  const shouldShowResumeButton = canResumeMerge
+  const showResumeButtonOnCard = useMemo(() => {
+    if (!canResumeMerge || !mergeRun) {
+      return false
+    }
+    const blockedTaskId = mergeRun.blockedTaskId ?? null
+    return blockedTaskId === null || blockedTaskId === node.id
+  }, [canResumeMerge, mergeRun, node.id])
+
+  const shouldShowResumeButton = showResumeButtonOnCard
 
   const allowRunningActionLabel =
     allowRunningPrompt?.kind === "merge"
@@ -1064,11 +1120,20 @@ export function TaskCard({
     if (!blockingMergeRunBlockedRebase) {
       return null
     }
+    const isResumable = blockingMergeRunStatus === "resumable"
     const agentRunning = agentStatus === "running"
     const assist = blockingConflictAssist
+    const assistTaskId = assist?.agentTaskId ?? null
+    const assistSuffix =
+      assistTaskId !== null && assistTaskId !== node.id
+        ? ` (on T-${assistTaskId})`
+        : ""
     if (!assist) {
-      return agentRunning
-        ? "Auto-resolving… agent working."
+      if (agentRunning) {
+        return "Auto-resolving… agent working."
+      }
+      return isResumable
+        ? "Conflicts resolved; ready to resume."
         : "Resolve conflicts, then resume."
     }
 
@@ -1081,11 +1146,13 @@ export function TaskCard({
 
     switch (assist.state) {
       case "waiting_for_agent_ready":
-        return "Auto-resolving… starting agent turn."
+        return assist.detail
+          ? `Auto-resolving… unable to start agent${assistSuffix}.`
+          : `Auto-resolving… starting agent turn${assistSuffix}.`
       case "sent_waiting_for_turn_complete":
         return assist.messageSentAt
-          ? "Auto-resolving… waiting for agent."
-          : "Auto-resolving…"
+          ? `Auto-resolving… waiting for agent${assistSuffix}.`
+          : `Auto-resolving${assistSuffix}…`
       case "waiting_for_repo_clean":
         return "Auto-resolving… waiting for repo clean."
       case "ready_to_resume":
@@ -1093,28 +1160,63 @@ export function TaskCard({
       case "resumed":
         return "Auto-resolving… resumed."
       default:
-        return assist.active || agentRunning
-          ? "Auto-resolving…"
+        if (assist.active || agentRunning) {
+          return `Auto-resolving${assistSuffix}…`
+        }
+        return isResumable
+          ? "Conflicts resolved; ready to resume."
           : "Resolve conflicts, then resume."
     }
-  }, [agentStatus, blockingConflictAssist, blockingMergeRunBlockedRebase])
+  }, [
+    agentStatus,
+    blockingConflictAssist,
+    blockingMergeRunBlockedRebase,
+    blockingMergeRunStatus,
+    node.id,
+  ])
 
   const blockedRebaseBadgeLabel = useMemo(() => {
     if (!blockingMergeRunBlockedRebase) {
       return null
     }
     const assist = blockingConflictAssist
-    if (assist?.state === "timed_out" || assist?.state === "unsupported") {
-      return "Rebase blocked"
+    if (
+      assist?.active &&
+      assist.state !== "timed_out" &&
+      assist.state !== "unsupported"
+    ) {
+      return "Auto-resolving"
     }
-    if (assist && assist.state !== "resumed") {
-      return "Rebase blocked (auto)"
-    }
-    if (agentStatus === "running") {
-      return "Rebase blocked (auto)"
+    if (blockingMergeRunStatus === "resumable") {
+      return "Ready to resume"
     }
     return "Rebase blocked"
-  }, [agentStatus, blockingConflictAssist, blockingMergeRunBlockedRebase])
+  }, [
+    blockingConflictAssist,
+    blockingMergeRunBlockedRebase,
+    blockingMergeRunStatus,
+  ])
+
+  const blockedRebaseVariant = useMemo(() => {
+    if (!blockingMergeRunBlockedRebase) {
+      return "amber" as const
+    }
+    const assist = blockingConflictAssist
+    if (
+      assist?.active &&
+      assist.state !== "timed_out" &&
+      assist.state !== "unsupported"
+    ) {
+      return "amber" as const
+    }
+    return blockingMergeRunStatus === "resumable"
+      ? "emerald" as const
+      : "amber" as const
+  }, [
+    blockingConflictAssist,
+    blockingMergeRunBlockedRebase,
+    blockingMergeRunStatus,
+  ])
 
   return (
     <Card
@@ -1883,7 +1985,7 @@ export function TaskCard({
 
           {blockingMergeRunBlockedRebase ? (
             <Alert
-              variant="amber"
+              variant={blockedRebaseVariant}
               className={cn(
                 "group gap-1 shadow-none ring-0",
                 "max-w-full overflow-hidden",
@@ -1907,7 +2009,7 @@ export function TaskCard({
             >
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <Badge variant="amber" size="xs">
+                  <Badge variant={blockedRebaseVariant} size="xs">
                     {blockedRebaseBadgeLabel ?? "Rebase blocked"}
                   </Badge>
                   <div className="truncate text-[11px] text-foreground/70">
@@ -1923,7 +2025,27 @@ export function TaskCard({
                   )}
                   onClick={(event) => event.stopPropagation()}
                 >
-                  {blockingAttachCommand ? (
+                  {blockingMergeRunStatus === "resumable" &&
+                  blockingConflictAssist?.active !== true ? (
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="border-emerald-400/35 text-emerald-100 hover:bg-emerald-400/10 hover:text-emerald-50"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleResumeBlockingMerge()
+                      }}
+                    >
+                      <Play className="size-3" />
+                      {blockingMergeRun?.operation === "restack"
+                        ? "Resume restack"
+                        : "Resume merge"}
+                    </Button>
+                  ) : null}
+
+                  {blockingMergeRunStatus === "blocked" &&
+                  blockingAttachCommand ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={(triggerProps) => (
@@ -1950,22 +2072,10 @@ export function TaskCard({
                         Copy attach
                       </TooltipContent>
                     </Tooltip>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabledReason="No task id recorded for this blocked step."
-                      aria-label="Copy attach command"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                    >
-                      <Terminal />
-                    </Button>
-                  )}
+                  ) : null}
 
-                  {blockingRemediationMessage ? (
+                  {blockingMergeRunStatus === "blocked" &&
+                  blockingRemediationMessage ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={(triggerProps) => (
@@ -1992,20 +2102,7 @@ export function TaskCard({
                         Copy agent note
                       </TooltipContent>
                     </Tooltip>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabledReason="No remediation message available."
-                      aria-label="Copy agent note"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                    >
-                      <MessageSquareText />
-                    </Button>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
@@ -2019,7 +2116,9 @@ export function TaskCard({
 
           {shouldShowResumeButton ? (
             <div className="flex justify-end">
-              {pendingMerge !== null || gitDisabledReason ? (
+              {pendingMerge !== null ||
+              gitDisabledReason ||
+              mergeAutoAssistStatusLabel ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -2028,6 +2127,10 @@ export function TaskCard({
                     pendingMerge !== null
                       ? "Action in progress"
                       : gitDisabledReason
+                        ? gitDisabledReason
+                        : mergeAutoAssistStatusLabel
+                          ? "Conflict assist is active"
+                          : null
                   }
                   onClick={(e) => {
                     e.preventDefault()
