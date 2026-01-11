@@ -19,3 +19,8 @@ async def test_dashboard_assets_are_served_without_repo_dashboard_dir(
     )
     assert spa_response.status_code == 200
     assert "<title>Redesmyn</title>" in spa_response.text
+
+    status_response = await scenario.app.client.get("/v1/status")
+    assert status_response.status_code == 200
+    assert status_response.headers["content-type"].startswith("application/json")
+    assert "<title>Redesmyn</title>" not in status_response.text
