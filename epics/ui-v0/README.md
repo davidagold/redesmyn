@@ -53,3 +53,4 @@ This is intentionally practical rather than exhaustive. The UI is “v0 ready”
 - `epics/ui-v0/tasks/T-9/README.md`: Left-align commit titles (keep trunk spacing invariant).
 - `epics/ui-v0/tasks/T-10/README.md`: Make epic menu hover background full width.
 - `epics/ui-v0/tasks/T-11/README.md`: Animate task card expansion (reflow graph layout for variable node heights).
+- `epics/ui-v0/tasks/T-12/README.md`: Show tasteful in-flight progress indicators for all user actions (no silent requests).
