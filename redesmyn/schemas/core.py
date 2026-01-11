@@ -351,6 +351,18 @@ class MergeRunResumeResponse(ApiResponse):
     base_branch: str | None = None
 
 
+class MergeRunCancelRequest(ApiRequest):
+    host_key: str | None = None
+    abort_git: bool = False
+
+
+class MergeRunCancelResponse(ApiResponse):
+    run_id: str
+    canceled: bool = True
+    aborted_git: bool = False
+    detail: str | None = None
+
+
 class HostUpsertRequest(ApiResponse):
     host_key: str
     display_name: str

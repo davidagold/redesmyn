@@ -111,6 +111,12 @@ class MergeRunResumeCommand(BaseModel):
     canonical: bool = True
 
 
+class MergeRunCancelCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+
+
 @dataclass(slots=True)
 class _BlockedMergeRun:
     run_id: str
@@ -923,6 +929,15 @@ class DaemonRuntime:
                 name=f"merge_run.resume:{payload.run_id}",
             )
             return {}
+
+        if cmd.command_type == "repo.merge_run.cancel":
+            self._require_attached_repo(cmd)
+            payload = MergeRunCancelCommand.model_validate(cmd.data)
+            canceled = background.cancel_matching(
+                lambda name: name.startswith("merge_run.")
+                and name.endswith(f":{payload.run_id}")
+            )
+            return {"canceled_tasks": canceled}
 
         raise ValueError(f"Unknown command_type: {cmd.command_type!r}")
 

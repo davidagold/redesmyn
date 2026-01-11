@@ -23,6 +23,9 @@ async def apply_merge_run_event_update(
     if row is None:
         return
 
+    if row.status in {MergeRunStatus.Succeeded, MergeRunStatus.Canceled}:
+        return
+
     if host_key is not None:
         row.host_key = host_key
 

@@ -1416,6 +1416,62 @@
         "title": "ManualReleaseResponse",
         "type": "object"
       },
+      "MergeRunCancelRequest": {
+        "properties": {
+          "abortGit": {
+            "default": false,
+            "title": "Abortgit",
+            "type": "boolean"
+          },
+          "hostKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostkey"
+          }
+        },
+        "title": "MergeRunCancelRequest",
+        "type": "object"
+      },
+      "MergeRunCancelResponse": {
+        "properties": {
+          "abortedGit": {
+            "default": false,
+            "title": "Abortedgit",
+            "type": "boolean"
+          },
+          "canceled": {
+            "default": true,
+            "title": "Canceled",
+            "type": "boolean"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "title": "MergeRunCancelResponse",
+        "type": "object"
+      },
       "MergeRunResumeRequest": {
         "properties": {
           "allowRunning": {
@@ -3889,6 +3945,55 @@
           }
         },
         "summary": "Linear Status"
+      }
+    },
+    "/v1/merge-runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_merge_run_v1_merge_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRunCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeRunCancelResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Merge Run"
       }
     },
     "/v1/merge-runs/{run_id}/resume": {

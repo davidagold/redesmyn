@@ -35,6 +35,8 @@ from redesmyn.repo import GitCommandError
 from redesmyn.repo_identity import RepoKey
 from redesmyn.schemas.core import (
     DaemonCommandResponse,
+    MergeRunCancelRequest,
+    MergeRunCancelResponse,
     MergeRunResumeRequest,
     MergeRunResumeResponse,
     TaskMergePlanStepResponse,
@@ -102,6 +104,14 @@ class RepoExecutor(Protocol):
         run: MergeRun,
         request: MergeRunResumeRequest,
     ) -> MergeRunResumeResponse: ...
+
+    async def cancel_merge_run(
+        self,
+        *,
+        target: RepoExecutorTarget,
+        run: MergeRun,
+        request: MergeRunCancelRequest,
+    ) -> MergeRunCancelResponse: ...
 
 
 def _require_run_id(*, run_id: str | None) -> str:
@@ -612,6 +622,64 @@ class LocalRepoExecutor:
         )
         return MergeRunResumeResponse(run_id=run_id, base_branch=plan.base_branch)
 
+    async def cancel_merge_run(
+        self,
+        *,
+        target: RepoExecutorTarget,
+        run: MergeRun,
+        request: MergeRunCancelRequest,
+    ) -> MergeRunCancelResponse:
+        aborted_git = False
+        detail_parts: list[str] = []
+        run_id = run.run_id
+
+        if self.background_tasks is not None:
+            canceled = self.background_tasks.cancel_matching(
+                lambda name: name.startswith("merge_run:")
+                and name.endswith(f":{run_id}")
+            )
+            if canceled:
+                detail_parts.append(f"canceled_tasks={canceled}")
+
+        if request.abort_git:
+            if not run.blocked_worktree_path:
+                detail_parts.append("no_blocked_worktree_path")
+            else:
+                from pathlib import Path
+
+                from redesmyn.git_subprocess import run_git
+
+                worktree = Path(run.blocked_worktree_path)
+                if not worktree.exists():
+                    detail_parts.append("blocked_worktree_missing")
+                else:
+                    # Best-effort. Prefer rebase abort, but tolerate merge abort too.
+                    rebase = run_git(["rebase", "--abort"], cwd=worktree, timeout_s=30)
+                    merge = run_git(["merge", "--abort"], cwd=worktree, timeout_s=30)
+                    if rebase.returncode == 0 or merge.returncode == 0:
+                        aborted_git = True
+                    else:
+                        detail_parts.append(
+                            "git_abort_failed"
+                            + (
+                                f": {rebase.stderr.strip()}"
+                                if (rebase.stderr or "").strip()
+                                else ""
+                            )
+                        )
+
+        await set_merge_run_status(
+            sessionmaker=self.sessionmaker,
+            run_id=run_id,
+            status=MergeRunStatus.Canceled,
+        )
+        return MergeRunCancelResponse(
+            run_id=run_id,
+            canceled=True,
+            aborted_git=aborted_git,
+            detail="; ".join(detail_parts) if detail_parts else None,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DaemonRepoExecutor:
@@ -1011,6 +1079,51 @@ class DaemonRepoExecutor:
         )
         return MergeRunResumeResponse(run_id=run_id, base_branch=base_branch)
 
+    async def cancel_merge_run(
+        self,
+        *,
+        target: RepoExecutorTarget,
+        run: MergeRun,
+        request: MergeRunCancelRequest,
+    ) -> MergeRunCancelResponse:
+        if request.abort_git:
+            raise RepoExecutorError(
+                "abort_git is not supported for daemon-backed merge runs yet.",
+                status_code=501,
+            )
+        if not await self.daemon_connections.is_connected(target.target_host_key):
+            raise RepoExecutorError(
+                "No connected daemon available to cancel this merge run.",
+                status_code=503,
+            )
+
+        command = await self._enqueue_daemon_command(
+            host_key=target.target_host_key,
+            command_type="repo.merge_run.cancel",
+            workspace_id=target.repo.workspace_id,
+            repo_id=target.repo.repo_id,
+            payload={"run_id": run.run_id},
+        )
+        row = await self._wait_for_command_final_state(
+            command_id=command.id,
+            timeout_s=5.0,
+        )
+        if row.state != CommandState.Succeeded:
+            detail = (
+                row.ack_data.get("detail") if isinstance(row.ack_data, dict) else None
+            )
+            raise RepoExecutorError(
+                f"Daemon did not acknowledge cancel{': ' + str(detail) if detail else ''}.",
+                status_code=502,
+            )
+
+        await set_merge_run_status(
+            sessionmaker=self.sessionmaker,
+            run_id=run.run_id,
+            status=MergeRunStatus.Canceled,
+        )
+        return MergeRunCancelResponse(run_id=run.run_id)
+
 
 @dataclass(frozen=True, slots=True)
 class RepoExecutorRouter:
@@ -1073,6 +1186,16 @@ class RepoExecutorRouter:
     ) -> MergeRunResumeResponse:
         impl = self._impl_for_target(target)
         return await impl.resume_merge_run(target=target, run=run, request=request)
+
+    async def cancel_merge_run(
+        self,
+        *,
+        target: RepoExecutorTarget,
+        run: MergeRun,
+        request: MergeRunCancelRequest,
+    ) -> MergeRunCancelResponse:
+        impl = self._impl_for_target(target)
+        return await impl.cancel_merge_run(target=target, run=run, request=request)
 
     def _impl_for_target(
         self, target: RepoExecutorTarget

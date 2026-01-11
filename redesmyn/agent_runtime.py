@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -12,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from pydantic import TypeAdapter
 from sqlalchemy import desc, select

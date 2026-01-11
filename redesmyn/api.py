@@ -134,6 +134,8 @@ from redesmyn.schemas.core import (
     LinearPushStatsResponse,
     MergeRunResumeRequest,
     MergeRunResumeResponse,
+    MergeRunCancelRequest,
+    MergeRunCancelResponse,
     MergeRunSummaryResponse,
     OrchestrationDefaultsResponse,
     OrchestrationFleetDefaultsResponse,
@@ -1715,6 +1717,86 @@ async def resume_merge_run(
     except RepoExecutorError as e:
         log.warning(
             "merge_run.resume.rejected",
+            run_id=run_id,
+            status_code=e.status_code,
+            detail=e.detail,
+        )
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+
+@v1.post("/merge-runs/{run_id}/cancel", response_model=MergeRunCancelResponse)
+async def cancel_merge_run(
+    http_request: Request, run_id: str, request: MergeRunCancelRequest
+) -> MergeRunCancelResponse:
+    app = _app_from_request(http_request)
+    log.info(
+        "merge_run.cancel.request",
+        run_id=run_id,
+        abort_git=bool(request.abort_git),
+        requested_host_key=request.host_key,
+    )
+    sessionmaker = app.state.sessionmaker
+    local_host_key = (
+        app.state.local_host_key if app.state.runner_mode == "local" else None
+    )
+
+    target: RepoExecutorTarget
+    run: MergeRun
+
+    async with sessionmaker() as session:
+        run_row = await session.scalar(
+            select(MergeRun).where(MergeRun.run_id == run_id)
+        )
+        if run_row is None:
+            raise HTTPException(status_code=404, detail="Merge run not found")
+        run = run_row
+
+        if run.status == MergeRunStatus.Succeeded:
+            raise HTTPException(
+                status_code=409, detail="Merge run has already finished"
+            )
+
+        repo = await _require_current_repo(session, app=app)
+        repo_key = RepoKey(workspace_id=repo.workspace_id, repo_id=repo.repo_id)
+        primary_host_key = await get_primary_host_key(session, repo_key)
+
+        target_host_key = request.host_key or run.host_key or primary_host_key
+        if target_host_key is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No repo executor available to cancel this merge run.",
+            )
+
+        if run.canonical and target_host_key != primary_host_key:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Primary executor is {primary_host_key or 'none'}; "
+                    f"cannot cancel canonical merge run on {target_host_key}."
+                ),
+            )
+
+        is_local_executor = (
+            local_host_key is not None and target_host_key == local_host_key
+        )
+        target = RepoExecutorTarget(
+            repo=repo,
+            repo_key=repo_key,
+            target_host_key=target_host_key,
+            primary_host_key=primary_host_key,
+            canonical=run.canonical,
+            is_local=is_local_executor,
+        )
+
+    try:
+        return await app.state.repo_executor.cancel_merge_run(
+            target=target,
+            run=run,
+            request=request,
+        )
+    except RepoExecutorError as e:
+        log.warning(
+            "merge_run.cancel.rejected",
             run_id=run_id,
             status_code=e.status_code,
             detail=e.detail,

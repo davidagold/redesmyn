@@ -24,6 +24,7 @@ import {
 import { ApiHttpError, fetchTaskAgentLogs } from "@/api"
 import {
   useRestartTaskAgentMutation,
+  useCancelMergeRunMutation,
   useResumeMergeRunMutation,
   useSetTaskMergeReadyMutation,
   useStartTaskAgentMutation,
@@ -109,6 +110,7 @@ function MergeRunDetails({
   panelOpen: boolean
 }) {
   const resumeMerge = useResumeMergeRunMutation()
+  const cancelMerge = useCancelMergeRunMutation()
   const [calloutExpanded, setCalloutExpanded] = useState(false)
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [resumeError, setResumeError] = useState<string | null>(null)
@@ -117,6 +119,10 @@ function MergeRunDetails({
   const [resumePromptDetail, setResumePromptDetail] = useState<string | null>(
     null,
   )
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancelPending, setCancelPending] = useState(false)
+  const [cancelPromptOpen, setCancelPromptOpen] = useState(false)
+  const [cancelAbortGit, setCancelAbortGit] = useState(false)
   const remediation = getRebaseRemediation(mergeRun, node?.branchName ?? null)
 
   const statusLabel = mergeRun.status.replace(/^\w/, (c) => c.toUpperCase())
@@ -216,6 +222,22 @@ function MergeRunDetails({
     }
   }
 
+  async function handleCancelMerge(abortGit: boolean) {
+    setCancelPending(true)
+    setCancelError(null)
+    try {
+      await cancelMerge.mutateAsync({
+        epicId: mergeRun.epicId,
+        runId: mergeRun.runId,
+        request: { abortGit },
+      })
+    } catch (e) {
+      setCancelError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCancelPending(false)
+    }
+  }
+
   return (
     <div className="grid min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -256,6 +278,19 @@ function MergeRunDetails({
                       : "Resume merge"}
                   </Button>
                 ) : null}
+
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={cancelPending ? "Action in progress" : null}
+                  onClick={() => {
+                    setCancelAbortGit(false)
+                    setCancelPromptOpen(true)
+                  }}
+                >
+                  <Square className="size-3" />
+                  Cancel run
+                </Button>
 
                 <CollapsibleTrigger
                   render={(triggerProps) => (
@@ -332,6 +367,20 @@ function MergeRunDetails({
                   <MessageSquareText className="size-3" />
                   Copy agent note
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabledReason={
+                    blockedWorktree ? null : "No blocked worktree recorded."
+                  }
+                  onClick={() => {
+                    setCancelAbortGit(true)
+                    setCancelPromptOpen(true)
+                  }}
+                >
+                  <Square className="size-3" />
+                  Cancel + abort git
+                </Button>
               </div>
             ) : null}
 
@@ -398,6 +447,12 @@ function MergeRunDetails({
         </pre>
       ) : null}
 
+      {cancelError ? (
+        <pre className="whitespace-pre-wrap text-xs text-destructive">
+          {cancelError}
+        </pre>
+      ) : null}
+
       <ProceedAnywayDialog
         open={resumePromptOpen}
         pending={resumePending}
@@ -412,6 +467,22 @@ function MergeRunDetails({
         onProceed={() => {
           setResumePromptOpen(false)
           void handleResumeMerge(true)
+        }}
+      />
+
+      <ProceedAnywayDialog
+        open={cancelPromptOpen}
+        pending={cancelPending}
+        actionLabel={cancelAbortGit ? "cancel + abort git" : "cancel"}
+        detail={
+          cancelAbortGit
+            ? "This will cancel the run and attempt to abort the in-progress git operation in the blocked worktree (best-effort)."
+            : "This will cancel the run. It will not automatically revert any in-progress git changes."
+        }
+        onOpenChange={setCancelPromptOpen}
+        onProceed={() => {
+          setCancelPromptOpen(false)
+          void handleCancelMerge(cancelAbortGit)
         }}
       />
     </div>

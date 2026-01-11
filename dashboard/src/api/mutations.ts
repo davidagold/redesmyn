@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import type {
+  MergeRunCancelRequest,
   MergeRunResumeRequest,
   OrchestrationDefaults,
   OrchestrationDefaultsUpdateRequest,
@@ -12,6 +13,7 @@ import type {
 } from "@/api"
 import {
   bulkTaskAgentActions,
+  cancelMergeRun,
   mergeTask,
   postLinearLogout,
   postSyncFromLinear,
@@ -253,6 +255,23 @@ export function useResumeMergeRunMutation() {
       runId: string
       request: MergeRunResumeRequest
     }) => resumeMergeRun(variables.runId, variables.request),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.epicGraph(variables.epicId),
+      })
+    },
+  })
+}
+
+export function useCancelMergeRunMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variables: {
+      epicId: number
+      runId: string
+      request: MergeRunCancelRequest
+    }) => cancelMergeRun(variables.runId, variables.request),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.epicGraph(variables.epicId),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from collections.abc import Callable
 from typing import Any
 
 import structlog
@@ -36,6 +37,15 @@ class BackgroundTaskManager:
 
         task.add_done_callback(_done)
         return task
+
+    def cancel_matching(self, predicate: Callable[[str], bool]) -> int:
+        canceled = 0
+        for task in list(self._tasks):
+            name = task.get_name()
+            if predicate(name):
+                task.cancel()
+                canceled += 1
+        return canceled
 
     async def cancel_and_await(self) -> None:
         tasks = list(self._tasks)

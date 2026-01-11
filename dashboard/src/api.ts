@@ -82,6 +82,18 @@ export type MergeRunResumeResponse = {
   baseBranch?: string | null
 }
 
+export type MergeRunCancelRequest = {
+  hostKey?: string | null
+  abortGit?: boolean
+}
+
+export type MergeRunCancelResponse = {
+  runId: string
+  canceled: boolean
+  abortedGit?: boolean
+  detail?: string | null
+}
+
 export type TaskMergePlanStep = {
   kind: "rebase" | "mergeFf"
   nodeId: number | null
@@ -266,6 +278,16 @@ export async function resumeMergeRun(
   request: MergeRunResumeRequest,
 ): Promise<MergeRunResumeResponse> {
   return requestJson(`/v1/merge-runs/${runId}/resume`, {
+    method: "POST",
+    body: request,
+  })
+}
+
+export async function cancelMergeRun(
+  runId: string,
+  request: MergeRunCancelRequest,
+): Promise<MergeRunCancelResponse> {
+  return requestJson(`/v1/merge-runs/${runId}/cancel`, {
     method: "POST",
     body: request,
   })
