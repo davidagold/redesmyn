@@ -213,6 +213,7 @@ This section captures the v0 plan as revised by the goals in this thread.
 - `epics/harness-interface-v0/tasks/T-3/README.md`: Codex agent interface implementation (turn/idle detection + capabilities).
 - `epics/harness-interface-v0/tasks/T-10/README.md`: Structured exec mode + semantic event stream plumbing (enables deterministic turns/messages).
 - `epics/harness-interface-v0/tasks/T-11/README.md`: Structured continuation transport: resume-by-id turns (enables safe structured “send message”, required by T-5).
+- `epics/harness-interface-v0/tasks/T-12/README.md`: UI: task card messaging (send message; start/resume/interrupt turns in structured + interactive modes).
 - `epics/harness-interface-v0/tasks/T-9/README.md`: UI: task card agent message preview (1-line, truncated).
 - `epics/harness-interface-v0/tasks/T-4/README.md`: Claude Code agent interface implementation (turn/idle detection + capabilities).
 - `epics/harness-interface-v0/tasks/T-5/README.md`: Conflict auto-assist + gated auto-resume (requires repo clean + agent turn complete).
