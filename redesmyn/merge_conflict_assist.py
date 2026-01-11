@@ -152,6 +152,30 @@ async def _has_resumable_structured_session(
     return True, None
 
 
+async def _select_assist_task_id(
+    session: AsyncSession,
+    *,
+    run: MergeRun,
+) -> tuple[int | None, str | None]:
+    candidates: list[int] = []
+    if run.blocked_task_id is not None:
+        candidates.append(run.blocked_task_id)
+    if run.requested_task_id is not None and run.requested_task_id not in candidates:
+        candidates.append(run.requested_task_id)
+
+    if not candidates:
+        return None, "No task id available for conflict assist."
+
+    failures: list[str] = []
+    for task_id in candidates:
+        ok, reason = await _has_resumable_structured_session(session, task_id=task_id)
+        if ok:
+            return task_id, None
+        failures.append(f"task_id={task_id}: {reason or 'unsupported'}")
+
+    return None, "; ".join(failures)
+
+
 async def _turn_completed_for_session(
     session: AsyncSession, *, agent_session_id: int
 ) -> tuple[bool, int | None]:
@@ -391,9 +415,6 @@ class MergeConflictAssistSupervisor:
                 runtime.detail = "Timed out waiting for conflict assist completion; use manual resume."
                 continue
 
-            assist_task_id = run.blocked_task_id or run.requested_task_id
-            runtime.agent_task_id = assist_task_id
-
             message = _rebase_remediation_message(run)
             if not message:
                 runtime.state = "unsupported"
@@ -402,15 +423,14 @@ class MergeConflictAssistSupervisor:
                 )
                 continue
 
-            ok, reason = await _has_resumable_structured_session(
-                session, task_id=assist_task_id
-            )
-            if not ok:
-                runtime.state = "unsupported"
-                runtime.detail = reason
-                continue
-
             if runtime.sent_at is None:
+                assist_task_id, reason = await _select_assist_task_id(session, run=run)
+                if assist_task_id is None:
+                    runtime.state = "unsupported"
+                    runtime.detail = reason
+                    continue
+                runtime.agent_task_id = assist_task_id
+
                 if now >= runtime.delivery_deadline_at:
                     runtime.state = "timed_out"
                     runtime.detail = "Timed out waiting to deliver remediation message; use manual copy."
@@ -430,6 +450,11 @@ class MergeConflictAssistSupervisor:
                 runtime.sent_at = now
                 runtime.state = "sent_waiting_for_turn_complete"
                 runtime.detail = None
+                continue
+
+            if runtime.agent_task_id is None:
+                runtime.state = "waiting_for_agent_ready"
+                runtime.detail = "Missing continuation task id."
                 continue
 
             if runtime.agent_session_id is None:

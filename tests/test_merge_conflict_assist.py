@@ -224,3 +224,49 @@ async def test_conflict_assist_times_out_if_turn_never_launches(
     assert snapshot.state == "timed_out"
     assert launcher.launched
     assert not resumer.resumed
+
+
+@pytest.mark.integration
+async def test_conflict_assist_falls_back_to_requested_task_id_if_blocked_task_unsupported(
+    scenario_with_conflicted_merge_run: Scenario,
+) -> None:
+    scenario = scenario_with_conflicted_merge_run
+    run = await _load_blocked_merge_run(scenario)
+    assert run.requested_task_id is not None
+    assert run.blocked_task_id is not None
+
+    async with scenario.db.session() as session:
+        run_row = await session.get(MergeRun, run.id)
+        assert run_row is not None
+        run_row.blocked_task_id = 999_999
+        await session.commit()
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=run.requested_task_id,
+                status=AgentStatus.Stopped,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                resolved_launch_configuration={"argv": ["codex", "exec", "--json"]},
+                external_session_ref={"type": "codex_thread", "thread_id": "th_123"},
+            )
+        )
+        await session.commit()
+
+    launcher = _FakeLauncher(launched=[], agent_session_id=4242)
+    resumer = _FakeResumer(resumed=[])
+    supervisor = MergeConflictAssistSupervisor(
+        launcher=launcher,
+        resumer=resumer,
+        delivery_timeout=timedelta(seconds=30),
+        overall_timeout=timedelta(minutes=5),
+    )
+
+    now = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervisor.tick(session, now=now)
+        await session.commit()
+
+    assert launcher.launched
+    launched = launcher.launched[-1]
+    assert launched["task_id"] == run.requested_task_id
