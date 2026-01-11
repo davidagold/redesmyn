@@ -555,31 +555,6 @@ def infer_interface_mode_from_argv(
             return AgentInterfaceMode.Interactive
 
 
-def _ensure_codex_structured_argv(argv: list[str]) -> list[str]:
-    """Best-effort rewrite to enable Codex's structured JSONL stream."""
-    idx = _find_agent_executable_index(argv, names={"codex"})
-    if idx is None:
-        return argv
-    out = list(argv)
-    if len(out) <= idx + 1 or out[idx + 1] != "exec":
-        out.insert(idx + 1, "exec")
-    if "--json" not in out[idx + 2 :]:
-        out.insert(idx + 2, "--json")
-    return out
-
-
-def _ensure_claude_structured_argv(argv: list[str]) -> list[str]:
-    """Best-effort rewrite to enable Claude Code's stream-json output mode."""
-    idx = _find_agent_executable_index(argv, names={"claude", "claude-code"})
-    if idx is None:
-        return argv
-    out = list(argv)
-    if "--output-format" in out[idx + 1 :] or "--outputFormat" in out[idx + 1 :]:
-        return out
-    out[idx + 1 : idx + 1] = ["--output-format", "stream-json"]
-    return out
-
-
 async def ensure_launch_configuration_row(
     session: AsyncSession,
     *,
@@ -1002,7 +977,6 @@ async def start_task_agent(
     prelude_override: str | None = None,
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
     external_session_ref_hint: dict[str, Any] | None = None,
-    interface_mode: AgentInterfaceMode = AgentInterfaceMode.Interactive,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -1071,21 +1045,9 @@ async def start_task_agent(
                 argv,
                 external_session_ref_hint=external_session_ref_hint,
             )
-            inferred_mode = infer_interface_mode_from_argv(
+            interface_mode = infer_interface_mode_from_argv(
                 argv=argv, resolved_agent_kind=resolved_agent_kind
             )
-            if interface_mode == AgentInterfaceMode.Interactive:
-                interface_mode = inferred_mode
-
-            if interface_mode == AgentInterfaceMode.Structured:
-                if resolved_agent_kind == AgentKind.Codex:
-                    argv = _ensure_codex_structured_argv(argv)
-                elif resolved_agent_kind == AgentKind.ClaudeCode:
-                    argv = _ensure_claude_structured_argv(argv)
-                else:
-                    raise RuntimeError(
-                        "Structured interface mode is only supported for Codex and Claude Code"
-                    )
 
             definition = LaunchConfigurationDefinition(argv=argv)
             profile_id = launch_configuration_id_for_definition(argv[0], definition)
