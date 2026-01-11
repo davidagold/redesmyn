@@ -575,6 +575,11 @@ function AgentActions({
     [agentSession?.agentLabel],
   )
   const statusLabel = agentSession?.status ?? null
+  const agentContinuable =
+    statusLabel === "stopped" &&
+    agentSession !== null &&
+    agentSession.agentCapabilities.canResumeById &&
+    agentSession.externalSessionRef.type !== "none"
   const resolvedAgentKindLabel = agentSession
     ? labelForAgentKind(agentSession.agentKind)
     : null
@@ -897,7 +902,10 @@ function AgentActions({
               extendBackground
               className="text-xs text-foreground/80"
             />
-            <AgentStatusBadge status={statusLabel} />
+            <AgentStatusBadge
+              status={statusLabel}
+              continuable={agentContinuable}
+            />
           </div>
         </div>
 

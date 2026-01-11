@@ -21,10 +21,15 @@ function textTone(status: Status) {
 
 export type AgentStatusBadgeProps = {
   status: Status
+  continuable?: boolean
   className?: string
 }
 
-export function AgentStatusBadge({ status, className }: AgentStatusBadgeProps) {
+export function AgentStatusBadge({
+  status,
+  continuable = false,
+  className,
+}: AgentStatusBadgeProps) {
   const label = labelForStatus(status)
   return (
     <div
@@ -34,7 +39,11 @@ export function AgentStatusBadge({ status, className }: AgentStatusBadgeProps) {
         className,
       )}
     >
-      <AgentStatusIcon status={status} className="size-2" />
+      <AgentStatusIcon
+        status={status}
+        continuable={continuable}
+        className="size-2"
+      />
       <span>{label}</span>
     </div>
   )

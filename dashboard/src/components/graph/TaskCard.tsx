@@ -427,6 +427,11 @@ export function TaskCard({
   }
 
   const agentStatus = agentSession?.status ?? null
+  const agentContinuable =
+    agentStatus === "stopped" &&
+    agentSession !== undefined &&
+    agentSession.agentCapabilities.canResumeById &&
+    agentSession.externalSessionRef.type !== "none"
   const taskId = task?.id ?? null
   const canResumeMerge = mergeRunStatus === "resumable"
   const canCancelMergeRun =
@@ -1377,6 +1382,7 @@ export function TaskCard({
                     >
                       <AgentStatusIcon
                         status={agentSession?.status ?? null}
+                        continuable={agentContinuable}
                         taskState={task?.state}
                         className="size-3"
                         label={tooltip}
