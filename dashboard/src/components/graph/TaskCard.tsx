@@ -40,6 +40,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -1183,57 +1186,72 @@ export function TaskCard({
               ) : null}
               {canCancelMergeRun ? (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={(triggerProps) => (
-                        <DropdownMenuItem
-                          {...triggerProps}
-                          variant="destructive"
-                          disabled={pendingMerge !== null}
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            void handleCancelMergeRun({ abortGit: false })
-                          }}
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger
+                      disabled={pendingMerge !== null}
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive data-open:bg-destructive/10 data-open:text-destructive"
+                    >
+                      <Square className="size-3.5" />
+                      Cancel…
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={(triggerProps) => (
+                            <DropdownMenuItem
+                              {...triggerProps}
+                              variant="destructive"
+                              disabled={pendingMerge !== null}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                void handleCancelMergeRun({ abortGit: false })
+                              }}
+                            >
+                              <Square className="size-3.5" />
+                              Cancel run
+                            </DropdownMenuItem>
+                          )}
+                        />
+                        <TooltipContent
+                          side="right"
+                          sideOffset={12}
+                          align="center"
                         >
-                          <Square className="size-3.5" />
-                          Cancel run
-                        </DropdownMenuItem>
-                      )}
-                    />
-                    <TooltipContent side="right" sideOffset={12} align="center">
-                      Cancel the in-progress merge/restack run.
-                    </TooltipContent>
-                  </Tooltip>
-                  {canCancelMergeRunAbortGit ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={(triggerProps) => (
-                          <DropdownMenuItem
-                            {...triggerProps}
-                            variant="destructive"
-                            disabled={pendingMerge !== null}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              void handleCancelMergeRun({ abortGit: true })
-                            }}
+                          Cancel the in-progress merge/restack run.
+                        </TooltipContent>
+                      </Tooltip>
+                      {canCancelMergeRunAbortGit ? (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={(triggerProps) => (
+                              <DropdownMenuItem
+                                {...triggerProps}
+                                variant="destructive"
+                                disabled={pendingMerge !== null}
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  void handleCancelMergeRun({ abortGit: true })
+                                }}
+                              >
+                                <RotateCcw className="size-3.5" />
+                                Cancel + abort git
+                              </DropdownMenuItem>
+                            )}
+                          />
+                          <TooltipContent
+                            side="right"
+                            sideOffset={12}
+                            align="center"
                           >
-                            <RotateCcw className="size-3.5" />
-                            Cancel + abort git
-                          </DropdownMenuItem>
-                        )}
-                      />
-                      <TooltipContent
-                        side="right"
-                        sideOffset={12}
-                        align="center"
-                      >
-                        Cancel the run and attempt to abort the git operation in
-                        the blocked worktree (best-effort).
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
+                            Cancel the run and attempt to abort the git
+                            operation in the blocked worktree (best-effort).
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
                   <DropdownMenuSeparator />
                 </>
               ) : null}
