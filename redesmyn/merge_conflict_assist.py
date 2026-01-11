@@ -16,6 +16,7 @@ from redesmyn.agent_interface.v0 import AgentSemanticStatus
 from redesmyn.db import AgentSession, Event, MergeRun, Repository
 from redesmyn.domain.enums import (
     AgentInterfaceMode,
+    AgentStatus,
     AgentTurnState,
     MergeRunStatus,
 )
@@ -192,16 +193,30 @@ async def _turn_completed_for_session(
         if event.data.get("agent_session_id") == agent_session_id:
             return True, event.id
 
-    # Fallback: observe the session ended.
     row = await session.get(AgentSession, agent_session_id)
-    if row is None or row.ended_at is None:
+    if row is None:
         return False, None
 
-    # For structured exec-style turns, the process ending implies there's nothing
-    # left to wait for. Semantic events are best-effort (driver could miss them),
-    # and repo cleanliness is still required before resuming.
+    # For structured turns, treat either (a) an ended session or (b) a completed
+    # semantic turn as "done". This matches our running-agent gating semantics,
+    # and avoids waiting forever when a one-shot structured exec completed but
+    # did not emit a `agent.turn_completed` event.
     if row.agent_interface_mode == AgentInterfaceMode.Structured:
-        return True, None
+        if row.status not in {AgentStatus.Running, AgentStatus.Blocked}:
+            return True, None
+        if row.ended_at is not None:
+            return True, None
+        try:
+            status = TypeAdapter(AgentSemanticStatus).validate_python(
+                row.agent_semantic_status
+            )
+        except Exception:
+            status = AgentSemanticStatus()
+        return status.turn_state == AgentTurnState.Completed, None
+
+    # Fallback: observe the session ended.
+    if row.ended_at is None:
+        return False, None
 
     try:
         status = TypeAdapter(AgentSemanticStatus).validate_python(
