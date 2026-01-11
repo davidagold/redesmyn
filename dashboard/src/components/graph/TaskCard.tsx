@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentProps } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiHttpError } from "@/api"
@@ -55,7 +56,6 @@ import { useMergeReadySpineConfirm } from "@/hooks/useMergeReadySpineConfirm"
 import {
   ChevronDown,
   ChevronUp,
-  ChevronRight,
   ArrowUp,
   EllipsisVertical,
   AlertTriangle,
@@ -65,7 +65,6 @@ import {
   Layers,
   Loader2,
   MessageSquareText,
-  Pause,
   Play,
   RotateCcw,
   Square,
@@ -1708,7 +1707,10 @@ export function TaskCard({
           {blockingMergeRunBlockedRebase ? (
             <Alert
               variant="amber"
-              className={cn("gap-2 shadow-lg", "cursor-pointer select-none")}
+              className={cn(
+                "group gap-1 shadow-none ring-0",
+                "cursor-pointer select-none",
+              )}
               role="button"
               tabIndex={0}
               aria-expanded={blockedRebaseExpanded}
@@ -1727,22 +1729,20 @@ export function TaskCard({
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  <Pause className="size-3.5 text-amber-300/80" />
-                  <div className="flex min-w-0 items-center gap-1">
-                    <div className="truncate text-xs font-medium text-foreground">
-                      Rebase blocked
-                    </div>
-                    <ChevronRight
-                      className={cn(
-                        "size-3 text-foreground/70 transition-transform",
-                        blockedRebaseExpanded ? "rotate-90" : null,
-                      )}
-                      aria-hidden="true"
-                    />
+                  <Badge variant="amber" size="xs">
+                    Rebase blocked
+                  </Badge>
+                  <div className="truncate text-[11px] text-foreground/70">
+                    Resolve conflicts, then resume.
                   </div>
                 </div>
                 <div
-                  className="flex shrink-0 items-center gap-1"
+                  className={cn(
+                    "flex shrink-0 items-center gap-1 transition-opacity",
+                    blockedRebaseExpanded
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+                  )}
                   onClick={(event) => event.stopPropagation()}
                 >
                   {blockingAttachCommand ? (
@@ -1849,9 +1849,6 @@ export function TaskCard({
                       </span>
                     </div>
                   ) : null}
-                  <div className="text-foreground/70">
-                    Resolve conflicts, then resume the run.
-                  </div>
                 </div>
               ) : null}
             </Alert>
