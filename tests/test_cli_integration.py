@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import sqlite3
 
 from tests.helpers.cli import (
     TaskSpec,
@@ -89,6 +90,86 @@ def test_shell_print_outputs_worktree_path_and_exits_zero(tmp_path: Path) -> Non
         repo.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
         == "rn/cli-epic/T-1-task"
     )
+
+
+@pytest.mark.integration
+def test_merge_run_cancel_local_marks_run_canceled(tmp_path: Path) -> None:
+    repo = ScenarioRepo.init(tmp_path)
+    epic_slug = "cli-epic"
+    write_docs(
+        repo_root=repo.repo_root,
+        epic_slug=epic_slug,
+        tasks=[TaskSpec(task_id="T-1", title="Task")],
+    )
+    repo.git(["add", "-A"], cwd=repo.repo_root)
+    repo.git(["commit", "-m", "add epic docs"], cwd=repo.repo_root)
+
+    init_proc = run_rn(repo.repo_root, ["init"])
+    assert init_proc.returncode == 0, init_proc.stderr
+
+    proc = run_rn(repo.repo_root, ["sync", "--from", "local"])
+    assert proc.returncode == 0, proc.stderr
+
+    epic_db_path = db_path(repo.repo_root)
+    local_path = f"epics/{epic_slug}/tasks/T-1/README.md"
+
+    with sqlite3.connect(epic_db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, epic_id, branch_name FROM tasks WHERE local_path = ?",
+            (local_path,),
+        ).fetchone()
+        assert row is not None
+        task_id = int(row["id"])
+        epic_id = int(row["epic_id"])
+        branch_name = str(row["branch_name"])
+        run_id = "cli-test-run"
+
+        conn.execute(
+            "INSERT INTO merge_runs ("
+            "run_id, epic_id, requested_task_id, status, scope, allow_running, force, canonical, plan, "
+            "blocked_task_id, blocked_step_index, blocked_step_kind, blocked_branch_name, blocked_worktree_path, blocked_error"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                epic_id,
+                task_id,
+                "blocked",
+                "spine",
+                0,
+                0,
+                1,
+                "{}",
+                task_id,
+                0,
+                "rebase",
+                branch_name,
+                None,
+                "conflict",
+            ),
+        )
+        conn.commit()
+
+    cancel_proc = run_rn(
+        repo.repo_root,
+        ["merge-run", "cancel", run_id, "--local", "--yes"],
+    )
+    assert cancel_proc.returncode == 0, cancel_proc.stderr
+    assert f"Merge run canceled: {run_id}" in cancel_proc.stdout
+
+    with sqlite3.connect(epic_db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT status, blocked_step_kind, blocked_branch_name, blocked_worktree_path, blocked_error "
+            "FROM merge_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "canceled"
+        assert row["blocked_step_kind"] is None
+        assert row["blocked_branch_name"] is None
+        assert row["blocked_worktree_path"] is None
+        assert row["blocked_error"] is None
 
 
 @pytest.mark.integration

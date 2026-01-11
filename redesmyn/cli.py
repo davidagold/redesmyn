@@ -48,6 +48,7 @@ from redesmyn.db import (
     DatabaseNotInitializedError,
     Epic,
     LinearAuth,
+    MergeRun,
     Repository,
     Task,
     create_engine,
@@ -189,6 +190,7 @@ task_app = typer.Typer(add_completion=False, help="Task management.")
 agent_app = typer.Typer(add_completion=False, help="Agent management.")
 linear_app = typer.Typer(add_completion=False, help="Linear integration.")
 observer_app = typer.Typer(add_completion=False, help="Repo observer + telemetry.")
+merge_run_app = typer.Typer(add_completion=False, help="Merge/restack run management.")
 
 
 @app.callback()
@@ -3615,6 +3617,148 @@ def observer_run(
 
 
 app.add_typer(observer_app, name="observer")
+app.add_typer(merge_run_app, name="merge-run")
+
+
+@merge_run_app.command("cancel")
+def merge_run_cancel(
+    run_id: str = typer.Argument(..., help="Merge run id."),
+    abort_git: bool = typer.Option(
+        False,
+        "--abort-git",
+        help="Also attempt to abort the in-progress git operation in the blocked worktree (best-effort).",
+    ),
+    host_key: str | None = typer.Option(
+        None,
+        "--host-key",
+        help="Target host key. Defaults to the run host key or primary executor.",
+    ),
+    control_plane: str | None = typer.Option(
+        None,
+        "--control-plane",
+        help="Control plane origin (http(s)://...). Defaults from settings.",
+    ),
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help=(
+            "Cancel by updating the local DB only (useful when the API is not running). "
+            "This cannot stop an in-flight server/daemon process."
+        ),
+    ),
+    yes: bool = typer.Option(
+        False,
+        "-y",
+        "--yes",
+        help="Proceed without prompting.",
+    ),
+) -> None:
+    """Cancel a merge/restack run (and optionally abort the git operation)."""
+    try:
+        ctx = get_repo_context()
+        _ensure_initialized(ctx)
+    except (NotAGitRepositoryError, NotInitializedError) as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(2)
+
+    if not yes:
+        label = "cancel + abort git" if abort_git else "cancel"
+        if not typer.confirm(
+            f"Proceed with {label} for run {run_id!r}?", default=False
+        ):
+            raise typer.Exit(1)
+
+    from redesmyn.settings import load_settings
+
+    settings = load_settings(repo_root=ctx.repo_root)
+    base_url = (
+        control_plane
+        or os.environ.get("REDESMYN_CONTROL_PLANE_ORIGIN")
+        or f"http://{settings.api_host}:{settings.api_port}"
+    )
+
+    if not local:
+        try:
+            import httpx
+
+            async def _call_api() -> dict[str, object]:
+                async with httpx.AsyncClient(base_url=base_url, timeout=10.0) as client:
+                    resp = await client.post(
+                        f"/v1/merge-runs/{run_id}/cancel",
+                        json={"host_key": host_key, "abort_git": abort_git},
+                    )
+                    if resp.status_code >= 400:
+                        detail = None
+                        try:
+                            payload = resp.json()
+                            if isinstance(payload, dict) and isinstance(
+                                payload.get("detail"), str
+                            ):
+                                detail = payload["detail"]
+                        except Exception:
+                            detail = None
+                        raise RuntimeError(
+                            detail
+                            or f"Request failed: {resp.status_code} {resp.text}".strip()
+                        )
+                    payload = resp.json()
+                    if not isinstance(payload, dict):
+                        raise RuntimeError("Unexpected response from server.")
+                    return payload
+
+            payload = asyncio.run(_call_api())
+            canceled = bool(payload.get("canceled", True))
+            aborted = bool(payload.get("aborted_git", False))
+            typer.echo(
+                f"Merge run canceled: {run_id}" + (" (aborted git)" if aborted else "")
+            )
+            if not canceled:
+                raise typer.Exit(1)
+            return
+        except Exception as e:
+            typer.echo(
+                f"warning: could not reach control plane at {base_url} ({e}); falling back to local DB cancel",
+                err=True,
+            )
+
+    engine = create_engine(ctx.db_path)
+    sessionmaker = create_sessionmaker(engine)
+    try:
+
+        async def _cancel_local() -> tuple[bool, bool]:
+            from redesmyn.git_subprocess import run_git
+
+            async with sessionmaker() as session:
+                row = await session.scalar(
+                    select(MergeRun).where(MergeRun.run_id == run_id)
+                )
+                if row is None:
+                    return False, False
+                blocked_worktree = row.blocked_worktree_path
+
+            aborted = False
+            if abort_git and blocked_worktree:
+                worktree = Path(blocked_worktree)
+                if worktree.exists():
+                    rebase = run_git(["rebase", "--abort"], cwd=worktree, timeout_s=30)
+                    merge = run_git(["merge", "--abort"], cwd=worktree, timeout_s=30)
+                    aborted = rebase.returncode == 0 or merge.returncode == 0
+
+            await set_merge_run_status(
+                sessionmaker=sessionmaker,
+                run_id=run_id,
+                status=MergeRunStatus.Canceled,
+            )
+            return True, aborted
+
+        canceled, aborted = asyncio.run(_cancel_local())
+    finally:
+        asyncio.run(engine.dispose())
+
+    if not canceled:
+        typer.echo("error: merge run not found", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"Merge run canceled: {run_id}" + (" (aborted git)" if aborted else ""))
 
 
 @epic_app.command("create")
