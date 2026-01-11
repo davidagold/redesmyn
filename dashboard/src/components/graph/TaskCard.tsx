@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ComponentProps } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react"
 import { useIsFetching } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Alert } from "@/components/ui/alert"
@@ -59,6 +65,7 @@ import {
   ChevronDown,
   ChevronUp,
   ArrowUp,
+  CheckCircle2,
   EllipsisVertical,
   AlertTriangle,
   GitBranch,
@@ -376,6 +383,8 @@ export function TaskCard({
     useState<AllowRunningPrompt | null>(null)
   const [allowRunningConfirming, setAllowRunningConfirming] = useState(false)
   const [blockedRebaseExpanded, setBlockedRebaseExpanded] = useState(false)
+  const [blockedRebaseCompletionNotice, setBlockedRebaseCompletionNotice] =
+    useState<string | null>(null)
   const [mergeReadySpineNotice, setMergeReadySpineNotice] =
     useState<string | null>(null)
   const [gitActionInProgress, setGitActionInProgress] = useState<{
@@ -386,6 +395,13 @@ export function TaskCard({
     initialMergeReadyAt: string | null
   } | null>(null)
   const mergeReadySpineConfirm = useMergeReadySpineConfirm()
+  const lastBlockedRebaseToastRunIdRef = useRef<string | null>(null)
+  const prevBlockedRebaseRef = useRef<{
+    runId: string | null
+    blockedRebase: boolean
+    hadAssist: boolean
+    assistState: string | null
+  }>({ runId: null, blockedRebase: false, hadAssist: false, assistState: null })
 
   const epicGraphIsFetching =
     useIsFetching({ queryKey: queryKeys.epicGraph(node.epicId) }) > 0
@@ -488,6 +504,52 @@ export function TaskCard({
     const id = window.setTimeout(() => setMergeReadySpineNotice(null), 2_000)
     return () => window.clearTimeout(id)
   }, [mergeReadySpineNotice])
+
+  useEffect(() => {
+    if (!blockedRebaseCompletionNotice) {
+      return
+    }
+    const id = window.setTimeout(
+      () => setBlockedRebaseCompletionNotice(null),
+      4_000,
+    )
+    return () => window.clearTimeout(id)
+  }, [blockedRebaseCompletionNotice])
+
+  useEffect(() => {
+    const prev = prevBlockedRebaseRef.current
+    const currentRunId = blockingMergeRun?.runId ?? null
+    const currentAssistState = blockingConflictAssist?.state ?? null
+    const currentHasAssist = currentAssistState !== null
+
+    const blockedRebaseCleared =
+      prev.blockedRebase &&
+      !blockingMergeRunBlockedRebase &&
+      prev.runId !== null &&
+      (currentRunId === null || currentRunId !== prev.runId)
+
+    if (
+      blockedRebaseCleared &&
+      lastBlockedRebaseToastRunIdRef.current !== prev.runId &&
+      prev.hadAssist &&
+      prev.assistState !== "timed_out" &&
+      prev.assistState !== "unsupported"
+    ) {
+      setBlockedRebaseCompletionNotice("Auto-resolve complete.")
+      lastBlockedRebaseToastRunIdRef.current = prev.runId
+    }
+
+    prevBlockedRebaseRef.current = {
+      runId: currentRunId,
+      blockedRebase: blockingMergeRunBlockedRebase,
+      hadAssist: currentHasAssist,
+      assistState: currentAssistState,
+    }
+  }, [
+    blockingConflictAssist?.state,
+    blockingMergeRun?.runId,
+    blockingMergeRunBlockedRebase,
+  ])
 
   useEffect(() => {
     if (!blockingMergeRunBlockedRebase) {
@@ -1807,7 +1869,8 @@ export function TaskCard({
       {actionError ||
       shouldShowResumeButton ||
       blockingMergeRunBlockedRebase ||
-      mergeReadySpineNotice ? (
+      mergeReadySpineNotice ||
+      blockedRebaseCompletionNotice ? (
         <div
           className="nodrag nopan absolute left-0 top-full z-50 mt-3 w-[min(100%,480px)] space-y-2"
           onPointerDown={(e) => e.stopPropagation()}
@@ -2111,6 +2174,31 @@ export function TaskCard({
                   {blockingConflictAssist.detail}
                 </div>
               ) : null}
+            </Alert>
+          ) : null}
+
+          {blockedRebaseCompletionNotice ? (
+            <Alert variant="emerald" className="gap-1 shadow-lg">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <CheckCircle2 className="size-3.5 text-emerald-300" />
+                  <div className="truncate text-[11px] text-foreground/80">
+                    {blockedRebaseCompletionNotice}
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Dismiss notice"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setBlockedRebaseCompletionNotice(null)
+                  }}
+                >
+                  <X className="size-3" />
+                </Button>
+              </div>
             </Alert>
           ) : null}
 
