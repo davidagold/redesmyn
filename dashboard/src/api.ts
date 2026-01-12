@@ -42,6 +42,8 @@ export type TaskAgentRestartRequest = components["schemas"]["TaskAgentRestartReq
 export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest"] & {
   prelude?: string | null
 }
+export type TaskAgentMessageRequest = components["schemas"]["TaskAgentMessageRequest"]
+export type TaskAgentMessageResponse = components["schemas"]["TaskAgentMessageResponse"]
 export type TaskAgentStartResponse = components["schemas"]["TaskAgentStartResponse"]
 export type TaskAgentStopResponse = components["schemas"]["TaskAgentStopResponse"]
 export type TaskAgentBulkRunRequest = components["schemas"]["TaskAgentBulkRunRequest"] & {
@@ -337,6 +339,16 @@ export async function stopTaskAgent(
   taskId: number,
 ): Promise<TaskAgentStopResponse> {
   return requestJson(`/v1/tasks/${taskId}/agent/stop`, { method: "POST" })
+}
+
+export async function postTaskAgentMessage(
+  taskId: number,
+  request: TaskAgentMessageRequest,
+): Promise<TaskAgentMessageResponse> {
+  return requestJson(`/v1/tasks/${taskId}/agent/message`, {
+    method: "POST",
+    body: request,
+  })
 }
 
 export async function restartTaskAgent(

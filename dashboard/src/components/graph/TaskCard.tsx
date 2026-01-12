@@ -21,6 +21,7 @@ import {
   useSetTaskMergeReadyMutation,
   useStartTaskAgentMutation,
   useStopTaskAgentMutation,
+  useTaskAgentMessageMutation,
 } from "@/api/mutations"
 import { copyToClipboard } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
@@ -39,8 +40,15 @@ import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { LinearIcon } from "@/components/linear/LinearIcon"
 import { MarkdownInline } from "@/components/markdown"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
-import { labelForAgentKind } from "@/lib/agent-kind"
+import {
+  inferStructuredAgentFromCommand,
+  labelForAgentKind,
+} from "@/lib/agent-kind"
 import { Shimmer } from "@/components/ui/shimmer"
+import {
+  AgentMessageConfirmDialog,
+  type AgentMessageConfirmMode,
+} from "@/components/agents/AgentMessageConfirmDialog"
 import {
   ActionErrorCallout,
   BlockedRebaseCallout,
@@ -330,6 +338,15 @@ export function TaskCard({
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
   const [agentComposerExpanded, setAgentComposerExpanded] = useState(false)
   const [agentComposerDraft, setAgentComposerDraft] = useState("")
+  const [agentComposerError, setAgentComposerError] = useState<string | null>(
+    null,
+  )
+  const [agentComposerConfirmOpen, setAgentComposerConfirmOpen] =
+    useState(false)
+  const [agentComposerConfirmMode, setAgentComposerConfirmMode] =
+    useState<AgentMessageConfirmMode>("interactive")
+  const agentComposerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const taskAgentMessageMutation = useTaskAgentMessageMutation()
   const mergeReady = Boolean(task?.mergeReadyAt)
   const expectedLinearStateType =
     task === undefined
@@ -533,6 +550,8 @@ export function TaskCard({
   useEffect(() => {
     if (!isSelected) {
       setAgentComposerExpanded(false)
+      setAgentComposerConfirmOpen(false)
+      setAgentComposerError(null)
     }
   }, [isSelected])
 
@@ -602,6 +621,29 @@ export function TaskCard({
   const canMerge =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
 
+  const agentComposerDraftTrimmed = agentComposerDraft.trim()
+  const harnessStructuredKind = inferStructuredAgentFromCommand(harnessCommand)
+  const composerInterfaceMode = harnessStructuredKind
+    ? "structured"
+    : "interactive"
+  const agentLooksBusy =
+    agentSession?.agentSemanticStatus.turnState === "busy" &&
+    (agentStatus === "running" || agentStatus === "blocked")
+  const agentCanInterrupt =
+    agentSession?.agentCapabilities.canInterrupt ?? false
+  const agentComposerPendingReason = taskAgentMessageMutation.isPending
+    ? "Sending…"
+    : null
+  const agentComposerSendDisabledReason =
+    agentComposerPendingReason ??
+    (taskId === null
+      ? "Task unavailable."
+      : !harnessCommand.trim()
+        ? "Set a harness command to send messages."
+        : !agentComposerDraftTrimmed
+          ? "Write a message."
+          : null)
+
   async function handleAttach() {
     if (taskId === null) {
       return
@@ -636,6 +678,41 @@ export function TaskCard({
       setActionErrorFromException("Start agent", e)
     } finally {
       setPendingAction(null)
+    }
+  }
+
+  async function submitAgentMessage(options?: { interrupt?: boolean }) {
+    if (taskId === null) {
+      return
+    }
+    if (!agentComposerDraftTrimmed) {
+      return
+    }
+    setAgentComposerError(null)
+
+    try {
+      await taskAgentMessageMutation.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+        request: {
+          message: agentComposerDraftTrimmed,
+          interrupt: options?.interrupt ?? false,
+          preferredInterfaceMode: composerInterfaceMode,
+        },
+      })
+      setAgentComposerDraft("")
+      requestAnimationFrame(() => agentComposerTextareaRef.current?.focus())
+    } catch (e) {
+      if (e instanceof ApiHttpError) {
+        if (e.status === 409) {
+          setAgentComposerConfirmMode(composerInterfaceMode)
+          setAgentComposerConfirmOpen(true)
+        }
+        setAgentComposerError(e.detail?.trim() || e.message)
+        return
+      }
+      const raw = e instanceof Error ? e.message : String(e)
+      setAgentComposerError(raw)
     }
   }
 
@@ -1863,27 +1940,66 @@ export function TaskCard({
           <div className="overflow-hidden pt-2">
             <div className="relative rounded-md border border-border/60 bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
               <Textarea
+                ref={agentComposerTextareaRef}
                 value={agentComposerDraft}
-                onChange={(event) => setAgentComposerDraft(event.target.value)}
+                onChange={(event) => {
+                  setAgentComposerDraft(event.target.value)
+                  if (agentComposerError) {
+                    setAgentComposerError(null)
+                  }
+                }}
                 placeholder="Write a message…"
                 rows={3}
                 className="min-h-20 w-full resize-none border-0 bg-transparent pr-10 shadow-none focus-visible:ring-0"
+                onKeyDown={(event) => {
+                  if (
+                    (event.metaKey || event.ctrlKey) &&
+                    event.key === "Enter" &&
+                    !agentComposerSendDisabledReason
+                  ) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (agentLooksBusy) {
+                      setAgentComposerConfirmMode(composerInterfaceMode)
+                      setAgentComposerConfirmOpen(true)
+                      return
+                    }
+                    void submitAgentMessage()
+                  }
+                }}
               />
-              <div className="absolute bottom-2 right-2">
+              <div className="absolute bottom-2 right-2 flex items-center gap-2">
+                {agentComposerPendingReason ? (
+                  <div className="select-none text-[11px] text-muted-foreground">
+                    Sending
+                    <span className="inline-block w-3 animate-pulse">…</span>
+                  </div>
+                ) : null}
                 <Button
                   variant="secondary"
                   size="icon-sm"
                   className="rounded-full"
-                  disabledReason="Sending messages will be wired up in T-11."
+                  disabledReason={agentComposerSendDisabledReason}
                   onClick={(event) => {
                     event.preventDefault()
                     event.stopPropagation()
+                    if (agentLooksBusy) {
+                      setAgentComposerConfirmMode(composerInterfaceMode)
+                      setAgentComposerConfirmOpen(true)
+                      return
+                    }
+                    void submitAgentMessage()
                   }}
                 >
                   <ArrowUp className="size-3" />
                 </Button>
               </div>
             </div>
+            {agentComposerError ? (
+              <div className="mt-1 text-[11px] text-destructive">
+                {agentComposerError}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="mt-auto flex items-end justify-between gap-2 pt-2">
@@ -2003,6 +2119,23 @@ export function TaskCard({
           setAllowRunningPrompt(null)
         }}
         onProceed={() => void confirmAllowRunning()}
+      />
+      <AgentMessageConfirmDialog
+        open={agentComposerConfirmOpen}
+        mode={agentComposerConfirmMode}
+        canInterrupt={
+          agentCanInterrupt || agentComposerConfirmMode === "structured"
+        }
+        pendingReason={agentComposerPendingReason}
+        onOpenChange={setAgentComposerConfirmOpen}
+        onInterruptAndSend={() => {
+          setAgentComposerConfirmOpen(false)
+          void submitAgentMessage({ interrupt: true })
+        }}
+        onSendAnyway={() => {
+          setAgentComposerConfirmOpen(false)
+          void submitAgentMessage({ interrupt: false })
+        }}
       />
       <MergeReadySpineConfirmDialog
         open={mergeReadySpineConfirm.dialog.open}

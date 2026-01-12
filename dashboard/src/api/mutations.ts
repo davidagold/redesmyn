@@ -6,6 +6,7 @@ import type {
   OrchestrationDefaultsUpdateRequest,
   Task,
   TaskAgentBulkActionRequest,
+  TaskAgentMessageRequest,
   TaskAgentRestartRequest,
   TaskAgentStartRequest,
   TaskMergeRequest,
@@ -16,6 +17,7 @@ import {
   cancelMergeRun,
   mergeTask,
   postLinearLogout,
+  postTaskAgentMessage,
   postSyncFromLinear,
   postSyncToLinear,
   resumeMergeRun,
@@ -200,6 +202,23 @@ export function useStopTaskAgentMutation() {
   return useMutation({
     mutationFn: (variables: StopTaskAgentVariables) =>
       stopTaskAgent(variables.taskId),
+    onSuccess: (_result, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.epicGraph(variables.epicId),
+      })
+    },
+  })
+}
+
+export function useTaskAgentMessageMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (variables: {
+      epicId: number
+      taskId: number
+      request: TaskAgentMessageRequest
+    }) => postTaskAgentMessage(variables.taskId, variables.request),
     onSuccess: (_result, variables) => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.epicGraph(variables.epicId),
