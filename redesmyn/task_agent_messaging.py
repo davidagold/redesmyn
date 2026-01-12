@@ -28,10 +28,13 @@ _SEMANTIC_STATUS_ADAPTER = TypeAdapter(AgentSemanticStatus)
 
 
 class TaskAgentMessageError(RuntimeError):
-    def __init__(self, detail: str, *, status_code: int) -> None:
+    def __init__(
+        self, detail: str, *, status_code: int, code: str | None = None
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.code = code
 
 
 TaskAgentMessageDelivery = Literal[
@@ -68,6 +71,8 @@ _CONFLICT_PREFIX_TURN_IN_PROGRESS = (
 _CONFLICT_PREFIX_SESSION_CONFLICT = (
     "[task_agent_message_conflict:structured_session_conflict]"
 )
+_CONFLICT_CODE_TURN_IN_PROGRESS = "structured_turn_in_progress"
+_CONFLICT_CODE_SESSION_CONFLICT = "structured_session_conflict"
 
 
 def _external_session_key(
@@ -277,6 +282,7 @@ async def send_task_agent_message(
                         "Agent turn in progress. Interrupt the current turn before sending a new structured message."
                     ),
                     status_code=409,
+                    code=_CONFLICT_CODE_TURN_IN_PROGRESS,
                 )
             if (
                 in_progress is not None
@@ -327,6 +333,7 @@ async def send_task_agent_message(
                     "Stop it and start a new structured session to send this message?"
                 ),
                 status_code=409,
+                code=_CONFLICT_CODE_SESSION_CONFLICT,
             )
         if (
             active_any is not None
@@ -378,6 +385,7 @@ async def send_task_agent_message(
                     "Stop it and start a new structured session to send this message?"
                 ),
                 status_code=409,
+                code=_CONFLICT_CODE_SESSION_CONFLICT,
             )
         return TaskAgentMessageResult(
             agent_session_id=result.agent_session.id,
@@ -424,6 +432,7 @@ async def send_task_agent_message(
                         "Stop it and start a new interactive session to send this message?"
                     ),
                     status_code=409,
+                    code=_CONFLICT_CODE_SESSION_CONFLICT,
                 )
 
         if (

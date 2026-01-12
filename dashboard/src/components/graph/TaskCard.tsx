@@ -276,6 +276,22 @@ function hasAgentMessageConflictPrefix(
   )
 }
 
+function agentMessageConfirmKindForApiError(
+  error: ApiHttpError,
+  mode: "structured" | "interactive",
+): AgentMessageConfirmKind | null {
+  if (error.code === "structured_turn_in_progress") {
+    return "structured_turn_in_progress"
+  }
+  if (error.code === "structured_session_conflict") {
+    return "structured_session_conflict"
+  }
+  if (hasAgentMessageConflictPrefix(error.detail)) {
+    return agentMessageConfirmKindForConflictDetail(error.detail, mode)
+  }
+  return null
+}
+
 function agentMessageConfirmKindForConflictDetail(
   detail: string | null | undefined,
   mode: "structured" | "interactive",
@@ -749,14 +765,15 @@ export function TaskCard({
       requestAnimationFrame(() => agentComposerTextareaRef.current?.focus())
     } catch (e) {
       if (e instanceof ApiHttpError) {
-        if (e.status === 409 && hasAgentMessageConflictPrefix(e.detail)) {
-          setAgentComposerConfirmKind(
-            agentMessageConfirmKindForConflictDetail(
-              e.detail,
-              composerInterfaceMode,
-            ),
+        if (e.status === 409) {
+          const confirmKind = agentMessageConfirmKindForApiError(
+            e,
+            composerInterfaceMode,
           )
-          setAgentComposerConfirmOpen(true)
+          if (confirmKind) {
+            setAgentComposerConfirmKind(confirmKind)
+            setAgentComposerConfirmOpen(true)
+          }
         }
         setAgentComposerError(
           e.detail ? stripAgentMessageConflictPrefix(e.detail) : e.message,

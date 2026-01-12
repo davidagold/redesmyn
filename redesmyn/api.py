@@ -1608,7 +1608,7 @@ async def message_task_agent(
     http_request: Request,
     task_id: int,
     request: TaskAgentMessageRequest,
-) -> TaskAgentMessageResponse:
+) -> TaskAgentMessageResponse | JSONResponse:
     app = _app_from_request(http_request)
     try:
         result = await send_task_agent_message(
@@ -1622,7 +1622,10 @@ async def message_task_agent(
             preferred_interface_mode=request.preferred_interface_mode,
         )
     except TaskAgentMessageError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        payload: dict[str, object] = {"detail": exc.detail}
+        if exc.code is not None:
+            payload["code"] = exc.code
+        return JSONResponse(status_code=exc.status_code, content=payload)
 
     return TaskAgentMessageResponse(
         task_id=task_id,

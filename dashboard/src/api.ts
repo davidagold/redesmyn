@@ -130,30 +130,45 @@ export type TaskAgentLogsResponse = {
 export class ApiHttpError extends Error {
   status: number
   detail: string | null
+  code: string | null
 
-  constructor(message: string, status: number, detail: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    detail: string | null,
+    code: string | null,
+  ) {
     super(message)
     this.name = "ApiHttpError"
     this.status = status
     this.detail = detail
+    this.code = code
   }
 }
 
-async function readErrorDetail(response: Response): Promise<string | null> {
+interface ApiErrorPayload {
+  detail: string | null
+  code: string | null
+}
+
+async function readErrorPayload(response: Response): Promise<ApiErrorPayload> {
+  let detail: string | null = null
+  let code: string | null = null
   try {
-    const payload = (await response.json()) as unknown
-    if (
-      payload &&
-      typeof payload === "object" &&
-      "detail" in payload &&
-      typeof payload.detail === "string"
-    ) {
-      return payload.detail
+    const payloadRaw = (await response.json()) as unknown
+    if (payloadRaw && typeof payloadRaw === "object") {
+      const payload = payloadRaw as Record<string, unknown>
+      if (typeof payload.detail === "string") {
+        detail = payload.detail
+      }
+      if (typeof payload.code === "string") {
+        code = payload.code
+      }
     }
   } catch {
     // Ignore.
   }
-  return null
+  return { detail, code }
 }
 
 async function requestJson<T>(
@@ -183,13 +198,15 @@ async function requestJson<T>(
 
   const response = await fetch(path, init)
   if (!response.ok) {
-    const detail = await readErrorDetail(response)
+    const payload = await readErrorPayload(response)
+    const detail = payload.detail
     throw new ApiHttpError(
       `${method} ${path} failed (${response.status})${
         detail ? `: ${detail}` : ""
       }`,
       response.status,
       detail,
+      payload.code,
     )
   }
 
