@@ -430,6 +430,23 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/agent/message": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Message Task Agent */
+    post: operations["message_task_agent_v1_tasks__task_id__agent_message_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/tasks/{task_id}/agent/restart": {
     parameters: {
       query?: never
@@ -1397,6 +1414,36 @@ export interface components {
       runId: string
       /** Submitted */
       submitted: number
+    }
+    /** TaskAgentMessageRequest */
+    TaskAgentMessageRequest: {
+      /**
+       * Interrupt
+       * @default false
+       */
+      interrupt: boolean
+      /** Message */
+      message: string
+      /**
+       * Preferredinterfacemode
+       * @default auto
+       */
+      preferredInterfaceMode: "auto" | components["schemas"]["AgentInterfaceMode"]
+    }
+    /** TaskAgentMessageResponse */
+    TaskAgentMessageResponse: {
+      agentInterfaceMode: components["schemas"]["AgentInterfaceMode"]
+      /** Agentsessionid */
+      agentSessionId: number
+      /**
+       * Delivery
+       * @enum {string}
+       */
+      delivery: "structured_started" | "structured_resumed" | "interactive_started" | "interactive_sent"
+      /** Taskid */
+      taskId: number
+      /** Warnings */
+      warnings?: string[]
     }
     /** TaskAgentRestartRequest */
     TaskAgentRestartRequest: {
@@ -2437,6 +2484,41 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskAgentBulkRunResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  message_task_agent_v1_tasks__task_id__agent_message_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TaskAgentMessageRequest"]
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["TaskAgentMessageResponse"]
         }
       }
       /** @description Validation Error */

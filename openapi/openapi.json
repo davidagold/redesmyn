@@ -2446,6 +2446,77 @@
         "title": "TaskAgentBulkRunResponse",
         "type": "object"
       },
+      "TaskAgentMessageRequest": {
+        "properties": {
+          "interrupt": {
+            "default": false,
+            "title": "Interrupt",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "preferredInterfaceMode": {
+            "anyOf": [
+              {
+                "const": "auto",
+                "type": "string"
+              },
+              {
+                "$ref": "#/components/schemas/AgentInterfaceMode"
+              }
+            ],
+            "default": "auto",
+            "title": "Preferredinterfacemode"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "TaskAgentMessageRequest",
+        "type": "object"
+      },
+      "TaskAgentMessageResponse": {
+        "properties": {
+          "agentInterfaceMode": {
+            "$ref": "#/components/schemas/AgentInterfaceMode"
+          },
+          "agentSessionId": {
+            "title": "Agentsessionid",
+            "type": "integer"
+          },
+          "delivery": {
+            "enum": [
+              "structured_started",
+              "structured_resumed",
+              "interactive_started",
+              "interactive_sent"
+            ],
+            "title": "Delivery",
+            "type": "string"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "agentSessionId",
+          "agentInterfaceMode",
+          "delivery"
+        ],
+        "title": "TaskAgentMessageResponse",
+        "type": "object"
+      },
       "TaskAgentRestartRequest": {
         "properties": {
           "agentKind": {
@@ -4260,6 +4331,55 @@
           }
         },
         "summary": "Run Task Agents Bulk"
+      }
+    },
+    "/v1/tasks/{task_id}/agent/message": {
+      "post": {
+        "operationId": "message_task_agent_v1_tasks__task_id__agent_message_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAgentMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAgentMessageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Message Task Agent"
       }
     },
     "/v1/tasks/{task_id}/agent/restart": {
