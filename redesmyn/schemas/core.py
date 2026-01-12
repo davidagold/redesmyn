@@ -237,6 +237,25 @@ class TaskAgentStopResponse(ApiResponse):
     stopped: bool
 
 
+class TaskAgentMessageRequest(ApiRequest):
+    message: str
+    interrupt: bool = False
+    preferred_interface_mode: Literal["auto"] | AgentInterfaceMode = "auto"
+
+
+class TaskAgentMessageResponse(ApiResponse):
+    task_id: int
+    agent_session_id: int
+    agent_interface_mode: AgentInterfaceMode
+    delivery: Literal[
+        "structured_started",
+        "structured_resumed",
+        "interactive_started",
+        "interactive_sent",
+    ]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class TaskAgentBulkRunRequest(ApiRequest):
     run_id: str | None = None
     start_task_ids: list[int] = Field(default_factory=list)

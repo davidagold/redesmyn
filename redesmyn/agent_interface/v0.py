@@ -122,7 +122,9 @@ class AgentBackend(Protocol):
 @dataclass(frozen=True, slots=True)
 class ShellAgent:
     _capabilities: AgentCapabilities = field(
-        default_factory=lambda: AgentCapabilities(can_send_text=True)
+        default_factory=lambda: AgentCapabilities(
+            can_send_text=True, can_interrupt=True
+        )
     )
     _status: AgentSemanticStatus = field(default_factory=AgentSemanticStatus)
     _external_session_ref: ExternalSessionRef = field(

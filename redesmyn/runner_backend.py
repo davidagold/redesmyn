@@ -8,6 +8,7 @@ from redesmyn.agent_runtime import (
     StartAgentResult,
     restart_task_agent,
     run_task_agent_resume_by_id_turn,
+    send_task_agent_text,
     start_task_agent,
     stop_task_agent,
 )
@@ -27,6 +28,7 @@ class RunnerBackend(Protocol):
         agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
+        initial_prompt: str | None = None,
     ) -> StartAgentResult: ...
 
     async def stop_task_agent(
@@ -34,6 +36,15 @@ class RunnerBackend(Protocol):
         *,
         task_id: int,
     ) -> bool: ...
+
+    async def send_task_agent_text(
+        self,
+        *,
+        task_id: int,
+        text: str,
+        submit: bool = True,
+        interrupt: bool = False,
+    ) -> None: ...
 
     async def restart_task_agent(
         self,
@@ -53,6 +64,7 @@ class RunnerBackend(Protocol):
         prompt: str,
         detach: bool,
         idempotency_key: str | None = None,
+        resume_session_id: int | None = None,
     ) -> StartAgentResult: ...
 
 
@@ -78,6 +90,7 @@ class LocalRunnerBackend:
         agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
+        initial_prompt: str | None = None,
     ) -> StartAgentResult:
         return await start_task_agent(
             self.ctx,
@@ -86,10 +99,27 @@ class LocalRunnerBackend:
             detach=detach,
             prelude_override=prelude_override,
             agent_kind_selection=agent_kind_selection,
+            initial_prompt=initial_prompt,
         )
 
     async def stop_task_agent(self, *, task_id: int) -> bool:
         return await stop_task_agent(self.ctx, task_id=task_id)
+
+    async def send_task_agent_text(
+        self,
+        *,
+        task_id: int,
+        text: str,
+        submit: bool = True,
+        interrupt: bool = False,
+    ) -> None:
+        await send_task_agent_text(
+            self.ctx,
+            task_id=task_id,
+            text=text,
+            submit=submit,
+            interrupt=interrupt,
+        )
 
     async def restart_task_agent(
         self,
@@ -118,6 +148,7 @@ class LocalRunnerBackend:
         prompt: str,
         detach: bool,
         idempotency_key: str | None = None,
+        resume_session_id: int | None = None,
     ) -> StartAgentResult:
         return await run_task_agent_resume_by_id_turn(
             self.ctx,
@@ -125,6 +156,7 @@ class LocalRunnerBackend:
             prompt=prompt,
             detach=detach,
             idempotency_key=idempotency_key,
+            resume_session_id=resume_session_id,
         )
 
 
@@ -147,6 +179,7 @@ class RemoteRunnerBackend:
         agent_kind_selection: AgentKindSelection,
         detach: bool,
         prelude_override: str | None = None,
+        initial_prompt: str | None = None,
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; start via the daemon is not implemented yet.",
@@ -156,6 +189,19 @@ class RemoteRunnerBackend:
     async def stop_task_agent(self, *, task_id: int) -> bool:
         raise RunnerBackendError(
             "Runner backend is remote; stop via the daemon is not implemented yet.",
+            status_code=501,
+        )
+
+    async def send_task_agent_text(
+        self,
+        *,
+        task_id: int,
+        text: str,
+        submit: bool = True,
+        interrupt: bool = False,
+    ) -> None:
+        raise RunnerBackendError(
+            "Runner backend is remote; interactive messaging via the daemon is not implemented yet.",
             status_code=501,
         )
 
@@ -181,6 +227,7 @@ class RemoteRunnerBackend:
         prompt: str,
         detach: bool,
         idempotency_key: str | None = None,
+        resume_session_id: int | None = None,
     ) -> StartAgentResult:
         raise RunnerBackendError(
             "Runner backend is remote; resume-by-id turns via the daemon are not implemented yet.",

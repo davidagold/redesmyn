@@ -78,6 +78,7 @@ class ClaudeCodeAgent:
     _capabilities: AgentCapabilities = field(
         default_factory=lambda: AgentCapabilities(
             can_send_text=True,
+            can_interrupt=True,
             # Resume-by-id requires an observed/seeded Claude session_id.
             can_resume_by_id=False,
             can_continue_in_cwd=True,

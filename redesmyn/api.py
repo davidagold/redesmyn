@@ -106,6 +106,7 @@ from redesmyn.repo_executor import (
     make_repo_executor,
 )
 from redesmyn.task_spine import resolve_spine_task_ids, split_merged_spine_prefix
+from redesmyn.task_agent_messaging import TaskAgentMessageError, send_task_agent_message
 from redesmyn.runner_backend import (
     RunnerBackend,
     RunnerBackendError,
@@ -159,6 +160,8 @@ from redesmyn.schemas.core import (
     TaskAgentStartRequest,
     TaskAgentStartResponse,
     TaskAgentStopResponse,
+    TaskAgentMessageRequest,
+    TaskAgentMessageResponse,
     TaskAgentBulkActionItemRequest,
     TaskAgentBulkActionRequest,
     TaskAgentBulkActionResponse,
@@ -1597,6 +1600,35 @@ async def restart_task_agent(
         started_at=session_row.started_at or datetime.now(UTC),
         started=result.started,
         warnings=warnings,
+    )
+
+
+@v1.post("/tasks/{task_id}/agent/message", response_model=TaskAgentMessageResponse)
+async def message_task_agent(
+    http_request: Request,
+    task_id: int,
+    request: TaskAgentMessageRequest,
+) -> TaskAgentMessageResponse:
+    app = _app_from_request(http_request)
+    try:
+        result = await send_task_agent_message(
+            sessionmaker=app.state.sessionmaker,
+            runner_backend=app.state.runner_backend,
+            ctx=app.state.ctx,
+            task_id=task_id,
+            message=request.message,
+            interrupt=request.interrupt,
+            preferred_interface_mode=request.preferred_interface_mode,
+        )
+    except TaskAgentMessageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return TaskAgentMessageResponse(
+        task_id=task_id,
+        agent_session_id=result.agent_session_id,
+        agent_interface_mode=result.agent_interface_mode,
+        delivery=result.delivery,
+        warnings=list(result.warnings),
     )
 
 

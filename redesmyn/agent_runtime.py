@@ -361,6 +361,18 @@ def _tmux_send_enter(*, name: str) -> None:
         raise RuntimeError(proc.stderr.strip() or "tmux send-keys Enter failed")
 
 
+def _tmux_send_ctrl_c(*, name: str) -> None:
+    proc = subprocess.run(
+        ["tmux", "send-keys", "-t", name, "C-c"],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "tmux send-keys C-c failed")
+
+
 def _tmux_send_lines(*, name: str, lines: list[str]) -> None:
     for line in lines:
         if line:
@@ -979,6 +991,39 @@ async def send_agent_prelude(
         _tmux_send_enter(name=tmux_name)
 
 
+async def send_task_agent_text(
+    _ctx: RepoContext,
+    *,
+    task_id: int,
+    text: str,
+    submit: bool = True,
+    interrupt: bool = False,
+    delay_s: float = 0.0,
+) -> None:
+    if delay_s > 0:
+        await asyncio.sleep(delay_s)
+
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    if not has_tmux():
+        raise RuntimeError(
+            "tmux is required for v0 agents; install tmux or set up a tmux-capable runner"
+        )
+    if not _tmux_has_session(name=tmux_name):
+        raise RuntimeError("Agent is not running.")
+
+    await _wait_for_agent_input_ready(name=tmux_name, timeout_s=1.5)
+
+    if interrupt:
+        _tmux_send_ctrl_c(name=tmux_name)
+
+    lines = text.strip("\n").splitlines()
+    if not lines:
+        lines = [""]
+    _tmux_send_lines(name=tmux_name, lines=lines)
+    if submit:
+        _tmux_send_enter(name=tmux_name)
+
+
 async def start_task_agent(
     ctx: RepoContext,
     *,
@@ -988,6 +1033,7 @@ async def start_task_agent(
     prelude_override: str | None = None,
     agent_kind_selection: AgentKindSelection = AgentKindSelection.Auto,
     external_session_ref_hint: dict[str, Any] | None = None,
+    initial_prompt: str | None = None,
 ) -> StartAgentResult:
     argv = _parse_harness_command(harness_command)
     if not detach:
@@ -1230,7 +1276,15 @@ async def start_task_agent(
                     template=prelude,
                 )
                 if interface_mode == AgentInterfaceMode.Structured:
-                    stdin_text = "\n".join(prelude_lines)
+                    parts: list[str] = ["\n".join(prelude_lines)]
+                    if initial_prompt is not None:
+                        parts.append(initial_prompt)
+                    stdin_text = "\n\n".join(
+                        [part.strip("\n") for part in parts if part.strip("\n")]
+                    )
+            elif interface_mode == AgentInterfaceMode.Structured:
+                if initial_prompt is not None and initial_prompt.strip("\n"):
+                    stdin_text = initial_prompt
             now = datetime.now(UTC)
             agent_session = AgentSession(
                 task_id=task.id,
@@ -1326,8 +1380,20 @@ async def start_task_agent(
                         template=prelude,
                         submit=submit_prelude,
                     )
+                if (
+                    initial_prompt is not None
+                    and interface_mode == AgentInterfaceMode.Interactive
+                ):
+                    await send_task_agent_text(
+                        ctx,
+                        task_id=task.id,
+                        text=initial_prompt,
+                        submit=True,
+                        interrupt=False,
+                        delay_s=0.25,
+                    )
             except RuntimeError as e:
-                warnings.append(f"Failed to send agent prelude: {e}")
+                warnings.append(f"Failed to send agent prelude/message: {e}")
             await maybe_push_task_state_to_linear(
                 ctx,
                 sessionmaker=sessionmaker,
@@ -1522,6 +1588,7 @@ async def run_task_agent_resume_by_id_turn(
     prompt: str,
     detach: bool,
     idempotency_key: str | None = None,
+    resume_session_id: int | None = None,
 ) -> StartAgentResult:
     """Run a single structured turn by resuming the prior external session id.
 
@@ -1575,6 +1642,11 @@ async def run_task_agent_resume_by_id_turn(
                     .limit(25)
                 )
             )
+            if resume_session_id is not None:
+                requested = await session.get(AgentSession, resume_session_id)
+                if requested is None or requested.task_id != task.id:
+                    raise RuntimeError("Requested resume session not found for task.")
+                latest_sessions = [requested]
             if not latest_sessions:
                 raise RuntimeError(
                     "No prior agent session found; start an agent first."
@@ -1605,6 +1677,8 @@ async def run_task_agent_resume_by_id_turn(
                     for row in latest_sessions
                     if row.external_session_ref is not None
                     and row.external_session_ref.get("type") != "none"
+                    and row.agent_interface_mode == AgentInterfaceMode.Structured
+                    and row.agent_kind == agent_kind
                 ),
                 None,
             )

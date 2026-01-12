@@ -117,6 +117,7 @@ class CodexAgent:
         default_factory=lambda: AgentCapabilities(
             can_detect_ready_for_input=True,
             can_send_text=True,
+            can_interrupt=True,
             # Turn-complete detection is only reliable when we see Codex's
             # structured JSONL stream (codex exec --json).
             can_detect_turn_complete=False,
