@@ -2798,7 +2798,10 @@ async def index(request: Request) -> Response:
             return FileResponse(str(index_html))
 
     return HTMLResponse(
-        "<h1>Redesmyn</h1><p>Dashboard assets not available. Use `just dev` for local UI dev.</p>"
+        "<h1>Redesmyn</h1>"
+        "<p>Dashboard assets not available.</p>"
+        "<p>From a source checkout, build and package the dashboard with <code>just dashboard-package</code> (requires Node), "
+        "or use <code>just dev</code> for local UI dev.</p>"
     )
 
 

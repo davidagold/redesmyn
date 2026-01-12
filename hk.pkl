@@ -45,22 +45,8 @@ local precommit_steps = (formatters) {
         )
     }
 
-    ["dashboard_packaged_assets"] {
-        glob = List(
-            "dashboard/src/**",
-            "dashboard/public/**",
-            "dashboard/index.html",
-            "dashboard/vite.config.ts",
-            "dashboard/tailwind.config.ts",
-            "dashboard/components.json",
-            "dashboard/tsconfig*.json",
-            "dashboard/package.json",
-            "dashboard/package-lock.json",
-        )
-        dir = "dashboard"
-        fix = "npm run build && uv run python ../scripts/build_packaged_dashboard_assets.py --copy-only"
-        stage = List("redesmyn/dashboard_assets/dist/**")
-    }
+    // Packaged dashboard assets are treated as a build artifact (not committed).
+    // The release pipeline should generate them before building wheels/sdists.
 }
 
 hooks {
