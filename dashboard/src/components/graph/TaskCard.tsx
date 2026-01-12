@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ResourceBadge } from "@/components/ui/resource-badge"
 import { Textarea } from "@/components/ui/textarea"
-import { ApiHttpError } from "@/api"
+import { ApiHttpError, type TaskAgentMessageConflictAction } from "@/api"
 import { queryKeys } from "@/api/queryKeys"
 import {
   useCancelMergeRunMutation,
@@ -47,7 +47,7 @@ import {
 import { Shimmer } from "@/components/ui/shimmer"
 import {
   AgentMessageConfirmDialog,
-  type AgentMessageConfirmMode,
+  type AgentMessageConfirmKind,
 } from "@/components/agents/AgentMessageConfirmDialog"
 import {
   ActionErrorCallout,
@@ -250,6 +250,37 @@ function agentStatusTooltip(
   return summary === "not started" ? "Agent not started" : `Agent ${summary}`
 }
 
+const STRUCTURED_TURN_CONFLICT_PREFIX =
+  "[task_agent_message_conflict:structured_turn_in_progress]"
+const STRUCTURED_SESSION_CONFLICT_PREFIX =
+  "[task_agent_message_conflict:structured_session_conflict]"
+
+function stripAgentMessageConflictPrefix(detail: string): string {
+  const trimmed = detail.trim()
+  if (trimmed.startsWith(STRUCTURED_TURN_CONFLICT_PREFIX)) {
+    return trimmed.slice(STRUCTURED_TURN_CONFLICT_PREFIX.length).trimStart()
+  }
+  if (trimmed.startsWith(STRUCTURED_SESSION_CONFLICT_PREFIX)) {
+    return trimmed.slice(STRUCTURED_SESSION_CONFLICT_PREFIX.length).trimStart()
+  }
+  return trimmed
+}
+
+function agentMessageConfirmKindForConflictDetail(
+  detail: string | null | undefined,
+  mode: "structured" | "interactive",
+): AgentMessageConfirmKind {
+  if (mode !== "structured") {
+    return "interactive_busy"
+  }
+
+  const trimmed = detail?.trim() ?? ""
+  if (trimmed.startsWith(STRUCTURED_SESSION_CONFLICT_PREFIX)) {
+    return "structured_session_conflict"
+  }
+  return "structured_turn_in_progress"
+}
+
 export function TaskCard({
   node,
   task,
@@ -343,8 +374,8 @@ export function TaskCard({
   )
   const [agentComposerConfirmOpen, setAgentComposerConfirmOpen] =
     useState(false)
-  const [agentComposerConfirmMode, setAgentComposerConfirmMode] =
-    useState<AgentMessageConfirmMode>("interactive")
+  const [agentComposerConfirmKind, setAgentComposerConfirmKind] =
+    useState<AgentMessageConfirmKind>("interactive_busy")
   const agentComposerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const taskAgentMessageMutation = useTaskAgentMessageMutation()
   const mergeReady = Boolean(task?.mergeReadyAt)
@@ -681,7 +712,9 @@ export function TaskCard({
     }
   }
 
-  async function submitAgentMessage(options?: { interrupt?: boolean }) {
+  async function submitAgentMessage(options?: {
+    onConflict?: TaskAgentMessageConflictAction
+  }) {
     if (taskId === null) {
       return
     }
@@ -696,7 +729,7 @@ export function TaskCard({
         taskId,
         request: {
           message: agentComposerDraftTrimmed,
-          interrupt: options?.interrupt ?? false,
+          onConflict: options?.onConflict ?? "fail",
           preferredInterfaceMode: composerInterfaceMode,
         },
       })
@@ -705,10 +738,17 @@ export function TaskCard({
     } catch (e) {
       if (e instanceof ApiHttpError) {
         if (e.status === 409) {
-          setAgentComposerConfirmMode(composerInterfaceMode)
+          setAgentComposerConfirmKind(
+            agentMessageConfirmKindForConflictDetail(
+              e.detail,
+              composerInterfaceMode,
+            ),
+          )
           setAgentComposerConfirmOpen(true)
         }
-        setAgentComposerError(e.detail?.trim() || e.message)
+        setAgentComposerError(
+          e.detail ? stripAgentMessageConflictPrefix(e.detail) : e.message,
+        )
         return
       }
       const raw = e instanceof Error ? e.message : String(e)
@@ -1960,7 +2000,11 @@ export function TaskCard({
                     event.preventDefault()
                     event.stopPropagation()
                     if (agentLooksBusy) {
-                      setAgentComposerConfirmMode(composerInterfaceMode)
+                      setAgentComposerConfirmKind(
+                        composerInterfaceMode === "structured"
+                          ? "structured_turn_in_progress"
+                          : "interactive_busy",
+                      )
                       setAgentComposerConfirmOpen(true)
                       return
                     }
@@ -1984,7 +2028,11 @@ export function TaskCard({
                     event.preventDefault()
                     event.stopPropagation()
                     if (agentLooksBusy) {
-                      setAgentComposerConfirmMode(composerInterfaceMode)
+                      setAgentComposerConfirmKind(
+                        composerInterfaceMode === "structured"
+                          ? "structured_turn_in_progress"
+                          : "interactive_busy",
+                      )
                       setAgentComposerConfirmOpen(true)
                       return
                     }
@@ -2122,19 +2170,21 @@ export function TaskCard({
       />
       <AgentMessageConfirmDialog
         open={agentComposerConfirmOpen}
-        mode={agentComposerConfirmMode}
-        canInterrupt={
-          agentCanInterrupt || agentComposerConfirmMode === "structured"
-        }
+        kind={agentComposerConfirmKind}
+        canInterrupt={agentCanInterrupt}
         pendingReason={agentComposerPendingReason}
         onOpenChange={setAgentComposerConfirmOpen}
         onInterruptAndSend={() => {
           setAgentComposerConfirmOpen(false)
-          void submitAgentMessage({ interrupt: true })
+          void submitAgentMessage({ onConflict: "interrupt_turn" })
+        }}
+        onStopAndSend={() => {
+          setAgentComposerConfirmOpen(false)
+          void submitAgentMessage({ onConflict: "stop_session_and_start_new" })
         }}
         onSendAnyway={() => {
           setAgentComposerConfirmOpen(false)
-          void submitAgentMessage({ interrupt: false })
+          void submitAgentMessage({ onConflict: "fail" })
         }}
       />
       <MergeReadySpineConfirmDialog

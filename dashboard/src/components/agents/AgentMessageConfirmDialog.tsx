@@ -9,34 +9,49 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
-export type AgentMessageConfirmMode = "structured" | "interactive"
+export type AgentMessageConfirmKind = "structured_turn_in_progress" | "structured_session_conflict" | "interactive_busy"
 
 export function AgentMessageConfirmDialog({
   open,
-  mode,
+  kind,
   canInterrupt,
   pendingReason,
   onOpenChange,
   onInterruptAndSend,
+  onStopAndSend,
   onSendAnyway,
 }: {
   open: boolean
-  mode: AgentMessageConfirmMode
+  kind: AgentMessageConfirmKind
   canInterrupt: boolean
   pendingReason?: string | null
   onOpenChange: (open: boolean) => void
   onInterruptAndSend: () => void
+  onStopAndSend: () => void
   onSendAnyway: () => void
 }) {
-  const title =
-    mode === "structured" ? "Interrupt agent turn?" : "Agent is busy"
+  const title = (() => {
+    if (kind === "structured_session_conflict") {
+      return "Stop agent session?"
+    }
+    if (kind === "structured_turn_in_progress") {
+      return "Interrupt agent turn?"
+    }
+    return "Agent is busy"
+  })()
 
-  const description =
-    mode === "structured"
-      ? "A structured agent turn is currently in progress. Interrupt it and send your message?"
-      : canInterrupt
-        ? "The agent looks busy. Interrupt it before sending your message?"
-        : "The agent looks busy. Interrupt is unavailable; send anyway?"
+  const description = (() => {
+    if (kind === "structured_session_conflict") {
+      return "A structured agent session is already running for this task. Stop it and start a new structured session to send your message?"
+    }
+    if (kind === "structured_turn_in_progress") {
+      return "A structured agent turn is currently in progress. Interrupt it and send your message?"
+    }
+    if (canInterrupt) {
+      return "The agent looks busy. Interrupt it before sending your message?"
+    }
+    return "The agent looks busy. Interrupt is unavailable; send anyway?"
+  })()
 
   return (
     <AlertDialog
@@ -65,7 +80,7 @@ export function AgentMessageConfirmDialog({
             Cancel
           </Button>
 
-          {mode === "interactive" ? (
+          {kind === "interactive_busy" ? (
             <Button
               variant="secondary"
               disabledReason={pendingReason ?? null}
@@ -78,7 +93,19 @@ export function AgentMessageConfirmDialog({
             </Button>
           ) : null}
 
-          {canInterrupt ? (
+          {kind === "structured_session_conflict" ? (
+            <AlertDialogAction
+              disabledReason={pendingReason ?? null}
+              onClick={(event) => {
+                event.preventDefault()
+                onStopAndSend()
+              }}
+            >
+              Stop and send
+            </AlertDialogAction>
+          ) : null}
+
+          {kind === "structured_turn_in_progress" || canInterrupt ? (
             <AlertDialogAction
               disabledReason={pendingReason ?? null}
               onClick={(event) => {

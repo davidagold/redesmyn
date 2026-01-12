@@ -43,6 +43,7 @@ export type TaskAgentStartRequest = components["schemas"]["TaskAgentStartRequest
   prelude?: string | null
 }
 export type TaskAgentMessageRequest = components["schemas"]["TaskAgentMessageRequest"]
+export type TaskAgentMessageConflictAction = components["schemas"]["TaskAgentMessageConflictAction"]
 export type TaskAgentMessageResponse = components["schemas"]["TaskAgentMessageResponse"]
 export type TaskAgentStartResponse = components["schemas"]["TaskAgentStartResponse"]
 export type TaskAgentStopResponse = components["schemas"]["TaskAgentStopResponse"]
