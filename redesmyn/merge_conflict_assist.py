@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 
 import structlog
 from pydantic import TypeAdapter
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy import desc
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -32,6 +33,8 @@ from redesmyn.schemas.core import (
     MergeConflictAssistStatusResponse,
     MergeRunResumeRequest,
 )
+from redesmyn.schemas.core import EventResponse
+from redesmyn.ws_runtime import JsonWebSocketHub
 
 log = structlog.get_logger("redesmyn.merge_conflict_assist")
 
@@ -228,6 +231,34 @@ async def _turn_completed_for_session(
     return status.turn_state == AgentTurnState.Completed, None
 
 
+async def _find_existing_continuation_session_id(
+    session: AsyncSession,
+    *,
+    task_id: int,
+    idempotency_key: str,
+) -> tuple[int | None, datetime | None]:
+    events = list(
+        await session.scalars(
+            select(Event)
+            .where(Event.event_type == "agent.continuation_turn_requested")
+            .order_by(desc(Event.id))
+            .limit(250)
+        )
+    )
+    for event in events:
+        if event.data.get("task_id") != task_id:
+            continue
+        if event.data.get("idempotency_key") != idempotency_key:
+            continue
+        session_id_value = event.data.get("agent_session_id")
+        try:
+            session_id = int(session_id_value)
+        except (TypeError, ValueError):
+            continue
+        return session_id, event.created_at
+    return None, None
+
+
 def _blocked_rebase_signature(
     run: MergeRun,
 ) -> tuple[int | None, int | None, str | None, str | None]:
@@ -273,6 +304,7 @@ class _AssistRuntime:
     sent_at: datetime | None = None
     baseline_turn_completed_event_id: int | None = None
     observed_turn_completed_event_id: int | None = None
+    last_emitted_key: tuple[object, ...] | None = None
     state: Literal[
         "inactive",
         "waiting_for_agent_ready",
@@ -456,12 +488,69 @@ class MergeConflictAssistSupervisor:
         runtime.observed_turn_completed_event_id = None
         runtime.state = "inactive"
         runtime.detail = None
+        runtime.last_emitted_key = None
 
         # Delivery timeout is per blocked step; keep overall timeout scoped to
         # the merge run so we don't wedge indefinitely.
         runtime.delivery_deadline_at = now + self.delivery_timeout
 
-    async def tick(self, session: AsyncSession, *, now: datetime) -> None:
+    def _emit_update_if_changed(
+        self,
+        session: AsyncSession,
+        *,
+        run: MergeRun,
+        runtime: _AssistRuntime,
+        now: datetime,
+        pending_events: list[Event] | None,
+    ) -> None:
+        key = (
+            runtime.state,
+            runtime.detail,
+            runtime.agent_task_id,
+            runtime.agent_session_id,
+            runtime.blocked_step_index,
+            runtime.blocked_task_id,
+            runtime.blocked_branch_name,
+            runtime.blocked_worktree_path,
+        )
+        if runtime.last_emitted_key == key:
+            return
+        runtime.last_emitted_key = key
+
+        task_id = runtime.agent_task_id or run.blocked_task_id or run.requested_task_id
+        if task_id is None:
+            # If we can't tie this to an epic task, emitting it would cause all
+            # epic subscribers to see it. Skip in that case.
+            return
+
+        event = Event(
+            event_type="merge.conflict_assist",
+            data={
+                "task_id": task_id,
+                "run_id": run.run_id,
+                "epic_id": run.epic_id,
+                "state": runtime.state,
+                "detail": runtime.detail,
+                "agent_task_id": runtime.agent_task_id,
+                "agent_session_id": runtime.agent_session_id,
+                "blocked_step_index": run.blocked_step_index,
+                "blocked_task_id": run.blocked_task_id,
+                "blocked_branch_name": run.blocked_branch_name,
+                "blocked_worktree_path": run.blocked_worktree_path,
+            },
+            created_at=now,
+        )
+        session.add(event)
+        if pending_events is not None:
+            pending_events.append(event)
+
+    async def tick(
+        self,
+        session: AsyncSession,
+        *,
+        now: datetime,
+        pending_events: list[Event] | None = None,
+    ) -> None:
         merge_runs = list(
             await session.scalars(
                 select(MergeRun).where(
@@ -496,98 +585,145 @@ class MergeConflictAssistSupervisor:
                 )
                 self._reset_for_new_blocked_step(runtime, run, now=now)
 
-            if now >= runtime.overall_deadline_at and runtime.state not in {
-                "timed_out",
-                "resumed",
-            }:
-                runtime.state = "timed_out"
-                runtime.detail = "Timed out waiting for conflict assist completion; use manual resume."
-                continue
-
-            message = _rebase_remediation_message(run)
-            if not message:
-                runtime.state = "unsupported"
-                runtime.detail = (
-                    "No remediation message available for this blocked run."
-                )
-                continue
-
-            if runtime.sent_at is None:
-                assist_task_id, reason = await _select_assist_task_id(session, run=run)
-                if assist_task_id is None:
-                    runtime.state = "unsupported"
-                    runtime.detail = reason
-                    continue
-                runtime.agent_task_id = assist_task_id
-
-                if now >= runtime.delivery_deadline_at:
+            try:
+                if now >= runtime.overall_deadline_at and runtime.state not in {
+                    "timed_out",
+                    "resumed",
+                }:
                     runtime.state = "timed_out"
-                    runtime.detail = "Timed out waiting to deliver remediation message; use manual copy."
+                    runtime.detail = "Timed out waiting for conflict assist completion; use manual resume."
                     continue
-                idempotency_key = _idempotency_key_for_run(run)
-                try:
-                    runtime.agent_session_id = await self.launcher.launch(
-                        task_id=assist_task_id,
-                        prompt=message,
-                        detach=True,
-                        idempotency_key=idempotency_key,
+
+                message = _rebase_remediation_message(run)
+                if not message:
+                    runtime.state = "unsupported"
+                    runtime.detail = (
+                        "No remediation message available for this blocked run."
                     )
-                except Exception as exc:
-                    runtime.state = "waiting_for_agent_ready"
-                    runtime.detail = str(exc) or "Failed to launch continuation turn."
                     continue
 
-                runtime.sent_at = now
-                runtime.state = "sent_waiting_for_turn_complete"
+                if runtime.sent_at is None:
+                    idempotency_key = _idempotency_key_for_run(run)
+                    candidates: list[int] = []
+                    if run.blocked_task_id is not None:
+                        candidates.append(run.blocked_task_id)
+                    if (
+                        run.requested_task_id is not None
+                        and run.requested_task_id not in candidates
+                    ):
+                        candidates.append(run.requested_task_id)
+
+                    for task_id in candidates:
+                        (
+                            existing_id,
+                            existing_created_at,
+                        ) = await _find_existing_continuation_session_id(
+                            session,
+                            task_id=task_id,
+                            idempotency_key=idempotency_key,
+                        )
+                        if existing_id is None:
+                            continue
+                        runtime.agent_task_id = task_id
+                        runtime.agent_session_id = existing_id
+                        runtime.sent_at = (
+                            existing_created_at
+                            if existing_created_at is not None
+                            else now
+                        )
+                        runtime.state = "sent_waiting_for_turn_complete"
+                        runtime.detail = None
+                        break
+
+                    if runtime.sent_at is None:
+                        assist_task_id, reason = await _select_assist_task_id(
+                            session, run=run
+                        )
+                        if assist_task_id is None:
+                            runtime.state = "unsupported"
+                            runtime.detail = reason
+                            continue
+                        runtime.agent_task_id = assist_task_id
+
+                        if now >= runtime.delivery_deadline_at:
+                            runtime.state = "timed_out"
+                            runtime.detail = "Timed out waiting to deliver remediation message; use manual copy."
+                            continue
+                        try:
+                            runtime.agent_session_id = await self.launcher.launch(
+                                task_id=assist_task_id,
+                                prompt=message,
+                                detach=True,
+                                idempotency_key=idempotency_key,
+                            )
+                        except Exception as exc:
+                            runtime.state = "waiting_for_agent_ready"
+                            runtime.detail = (
+                                str(exc) or "Failed to launch continuation turn."
+                            )
+                            continue
+
+                        runtime.sent_at = now
+                        runtime.state = "sent_waiting_for_turn_complete"
+                        runtime.detail = None
+                    continue
+
+                if runtime.agent_task_id is None:
+                    runtime.state = "waiting_for_agent_ready"
+                    runtime.detail = "Missing continuation task id."
+                    continue
+
+                if runtime.agent_session_id is None:
+                    runtime.state = "waiting_for_agent_ready"
+                    runtime.detail = "Missing continuation agent_session_id."
+                    continue
+
+                completed, event_id = await _turn_completed_for_session(
+                    session, agent_session_id=runtime.agent_session_id
+                )
+                if not completed:
+                    runtime.state = "sent_waiting_for_turn_complete"
+                    runtime.detail = None
+                    continue
+                runtime.observed_turn_completed_event_id = event_id
+
+                if run.status != MergeRunStatus.Resumable:
+                    runtime.state = "waiting_for_repo_clean"
+                    runtime.detail = "Waiting for merge run to become resumable."
+                    continue
+
+                if not run.blocked_worktree_path:
+                    runtime.state = "waiting_for_repo_clean"
+                    runtime.detail = "Blocked worktree path missing."
+                    continue
+
+                repo_ok, repo_detail = _worktree_is_clean_for_resume(
+                    run.blocked_worktree_path
+                )
+                if not repo_ok:
+                    runtime.state = "waiting_for_repo_clean"
+                    runtime.detail = repo_detail
+                    continue
+
+                runtime.state = "ready_to_resume"
                 runtime.detail = None
-                continue
-
-            if runtime.agent_task_id is None:
-                runtime.state = "waiting_for_agent_ready"
-                runtime.detail = "Missing continuation task id."
-                continue
-
-            if runtime.agent_session_id is None:
-                runtime.state = "waiting_for_agent_ready"
-                runtime.detail = "Missing continuation agent_session_id."
-                continue
-
-            completed, event_id = await _turn_completed_for_session(
-                session, agent_session_id=runtime.agent_session_id
-            )
-            if not completed:
-                runtime.state = "sent_waiting_for_turn_complete"
-                runtime.detail = None
-                continue
-            runtime.observed_turn_completed_event_id = event_id
-
-            if run.status != MergeRunStatus.Resumable:
-                runtime.state = "waiting_for_repo_clean"
-                runtime.detail = "Waiting for merge run to become resumable."
-                continue
-
-            if not run.blocked_worktree_path:
-                runtime.state = "waiting_for_repo_clean"
-                runtime.detail = "Blocked worktree path missing."
-                continue
-
-            repo_ok, repo_detail = _worktree_is_clean_for_resume(
-                run.blocked_worktree_path
-            )
-            if not repo_ok:
-                runtime.state = "waiting_for_repo_clean"
-                runtime.detail = repo_detail
-                continue
-
-            runtime.state = "ready_to_resume"
-            runtime.detail = None
-            resumed = await self.resumer.resume(run=run)
-            if resumed:
-                runtime.state = "resumed"
-                runtime.detail = None
-            else:
-                runtime.state = "waiting_for_repo_clean"
-                runtime.detail = "Failed to resume automatically; use manual resume."
+                resumed = await self.resumer.resume(run=run)
+                if resumed:
+                    runtime.state = "resumed"
+                    runtime.detail = None
+                else:
+                    runtime.state = "waiting_for_repo_clean"
+                    runtime.detail = (
+                        "Failed to resume automatically; use manual resume."
+                    )
+            finally:
+                self._emit_update_if_changed(
+                    session,
+                    run=run,
+                    runtime=runtime,
+                    now=now,
+                    pending_events=pending_events,
+                )
 
         for run_id in list(self._runtime_by_run_id.keys()):
             if run_id not in active_run_ids:
@@ -600,13 +736,35 @@ async def run_merge_conflict_assist(
     supervisor: MergeConflictAssistSupervisor,
     interval_s: float = 1.0,
     once: bool = False,
+    event_hub: JsonWebSocketHub | None = None,
 ) -> None:
     while True:
         try:
             now = datetime.now(UTC)
             async with sessionmaker() as session:
-                await supervisor.tick(session, now=now)
+                pending_events: list[Event] = []
+                await supervisor.tick(session, now=now, pending_events=pending_events)
                 await session.commit()
+                if event_hub is not None and pending_events:
+                    for row in pending_events:
+                        try:
+                            payload = EventResponse.model_validate(
+                                row, from_attributes=True
+                            ).model_dump(by_alias=True, mode="json")
+                        except ValidationError:
+                            payload = EventResponse.model_validate(
+                                {
+                                    "id": row.id,
+                                    "event_type": row.event_type,
+                                    "created_at": row.created_at,
+                                    "data": {
+                                        "type": "unknown",
+                                        "event_type": row.event_type,
+                                        "data": row.data,
+                                    },
+                                }
+                            ).model_dump(by_alias=True, mode="json")
+                        await event_hub.publish({"type": "event", "event": payload})
         except asyncio.CancelledError:
             raise
         except Exception:

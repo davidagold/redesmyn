@@ -183,6 +183,103 @@ async def test_conflict_assist_requires_turn_complete_for_continuation_session(
 
 
 @pytest.mark.integration
+async def test_conflict_assist_recovers_after_restart_mid_turn(
+    scenario_with_conflicted_merge_run: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenario = scenario_with_conflicted_merge_run
+    run = await _load_blocked_merge_run(scenario)
+    assert run.blocked_task_id is not None
+    assert run.blocked_branch_name is not None
+    assert run.blocked_step_index is not None
+
+    monkeypatch.setattr(
+        conflict_assist,
+        "_worktree_is_clean_for_resume",
+        lambda _: (True, None),
+    )
+
+    async with scenario.db.session() as session:
+        session.add(
+            AgentSession(
+                task_id=run.blocked_task_id,
+                status=AgentStatus.Stopped,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                resolved_launch_configuration={"argv": ["codex", "exec", "--json"]},
+                external_session_ref={"type": "codex_thread", "thread_id": "th_123"},
+            )
+        )
+        await session.commit()
+
+    supervisor1 = MergeConflictAssistSupervisor(
+        launcher=_FakeLauncher(launched=[], agent_session_id=4242),
+        resumer=_FakeResumer(resumed=[]),
+        delivery_timeout=timedelta(seconds=30),
+        overall_timeout=timedelta(minutes=5),
+    )
+
+    now = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervisor1.tick(session, now=now)
+        await session.commit()
+
+    idempotency_key = f"merge_conflict_assist:{run.run_id}:{run.blocked_step_index}:{run.blocked_branch_name}"
+    async with scenario.db.session() as session:
+        session.add(
+            Event(
+                event_type="agent.continuation_turn_requested",
+                data={
+                    "task_id": run.blocked_task_id,
+                    "agent_session_id": 4242,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+        )
+        await session.commit()
+
+    launcher2 = _FakeLauncher(
+        launched=[],
+        agent_session_id=9999,
+        error=RuntimeError("should not launch"),
+    )
+    resumer2 = _FakeResumer(resumed=[])
+    supervisor2 = MergeConflictAssistSupervisor(
+        launcher=launcher2,
+        resumer=resumer2,
+        delivery_timeout=timedelta(seconds=30),
+        overall_timeout=timedelta(minutes=5),
+    )
+
+    async with scenario.db.session() as session:
+        await supervisor2.tick(session, now=now + timedelta(seconds=1))
+        await session.commit()
+
+    assert not launcher2.launched
+    snapshot = supervisor2.snapshot(run_id=run.run_id)
+    assert snapshot is not None
+    assert snapshot.state == "sent_waiting_for_turn_complete"
+    assert snapshot.agent_session_id == 4242
+
+    async with scenario.db.session() as session:
+        run_row = await session.get(MergeRun, run.id)
+        assert run_row is not None
+        run_row.status = MergeRunStatus.Resumable
+        session.add(
+            Event(
+                event_type="agent.turn_completed",
+                data={"task_id": run.blocked_task_id, "agent_session_id": 4242},
+            )
+        )
+        await session.commit()
+
+    async with scenario.db.session() as session:
+        await supervisor2.tick(session, now=now + timedelta(seconds=2))
+        await session.commit()
+
+    assert resumer2.resumed == [run.run_id]
+
+
+@pytest.mark.integration
 async def test_conflict_assist_relaunches_when_blocked_step_changes(
     scenario_with_conflicted_merge_run: Scenario,
 ) -> None:

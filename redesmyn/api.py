@@ -421,6 +421,7 @@ async def _lifespan(app: App, *, settings_override: RedesmynSettings | None):
                 supervisor=app.state.merge_conflict_assist,
                 interval_s=1.0,
                 once=False,
+                event_hub=app.state.event_hub,
             ),
             name="merge_conflict_assist",
         )
