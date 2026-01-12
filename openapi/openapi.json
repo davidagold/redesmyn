@@ -2446,16 +2446,37 @@
         "title": "TaskAgentBulkRunResponse",
         "type": "object"
       },
+      "TaskAgentMessageConflictAction": {
+        "enum": [
+          "fail",
+          "interrupt_turn",
+          "stop_session_and_start_new"
+        ],
+        "title": "TaskAgentMessageConflictAction",
+        "type": "string"
+      },
       "TaskAgentMessageRequest": {
         "properties": {
           "interrupt": {
-            "default": false,
-            "title": "Interrupt",
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "deprecated": true,
+            "description": "Deprecated: use on_conflict=interrupt_turn instead.",
+            "title": "Interrupt"
           },
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "onConflict": {
+            "$ref": "#/components/schemas/TaskAgentMessageConflictAction",
+            "default": "fail"
           },
           "preferredInterfaceMode": {
             "anyOf": [

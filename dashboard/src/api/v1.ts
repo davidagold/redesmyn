@@ -1415,15 +1415,23 @@ export interface components {
       /** Submitted */
       submitted: number
     }
+    /**
+     * TaskAgentMessageConflictAction
+     * @enum {string}
+     */
+    TaskAgentMessageConflictAction: "fail" | "interrupt_turn" | "stop_session_and_start_new"
     /** TaskAgentMessageRequest */
     TaskAgentMessageRequest: {
       /**
        * Interrupt
-       * @default false
+       * @deprecated
+       * @description Deprecated: use on_conflict=interrupt_turn instead.
        */
-      interrupt: boolean
+      interrupt?: boolean | null
       /** Message */
       message: string
+      /** @default fail */
+      onConflict: components["schemas"]["TaskAgentMessageConflictAction"]
       /**
        * Preferredinterfacemode
        * @default auto

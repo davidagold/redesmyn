@@ -18,6 +18,7 @@ from redesmyn.domain.enums import (
     CommandState,
     LaunchConfigurationSource,
     MergeRunStatus,
+    TaskAgentMessageConflictAction,
     TaskAuthority,
     TaskSource,
     TaskState,
@@ -239,7 +240,12 @@ class TaskAgentStopResponse(ApiResponse):
 
 class TaskAgentMessageRequest(ApiRequest):
     message: str
-    interrupt: bool = False
+    on_conflict: TaskAgentMessageConflictAction = TaskAgentMessageConflictAction.Fail
+    interrupt: bool | None = Field(
+        default=None,
+        json_schema_extra={"deprecated": True},
+        description="Deprecated: use on_conflict=interrupt_turn instead.",
+    )
     preferred_interface_mode: Literal["auto"] | AgentInterfaceMode = "auto"
 
 

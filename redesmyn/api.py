@@ -1617,6 +1617,7 @@ async def message_task_agent(
             ctx=app.state.ctx,
             task_id=task_id,
             message=request.message,
+            on_conflict=request.on_conflict,
             interrupt=request.interrupt,
             preferred_interface_mode=request.preferred_interface_mode,
         )

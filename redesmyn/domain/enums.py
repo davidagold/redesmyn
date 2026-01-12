@@ -61,6 +61,12 @@ class AgentInterfaceMode(StrEnum):
     Structured = "structured"
 
 
+class TaskAgentMessageConflictAction(StrEnum):
+    Fail = "fail"
+    InterruptTurn = "interrupt_turn"
+    StopSessionAndStartNew = "stop_session_and_start_new"
+
+
 class LaunchConfigurationSource(StrEnum):
     Builtin = "builtin"
     User = "user"

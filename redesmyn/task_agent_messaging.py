@@ -18,6 +18,7 @@ from redesmyn.domain.enums import (
     AgentKind,
     AgentStatus,
     AgentTurnState,
+    TaskAgentMessageConflictAction,
 )
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.runner_backend import RunnerBackend, RunnerBackendError
@@ -47,6 +48,26 @@ class TaskAgentMessageResult:
     agent_interface_mode: AgentInterfaceMode
     delivery: TaskAgentMessageDelivery
     warnings: tuple[str, ...] = ()
+
+
+def _effective_on_conflict(
+    *,
+    on_conflict: TaskAgentMessageConflictAction,
+    interrupt: bool | None,
+) -> TaskAgentMessageConflictAction:
+    if on_conflict != TaskAgentMessageConflictAction.Fail:
+        return on_conflict
+    if interrupt is True:
+        return TaskAgentMessageConflictAction.InterruptTurn
+    return TaskAgentMessageConflictAction.Fail
+
+
+_CONFLICT_PREFIX_TURN_IN_PROGRESS = (
+    "[task_agent_message_conflict:structured_turn_in_progress]"
+)
+_CONFLICT_PREFIX_SESSION_CONFLICT = (
+    "[task_agent_message_conflict:structured_session_conflict]"
+)
 
 
 def _external_session_key(
@@ -109,7 +130,8 @@ async def send_task_agent_message(
     ctx: RepoContext,
     task_id: int,
     message: str,
-    interrupt: bool,
+    on_conflict: TaskAgentMessageConflictAction,
+    interrupt: bool | None,
     preferred_interface_mode: Literal["auto"] | AgentInterfaceMode,
 ) -> TaskAgentMessageResult:
     trimmed = message.strip()
@@ -191,6 +213,10 @@ async def send_task_agent_message(
         and row.agent_interface_mode == desired_mode
     ]
 
+    effective_on_conflict = _effective_on_conflict(
+        on_conflict=on_conflict, interrupt=interrupt
+    )
+
     if desired_mode == AgentInterfaceMode.Structured:
         active_any = next(
             (
@@ -211,6 +237,17 @@ async def send_task_agent_message(
             None,
         )
         if resumable_session is not None:
+            if (
+                effective_on_conflict
+                == TaskAgentMessageConflictAction.StopSessionAndStartNew
+            ):
+                raise TaskAgentMessageError(
+                    (
+                        "Stop-and-start-new is not supported when a resumable structured session exists. "
+                        "Use on_conflict=interrupt_turn instead."
+                    ),
+                    status_code=400,
+                )
             external_key = _external_session_key(resumable_session.external_session_ref)
             if external_key is not None:
                 in_progress = next(
@@ -228,12 +265,22 @@ async def send_task_agent_message(
             else:
                 in_progress = None
 
-            if in_progress is not None and not interrupt:
+            if (
+                in_progress is not None
+                and effective_on_conflict == TaskAgentMessageConflictAction.Fail
+            ):
                 raise TaskAgentMessageError(
-                    "Agent turn in progress. Interrupt the current turn before sending a new structured message.",
+                    (
+                        f"{_CONFLICT_PREFIX_TURN_IN_PROGRESS} "
+                        "Agent turn in progress. Interrupt the current turn before sending a new structured message."
+                    ),
                     status_code=409,
                 )
-            if in_progress is not None and interrupt:
+            if (
+                in_progress is not None
+                and effective_on_conflict
+                == TaskAgentMessageConflictAction.InterruptTurn
+            ):
                 try:
                     await runner_backend.stop_task_agent(task_id=task_id)
                 except (RunnerBackendError, RuntimeError) as exc:
@@ -256,14 +303,38 @@ async def send_task_agent_message(
                 warnings=result.warnings,
             )
 
-        if active_any is not None:
+        if (
+            active_any is not None
+            and effective_on_conflict == TaskAgentMessageConflictAction.InterruptTurn
+        ):
             raise TaskAgentMessageError(
                 (
-                    "An agent session is currently running for this task. "
-                    "Stop/interrupt it before starting a new structured turn."
+                    "Cannot interrupt a structured turn when no resumable structured session exists. "
+                    "Use on_conflict=stop_session_and_start_new instead."
+                ),
+                status_code=400,
+            )
+        if (
+            active_any is not None
+            and effective_on_conflict == TaskAgentMessageConflictAction.Fail
+        ):
+            raise TaskAgentMessageError(
+                (
+                    f"{_CONFLICT_PREFIX_SESSION_CONFLICT} "
+                    "A (non-resumable) agent session is running for this task. "
+                    "Stop it and start a new structured session to send this message?"
                 ),
                 status_code=409,
             )
+        if (
+            active_any is not None
+            and effective_on_conflict
+            == TaskAgentMessageConflictAction.StopSessionAndStartNew
+        ):
+            try:
+                await runner_backend.stop_task_agent(task_id=task_id)
+            except (RunnerBackendError, RuntimeError) as exc:
+                raise _as_message_error(exc) from exc
 
         try:
             result = await runner_backend.start_task_agent(
@@ -277,10 +348,32 @@ async def send_task_agent_message(
         except (RunnerBackendError, RuntimeError, ValueError) as exc:
             raise _as_message_error(exc) from exc
         if not result.started:
+            session_row = result.agent_session
+            if session_row.ended_at is not None:
+                if (
+                    session_row.status == AgentStatus.Stopped
+                    and session_row.exit_code == 0
+                ):
+                    return TaskAgentMessageResult(
+                        agent_session_id=session_row.id,
+                        agent_interface_mode=session_row.agent_interface_mode,
+                        delivery="structured_started",
+                        warnings=result.warnings,
+                    )
+                raise TaskAgentMessageError(
+                    (
+                        result.warnings[0]
+                        if result.warnings
+                        else "Structured harness exited immediately."
+                    ),
+                    status_code=400,
+                )
+
             raise TaskAgentMessageError(
                 (
+                    f"{_CONFLICT_PREFIX_SESSION_CONFLICT} "
                     "An agent session is currently running for this task. "
-                    "Stop/interrupt it before starting a new structured turn."
+                    "Stop it and start a new structured session to send this message?"
                 ),
                 status_code=409,
             )
@@ -315,7 +408,8 @@ async def send_task_agent_message(
             await runner_backend.send_task_agent_text(
                 task_id=task_id,
                 text=trimmed,
-                interrupt=interrupt,
+                interrupt=effective_on_conflict
+                == TaskAgentMessageConflictAction.InterruptTurn,
                 submit=True,
             )
         except (RunnerBackendError, RuntimeError) as exc:
@@ -346,7 +440,8 @@ async def send_task_agent_message(
                 await runner_backend.send_task_agent_text(
                     task_id=task_id,
                     text=trimmed,
-                    interrupt=interrupt,
+                    interrupt=effective_on_conflict
+                    == TaskAgentMessageConflictAction.InterruptTurn,
                     submit=True,
                 )
             except (RunnerBackendError, RuntimeError) as exc:
@@ -368,7 +463,8 @@ async def send_task_agent_message(
         await runner_backend.send_task_agent_text(
             task_id=task_id,
             text=trimmed,
-            interrupt=interrupt,
+            interrupt=effective_on_conflict
+            == TaskAgentMessageConflictAction.InterruptTurn,
             submit=True,
         )
     except (RunnerBackendError, RuntimeError) as exc:
