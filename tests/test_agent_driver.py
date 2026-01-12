@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from redesmyn.agent_driver import TmuxSessionSnapshot, TmuxSupervisor, supervise_once
 from redesmyn.agent_driver import _should_skip_log_history
@@ -170,6 +171,60 @@ async def test_agent_driver_creates_session_and_pipes_log(scenario: Scenario) ->
 
     assert fake_tmux.pipe_calls
     assert fake_tmux.pipe_calls[-1][0] == tmux_name
+
+
+@pytest.mark.integration
+async def test_agent_driver_handles_agent_session_insert_race(
+    scenario: Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    driver_started_at = datetime.now(UTC)
+
+    did_race = False
+    original_flush = AsyncSession.flush
+
+    runtime: dict[int, object] = {}
+    async with scenario.db.session() as session:
+        target_session_id = id(session)
+
+        async def flush_with_race(self: AsyncSession, *args: Any, **kwargs: Any):
+            nonlocal did_race
+            if id(self) == target_session_id and not did_race:
+                did_race = True
+                async with scenario.db.session() as other:
+                    other.add(
+                        AgentSession(
+                            task_id=task_id,
+                            status=AgentStatus.Running,
+                            started_at=datetime.now(UTC),
+                            ended_at=None,
+                        )
+                    )
+                    await other.commit()
+            return await original_flush(self, *args, **kwargs)
+
+        monkeypatch.setattr(AsyncSession, "flush", flush_with_race)
+        updated = await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+            driver_started_at=driver_started_at,
+        )
+        assert updated == 0
+
+    assert did_race
+    async with scenario.db.session() as session:
+        sessions = list(
+            await session.scalars(
+                select(AgentSession).where(AgentSession.task_id == task_id)
+            )
+        )
+        assert len(sessions) == 1
+        assert sessions[0].ended_at is None
 
 
 @pytest.mark.unit
