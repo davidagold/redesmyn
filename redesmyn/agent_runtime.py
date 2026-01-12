@@ -199,6 +199,64 @@ def _sanitize_path_for_sandbox(path_value: str) -> str:
     return os.pathsep.join(parts)
 
 
+def _apply_worktree_sandbox_runtime_env(
+    *,
+    ctx: RepoContext,
+    task_id: int,
+    runtime_env: dict[str, str],
+    agent_kind: AgentKind,
+    warnings: list[str],
+) -> None:
+    """Apply the same sandbox runtime env used for task agent start/continuations.
+
+    Worktree sandboxing denies writes outside the allowed paths. Setting HOME +
+    XDG paths inside `.redesmyn/tasks/<id>/agent-runtime` keeps common tool
+    caches/config writable and avoids surprising failures (e.g. git writing
+    under `~/Library/...`).
+    """
+
+    run_dir = task_agent_runtime_dir(ctx, task_id=task_id)
+    tmp_dir = run_dir / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    runtime_env["TMPDIR"] = str(tmp_dir)
+    runtime_env["TMP"] = str(tmp_dir)
+    runtime_env["TEMP"] = str(tmp_dir)
+    runtime_env["PATH"] = _sanitize_path_for_sandbox(runtime_env.get("PATH", ""))
+
+    # Keep harness state (caches/config) inside Redesmyn state so it remains
+    # writable when sandboxing is enabled.
+    runtime_env["HOME"] = str(run_dir / "home")
+    runtime_env.setdefault("CODEX_HOME", str(Path(runtime_env["HOME"]) / ".codex"))
+    runtime_env.setdefault("XDG_CONFIG_HOME", str(run_dir / "xdg-config"))
+    runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
+    runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
+    runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
+
+    for key in (
+        "HOME",
+        "CODEX_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+    ):
+        value = runtime_env.get(key)
+        if not value:
+            continue
+        path = Path(value)
+        if path.is_relative_to(ctx.state_dir):
+            path.mkdir(parents=True, exist_ok=True)
+
+    if agent_kind == AgentKind.Codex:
+        src_codex = Path.home() / ".codex"
+        _seed_codex_home(
+            src_dir=src_codex,
+            dst_dir=Path(runtime_env["CODEX_HOME"]),
+            warnings=warnings,
+        )
+
+
 def _seed_codex_home(*, src_dir: Path, dst_dir: Path, warnings: list[str]) -> None:
     """Best-effort seed of Codex auth/config into a sandboxed home."""
     try:
@@ -1207,52 +1265,13 @@ async def start_task_agent(
 
             match sandbox_policy:
                 case WorktreeSandboxPolicy():
-                    run_dir = task_agent_runtime_dir(ctx, task_id=task.id)
-                    tmp_dir = run_dir / "tmp"
-                    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-                    runtime_env["TMPDIR"] = str(tmp_dir)
-                    runtime_env["TMP"] = str(tmp_dir)
-                    runtime_env["TEMP"] = str(tmp_dir)
-                    runtime_env["PATH"] = _sanitize_path_for_sandbox(
-                        runtime_env.get("PATH", "")
+                    _apply_worktree_sandbox_runtime_env(
+                        ctx=ctx,
+                        task_id=task.id,
+                        runtime_env=runtime_env,
+                        agent_kind=resolved_agent_kind,
+                        warnings=warnings,
                     )
-
-                    # Keep harness state (caches/config) inside Redesmyn state so it
-                    # remains writable when sandboxing is enabled.
-                    runtime_env["HOME"] = str(run_dir / "home")
-                    runtime_env.setdefault(
-                        "CODEX_HOME", str(Path(runtime_env["HOME"]) / ".codex")
-                    )
-                    runtime_env.setdefault(
-                        "XDG_CONFIG_HOME", str(run_dir / "xdg-config")
-                    )
-                    runtime_env.setdefault("XDG_CACHE_HOME", str(run_dir / "xdg-cache"))
-                    runtime_env.setdefault("XDG_DATA_HOME", str(run_dir / "xdg-data"))
-                    runtime_env.setdefault("XDG_STATE_HOME", str(run_dir / "xdg-state"))
-
-                    for key in (
-                        "HOME",
-                        "CODEX_HOME",
-                        "XDG_CONFIG_HOME",
-                        "XDG_CACHE_HOME",
-                        "XDG_DATA_HOME",
-                        "XDG_STATE_HOME",
-                    ):
-                        value = runtime_env.get(key)
-                        if not value:
-                            continue
-                        path = Path(value)
-                        if path.is_relative_to(ctx.state_dir):
-                            path.mkdir(parents=True, exist_ok=True)
-
-                    if Path(definition.argv[0]).name == "codex":
-                        src_codex = Path.home() / ".codex"
-                        _seed_codex_home(
-                            src_dir=src_codex,
-                            dst_dir=Path(runtime_env["CODEX_HOME"]),
-                            warnings=warnings,
-                        )
                 case _:
                     pass
 
@@ -1801,27 +1820,13 @@ async def run_task_agent_resume_by_id_turn(
 
             match sandbox_policy:
                 case WorktreeSandboxPolicy():
-                    run_dir = task_agent_runtime_dir(ctx, task_id=task.id)
-                    tmp_dir = run_dir / "tmp"
-                    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-                    runtime_env["TMPDIR"] = str(tmp_dir)
-                    runtime_env["TMP"] = str(tmp_dir)
-                    runtime_env["TEMP"] = str(tmp_dir)
-                    runtime_env["PATH"] = _sanitize_path_for_sandbox(
-                        runtime_env.get("PATH", "")
+                    _apply_worktree_sandbox_runtime_env(
+                        ctx=ctx,
+                        task_id=task.id,
+                        runtime_env=runtime_env,
+                        agent_kind=agent_kind,
+                        warnings=warnings,
                     )
-
-                    if agent_kind == AgentKind.Codex:
-                        runtime_env.setdefault(
-                            "CODEX_HOME", str(run_dir / "codex-home")
-                        )
-                        src_codex = Path.home() / ".codex"
-                        _seed_codex_home(
-                            src_dir=src_codex,
-                            dst_dir=Path(runtime_env["CODEX_HOME"]),
-                            warnings=warnings,
-                        )
                 case _:
                     pass
 
