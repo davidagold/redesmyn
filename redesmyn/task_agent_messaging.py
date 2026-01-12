@@ -91,6 +91,17 @@ def _looks_busy(row: AgentSession) -> bool:
     return status.turn_state == AgentTurnState.Busy
 
 
+def _as_message_error(exc: Exception) -> TaskAgentMessageError:
+    if isinstance(exc, TaskAgentMessageError):
+        return exc
+    if isinstance(exc, RunnerBackendError):
+        return TaskAgentMessageError(exc.detail, status_code=exc.status_code)
+    message = str(exc)
+    if "tmux session is active for this task" in message:
+        return TaskAgentMessageError(message, status_code=409)
+    return TaskAgentMessageError(message or "Failed to send message.", status_code=400)
+
+
 async def send_task_agent_message(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -181,6 +192,15 @@ async def send_task_agent_message(
     ]
 
     if desired_mode == AgentInterfaceMode.Structured:
+        active_any = next(
+            (
+                row
+                for row in recent_sessions
+                if row.ended_at is None
+                and row.status in {AgentStatus.Running, AgentStatus.Blocked}
+            ),
+            None,
+        )
         resumable_session = next(
             (
                 row
@@ -216,10 +236,8 @@ async def send_task_agent_message(
             if in_progress is not None and interrupt:
                 try:
                     await runner_backend.stop_task_agent(task_id=task_id)
-                except RunnerBackendError as exc:
-                    raise TaskAgentMessageError(
-                        exc.detail, status_code=exc.status_code
-                    ) from exc
+                except (RunnerBackendError, RuntimeError) as exc:
+                    raise _as_message_error(exc) from exc
 
             try:
                 result = await runner_backend.run_task_agent_resume_by_id_turn(
@@ -229,15 +247,22 @@ async def send_task_agent_message(
                     idempotency_key=None,
                     resume_session_id=resumable_session.id,
                 )
-            except RunnerBackendError as exc:
-                raise TaskAgentMessageError(
-                    exc.detail, status_code=exc.status_code
-                ) from exc
+            except (RunnerBackendError, RuntimeError) as exc:
+                raise _as_message_error(exc) from exc
             return TaskAgentMessageResult(
                 agent_session_id=result.agent_session.id,
                 agent_interface_mode=AgentInterfaceMode.Structured,
                 delivery="structured_resumed",
                 warnings=result.warnings,
+            )
+
+        if active_any is not None:
+            raise TaskAgentMessageError(
+                (
+                    "An agent session is currently running for this task. "
+                    "Stop/interrupt it before starting a new structured turn."
+                ),
+                status_code=409,
             )
 
         try:
@@ -249,10 +274,16 @@ async def send_task_agent_message(
                 prelude_override=None,
                 initial_prompt=trimmed,
             )
-        except RunnerBackendError as exc:
+        except (RunnerBackendError, RuntimeError, ValueError) as exc:
+            raise _as_message_error(exc) from exc
+        if not result.started:
             raise TaskAgentMessageError(
-                exc.detail, status_code=exc.status_code
-            ) from exc
+                (
+                    "An agent session is currently running for this task. "
+                    "Stop/interrupt it before starting a new structured turn."
+                ),
+                status_code=409,
+            )
         return TaskAgentMessageResult(
             agent_session_id=result.agent_session.id,
             agent_interface_mode=result.agent_session.agent_interface_mode,
@@ -269,6 +300,35 @@ async def send_task_agent_message(
         ),
         None,
     )
+    active_any = next(
+        (
+            row
+            for row in recent_sessions
+            if row.ended_at is None
+            and row.status in {AgentStatus.Running, AgentStatus.Blocked}
+        ),
+        None,
+    )
+
+    if active_interactive is None and active_any is not None:
+        try:
+            await runner_backend.send_task_agent_text(
+                task_id=task_id,
+                text=trimmed,
+                interrupt=interrupt,
+                submit=True,
+            )
+        except (RunnerBackendError, RuntimeError) as exc:
+            raise _as_message_error(exc) from exc
+        return TaskAgentMessageResult(
+            agent_session_id=active_any.id,
+            agent_interface_mode=AgentInterfaceMode.Interactive,
+            delivery="interactive_sent",
+            warnings=(
+                "Sent message to the currently running agent session (it does not match the configured harness command).",
+            ),
+        )
+
     if active_interactive is None:
         try:
             result = await runner_backend.start_task_agent(
@@ -279,10 +339,24 @@ async def send_task_agent_message(
                 prelude_override=None,
                 initial_prompt=trimmed,
             )
-        except RunnerBackendError as exc:
-            raise TaskAgentMessageError(
-                exc.detail, status_code=exc.status_code
-            ) from exc
+        except (RunnerBackendError, RuntimeError, ValueError) as exc:
+            raise _as_message_error(exc) from exc
+        if not result.started:
+            try:
+                await runner_backend.send_task_agent_text(
+                    task_id=task_id,
+                    text=trimmed,
+                    interrupt=interrupt,
+                    submit=True,
+                )
+            except (RunnerBackendError, RuntimeError) as exc:
+                raise _as_message_error(exc) from exc
+            return TaskAgentMessageResult(
+                agent_session_id=result.agent_session.id,
+                agent_interface_mode=AgentInterfaceMode.Interactive,
+                delivery="interactive_sent",
+                warnings=result.warnings,
+            )
         return TaskAgentMessageResult(
             agent_session_id=result.agent_session.id,
             agent_interface_mode=result.agent_session.agent_interface_mode,
@@ -297,8 +371,8 @@ async def send_task_agent_message(
             interrupt=interrupt,
             submit=True,
         )
-    except RunnerBackendError as exc:
-        raise TaskAgentMessageError(exc.detail, status_code=exc.status_code) from exc
+    except (RunnerBackendError, RuntimeError) as exc:
+        raise _as_message_error(exc) from exc
     return TaskAgentMessageResult(
         agent_session_id=active_interactive.id,
         agent_interface_mode=AgentInterfaceMode.Interactive,
