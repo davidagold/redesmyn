@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 import redesmyn.merge_conflict_assist as conflict_assist
-from redesmyn.db import AgentSession, Event, MergeRun
+from redesmyn.db import AgentSession, Event, MergeRun, Task
 from redesmyn.domain.enums import AgentInterfaceMode, AgentStatus, MergeRunStatus
 from redesmyn.merge_conflict_assist import MergeConflictAssistSupervisor
 
@@ -103,7 +103,10 @@ async def test_conflict_assist_launches_structured_continuation_turn(
     assert run.blocked_branch_name in message
     assert run.blocked_worktree_path in message
     assert launched["detach"] is True
-    assert launched["idempotency_key"] == f"merge_conflict_assist:{run.run_id}"
+    assert (
+        launched["idempotency_key"]
+        == f"merge_conflict_assist:{run.run_id}:{run.blocked_step_index}:{run.blocked_branch_name}"
+    )
     assert not resumer.resumed
 
 
@@ -177,6 +180,86 @@ async def test_conflict_assist_requires_turn_complete_for_continuation_session(
         await session.commit()
 
     assert resumer.resumed == [run.run_id]
+
+
+@pytest.mark.integration
+async def test_conflict_assist_relaunches_when_blocked_step_changes(
+    scenario_with_conflicted_merge_run: Scenario,
+) -> None:
+    scenario = scenario_with_conflicted_merge_run
+    run = await _load_blocked_merge_run(scenario)
+    assert run.blocked_task_id is not None
+    assert run.requested_task_id is not None
+    assert run.blocked_branch_name is not None
+    assert run.blocked_step_index is not None
+
+    async with scenario.db.session() as session:
+        child_task = await session.get(Task, run.requested_task_id)
+        assert child_task is not None
+        assert child_task.parent_task_id is not None
+        parent_task = await session.get(Task, child_task.parent_task_id)
+        assert parent_task is not None
+        assert parent_task.branch_name is not None
+        assert parent_task.worktree_path is not None
+
+        session.add(
+            AgentSession(
+                task_id=run.blocked_task_id,
+                status=AgentStatus.Stopped,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                resolved_launch_configuration={"argv": ["codex", "exec", "--json"]},
+                external_session_ref={"type": "codex_thread", "thread_id": "th_child"},
+            )
+        )
+        session.add(
+            AgentSession(
+                task_id=parent_task.id,
+                status=AgentStatus.Stopped,
+                agent_interface_mode=AgentInterfaceMode.Structured,
+                resolved_launch_configuration={"argv": ["codex", "exec", "--json"]},
+                external_session_ref={"type": "codex_thread", "thread_id": "th_parent"},
+            )
+        )
+        await session.commit()
+
+    launcher = _FakeLauncher(launched=[], agent_session_id=4242)
+    resumer = _FakeResumer(resumed=[])
+    supervisor = MergeConflictAssistSupervisor(
+        launcher=launcher,
+        resumer=resumer,
+        delivery_timeout=timedelta(seconds=30),
+        overall_timeout=timedelta(minutes=5),
+    )
+
+    now = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervisor.tick(session, now=now)
+        await session.commit()
+
+    assert launcher.launched
+
+    async with scenario.db.session() as session:
+        run_row = await session.get(MergeRun, run.id)
+        assert run_row is not None
+        run_row.blocked_step_index = (run.blocked_step_index or 0) + 1
+        run_row.blocked_task_id = parent_task.id
+        run_row.blocked_branch_name = parent_task.branch_name
+        run_row.blocked_worktree_path = parent_task.worktree_path
+        await session.commit()
+
+    async with scenario.db.session() as session:
+        await supervisor.tick(session, now=now + timedelta(seconds=1))
+        await session.commit()
+
+    assert len(launcher.launched) == 2
+    assert launcher.launched[1]["task_id"] == parent_task.id
+    assert (
+        launcher.launched[1]["idempotency_key"]
+        == f"merge_conflict_assist:{run.run_id}:{run.blocked_step_index + 1}:{parent_task.branch_name}"
+    )
+    assert parent_task.branch_name in str(launcher.launched[1]["prompt"])
+    assert parent_task.worktree_path in str(launcher.launched[1]["prompt"])
+    assert not resumer.resumed
 
 
 @pytest.mark.integration

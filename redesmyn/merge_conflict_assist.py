@@ -72,6 +72,7 @@ def _rebase_remediation_message(run: MergeRun) -> str | None:
             "- `git status` (to see conflicted files)",
             "- `git add -A`",
             "- `git rebase --continue`",
+            "- If `git rebase --continue` fails due to editor config, try `GIT_EDITOR=true git rebase --continue`.",
             "- Repeat until the rebase completes (resolving any further conflicts).",
             "",
             f"Once the rebase finishes and the worktree is clean, let me know so I can resume the {operation} run.",
@@ -227,8 +228,34 @@ async def _turn_completed_for_session(
     return status.turn_state == AgentTurnState.Completed, None
 
 
-def _idempotency_key_for_run(run_id: str) -> str:
-    return f"merge_conflict_assist:{run_id}"
+def _blocked_rebase_signature(
+    run: MergeRun,
+) -> tuple[int | None, int | None, str | None, str | None]:
+    """Signature for a single blocked rebase step within a merge run.
+
+    A merge/restack run may encounter multiple rebase conflicts as it cascades
+    across the stack. We use this signature to detect when the blocked step has
+    changed so conflict assist can launch a new remediation turn.
+    """
+
+    return (
+        run.blocked_step_index,
+        run.blocked_task_id,
+        run.blocked_branch_name,
+        run.blocked_worktree_path,
+    )
+
+
+def _idempotency_key_for_run(run: MergeRun) -> str:
+    """Idempotency key for a remediation message on a specific blocked step.
+
+    Using only `run_id` would prevent launching follow-on turns for later
+    conflicts, because resume-by-id treats the idempotency key as a dedupe key.
+    """
+
+    step = str(run.blocked_step_index) if run.blocked_step_index is not None else "?"
+    detail = run.blocked_branch_name or run.blocked_worktree_path or "?"
+    return f"merge_conflict_assist:{run.run_id}:{step}:{detail}"
 
 
 @dataclass(slots=True)
@@ -237,6 +264,10 @@ class _AssistRuntime:
     created_at: datetime
     delivery_deadline_at: datetime
     overall_deadline_at: datetime
+    blocked_step_index: int | None = None
+    blocked_task_id: int | None = None
+    blocked_branch_name: str | None = None
+    blocked_worktree_path: str | None = None
     agent_task_id: int | None = None
     agent_session_id: int | None = None
     sent_at: datetime | None = None
@@ -410,6 +441,26 @@ class MergeConflictAssistSupervisor:
     def stop_tracking(self, *, run_id: str) -> None:
         self._runtime_by_run_id.pop(run_id, None)
 
+    def _reset_for_new_blocked_step(
+        self, runtime: _AssistRuntime, run: MergeRun, *, now: datetime
+    ) -> None:
+        runtime.blocked_step_index = run.blocked_step_index
+        runtime.blocked_task_id = run.blocked_task_id
+        runtime.blocked_branch_name = run.blocked_branch_name
+        runtime.blocked_worktree_path = run.blocked_worktree_path
+
+        runtime.agent_task_id = None
+        runtime.agent_session_id = None
+        runtime.sent_at = None
+        runtime.baseline_turn_completed_event_id = None
+        runtime.observed_turn_completed_event_id = None
+        runtime.state = "inactive"
+        runtime.detail = None
+
+        # Delivery timeout is per blocked step; keep overall timeout scoped to
+        # the merge run so we don't wedge indefinitely.
+        runtime.delivery_deadline_at = now + self.delivery_timeout
+
     async def tick(self, session: AsyncSession, *, now: datetime) -> None:
         merge_runs = list(
             await session.scalars(
@@ -428,6 +479,22 @@ class MergeConflictAssistSupervisor:
                 continue
             active_run_ids.add(run.run_id)
             runtime = self.ensure_tracking(run_id=run.run_id, now=now)
+
+            signature = _blocked_rebase_signature(run)
+            tracked_signature = (
+                runtime.blocked_step_index,
+                runtime.blocked_task_id,
+                runtime.blocked_branch_name,
+                runtime.blocked_worktree_path,
+            )
+            if signature != tracked_signature:
+                log.info(
+                    "merge_conflict_assist.blocked_step_changed",
+                    run_id=run.run_id,
+                    previous=tracked_signature,
+                    current=signature,
+                )
+                self._reset_for_new_blocked_step(runtime, run, now=now)
 
             if now >= runtime.overall_deadline_at and runtime.state not in {
                 "timed_out",
@@ -457,12 +524,13 @@ class MergeConflictAssistSupervisor:
                     runtime.state = "timed_out"
                     runtime.detail = "Timed out waiting to deliver remediation message; use manual copy."
                     continue
+                idempotency_key = _idempotency_key_for_run(run)
                 try:
                     runtime.agent_session_id = await self.launcher.launch(
                         task_id=assist_task_id,
                         prompt=message,
                         detach=True,
-                        idempotency_key=_idempotency_key_for_run(run.run_id),
+                        idempotency_key=idempotency_key,
                     )
                 except Exception as exc:
                     runtime.state = "waiting_for_agent_ready"
