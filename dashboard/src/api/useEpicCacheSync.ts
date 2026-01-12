@@ -134,6 +134,12 @@ export function useEpicCacheSync(options: {
         return
       }
 
+      if (event.eventType === "merge.conflict_assist") {
+        invalidateEpicGraph(250)
+        onEvent?.(event)
+        return
+      }
+
       if (event.eventType === "task.agent_session_update") {
         patchAgentSession(event)
         onEvent?.(event)
