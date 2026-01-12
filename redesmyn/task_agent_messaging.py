@@ -103,7 +103,9 @@ def _key_matches_kind(
 
 
 def _looks_busy(row: AgentSession) -> bool:
-    if row.status != AgentStatus.Running:
+    if row.ended_at is not None:
+        return False
+    if row.status not in {AgentStatus.Running, AgentStatus.Blocked}:
         return False
     try:
         status = _SEMANTIC_STATUS_ADAPTER.validate_python(row.agent_semantic_status)
@@ -404,24 +406,56 @@ async def send_task_agent_message(
     )
 
     if active_interactive is None and active_any is not None:
-        try:
-            await runner_backend.send_task_agent_text(
-                task_id=task_id,
-                text=trimmed,
-                interrupt=effective_on_conflict
-                == TaskAgentMessageConflictAction.InterruptTurn,
-                submit=True,
+        if active_any.agent_interface_mode == AgentInterfaceMode.Structured:
+            if (
+                effective_on_conflict
+                == TaskAgentMessageConflictAction.StopSessionAndStartNew
+            ):
+                try:
+                    await runner_backend.stop_task_agent(task_id=task_id)
+                except (RunnerBackendError, RuntimeError) as exc:
+                    raise _as_message_error(exc) from exc
+                active_any = None
+            else:
+                raise TaskAgentMessageError(
+                    (
+                        f"{_CONFLICT_PREFIX_SESSION_CONFLICT} "
+                        "An incompatible structured agent session is currently running for this task. "
+                        "Stop it and start a new interactive session to send this message?"
+                    ),
+                    status_code=409,
+                )
+
+        if (
+            active_any is not None
+            and effective_on_conflict
+            == TaskAgentMessageConflictAction.StopSessionAndStartNew
+        ):
+            try:
+                await runner_backend.stop_task_agent(task_id=task_id)
+            except (RunnerBackendError, RuntimeError) as exc:
+                raise _as_message_error(exc) from exc
+            active_any = None
+
+        if active_any is not None:
+            try:
+                await runner_backend.send_task_agent_text(
+                    task_id=task_id,
+                    text=trimmed,
+                    interrupt=effective_on_conflict
+                    == TaskAgentMessageConflictAction.InterruptTurn,
+                    submit=True,
+                )
+            except (RunnerBackendError, RuntimeError) as exc:
+                raise _as_message_error(exc) from exc
+            return TaskAgentMessageResult(
+                agent_session_id=active_any.id,
+                agent_interface_mode=active_any.agent_interface_mode,
+                delivery="interactive_sent",
+                warnings=(
+                    "Sent message to the currently running agent session (it does not match the configured harness command).",
+                ),
             )
-        except (RunnerBackendError, RuntimeError) as exc:
-            raise _as_message_error(exc) from exc
-        return TaskAgentMessageResult(
-            agent_session_id=active_any.id,
-            agent_interface_mode=AgentInterfaceMode.Interactive,
-            delivery="interactive_sent",
-            warnings=(
-                "Sent message to the currently running agent session (it does not match the configured harness command).",
-            ),
-        )
 
     if active_interactive is None:
         try:
