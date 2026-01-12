@@ -266,6 +266,16 @@ function stripAgentMessageConflictPrefix(detail: string): string {
   return trimmed
 }
 
+function hasAgentMessageConflictPrefix(
+  detail: string | null | undefined,
+): boolean {
+  const trimmed = detail?.trim() ?? ""
+  return (
+    trimmed.startsWith(STRUCTURED_TURN_CONFLICT_PREFIX) ||
+    trimmed.startsWith(STRUCTURED_SESSION_CONFLICT_PREFIX)
+  )
+}
+
 function agentMessageConfirmKindForConflictDetail(
   detail: string | null | undefined,
   mode: "structured" | "interactive",
@@ -739,7 +749,7 @@ export function TaskCard({
       requestAnimationFrame(() => agentComposerTextareaRef.current?.focus())
     } catch (e) {
       if (e instanceof ApiHttpError) {
-        if (e.status === 409) {
+        if (e.status === 409 && hasAgentMessageConflictPrefix(e.detail)) {
           setAgentComposerConfirmKind(
             agentMessageConfirmKindForConflictDetail(
               e.detail,
