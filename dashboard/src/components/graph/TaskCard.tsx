@@ -270,13 +270,15 @@ function agentMessageConfirmKindForConflictDetail(
   detail: string | null | undefined,
   mode: "structured" | "interactive",
 ): AgentMessageConfirmKind {
-  if (mode !== "structured") {
-    return "interactive_busy"
-  }
-
   const trimmed = detail?.trim() ?? ""
+  if (trimmed.startsWith(STRUCTURED_TURN_CONFLICT_PREFIX)) {
+    return "structured_turn_in_progress"
+  }
   if (trimmed.startsWith(STRUCTURED_SESSION_CONFLICT_PREFIX)) {
     return "structured_session_conflict"
+  }
+  if (mode !== "structured") {
+    return "interactive_busy"
   }
   return "structured_turn_in_progress"
 }
@@ -730,7 +732,7 @@ export function TaskCard({
         request: {
           message: agentComposerDraftTrimmed,
           onConflict: options?.onConflict ?? "fail",
-          preferredInterfaceMode: composerInterfaceMode,
+          preferredInterfaceMode: "auto",
         },
       })
       setAgentComposerDraft("")

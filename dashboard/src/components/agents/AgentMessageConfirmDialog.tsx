@@ -105,7 +105,8 @@ export function AgentMessageConfirmDialog({
             </AlertDialogAction>
           ) : null}
 
-          {kind === "structured_turn_in_progress" || canInterrupt ? (
+          {kind === "structured_turn_in_progress" ||
+          (kind === "interactive_busy" && canInterrupt) ? (
             <AlertDialogAction
               disabledReason={pendingReason ?? null}
               onClick={(event) => {
