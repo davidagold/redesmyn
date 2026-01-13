@@ -38,7 +38,7 @@ import {
 } from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
 import { LinearIcon } from "@/components/linear/LinearIcon"
-import { MarkdownInline } from "@/components/markdown"
+import { Markdown, MarkdownInline } from "@/components/markdown"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
 import {
   inferStructuredAgentFromCommand,
@@ -83,6 +83,7 @@ import {
   GitMerge,
   Ghost,
   Layers,
+  MessageSquareText,
   Play,
   RotateCcw,
   Square,
@@ -368,6 +369,11 @@ export function TaskCard({
     : null
   const agentPreviewTitle = agentMessageSplit?.title ?? null
   const agentPreviewBody = agentMessageSplit?.body ?? null
+  const agentLastMessageText = (() => {
+    const raw = agentSession?.agentPreview?.lastAssistantMessageText ?? null
+    const trimmed = raw?.trim() ?? ""
+    return trimmed ? trimmed : null
+  })()
   const agentTurnState = agentSession?.agentSemanticStatus.turnState ?? null
   const showAgentPreviewShimmer =
     agentSession?.status === "running" && agentTurnState === "busy"
@@ -2007,6 +2013,34 @@ export function TaskCard({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="overflow-hidden pt-2">
+            {agentLastMessageText ? (
+              <div className="mb-2 rounded-md bg-muted/30 p-2 text-xs text-foreground/90 shadow-sm">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                    <MessageSquareText className="size-3" aria-hidden="true" />
+                    Final output
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      void copyToClipboard(agentLastMessageText)
+                    }}
+                  >
+                    Copy
+                  </Button>
+                </div>
+                <div className="max-h-52 overflow-auto pr-1">
+                  <Markdown
+                    content={agentLastMessageText}
+                    omitFirstHeading
+                    omitMetadataSection
+                  />
+                </div>
+              </div>
+            ) : null}
             <div className="relative rounded-md border border-border/60 bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
               <Textarea
                 ref={agentComposerTextareaRef}

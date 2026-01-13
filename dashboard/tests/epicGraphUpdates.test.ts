@@ -32,6 +32,7 @@ function makeAgentSession(overrides: Partial<AgentSession>): AgentSession {
     agentPreview: {
       lastAssistantMessageAt: null,
       lastAssistantMessagePreview: null,
+      lastAssistantMessageText: null,
       lastMessageTurnId: null,
     },
     launchConfigurationId: null,
@@ -70,6 +71,7 @@ test("applyTaskAgentSessionUpdate: patches the matching session", () => {
         agentPreview: {
           lastAssistantMessageAt: "2026-01-06T12:00:00Z",
           lastAssistantMessagePreview: "Old message",
+          lastAssistantMessageText: null,
           lastMessageTurnId: "tu_old",
         },
       }),
@@ -96,6 +98,7 @@ test("applyTaskAgentSessionUpdate: patches the matching session", () => {
     agentPreview: {
       lastAssistantMessageAt: "2026-01-06T12:10:00Z",
       lastAssistantMessagePreview: "Hello world",
+      lastAssistantMessageText: "Longer message body",
       lastMessageTurnId: "tu_1",
     },
   }
@@ -122,6 +125,7 @@ test("applyTaskAgentSessionUpdate: preserves prior preview when update omits it"
         agentPreview: {
           lastAssistantMessageAt: "2026-01-06T12:10:00Z",
           lastAssistantMessagePreview: "Hello world",
+          lastAssistantMessageText: "Hello world (old text)",
           lastMessageTurnId: "tu_1",
         },
       }),

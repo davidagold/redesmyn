@@ -440,6 +440,7 @@ async def supervise_once(
                 normalized = _normalize_preview_text(raw_text)
                 preview = _truncate(normalized, max_chars=240)
                 stored_text = _truncate(normalized, max_chars=4000)
+                stored_preview_text = _truncate(raw_text.strip(), max_chars=12_000)
 
                 try:
                     current_preview = preview_adapter.validate_python(
@@ -455,6 +456,7 @@ async def supervise_once(
                 next_preview = current_preview.model_copy(
                     update={
                         "last_assistant_message_preview": preview,
+                        "last_assistant_message_text": stored_preview_text,
                         "last_assistant_message_at": now,
                         "last_message_turn_id": next_turn_id,
                     }
@@ -523,6 +525,7 @@ async def supervise_once(
         # Preserve formatting for the captured final message (best-effort). We
         # bound it only to avoid extreme payload sizes.
         stored_text = _truncate(captured, max_chars=200_000)
+        stored_preview_text = _truncate(captured.strip(), max_chars=12_000)
 
         try:
             current_preview = preview_adapter.validate_python(
@@ -538,6 +541,7 @@ async def supervise_once(
         next_preview = current_preview.model_copy(
             update={
                 "last_assistant_message_preview": preview,
+                "last_assistant_message_text": stored_preview_text,
                 "last_assistant_message_at": now,
                 "last_message_turn_id": next_turn_id,
             }

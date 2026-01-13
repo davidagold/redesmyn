@@ -150,6 +150,7 @@ class AgentPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     last_assistant_message_preview: str | None = None
+    last_assistant_message_text: str | None = None
     last_assistant_message_at: datetime | None = None
     last_message_turn_id: str | None = None
 

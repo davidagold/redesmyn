@@ -627,6 +627,8 @@ export interface components {
       lastAssistantMessageAt?: string | null
       /** Lastassistantmessagepreview */
       lastAssistantMessagePreview?: string | null
+      /** Lastassistantmessagetext */
+      lastAssistantMessageText?: string | null
       /** Lastmessageturnid */
       lastMessageTurnId?: string | null
     }

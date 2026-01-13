@@ -121,6 +121,17 @@
             ],
             "title": "Lastassistantmessagepreview"
           },
+          "lastAssistantMessageText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastassistantmessagetext"
+          },
           "lastMessageTurnId": {
             "anyOf": [
               {

@@ -123,6 +123,7 @@ export type TaskAgentSessionUpdateEventData = {
   agentPreview?: {
     lastAssistantMessageAt?: string | null
     lastAssistantMessagePreview?: string | null
+    lastAssistantMessageText?: string | null
     lastMessageTurnId?: string | null
   }
 }

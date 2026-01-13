@@ -86,22 +86,33 @@ class AgentSemanticStatusResponse(ApiResponse):
 
 class AgentPreviewResponse(ApiResponse):
     last_assistant_message_preview: str | None = None
+    last_assistant_message_text: str | None = None
     last_assistant_message_at: datetime | None = None
     last_message_turn_id: str | None = None
 
     @model_validator(mode="after")
     def _decode_preview_entities(self) -> "AgentPreviewResponse":
-        preview = self.last_assistant_message_preview
-        if not preview:
+        if (
+            not self.last_assistant_message_preview
+            and not self.last_assistant_message_text
+        ):
             return self
 
-        current = preview
-        for _ in range(3):
-            decoded = html.unescape(current)
-            if decoded == current:
-                break
-            current = decoded
-        self.last_assistant_message_preview = current
+        def decode(value: str | None) -> str | None:
+            if not value:
+                return value
+            current = value
+            for _ in range(3):
+                decoded = html.unescape(current)
+                if decoded == current:
+                    break
+                current = decoded
+            return current
+
+        self.last_assistant_message_preview = decode(
+            self.last_assistant_message_preview
+        )
+        self.last_assistant_message_text = decode(self.last_assistant_message_text)
         return self
 
 
