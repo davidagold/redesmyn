@@ -299,6 +299,7 @@ async def supervise_once(
     pending_events: list[Event] = []
     attach_adapter = TypeAdapter(AttachInfo)
     preview_adapter = TypeAdapter(AgentPreview)
+    external_ref_adapter = TypeAdapter(ExternalSessionRef)
 
     tmux_snapshot: TmuxSessionSnapshot | None = None
     if tmux is None and has_tmux():
@@ -513,12 +514,48 @@ async def supervise_once(
             return
         runtime.codex_last_message_sha256 = digest
 
-        await persist_agent_event(
-            agent_session=agent_session,
-            runtime=runtime,
-            event=AgentAssistantMessageEvent(text=captured),
-            ref=ref,
-            now=now,
+        key = agent_event_key(event_type="assistant_message", ref=ref, text=captured)
+        if key in runtime.recent_event_keys:
+            return
+        runtime.recent_event_keys.append(key)
+
+        preview = _truncate(normalized, max_chars=240)
+        # Preserve formatting for the captured final message (best-effort). We
+        # bound it only to avoid extreme payload sizes.
+        stored_text = _truncate(captured, max_chars=200_000)
+
+        try:
+            current_preview = preview_adapter.validate_python(
+                agent_session.agent_preview
+            )
+        except Exception:
+            current_preview = AgentPreview()
+
+        next_turn_id: str | None = None
+        match ref:
+            case ExternalSessionCodex(turn_id=turn_id):
+                next_turn_id = turn_id
+        next_preview = current_preview.model_copy(
+            update={
+                "last_assistant_message_preview": preview,
+                "last_assistant_message_at": now,
+                "last_message_turn_id": next_turn_id,
+            }
+        )
+        next_preview_dump = next_preview.model_dump(mode="json")
+        if agent_session.agent_preview != next_preview_dump:
+            agent_session.agent_preview = next_preview_dump
+            await flush_session_update(agent_session)
+
+        await emit_event(
+            "agent.assistant_message",
+            {
+                "task_id": agent_session.task_id,
+                "agent_session_id": agent_session.id,
+                "text": stored_text,
+                "preview": preview,
+                "external_session_ref": ref.model_dump(mode="python"),
+            },
         )
 
     async def process_log_text(
@@ -691,22 +728,22 @@ async def supervise_once(
                     tmux_name = tmux_session_name_for_task(task_id=task_id)
                     log_path = None
             if tmux_name not in tmux_sessions:
-                if log_path:
-                    drain_runtime = runtime_by_session_id.get(agent_session.id)
-                    if drain_runtime is None:
-                        skip_history = _should_skip_log_history(
-                            agent_session=agent_session,
-                            driver_started_at=driver_started_at,
-                        )
-                        drain_runtime = _SessionRuntime(
-                            backend=backend_factory(agent_session=agent_session),
-                            cursor=_log_file_size(Path(log_path))
-                            if skip_history
-                            else 0,
-                            skip_persist_until_log_activity=skip_history,
-                        )
-                        runtime_by_session_id[agent_session.id] = drain_runtime
+                drain_runtime = runtime_by_session_id.get(agent_session.id)
+                if drain_runtime is None:
+                    skip_history = _should_skip_log_history(
+                        agent_session=agent_session,
+                        driver_started_at=driver_started_at,
+                    )
+                    drain_runtime = _SessionRuntime(
+                        backend=backend_factory(agent_session=agent_session),
+                        cursor=_log_file_size(Path(log_path))
+                        if (skip_history and log_path)
+                        else 0,
+                        skip_persist_until_log_activity=skip_history,
+                    )
+                    runtime_by_session_id[agent_session.id] = drain_runtime
 
+                if log_path:
                     drain_log_path = Path(log_path)
                     while True:
                         drained_text, next_cursor = _read_log_incremental(
@@ -723,17 +760,27 @@ async def supervise_once(
                             log_text=drained_text,
                         )
 
-                    if (
-                        agent_session.agent_interface_mode
-                        == AgentInterfaceMode.Structured
-                        and agent_session.agent_kind == AgentKind.Codex
-                    ):
-                        await maybe_capture_codex_last_message_file(
-                            agent_session=agent_session,
-                            runtime=drain_runtime,
-                            ref=drain_runtime.backend.external_session_ref,
-                            assume_turn_complete=True,
+                if (
+                    agent_session.agent_interface_mode == AgentInterfaceMode.Structured
+                    and agent_session.agent_kind == AgentKind.Codex
+                ):
+                    try:
+                        ref_from_row = external_ref_adapter.validate_python(
+                            agent_session.external_session_ref
                         )
+                    except Exception:
+                        ref_from_row = ExternalSessionNone()
+
+                    ref_for_capture = drain_runtime.backend.external_session_ref
+                    if ref_for_capture.type == "none" and ref_from_row.type != "none":
+                        ref_for_capture = ref_from_row
+
+                    await maybe_capture_codex_last_message_file(
+                        agent_session=agent_session,
+                        runtime=drain_runtime,
+                        ref=ref_for_capture,
+                        assume_turn_complete=True,
+                    )
 
                 exit_code: int | None = None
                 exit_code_path = agent_session_exit_code_path(

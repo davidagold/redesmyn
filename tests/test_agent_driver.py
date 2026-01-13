@@ -846,6 +846,61 @@ async def test_agent_driver_emits_codex_last_message_file_when_tmux_exits(
 
 
 @pytest.mark.integration
+async def test_agent_driver_emits_codex_last_message_file_without_log_path(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+
+    async with scenario.db.session() as session:
+        agent_session = AgentSession(
+            task_id=task_id,
+            status=AgentStatus.Running,
+            agent_kind=AgentKind.Codex,
+            agent_interface_mode=AgentInterfaceMode.Structured,
+            attach=AttachTmux(
+                session=tmux_name, socket_path=None, log_path=None
+            ).model_dump(mode="python"),
+        )
+        session.add(agent_session)
+        await session.commit()
+        await session.refresh(agent_session)
+
+        last_message_path = agent_session_codex_last_message_path(
+            scenario.ctx, task_id=task_id, session_id=agent_session.id
+        )
+        last_message_path.parent.mkdir(parents=True, exist_ok=True)
+        last_message_path.write_text("Final answer\n", encoding="utf-8")
+
+    fake_tmux = _FakeTmux(sessions=set(), pipe_calls=[])
+    runtime: dict[int, object] = {}
+    driver_started_at = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+            driver_started_at=driver_started_at,
+        )
+
+    async with scenario.db.session() as session:
+        event_types = list(
+            await session.scalars(
+                select(Event.event_type).where(
+                    Event.event_type == "agent.assistant_message"
+                )
+            )
+        )
+        assert "agent.assistant_message" in event_types
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.agent_preview.get("last_assistant_message_preview") == "Final answer"
+
+
+@pytest.mark.integration
 async def test_agent_driver_emits_codex_last_message_file_on_turn_completed(
     scenario: Scenario,
 ) -> None:
