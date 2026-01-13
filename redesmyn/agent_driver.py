@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -31,7 +32,7 @@ from redesmyn.agent_interface.v0 import (
 )
 from redesmyn.agent_runtime import (
     agent_session_exit_code_path,
-    agent_session_last_message_path,
+    agent_session_codex_last_message_path,
     agent_session_log_path,
     has_tmux,
     tmux_session_name_for_task,
@@ -50,6 +51,7 @@ from redesmyn.domain.enums import (
     AgentKind,
     AgentSessionRuntimeKind,
     AgentStatus,
+    AgentTurnState,
 )
 from redesmyn.schemas.core import EventResponse
 from redesmyn.ws_runtime import JsonWebSocketHub
@@ -187,6 +189,7 @@ class _SessionRuntime:
     cursor: int
     skip_persist_until_log_activity: bool = False
     recent_event_keys: deque[str] = field(default_factory=lambda: deque(maxlen=256))
+    codex_last_message_sha256: str | None = None
 
 
 def _log_file_size(log_path: Path) -> int:
@@ -475,6 +478,49 @@ async def supervise_once(
             case _:
                 return
 
+    async def maybe_capture_codex_last_message_file(
+        *,
+        agent_session: AgentSession,
+        runtime: _SessionRuntime,
+        ref: ExternalSessionRef,
+        assume_turn_complete: bool,
+    ) -> None:
+        if (
+            agent_session.agent_interface_mode != AgentInterfaceMode.Structured
+            or agent_session.agent_kind != AgentKind.Codex
+        ):
+            return
+        if (not assume_turn_complete) and (
+            runtime.backend.semantic_status.turn_state != AgentTurnState.Completed
+        ):
+            return
+
+        last_message_path = agent_session_codex_last_message_path(
+            ctx, task_id=agent_session.task_id, session_id=agent_session.id
+        )
+        try:
+            captured = last_message_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).strip()
+        except OSError:
+            captured = ""
+        if not captured:
+            return
+
+        normalized = _normalize_preview_text(captured)
+        digest = sha256(normalized.encode("utf-8")).hexdigest()
+        if runtime.codex_last_message_sha256 == digest:
+            return
+        runtime.codex_last_message_sha256 = digest
+
+        await persist_agent_event(
+            agent_session=agent_session,
+            runtime=runtime,
+            event=AgentAssistantMessageEvent(text=captured),
+            ref=ref,
+            now=now,
+        )
+
     async def process_log_text(
         *,
         agent_session: AgentSession,
@@ -502,6 +548,13 @@ async def supervise_once(
                 ref=ref,
                 now=now,
             )
+
+        await maybe_capture_codex_last_message_file(
+            agent_session=agent_session,
+            runtime=runtime,
+            ref=ref,
+            assume_turn_complete=False,
+        )
 
         next_caps = runtime.backend.capabilities.model_dump(mode="python")
         next_semantic_status = runtime.backend.semantic_status.model_dump(mode="python")
@@ -675,23 +728,12 @@ async def supervise_once(
                         == AgentInterfaceMode.Structured
                         and agent_session.agent_kind == AgentKind.Codex
                     ):
-                        last_message_path = agent_session_last_message_path(
-                            ctx, task_id=task_id, session_id=agent_session.id
+                        await maybe_capture_codex_last_message_file(
+                            agent_session=agent_session,
+                            runtime=drain_runtime,
+                            ref=drain_runtime.backend.external_session_ref,
+                            assume_turn_complete=True,
                         )
-                        try:
-                            captured = last_message_path.read_text(
-                                encoding="utf-8", errors="replace"
-                            ).strip()
-                        except OSError:
-                            captured = ""
-                        if captured:
-                            await persist_agent_event(
-                                agent_session=agent_session,
-                                runtime=drain_runtime,
-                                event=AgentAssistantMessageEvent(text=captured),
-                                ref=drain_runtime.backend.external_session_ref,
-                                now=now,
-                            )
 
                 exit_code: int | None = None
                 exit_code_path = agent_session_exit_code_path(

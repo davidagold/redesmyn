@@ -147,9 +147,18 @@ def agent_session_exit_code_path(
 def agent_session_last_message_path(
     ctx: RepoContext, *, task_id: int, session_id: int
 ) -> Path:
+    # Backwards-compatible alias; prefer `agent_session_codex_last_message_path`.
+    return agent_session_codex_last_message_path(
+        ctx, task_id=task_id, session_id=session_id
+    )
+
+
+def agent_session_codex_last_message_path(
+    ctx: RepoContext, *, task_id: int, session_id: int
+) -> Path:
     return (
         agent_session_dir(ctx, task_id=task_id, session_id=session_id)
-        / "last_assistant_message.txt"
+        / "codex_last_message.txt"
     )
 
 
@@ -1372,7 +1381,7 @@ async def start_task_agent(
                 interface_mode == AgentInterfaceMode.Structured
                 and resolved_agent_kind == AgentKind.Codex
             ):
-                output_path = agent_session_last_message_path(
+                output_path = agent_session_codex_last_message_path(
                     ctx, task_id=task.id, session_id=agent_session.id
                 )
                 output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1905,7 +1914,7 @@ async def run_task_agent_resume_by_id_turn(
 
             base_argv = base_definition.argv
             if agent_kind == AgentKind.Codex:
-                output_path = agent_session_last_message_path(
+                output_path = agent_session_codex_last_message_path(
                     ctx, task_id=task.id, session_id=agent_session.id
                 )
                 output_path.parent.mkdir(parents=True, exist_ok=True)

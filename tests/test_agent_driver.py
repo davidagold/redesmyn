@@ -22,7 +22,7 @@ from redesmyn.agent_interface.v0 import (
 )
 from redesmyn.api import create_app
 from redesmyn.agent_runtime import (
-    agent_session_last_message_path,
+    agent_session_codex_last_message_path,
     tmux_session_name_for_task,
 )
 from redesmyn.context import build_repo_context
@@ -811,7 +811,7 @@ async def test_agent_driver_emits_codex_last_message_file_when_tmux_exits(
         await session.commit()
         await session.refresh(agent_session)
 
-        last_message_path = agent_session_last_message_path(
+        last_message_path = agent_session_codex_last_message_path(
             scenario.ctx, task_id=task_id, session_id=agent_session.id
         )
         last_message_path.parent.mkdir(parents=True, exist_ok=True)
@@ -843,6 +843,83 @@ async def test_agent_driver_emits_codex_last_message_file_when_tmux_exits(
         )
         assert row is not None
         assert row.agent_preview.get("last_assistant_message_preview") == "Final answer"
+
+
+@pytest.mark.integration
+async def test_agent_driver_emits_codex_last_message_file_on_turn_completed(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    log_path = scenario.ctx.state_dir / "external" / "codex-last-message-turn.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "\n".join(
+            [
+                '{"type":"thread.started","thread_id":"th_123"}',
+                '{"type":"turn.started","turn_id":"tu_1"}',
+                '{"type":"assistant.message","role":"assistant","text":"Working..."}',
+                '{"type":"turn.completed","turn_id":"tu_1"}',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async with scenario.db.session() as session:
+        agent_session = AgentSession(
+            task_id=task_id,
+            status=AgentStatus.Running,
+            agent_kind=AgentKind.Codex,
+            agent_interface_mode=AgentInterfaceMode.Structured,
+            attach=AttachTmux(
+                session=tmux_name, socket_path=None, log_path=str(log_path)
+            ).model_dump(mode="python"),
+        )
+        session.add(agent_session)
+        await session.commit()
+        await session.refresh(agent_session)
+
+        last_message_path = agent_session_codex_last_message_path(
+            scenario.ctx, task_id=task_id, session_id=agent_session.id
+        )
+        last_message_path.parent.mkdir(parents=True, exist_ok=True)
+        last_message_path.write_text("Final answer\n", encoding="utf-8")
+
+    fake_tmux = _FakeTmux(sessions={tmux_name}, pipe_calls=[])
+    runtime: dict[int, object] = {}
+    driver_started_at = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+            driver_started_at=driver_started_at,
+        )
+
+    async with scenario.db.session() as session:
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.agent_preview.get("last_assistant_message_preview") == "Final answer"
+
+        payloads = list(
+            await session.scalars(
+                select(Event.data).where(Event.event_type == "agent.assistant_message")
+            )
+        )
+        found = False
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("agent_session_id") != agent_session.id:
+                continue
+            if payload.get("preview") == "Final answer":
+                found = True
+                break
+        assert found
 
 
 @pytest.mark.integration
