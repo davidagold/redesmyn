@@ -144,6 +144,48 @@ def agent_session_exit_code_path(
     )
 
 
+def agent_session_last_message_path(
+    ctx: RepoContext, *, task_id: int, session_id: int
+) -> Path:
+    return (
+        agent_session_dir(ctx, task_id=task_id, session_id=session_id)
+        / "last_assistant_message.txt"
+    )
+
+
+def _codex_exec_argv_with_output_last_message(
+    argv: list[str], *, output_path: Path
+) -> list[str]:
+    for token in argv:
+        if token in {"-o", "--output-last-message"}:
+            return argv
+        if token.startswith("--output-last-message="):
+            return argv
+
+    codex_idx: int | None = None
+    for idx, token in enumerate(argv):
+        if not token or token.startswith("-"):
+            continue
+        if Path(token).name.lower() == "codex":
+            codex_idx = idx
+            break
+    if codex_idx is None:
+        return argv
+
+    try:
+        exec_idx = argv.index("exec", codex_idx + 1)
+    except ValueError:
+        return argv
+
+    insert_at = exec_idx + 1
+    return [
+        *argv[:insert_at],
+        "--output-last-message",
+        str(output_path),
+        *argv[insert_at:],
+    ]
+
+
 def _tail_text(path: Path, *, max_bytes: int = 8192) -> str | None:
     try:
         with path.open("rb") as f:
@@ -1325,8 +1367,25 @@ async def start_task_agent(
             await session.flush()
             runtime_env["REDESMYN_AGENT_SESSION_ID"] = str(agent_session.id)
 
+            argv = definition.argv
+            if (
+                interface_mode == AgentInterfaceMode.Structured
+                and resolved_agent_kind == AgentKind.Codex
+            ):
+                output_path = agent_session_last_message_path(
+                    ctx, task_id=task.id, session_id=agent_session.id
+                )
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                argv = _codex_exec_argv_with_output_last_message(
+                    argv, output_path=output_path
+                )
+                if argv is not definition.argv:
+                    agent_session.resolved_launch_configuration = definition.model_copy(
+                        update={"argv": argv}
+                    ).model_dump(mode="python")
+
             wrapped = sandbox_provider.wrap(
-                argv=definition.argv,
+                argv=argv,
                 cwd=worktree_path,
                 env=runtime_env,
                 policy=sandbox_policy,
@@ -1760,16 +1819,6 @@ async def run_task_agent_resume_by_id_turn(
                             "Refusing to run a resume-by-id turn because the prior agent session may still be running."
                         )
 
-            try:
-                turn = build_resume_by_id_turn(
-                    base_argv=base_definition.argv,
-                    agent_kind=agent_kind,
-                    external_session_ref_raw=resume_session.external_session_ref,
-                    prompt=prompt,
-                )
-            except StructuredTurnTransportError as exc:
-                raise RuntimeError(str(exc)) from exc
-
             baseline_turn_completed_event_id = await _latest_turn_completed_event_id(
                 session,
                 task_id=task.id,
@@ -1843,9 +1892,7 @@ async def run_task_agent_resume_by_id_turn(
                 launch_configuration_id=base_session.launch_configuration_id,
                 cwd_path=str(worktree_path),
                 pid=None,
-                resolved_launch_configuration=base_definition.model_copy(
-                    update={"argv": turn.argv}
-                ).model_dump(mode="python"),
+                resolved_launch_configuration=base_definition.model_dump(mode="python"),
                 exit_code=None,
                 started_at=now,
                 ended_at=None,
@@ -1855,6 +1902,30 @@ async def run_task_agent_resume_by_id_turn(
             session.add(agent_session)
             await session.flush()
             runtime_env["REDESMYN_AGENT_SESSION_ID"] = str(agent_session.id)
+
+            base_argv = base_definition.argv
+            if agent_kind == AgentKind.Codex:
+                output_path = agent_session_last_message_path(
+                    ctx, task_id=task.id, session_id=agent_session.id
+                )
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                base_argv = _codex_exec_argv_with_output_last_message(
+                    base_argv, output_path=output_path
+                )
+
+            try:
+                turn = build_resume_by_id_turn(
+                    base_argv=base_argv,
+                    agent_kind=agent_kind,
+                    external_session_ref_raw=resume_session.external_session_ref,
+                    prompt=prompt,
+                )
+            except StructuredTurnTransportError as exc:
+                raise RuntimeError(str(exc)) from exc
+
+            agent_session.resolved_launch_configuration = base_definition.model_copy(
+                update={"argv": turn.argv}
+            ).model_dump(mode="python")
 
             session.add(
                 Event(

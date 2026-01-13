@@ -31,6 +31,7 @@ from redesmyn.agent_interface.v0 import (
 )
 from redesmyn.agent_runtime import (
     agent_session_exit_code_path,
+    agent_session_last_message_path,
     agent_session_log_path,
     has_tmux,
     tmux_session_name_for_task,
@@ -46,6 +47,7 @@ from redesmyn.db.models import (
 )
 from redesmyn.domain.enums import (
     AgentInterfaceMode,
+    AgentKind,
     AgentSessionRuntimeKind,
     AgentStatus,
 )
@@ -667,6 +669,29 @@ async def supervise_once(
                             runtime=drain_runtime,
                             log_text=drained_text,
                         )
+
+                    if (
+                        agent_session.agent_interface_mode
+                        == AgentInterfaceMode.Structured
+                        and agent_session.agent_kind == AgentKind.Codex
+                    ):
+                        last_message_path = agent_session_last_message_path(
+                            ctx, task_id=task_id, session_id=agent_session.id
+                        )
+                        try:
+                            captured = last_message_path.read_text(
+                                encoding="utf-8", errors="replace"
+                            ).strip()
+                        except OSError:
+                            captured = ""
+                        if captured:
+                            await persist_agent_event(
+                                agent_session=agent_session,
+                                runtime=drain_runtime,
+                                event=AgentAssistantMessageEvent(text=captured),
+                                ref=drain_runtime.backend.external_session_ref,
+                                now=now,
+                            )
 
                 exit_code: int | None = None
                 exit_code_path = agent_session_exit_code_path(

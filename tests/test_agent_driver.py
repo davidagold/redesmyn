@@ -21,7 +21,10 @@ from redesmyn.agent_interface.v0 import (
     ExternalSessionNone,
 )
 from redesmyn.api import create_app
-from redesmyn.agent_runtime import tmux_session_name_for_task
+from redesmyn.agent_runtime import (
+    agent_session_last_message_path,
+    tmux_session_name_for_task,
+)
 from redesmyn.context import build_repo_context
 from redesmyn.db import AgentSession, Epic, Event, Repository, Task
 from redesmyn.db.models import AttachExternal, AttachTmux
@@ -782,6 +785,64 @@ async def test_agent_driver_drains_structured_log_when_tmux_exits(
         assert row.status == AgentStatus.Stopped
         assert row.ended_at is not None
         assert row.agent_preview.get("last_assistant_message_preview") == "Hello world"
+
+
+@pytest.mark.integration
+async def test_agent_driver_emits_codex_last_message_file_when_tmux_exits(
+    scenario: Scenario,
+) -> None:
+    task_id = await _seed_task(scenario)
+    tmux_name = tmux_session_name_for_task(task_id=task_id)
+    log_path = scenario.ctx.state_dir / "external" / "codex-last-message.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("", encoding="utf-8")
+
+    async with scenario.db.session() as session:
+        agent_session = AgentSession(
+            task_id=task_id,
+            status=AgentStatus.Running,
+            agent_kind=AgentKind.Codex,
+            agent_interface_mode=AgentInterfaceMode.Structured,
+            attach=AttachTmux(
+                session=tmux_name, socket_path=None, log_path=str(log_path)
+            ).model_dump(mode="python"),
+        )
+        session.add(agent_session)
+        await session.commit()
+        await session.refresh(agent_session)
+
+        last_message_path = agent_session_last_message_path(
+            scenario.ctx, task_id=task_id, session_id=agent_session.id
+        )
+        last_message_path.parent.mkdir(parents=True, exist_ok=True)
+        last_message_path.write_text("Final answer\n", encoding="utf-8")
+
+    fake_tmux = _FakeTmux(sessions=set(), pipe_calls=[])
+    runtime: dict[int, object] = {}
+    driver_started_at = datetime.now(UTC)
+    async with scenario.db.session() as session:
+        await supervise_once(
+            scenario.ctx,
+            session,
+            runtime_by_session_id=runtime,  # type: ignore[arg-type]
+            tmux=fake_tmux,
+            driver_started_at=driver_started_at,
+        )
+
+    async with scenario.db.session() as session:
+        event_types = list(
+            await session.scalars(
+                select(Event.event_type).where(
+                    Event.event_type == "agent.assistant_message"
+                )
+            )
+        )
+        assert "agent.assistant_message" in event_types
+        row = await session.scalar(
+            select(AgentSession).where(AgentSession.task_id == task_id)
+        )
+        assert row is not None
+        assert row.agent_preview.get("last_assistant_message_preview") == "Final answer"
 
 
 @pytest.mark.integration
