@@ -203,6 +203,7 @@ export type AgentAssistantMessageEventData = {
   text: string
   preview: string
   externalSessionRef: Record<string, unknown>
+  source?: "stream" | "last_message_file"
 }
 
 export type UnknownEventData = {

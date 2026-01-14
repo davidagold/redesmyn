@@ -42,7 +42,7 @@ export function AgentMessageConfirmDialog({
 
   const description = (() => {
     if (kind === "structured_session_conflict") {
-      return "A structured agent session is already running for this task. Stop it and send your message?"
+      return "Another agent session is already running for this task. Stop it and send your message?"
     }
     if (kind === "structured_turn_in_progress") {
       return "A structured agent turn is currently in progress. Interrupt it and send your message?"

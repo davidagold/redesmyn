@@ -364,6 +364,8 @@ export function TaskCard({
     const trimmed = raw?.trim() ?? ""
     return trimmed ? trimmed : null
   })()
+  const agentLastMessageSource =
+    agentSession?.agentPreview?.lastAssistantMessageSource ?? null
   const agentMessageSplit = agentMessagePreview
     ? splitAgentPreviewHeading(agentMessagePreview)
     : null
@@ -374,6 +376,8 @@ export function TaskCard({
     const trimmed = raw?.trim() ?? ""
     return trimmed ? trimmed : null
   })()
+  const capturedFinalOutputText =
+    agentLastMessageSource === "last_message_file" ? agentLastMessageText : null
   const agentTurnState = agentSession?.agentSemanticStatus.turnState ?? null
   const showAgentPreviewShimmer =
     agentSession?.status === "running" && agentTurnState === "busy"
@@ -1964,15 +1968,30 @@ export function TaskCard({
             className={cn(
               "nodrag nopan",
               "w-full",
-              "mt-2 flex min-w-0 items-start gap-1.5 text-left text-xs leading-snug text-muted-foreground/80",
+              "mt-2 flex min-w-0 items-start gap-1.5 text-left leading-snug",
+              capturedFinalOutputText
+                ? "text-[11px] text-muted-foreground/75"
+                : "text-xs text-muted-foreground/80",
               "transition-colors hover:text-muted-foreground",
               agentPreviewDimmed ? "opacity-60" : null,
             )}
           >
-            <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
+            {capturedFinalOutputText ? (
+              <MessageSquareText
+                className="mt-0.5 size-3.5 shrink-0 opacity-70"
+                aria-hidden="true"
+              />
+            ) : (
+              <Ghost className="mt-0.5 size-3.5 shrink-0 opacity-70" />
+            )}
             <div className="min-w-0 flex-1">
               {agentPreviewTitle ? (
-                <div className="line-clamp-1 font-semibold text-foreground/80">
+                <div
+                  className={cn(
+                    "line-clamp-1 text-foreground/80",
+                    capturedFinalOutputText ? "font-medium" : "font-semibold",
+                  )}
+                >
                   {showAgentPreviewShimmer ? (
                     <Shimmer as="span" className="inline" duration={3.5}>
                       {agentPreviewTitle.slice(0, 200)}
@@ -2013,8 +2032,8 @@ export function TaskCard({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="overflow-hidden pt-2">
-            {agentLastMessageText ? (
-              <div className="mb-2 rounded-md bg-muted/30 p-2 text-xs text-foreground/90 shadow-sm">
+            {capturedFinalOutputText ? (
+              <div className="mb-2 rounded-md bg-muted/30 p-2 text-[11px] text-foreground/85 shadow-sm">
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                     <MessageSquareText className="size-3" aria-hidden="true" />
@@ -2026,7 +2045,7 @@ export function TaskCard({
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      void copyToClipboard(agentLastMessageText)
+                      void copyToClipboard(capturedFinalOutputText)
                     }}
                   >
                     Copy
@@ -2034,7 +2053,7 @@ export function TaskCard({
                 </div>
                 <div className="max-h-52 overflow-auto pr-1">
                   <Markdown
-                    content={agentLastMessageText}
+                    content={capturedFinalOutputText}
                     omitFirstHeading
                     omitMetadataSection
                   />
