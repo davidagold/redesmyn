@@ -1632,6 +1632,7 @@ async def message_task_agent(
         agent_session_id=result.agent_session_id,
         agent_interface_mode=result.agent_interface_mode,
         delivery=result.delivery,
+        conversation_continuity=result.conversation_continuity,
         warnings=list(result.warnings),
     )
 

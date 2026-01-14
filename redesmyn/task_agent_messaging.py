@@ -8,7 +8,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from redesmyn.agent_interface.v0 import AgentSemanticStatus, ExternalSessionRef
+from redesmyn.agent_interface.v0 import ExternalSessionRef
 from redesmyn.agent_kind import resolve_agent_kind
 from redesmyn.agent_runtime import infer_interface_mode_from_argv
 from redesmyn.context import RepoContext
@@ -17,14 +17,13 @@ from redesmyn.domain.enums import (
     AgentInterfaceMode,
     AgentKind,
     AgentStatus,
-    AgentTurnState,
+    TaskAgentMessageConversationContinuity,
     TaskAgentMessageConflictAction,
 )
 from redesmyn.orchestration_config import load_orchestration_defaults
 from redesmyn.runner_backend import RunnerBackend, RunnerBackendError
 
 _EXTERNAL_SESSION_REF_ADAPTER = TypeAdapter(ExternalSessionRef)
-_SEMANTIC_STATUS_ADAPTER = TypeAdapter(AgentSemanticStatus)
 
 
 class TaskAgentMessageError(RuntimeError):
@@ -50,6 +49,7 @@ class TaskAgentMessageResult:
     agent_session_id: int
     agent_interface_mode: AgentInterfaceMode
     delivery: TaskAgentMessageDelivery
+    conversation_continuity: TaskAgentMessageConversationContinuity
     warnings: tuple[str, ...] = ()
 
 
@@ -107,16 +107,12 @@ def _key_matches_kind(
             return False
 
 
-def _looks_busy(row: AgentSession) -> bool:
+def _looks_structured_turn_in_progress(row: AgentSession) -> bool:
     if row.ended_at is not None:
         return False
     if row.status not in {AgentStatus.Running, AgentStatus.Blocked}:
         return False
-    try:
-        status = _SEMANTIC_STATUS_ADAPTER.validate_python(row.agent_semantic_status)
-    except ValidationError:
-        return False
-    return status.turn_state == AgentTurnState.Busy
+    return row.agent_interface_mode == AgentInterfaceMode.Structured
 
 
 def _as_message_error(exc: Exception) -> TaskAgentMessageError:
@@ -126,7 +122,13 @@ def _as_message_error(exc: Exception) -> TaskAgentMessageError:
         return TaskAgentMessageError(exc.detail, status_code=exc.status_code)
     message = str(exc)
     if "tmux session is active for this task" in message:
-        return TaskAgentMessageError(message, status_code=409)
+        return TaskAgentMessageError(
+            message, status_code=409, code=_CONFLICT_CODE_SESSION_CONFLICT
+        )
+    if "an agent turn is currently running for this task" in message:
+        return TaskAgentMessageError(
+            message, status_code=409, code=_CONFLICT_CODE_TURN_IN_PROGRESS
+        )
     return TaskAgentMessageError(message or "Failed to send message.", status_code=400)
 
 
@@ -263,7 +265,7 @@ async def send_task_agent_message(
                         for row in recent_sessions
                         if row.agent_interface_mode == AgentInterfaceMode.Structured
                         and row.ended_at is None
-                        and _looks_busy(row)
+                        and _looks_structured_turn_in_progress(row)
                         and _external_session_key(row.external_session_ref)
                         == external_key
                     ),
@@ -308,6 +310,7 @@ async def send_task_agent_message(
                 agent_session_id=result.agent_session.id,
                 agent_interface_mode=AgentInterfaceMode.Structured,
                 delivery="structured_resumed",
+                conversation_continuity=TaskAgentMessageConversationContinuity.Kept,
                 warnings=result.warnings,
             )
 
@@ -367,6 +370,7 @@ async def send_task_agent_message(
                         agent_session_id=session_row.id,
                         agent_interface_mode=session_row.agent_interface_mode,
                         delivery="structured_started",
+                        conversation_continuity=TaskAgentMessageConversationContinuity.Broken,
                         warnings=result.warnings,
                     )
                 raise TaskAgentMessageError(
@@ -391,6 +395,7 @@ async def send_task_agent_message(
             agent_session_id=result.agent_session.id,
             agent_interface_mode=result.agent_session.agent_interface_mode,
             delivery="structured_started",
+            conversation_continuity=TaskAgentMessageConversationContinuity.Broken,
             warnings=result.warnings,
         )
 
@@ -461,6 +466,7 @@ async def send_task_agent_message(
                 agent_session_id=active_any.id,
                 agent_interface_mode=active_any.agent_interface_mode,
                 delivery="interactive_sent",
+                conversation_continuity=TaskAgentMessageConversationContinuity.Kept,
                 warnings=(
                     "Sent message to the currently running agent session (it does not match the configured harness command).",
                 ),
@@ -493,12 +499,14 @@ async def send_task_agent_message(
                 agent_session_id=result.agent_session.id,
                 agent_interface_mode=AgentInterfaceMode.Interactive,
                 delivery="interactive_sent",
+                conversation_continuity=TaskAgentMessageConversationContinuity.Kept,
                 warnings=result.warnings,
             )
         return TaskAgentMessageResult(
             agent_session_id=result.agent_session.id,
             agent_interface_mode=result.agent_session.agent_interface_mode,
             delivery="interactive_started",
+            conversation_continuity=TaskAgentMessageConversationContinuity.Broken,
             warnings=result.warnings,
         )
 
@@ -516,5 +524,6 @@ async def send_task_agent_message(
         agent_session_id=active_interactive.id,
         agent_interface_mode=AgentInterfaceMode.Interactive,
         delivery="interactive_sent",
+        conversation_continuity=TaskAgentMessageConversationContinuity.Kept,
         warnings=(),
     )

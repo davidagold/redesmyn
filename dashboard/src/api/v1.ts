@@ -563,6 +563,11 @@ export interface components {
        */
       type: "acks"
     }
+    /**
+     * AgentAssistantMessageSource
+     * @enum {string}
+     */
+    AgentAssistantMessageSource: "stream" | "last_message_file"
     /** AgentCapabilitiesResponse */
     AgentCapabilitiesResponse: {
       /**
@@ -627,6 +632,7 @@ export interface components {
       lastAssistantMessageAt?: string | null
       /** Lastassistantmessagepreview */
       lastAssistantMessagePreview?: string | null
+      lastAssistantMessageSource?: components["schemas"]["AgentAssistantMessageSource"] | null
       /** Lastassistantmessagetext */
       lastAssistantMessageText?: string | null
       /** Lastmessageturnid */
@@ -1422,6 +1428,11 @@ export interface components {
      * @enum {string}
      */
     TaskAgentMessageConflictAction: "fail" | "interrupt_turn" | "stop_session_and_start_new"
+    /**
+     * TaskAgentMessageConversationContinuity
+     * @enum {string}
+     */
+    TaskAgentMessageConversationContinuity: "kept" | "broken"
     /** TaskAgentMessageRequest */
     TaskAgentMessageRequest: {
       /**
@@ -1445,6 +1456,7 @@ export interface components {
       agentInterfaceMode: components["schemas"]["AgentInterfaceMode"]
       /** Agentsessionid */
       agentSessionId: number
+      conversationContinuity: components["schemas"]["TaskAgentMessageConversationContinuity"]
       /**
        * Delivery
        * @enum {string}

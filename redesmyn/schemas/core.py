@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, TypeAdapter, ValidationError, model_validator
 
 from redesmyn.domain.enums import (
+    AgentAssistantMessageSource,
     AgentKind,
     AgentKindSelection,
     AgentInterfaceMode,
@@ -18,6 +19,7 @@ from redesmyn.domain.enums import (
     CommandState,
     LaunchConfigurationSource,
     MergeRunStatus,
+    TaskAgentMessageConversationContinuity,
     TaskAgentMessageConflictAction,
     TaskAuthority,
     TaskSource,
@@ -89,6 +91,7 @@ class AgentPreviewResponse(ApiResponse):
     last_assistant_message_text: str | None = None
     last_assistant_message_at: datetime | None = None
     last_message_turn_id: str | None = None
+    last_assistant_message_source: AgentAssistantMessageSource | None = None
 
     @model_validator(mode="after")
     def _decode_preview_entities(self) -> "AgentPreviewResponse":
@@ -270,6 +273,7 @@ class TaskAgentMessageResponse(ApiResponse):
         "interactive_started",
         "interactive_sent",
     ]
+    conversation_continuity: TaskAgentMessageConversationContinuity
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -593,6 +597,7 @@ class AgentAssistantMessageEventDataResponse(ApiResponse):
     text: str
     preview: str
     external_session_ref: ExternalSessionRefResponse
+    source: AgentAssistantMessageSource = AgentAssistantMessageSource.Stream
 
 
 class TaskMergeEventDataResponse(ApiResponse):

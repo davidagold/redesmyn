@@ -30,6 +30,7 @@ from redesmyn.agent_interface.v0 import (
     ExternalSessionNone,
 )
 from redesmyn.domain.enums import (
+    AgentAssistantMessageSource,
     AgentKind,
     AgentKindSelection,
     AgentInterfaceMode,
@@ -153,6 +154,7 @@ class AgentPreview(BaseModel):
     last_assistant_message_text: str | None = None
     last_assistant_message_at: datetime | None = None
     last_message_turn_id: str | None = None
+    last_assistant_message_source: AgentAssistantMessageSource | None = None
 
 
 def _default_agent_preview() -> dict[str, Any]:

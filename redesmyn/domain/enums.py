@@ -43,6 +43,11 @@ class AgentTurnState(StrEnum):
     Completed = "completed"
 
 
+class AgentAssistantMessageSource(StrEnum):
+    Stream = "stream"
+    LastMessageFile = "last_message_file"
+
+
 class AgentKind(StrEnum):
     Generic = "generic"
     Codex = "codex"
@@ -65,6 +70,11 @@ class TaskAgentMessageConflictAction(StrEnum):
     Fail = "fail"
     InterruptTurn = "interrupt_turn"
     StopSessionAndStartNew = "stop_session_and_start_new"
+
+
+class TaskAgentMessageConversationContinuity(StrEnum):
+    Kept = "kept"
+    Broken = "broken"
 
 
 class LaunchConfigurationSource(StrEnum):

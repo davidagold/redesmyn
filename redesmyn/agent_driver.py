@@ -47,6 +47,7 @@ from redesmyn.db.models import (
     AttachTmux,
 )
 from redesmyn.domain.enums import (
+    AgentAssistantMessageSource,
     AgentInterfaceMode,
     AgentKind,
     AgentSessionRuntimeKind,
@@ -381,9 +382,14 @@ async def supervise_once(
                 return "none"
 
     def agent_event_key(
-        *, event_type: str, ref: ExternalSessionRef, text: str | None
+        *,
+        event_type: str,
+        ref: ExternalSessionRef,
+        text: str | None,
+        source: AgentAssistantMessageSource | None = None,
     ) -> str:
-        base = f"{event_type}:{external_ref_key(ref)}"
+        source_tag = source.value if source is not None else ""
+        base = f"{event_type}:{source_tag}:{external_ref_key(ref)}"
         if text is None:
             return base
         normalized = _normalize_preview_text(text)
@@ -430,8 +436,12 @@ async def supervise_once(
                 raw_text = event.text
                 if not raw_text.strip():
                     return
+                source = AgentAssistantMessageSource.Stream
                 key = agent_event_key(
-                    event_type="assistant_message", ref=ref, text=raw_text
+                    event_type="assistant_message",
+                    ref=ref,
+                    text=raw_text,
+                    source=source,
                 )
                 if key in runtime.recent_event_keys:
                     return
@@ -459,6 +469,7 @@ async def supervise_once(
                         "last_assistant_message_text": stored_preview_text,
                         "last_assistant_message_at": now,
                         "last_message_turn_id": next_turn_id,
+                        "last_assistant_message_source": source,
                     }
                 )
                 next_preview_dump = next_preview.model_dump(mode="json")
@@ -475,6 +486,7 @@ async def supervise_once(
                         "text": stored_text,
                         "preview": preview,
                         "external_session_ref": ref.model_dump(mode="python"),
+                        "source": source.value,
                     },
                 )
                 return
@@ -516,7 +528,10 @@ async def supervise_once(
             return
         runtime.codex_last_message_sha256 = digest
 
-        key = agent_event_key(event_type="assistant_message", ref=ref, text=captured)
+        source = AgentAssistantMessageSource.LastMessageFile
+        key = agent_event_key(
+            event_type="assistant_message", ref=ref, text=captured, source=source
+        )
         if key in runtime.recent_event_keys:
             return
         runtime.recent_event_keys.append(key)
@@ -544,6 +559,7 @@ async def supervise_once(
                 "last_assistant_message_text": stored_preview_text,
                 "last_assistant_message_at": now,
                 "last_message_turn_id": next_turn_id,
+                "last_assistant_message_source": source,
             }
         )
         next_preview_dump = next_preview.model_dump(mode="json")
@@ -559,6 +575,7 @@ async def supervise_once(
                 "text": stored_text,
                 "preview": preview,
                 "external_session_ref": ref.model_dump(mode="python"),
+                "source": source.value,
             },
         )
 

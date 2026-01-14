@@ -23,6 +23,14 @@
         "title": "AckReleaseResponse",
         "type": "object"
       },
+      "AgentAssistantMessageSource": {
+        "enum": [
+          "stream",
+          "last_message_file"
+        ],
+        "title": "AgentAssistantMessageSource",
+        "type": "string"
+      },
       "AgentCapabilitiesResponse": {
         "properties": {
           "canContinueInCwd": {
@@ -120,6 +128,16 @@
               }
             ],
             "title": "Lastassistantmessagepreview"
+          },
+          "lastAssistantMessageSource": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentAssistantMessageSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "lastAssistantMessageText": {
             "anyOf": [
@@ -2466,6 +2484,14 @@
         "title": "TaskAgentMessageConflictAction",
         "type": "string"
       },
+      "TaskAgentMessageConversationContinuity": {
+        "enum": [
+          "kept",
+          "broken"
+        ],
+        "title": "TaskAgentMessageConversationContinuity",
+        "type": "string"
+      },
       "TaskAgentMessageRequest": {
         "properties": {
           "interrupt": {
@@ -2518,6 +2544,9 @@
             "title": "Agentsessionid",
             "type": "integer"
           },
+          "conversationContinuity": {
+            "$ref": "#/components/schemas/TaskAgentMessageConversationContinuity"
+          },
           "delivery": {
             "enum": [
               "structured_started",
@@ -2544,7 +2573,8 @@
           "taskId",
           "agentSessionId",
           "agentInterfaceMode",
-          "delivery"
+          "delivery",
+          "conversationContinuity"
         ],
         "title": "TaskAgentMessageResponse",
         "type": "object"
