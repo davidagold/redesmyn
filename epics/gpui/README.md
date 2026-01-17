@@ -162,3 +162,22 @@ Sequencing intent:
 - Build the event pipeline and command engine next (T-18, T-19).
 - Expose the client API over UDS and validate with integration tests (T-20, T-22).
 - Implement and tune the EpicGraph read model as the primary UI/CLI query (T-21).
+
+## 9) Domain 3: Task map (Daemon / repo executor core)
+
+- `epics/gpui/tasks/T-23/README.md`: Daemon runtime skeleton (service + control-plane connection).
+- `epics/gpui/tasks/T-24/README.md`: Repo registry + attachment semantics (no path leakage).
+- `epics/gpui/tasks/T-25/README.md`: Lease/primary executor management + enforcement.
+- `epics/gpui/tasks/T-26/README.md`: Git backend abstraction (CLI-first now, swappable later).
+- `epics/gpui/tasks/T-27/README.md`: Worktree management service.
+- `epics/gpui/tasks/T-28/README.md`: Repo observation + telemetry + snapshots.
+- `epics/gpui/tasks/T-29/README.md`: Merge/restack planner (deterministic plans).
+- `epics/gpui/tasks/T-30/README.md`: Merge/restack executor (resumable, step updates).
+- `epics/gpui/tasks/T-31/README.md`: Daemon integration test harness (real repo fixtures).
+
+Sequencing intent:
+
+- Stand up the daemon runtime first (T-23), then enable safe attachment + identity (T-24) and lease enforcement (T-25).
+- Implement the git/worktree substrate (T-26, T-27), then observation/telemetry (T-28).
+- Build merge/restack as a plan+execute split (T-29, T-30) so UI/CLI can preview plans and execution can be resumable.
+- Keep real-repo integration tests close to the daemon implementation (T-31) to enforce AI-friendly determinism.

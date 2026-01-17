@@ -1,0 +1,91 @@
+---
+epic: gpui
+branch:
+  suggested: rn/gpui/T-30-merge-restack-executor
+rn:
+  parent: T-29
+---
+
+# T-30 Merge/restack executor (resumable, step updates, command integration) (Domain 3)
+
+## Problem
+
+Executing merge/restack safely requires:
+
+- worktree-aware git mutations,
+- a clear and observable lifecycle (no silent actions),
+- resumability when blocked (conflicts, running agents, etc.),
+- and consistent reporting of progress to the control plane.
+
+If execution is not modeled explicitly, the UI/CLI cannot reliably guide the user through conflicts and resume.
+
+## Goal
+
+Implement daemon-side execution of merge/restack plans (from T-29) that:
+
+- executes step-by-step with safe boundaries,
+- emits command updates and domain events for each step,
+- supports “blocked” and “resumable” states,
+- and can resume/cancel deterministically.
+
+## Requirements
+
+### 1) Execution engine
+
+Implement an execution engine that:
+
+- takes a plan + command_id/run_id,
+- executes steps sequentially,
+- records current step index,
+- and emits:
+  - command lifecycle updates (`running`, progress, `blocked`, `succeeded`, etc.)
+  - domain events for UI (per-step events)
+
+### 2) Resumability model
+
+Define what “blocked” means and what state must be persisted to resume:
+
+- blocked step index/kind
+- worktree path
+- error classification (conflict vs running agents vs git op in progress)
+
+Resume behavior:
+
+- resume continues from the blocked step if preconditions are now satisfied.
+- cancel stops at the next safe boundary and marks command canceled.
+
+### 3) Safety rails
+
+Before each step:
+
+- verify primary lease (T-25),
+- verify no in-progress git operations,
+- verify worktree health and branch correctness.
+
+### 4) Integration with control plane command engine
+
+Execution must integrate with Domain 2 command lifecycle:
+
+- command dispatch from control plane triggers execution.
+- daemon reports updates on the daemon stream (T-11), which the control plane persists and publishes.
+
+### 5) Testability
+
+Provide end-to-end daemon tests using temp repos that validate:
+
+- successful execution (no conflicts),
+- blocked state simulation (e.g., inject a conflict or fake “running agents” blocker),
+- resume and cancel behavior.
+
+No sleeps for correctness; drive execution deterministically.
+
+## Acceptance criteria
+
+- Merge/restack commands execute stepwise with visible progress updates.
+- Blocked/resumable flows work and are observable to clients.
+- Execution is safe (lease + worktree + in-progress checks) and failure modes are actionable.
+
+## Dependencies / sequencing
+
+- Depends on planning (T-29), worktrees (T-27), leases (T-25), and daemon/control-plane command protocol (T-11/T-19).
+
