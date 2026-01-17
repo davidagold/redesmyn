@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-7-transport-codecs
 rn:
-  parent: null
+  parent: T-2
 ---
 
 # T-7 Transport + codec scaffolding (Protobuf default + JSON debug) (Domain 0)

@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-4-tracing-logging
 rn:
-  parent: null
+  parent: T-1
 ---
 
 # T-4 Logging + tracing foundations (Domain 0)

@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-6-sqlx-storage-scaffold
 rn:
-  parent: null
+  parent: T-2
 ---
 
 # T-6 Control-plane storage scaffold (`sqlx` + SQLite) (Domain 0)

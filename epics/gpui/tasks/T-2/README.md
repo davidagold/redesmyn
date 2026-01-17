@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-2-ulid-newtypes
 rn:
-  parent: null
+  parent: T-1
 ---
 
 # T-2 ULID + newtypes everywhere (`redesmyn_ids`) (Domain 0)

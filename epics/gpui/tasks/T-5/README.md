@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-5-config-layer
 rn:
-  parent: null
+  parent: T-1
 ---
 
 # T-5 Typed config layer (Domain 0)

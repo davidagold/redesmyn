@@ -3,7 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-8-rn-rust-skeleton
 rn:
-  parent: null
+  parent: T-1
 ---
 
 # T-8 Rust `rn` skeleton (fast CLI harness) (Domain 0)
