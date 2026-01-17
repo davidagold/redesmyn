@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from pydantic import ValidationError
 
@@ -15,6 +16,9 @@ from redesmyn.docs.metadata import EpicMetadata, TaskMetadata
 
 class DocLoadError(ValueError):
     pass
+
+
+_TASK_ID_RE = re.compile(r"^T-\d+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +52,12 @@ def load_epic_doc(path: Path) -> EpicDoc:
     try:
         frontmatter = extract_yaml_frontmatter(markdown)
         data = parse_yaml_block(frontmatter)
-        metadata = EpicMetadata.model_validate(data)
+        rn = data.get("rn")
+        if not isinstance(rn, dict):
+            raise MarkdownSectionError(
+                "Missing required 'rn' mapping in YAML frontmatter"
+            )
+        metadata = EpicMetadata.model_validate(rn)
     except (MarkdownSectionError, ValidationError) as e:
         raise DocLoadError(f"Invalid epic doc metadata in {path}: {e}") from e
 
@@ -64,9 +73,22 @@ def load_task_doc(path: Path) -> TaskDoc:
     try:
         frontmatter = extract_yaml_frontmatter(markdown)
         data = parse_yaml_block(frontmatter)
-        metadata = TaskMetadata.model_validate(data)
+        rn = data.get("rn")
+        if not isinstance(rn, dict):
+            raise MarkdownSectionError(
+                "Missing required 'rn' mapping in YAML frontmatter"
+            )
+        metadata = TaskMetadata.model_validate(rn)
     except (MarkdownSectionError, ValidationError) as e:
         raise DocLoadError(f"Invalid task doc metadata in {path}: {e}") from e
+
+    inferred_id = path.parent.name if _TASK_ID_RE.match(path.parent.name) else None
+    if metadata.id is None and inferred_id is not None:
+        metadata = metadata.model_copy(update={"id": inferred_id})
+    if metadata.id is None:
+        raise DocLoadError(
+            f"Invalid task doc metadata in {path}: missing rn.id (required unless folder is T-<n>)"
+        )
 
     return TaskDoc(
         path=path, markdown=markdown, metadata=metadata, title=_extract_title(markdown)

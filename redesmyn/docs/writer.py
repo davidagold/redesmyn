@@ -4,7 +4,7 @@ from typing import Any
 
 import yaml
 
-from redesmyn.docs.markdown import MarkdownSectionError
+from redesmyn.docs.markdown import MarkdownSectionError, parse_yaml_block
 
 
 SYNC_START = "<!-- rn:sync:start -->"
@@ -22,16 +22,14 @@ def dump_yaml(data: dict[str, Any]) -> str:
     return text.rstrip() + "\n"
 
 
-def upsert_metadata_yaml(markdown: str, *, yaml_data: dict[str, Any]) -> str:
+def upsert_rn_metadata(markdown: str, *, rn_data: dict[str, Any]) -> str:
     bom = "\ufeff" if markdown.startswith("\ufeff") else ""
     text = markdown.removeprefix(bom)
     lines = text.splitlines()
 
-    yaml_block = dump_yaml(yaml_data).rstrip("\n")
-    frontmatter = f"---\n{yaml_block}\n---\n"
-
+    frontmatter_dict: dict[str, Any] = {}
+    end_idx: int | None = None
     if lines and lines[0].strip() == "---":
-        end_idx: int | None = None
         for idx in range(1, len(lines)):
             if lines[idx].strip() in _FRONTMATTER_DELIMS:
                 end_idx = idx
@@ -40,7 +38,16 @@ def upsert_metadata_yaml(markdown: str, *, yaml_data: dict[str, Any]) -> str:
             raise MarkdownSectionError(
                 "Unterminated YAML frontmatter (missing closing '---')"
             )
+        existing_raw = "\n".join(lines[1:end_idx]).rstrip() + "\n"
+        frontmatter_dict = parse_yaml_block(existing_raw)
 
+    frontmatter_dict = dict(frontmatter_dict)
+    frontmatter_dict["rn"] = dict(rn_data)
+
+    yaml_block = dump_yaml(frontmatter_dict).rstrip("\n")
+    frontmatter = f"---\n{yaml_block}\n---\n"
+
+    if end_idx is not None:
         rest = "\n".join(lines[end_idx + 1 :]).lstrip("\n")
         if rest:
             return (bom + frontmatter + "\n" + rest).rstrip() + "\n"

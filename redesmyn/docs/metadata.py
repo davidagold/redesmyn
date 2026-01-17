@@ -43,20 +43,20 @@ class TaskMetadata(BaseModel):
 
     id: str | None = None
     group_under: str | None = None
-    stacked_on: str | None = None
-    must_land_after: list[str] = Field(default_factory=list)
+    parent: str | None = None
+    after: list[str] = Field(default_factory=list)
     linear: LinearRef | None = None
     github: GithubRef | None = None
     node: NodeRef | None = None
 
-    @field_validator("id", "group_under", "stacked_on", mode="before")
+    @field_validator("id", "group_under", "parent", mode="before")
     @classmethod
     def _empty_string_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value
 
-    @field_validator("must_land_after", mode="before")
+    @field_validator("after", mode="before")
     @classmethod
     def _normalize_must_land_after(cls, value: object) -> object:
         if value is None:

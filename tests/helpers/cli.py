@@ -13,7 +13,7 @@ class TaskSpec:
     task_id: str
     title: str
     branch: str | None = None
-    stacked_on: str | None = None
+    parent: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,9 +76,10 @@ def write_docs(*, repo_root: Path, epic_slug: str, tasks: list[TaskSpec]) -> Non
         "\n".join(
             [
                 "---",
-                f"slug: {epic_slug}",
-                "name: CLI Epic",
-                "root_branch: main",
+                "rn:",
+                f"  slug: {epic_slug}",
+                "  name: CLI Epic",
+                "  root_branch: main",
                 "",
                 "---",
                 "",
@@ -92,20 +93,18 @@ def write_docs(*, repo_root: Path, epic_slug: str, tasks: list[TaskSpec]) -> Non
     for task in tasks:
         task_dir = tasks_dir / task.task_id
         task_dir.mkdir(parents=True, exist_ok=True)
-        stacked_on_line = (
-            f"stacked_on: {task.stacked_on}"
-            if task.stacked_on is not None
-            else "stacked_on:"
+        parent_line = (
+            f"    parent: {task.parent}" if task.parent is not None else "    parent:"
         )
         node_lines: list[str] = []
         if task.branch is not None:
-            node_lines = ["node:", f"  branch: {task.branch}"]
+            node_lines = ["    node:", f"      branch: {task.branch}"]
         (task_dir / "README.md").write_text(
             "\n".join(
                 [
                     "---",
-                    f"id: {task.task_id}",
-                    stacked_on_line,
+                    "rn:",
+                    parent_line,
                     *node_lines,
                     "",
                     "---",

@@ -62,7 +62,7 @@ from redesmyn.docs.markdown import (
 )
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.metadata import TaskMetadata
-from redesmyn.docs.writer import upsert_metadata_yaml, upsert_synced_section
+from redesmyn.docs.writer import upsert_rn_metadata, upsert_synced_section
 from redesmyn.domain.enums import (
     AgentKindSelection,
     BlockPolicy,
@@ -1833,7 +1833,7 @@ async def _sync_from_local(
                 task = task_by_path.get(doc.path)
                 if task is None:
                     continue
-                parent_ref = doc.metadata.stacked_on
+                parent_ref = doc.metadata.parent
                 if not parent_ref:
                     if task.parent_task_id is not None:
                         task.parent_task_id = None
@@ -1843,7 +1843,7 @@ async def _sync_from_local(
                 parent_task = task_by_ref.get(parent_ref)
                 if parent_task is None:
                     raise typer.BadParameter(
-                        f"Unknown stacked_on ref {parent_ref!r} in {doc.path}"
+                        f"Unknown parent ref {parent_ref!r} in {doc.path}"
                     )
                 if task.parent_task_id != parent_task.id:
                     task.parent_task_id = parent_task.id
@@ -1910,7 +1910,9 @@ async def _sync_from_linear(
             frontmatter = extract_yaml_frontmatter(markdown)
         except MarkdownSectionError:
             return {}
-        return parse_yaml_block(frontmatter)
+        data = parse_yaml_block(frontmatter)
+        rn = data.get("rn")
+        return rn if isinstance(rn, dict) else {}
 
     def _parse_task_number(task_id: str | None) -> int | None:
         if not task_id:
@@ -1974,7 +1976,7 @@ async def _sync_from_linear(
             yaml_data["linear"] = linear_meta
         linear_meta["project_id"] = project_id
         epic_readme.write_text(
-            upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
+            upsert_rn_metadata(markdown, rn_data=yaml_data), encoding="utf-8"
         )
 
     def _branch_name(identifier: str, title: str) -> str:
@@ -2032,8 +2034,8 @@ async def _sync_from_linear(
         *,
         issue: LinearIssue,
         blocker_issue_ids: list[str],
-        existing_stacked_on: str | None,
-        existing_must_land_after: list[str],
+        existing_parent: str | None,
+        existing_after: list[str],
     ) -> str | None:
         imported_blocker_ids = sorted(
             [bid for bid in blocker_issue_ids if bid in issues_by_id],
@@ -2044,17 +2046,17 @@ async def _sync_from_linear(
         if len(imported_blocker_ids) == 1:
             return imported_blocker_ids[0]
 
-        if existing_stacked_on:
+        if existing_parent:
             for bid in imported_blocker_ids:
-                if existing_stacked_on in {
+                if existing_parent in {
                     local_task_id_by_issue_id.get(bid),
                     issues_by_id[bid].identifier,
                     bid,
                 }:
                     return bid
 
-        if existing_stacked_on is None:
-            for ref in existing_must_land_after:
+        if existing_parent is None:
+            for ref in existing_after:
                 for bid in imported_blocker_ids:
                     if ref in {
                         local_task_id_by_issue_id.get(bid),
@@ -2070,7 +2072,7 @@ async def _sync_from_linear(
 
         typer.echo("")
         typer.echo(
-            f"Linear issue {issue.identifier} has multiple blockers; choose `stacked_on`:"
+            f"Linear issue {issue.identifier} has multiple blockers; choose `parent`:"
         )
         typer.echo("  0) No parent")
         for idx, bid in enumerate(imported_blocker_ids, start=1):
@@ -2121,26 +2123,24 @@ async def _sync_from_linear(
             markdown = f"# {issue.identifier} {issue.title}\n\n## Plan\n\n"
 
         existing_meta = _load_metadata_dict(markdown)
-        existing_stacked_on = None
-        existing_must_land_after: list[str] = []
+        existing_parent = None
+        existing_after: list[str] = []
         try:
             doc = load_task_doc(target_readme) if target_readme.exists() else None
         except DocLoadError:
             doc = None
         if doc is not None:
-            existing_stacked_on = doc.metadata.stacked_on
-            existing_must_land_after = doc.metadata.must_land_after
+            existing_parent = doc.metadata.parent
+            existing_after = doc.metadata.after
 
         blocker_issue_ids = blockers_by_issue.get(issue.id, [])
         parent_issue_id = _choose_parent_issue_id(
             issue=issue,
             blocker_issue_ids=blocker_issue_ids,
-            existing_stacked_on=existing_stacked_on,
-            existing_must_land_after=existing_must_land_after,
+            existing_parent=existing_parent,
+            existing_after=existing_after,
         )
-        stacked_on = (
-            local_task_id_by_issue_id[parent_issue_id] if parent_issue_id else None
-        )
+        parent = local_task_id_by_issue_id[parent_issue_id] if parent_issue_id else None
 
         imported_blockers = sorted(
             [bid for bid in blocker_issue_ids if bid in local_task_id_by_issue_id],
@@ -2151,23 +2151,26 @@ async def _sync_from_linear(
         external_blockers = sorted(
             [bid for bid in blocker_issue_ids if bid not in issues_by_id]
         )
-        must_land_after: list[str] = []
+        after: list[str] = []
         for bid in [*imported_blockers, *external_blockers]:
             ref = local_task_id_by_issue_id.get(bid) or bid
-            if stacked_on and ref == stacked_on:
+            if parent and ref == parent:
                 continue
-            must_land_after.append(ref)
-        must_land_after_dedup: list[str] = []
+            after.append(ref)
+        after_dedup: list[str] = []
         seen = set()
-        for ref in must_land_after:
+        for ref in after:
             if ref in seen:
                 continue
             seen.add(ref)
-            must_land_after_dedup.append(ref)
+            after_dedup.append(ref)
 
-        existing_meta["id"] = local_task_id
-        existing_meta["stacked_on"] = stacked_on
-        existing_meta["must_land_after"] = must_land_after_dedup
+        if _parse_task_number(local_task_id) is not None:
+            existing_meta.pop("id", None)
+        else:
+            existing_meta["id"] = local_task_id
+        existing_meta["parent"] = parent
+        existing_meta["after"] = after_dedup
 
         linear_meta = existing_meta.get("linear")
         if not isinstance(linear_meta, dict):
@@ -2176,7 +2179,7 @@ async def _sync_from_linear(
         linear_meta["issue_id"] = issue.id
         linear_meta["identifier"] = issue.identifier
 
-        markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
+        markdown = upsert_rn_metadata(markdown, rn_data=existing_meta)
 
         synced_lines: list[str] = []
         if issue.state_type:
@@ -2505,7 +2508,9 @@ async def _sync_to_linear(
             frontmatter = extract_yaml_frontmatter(markdown)
         except MarkdownSectionError:
             return {}
-        return parse_yaml_block(frontmatter)
+        data = parse_yaml_block(frontmatter)
+        rn = data.get("rn")
+        return rn if isinstance(rn, dict) else {}
 
     engine = create_engine(ctx.db_path)
     try:
@@ -2740,8 +2745,8 @@ async def _sync_to_linear(
                             existing_meta["linear"] = linear_meta
                         linear_meta["issue_id"] = existing.id
                         linear_meta["identifier"] = existing.identifier
-                        next_markdown = upsert_metadata_yaml(
-                            markdown, yaml_data=existing_meta
+                        next_markdown = upsert_rn_metadata(
+                            markdown, rn_data=existing_meta
                         )
                         if next_markdown != markdown:
                             planned_doc_ops.append(
@@ -2830,9 +2835,9 @@ async def _sync_to_linear(
                         ) from e
 
                     refs: list[str] = []
-                    if meta_parsed.stacked_on:
-                        refs.append(meta_parsed.stacked_on)
-                    refs.extend(meta_parsed.must_land_after)
+                    if meta_parsed.parent:
+                        refs.append(meta_parsed.parent)
+                    refs.extend(meta_parsed.after)
 
                     deduped: list[str] = []
                     seen = set()
@@ -3120,7 +3125,7 @@ async def _sync_to_linear(
                 linear_meta["issue_id"] = issue.id
                 linear_meta["identifier"] = issue.identifier
 
-                next_markdown = upsert_metadata_yaml(markdown, yaml_data=existing_meta)
+                next_markdown = upsert_rn_metadata(markdown, rn_data=existing_meta)
                 if next_markdown != markdown:
                     readme.write_text(next_markdown, encoding="utf-8")
                     stats.docs_updated += 1
@@ -3146,7 +3151,7 @@ async def _sync_to_linear(
                 yaml_data["linear"] = linear_meta
             linear_meta["project_id"] = project_id
             epic_readme.write_text(
-                upsert_metadata_yaml(markdown, yaml_data=yaml_data), encoding="utf-8"
+                upsert_rn_metadata(markdown, rn_data=yaml_data), encoding="utf-8"
             )
 
     # Second pass: after all issues exist, push dependency edges.
@@ -3189,9 +3194,9 @@ async def _sync_to_linear(
             continue
 
         refs: list[str] = []
-        if meta_parsed.stacked_on:
-            refs.append(meta_parsed.stacked_on)
-        refs.extend(meta_parsed.must_land_after)
+        if meta_parsed.parent:
+            refs.append(meta_parsed.parent)
+        refs.extend(meta_parsed.after)
 
         deduped: list[str] = []
         seen = set()

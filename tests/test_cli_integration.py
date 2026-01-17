@@ -28,7 +28,7 @@ def test_sync_from_local_imports_tasks_and_sets_parent_links_without_creating_br
         epic_slug=epic_slug,
         tasks=[
             TaskSpec(task_id="T-1", title="Parent"),
-            TaskSpec(task_id="T-2", title="Child", stacked_on="T-1"),
+            TaskSpec(task_id="T-2", title="Child", parent="T-1"),
         ],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
@@ -367,7 +367,7 @@ def _seed_stack_for_merge_or_restack(
         epic_slug=epic_slug,
         tasks=[
             TaskSpec(task_id="T-1", title="Parent"),
-            TaskSpec(task_id="T-2", title="Child", stacked_on="T-1"),
+            TaskSpec(task_id="T-2", title="Child", parent="T-1"),
         ],
     )
     repo.git(["add", "-A"], cwd=repo.repo_root)
