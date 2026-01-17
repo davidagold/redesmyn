@@ -58,3 +58,7 @@ Create the minimal tables needed to validate the scaffolding:
 - The crate provides a clean API surface so control-plane code doesn’t scatter SQL.
 - Migration workflow is documented.
 
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+- Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) for key types.

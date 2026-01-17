@@ -66,3 +66,8 @@ Include a few early “developer utility” commands that reinforce the architec
 - Command structure is established and documented.
 - Coexistence with Python `rn` is clear and non-confusing for contributors.
 
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+- Should coordinate with `epics/gpui/tasks/T-3/README.md` (exit codes + error formatting).
+- Optionally depends on `epics/gpui/tasks/T-7/README.md` if we include protocol decode tooling in the initial CLI skeleton.

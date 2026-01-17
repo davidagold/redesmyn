@@ -74,3 +74,7 @@ Add a short doc describing:
   - rendered as a user-facing message and an exit code in a binary.
 - Error strategy is consistent and easy for parallel implementers to follow.
 
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+- Should coordinate with `epics/gpui/tasks/T-7/README.md` (protocol error envelope) and `epics/gpui/tasks/T-8/README.md` (CLI exit codes/output).

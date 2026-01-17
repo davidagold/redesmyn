@@ -87,3 +87,8 @@ Add minimal tooling hooks:
 - Debug codec: **JSON** (opt-in).
 - In-proc: typed messages, no serialization.
 
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+- Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) for `msg_id`/ids in envelopes.
+- Should coordinate with `epics/gpui/tasks/T-4/README.md` (message tracing + wiretap spans).

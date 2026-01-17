@@ -65,3 +65,7 @@ During the split-codebase port:
 - The desktop app can supply embedded config to both modules without special casing.
 - Config layer is documented and stable for parallel implementers.
 
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+- Should coordinate with `epics/gpui/tasks/T-6/README.md` (DB config), `epics/gpui/tasks/T-7/README.md` (transport endpoints), and the desktop/server/daemon crate scaffolds from T-1.

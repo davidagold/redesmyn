@@ -115,6 +115,11 @@ We will discuss each domain and create detailed tickets before implementation.
 - `epics/gpui/tasks/T-7/README.md`: Transport + codec scaffolding (Protobuf + JSON debug).
 - `epics/gpui/tasks/T-8/README.md`: Rust `rn` skeleton (fast CLI harness).
 
+Sequencing intent:
+
+- Land T-1 first to establish workspace + crate seams.
+- After T-1, execute the remaining Domain 0 tickets in parallel (one task per branch/worktree), coordinating only where explicitly noted in the “Dependencies / sequencing” sections.
+
 ## 6) Split-codebase strategy (during port)
 
 While building `gpui`, we can keep the existing Python/TS implementation alongside the Rust workspace. The existing codebase serves as:
@@ -124,4 +129,3 @@ While building `gpui`, we can keep the existing Python/TS implementation alongsi
 - and a compatibility target when we choose “parity first” for a subdomain.
 
 We will deliberately choose which parts to port, redesign, or drop as we proceed.
-

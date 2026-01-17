@@ -70,6 +70,25 @@ These crates are intentionally small and boundary-oriented; they are not a “fi
 - Daemon-side primitives: process/session lifecycle, exec streaming, artifacts.
 - Depends on `redesmyn_domain` + `redesmyn_protocol`.
 
+#### `redesmyn_logging`
+
+- `tracing` + `tracing_subscriber` setup and shared span conventions.
+- Shared logging policy (metadata vs payload sampling/redaction).
+- Used by all binaries and most libraries.
+
+#### `redesmyn_config`
+
+- Typed config structs and layered config loading (defaults → TOML → env).
+- Clear separation between control-plane settings, daemon settings, and desktop settings.
+
+#### `redesmyn_transport` (+ optional `redesmyn_codec`)
+
+- Typed transport traits used by control plane to communicate with daemons.
+- In-proc transport for desktop embedding.
+- Optional split:
+  - `redesmyn_transport`: traits + in-proc channel transport
+  - `redesmyn_codec`: framing + protobuf/json codecs for network transports
+
 #### `redesmyn_control_plane` (lib) + `redesmyn-server` (bin)
 
 - Control plane API layer: serves the desktop UI + `rn`.
@@ -135,3 +154,7 @@ Enforce these rules by crate dependencies (and add a short doc explaining the in
 - Workspace structure: `rust/` + `rust/crates/`.
 - ID strategy is ULID/newtypes everywhere (implemented in T-2).
 
+## Dependencies / sequencing
+
+- This ticket is a prerequisite for all other Domain 0 tickets.
+- After this lands, Domain 0 tickets are intended to be runnable in parallel (one task per branch/worktree) with minimal merge conflicts by working primarily within their dedicated crates.
