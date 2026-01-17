@@ -1,8 +1,8 @@
 ---
-id: T-7
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-7-repo-executor-panel-polish
+rn: {}
 ---
 
 # T-7 Repo executor panel: remove copy buttons, clarify messaging, and consolidate status UI

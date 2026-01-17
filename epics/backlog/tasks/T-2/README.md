@@ -1,9 +1,9 @@
 ---
-id: T-2
 epic: backlog
-stacked_on:
 branch:
   suggested: rn/backlog/T-2-git-query-fastpath
+rn:
+  parent: null
 ---
 
 # T-2 Git query fastpath when a primary executor is available

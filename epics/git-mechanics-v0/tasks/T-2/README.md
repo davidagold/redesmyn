@@ -1,8 +1,8 @@
 ---
-id: T-2
-stacked_on:
-node:
-  branch: rn/git-mechanics-v0/T-2-out-of-sync-indicators
+rn:
+  node:
+    branch: rn/git-mechanics-v0/T-2-out-of-sync-indicators
+  parent: null
 ---
 
 # T-2 Surface out-of-sync / left-behind branches in the UI

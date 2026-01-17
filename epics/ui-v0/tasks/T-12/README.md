@@ -1,8 +1,8 @@
 ---
-id: T-12
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-12-inflight-progress-indicators
+rn: {}
 ---
 
 # T-12 UI: show in-flight progress for all actions (no “silent” requests)

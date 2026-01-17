@@ -1,8 +1,8 @@
 ---
-id: T-4
-stacked_on: T-3
-node:
-  branch: rn/messages-commands/T-4-dashboard
+rn:
+  node:
+    branch: rn/messages-commands/T-4-dashboard
+  parent: T-3
 ---
 
 # T-4 Dashboard: per-node thread + command issuance (graph-first)

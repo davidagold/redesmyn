@@ -1,11 +1,11 @@
 ---
-id: T-1
-stacked_on: null
-node:
-  branch: rn/revise-architecture/T-1-daemon-contracts
-linear:
-  issue_id: 3374fe5d-3ec1-4fab-a128-c1d7de20f956
-  identifier: RED-27
+rn:
+  node:
+    branch: rn/revise-architecture/T-1-daemon-contracts
+  linear:
+    issue_id: 3374fe5d-3ec1-4fab-a128-c1d7de20f956
+    identifier: RED-27
+  parent: null
 ---
 
 # T-1 Daemon ↔ control plane contracts + naming

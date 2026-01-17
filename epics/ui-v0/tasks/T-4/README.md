@@ -1,8 +1,8 @@
 ---
-id: T-4
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-4-details-linear-button-removal
+rn: {}
 ---
 
 # T-4 Remove redundant Linear connection button from Details panel

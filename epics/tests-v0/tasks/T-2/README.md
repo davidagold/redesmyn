@@ -1,9 +1,9 @@
 ---
-id: T-2
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-2-db-migrations
+rn:
+  node:
+    branch: rn/tests-v0/T-2-db-migrations
+  parent: T-1
+  after: []
 ---
 
 # T-2 DB/migrations + schema invariants

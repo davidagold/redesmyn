@@ -1,9 +1,10 @@
 ---
-slug: redesmyn
-name: Redesmyn
-root_branch: main
-linear:
-  project_id: null
+rn:
+  slug: redesmyn
+  name: Redesmyn
+  root_branch: main
+  linear:
+    project_id: null
 ---
 
 # Redesmyn Epic: Control Doc (Canonical)
@@ -80,16 +81,16 @@ Branch topology must be a **tree** (one parent per node), but Linear dependencie
 
 - Local docs store:
   - `group_under`: grouping only (maps to Linear parent/sub-issue; does **not** affect topology)
-  - `stacked_on`: a single primary dependency that defines the node’s parent (topology)
-  - `must_land_after`: additional merge-order constraints; effective `must_land_after` always includes `stacked_on` (no need to repeat)
+  - `parent`: a single primary dependency that defines the node’s parent (topology)
+  - `after`: additional merge-order constraints; effective `after` always includes `parent` (no need to repeat)
 
 When importing from Linear:
 
-- Use Linear **blocked-by** to populate `stacked_on`.
+- Use Linear **blocked-by** to populate `parent`.
   - Blocked tasks can still be started in parallel (stacked on the blocker branch), but their PRs cannot be merged until blockers merge, and they may require rebases as blockers evolve.
 - Inference rules:
-  - `blocked_by == 0` → `stacked_on` is empty; node parent is the epic root branch (typically the repo default branch).
-  - `blocked_by == 1` → `stacked_on` is the blocker’s task; node parent is the blocker’s node (PR base = blocker branch).
+  - `blocked_by == 0` → `parent` is empty; node parent is the epic root branch (typically the repo default branch).
+  - `blocked_by == 1` → `parent` is the blocker’s task; node parent is the blocker’s node (PR base = blocker branch).
   - `blocked_by > 1` → **error in v0**: user must choose a single parent explicitly (we do not guess).
   - Cycles/self-dependencies → error.
 
@@ -104,24 +105,25 @@ When importing from Linear:
 
 - One task per directory under `epics/<slug>/tasks/` (flat at the Redesmyn layer).
 - Use standard YAML frontmatter for metadata (visible, plain-text, git-friendly):
-  - `---` delimited YAML mapping at the top of the file.
+  - `---` delimited YAML mapping at the top of the file, with Redesmyn metadata under `rn:`.
 - Metadata uses stable local IDs so dependencies are unambiguous within an epic:
-  - Task local id: `T-<NNN>` (unique within the epic; used for refs like `stacked_on`)
+  - Task local id: `T-<NNN>` (unique within the epic; used for refs like `parent`)
+  - If the task directory is `T-<NNN>`, `rn.id` is inferred and should usually be omitted.
 - Task metadata includes:
-  - `id` (optional for Linear-only tasks; required for local-first)
-  - `group_under` (optional; grouping only)
-  - `stacked_on` (optional; defines node parent/topology)
-  - `must_land_after` (optional list; additional merge-order constraints)
-  - `linear.issue_id` / `linear.identifier` (optional; filled after `rn sync --from linear` / `rn sync --to linear`)
-  - `github.issue_id` / `github.issue_key` (optional; seam for later)
-  - `node.branch` (optional; filled when linked/created)
+  - `rn.id` (optional unless the task directory is not `T-<NNN>`)
+  - `rn.group_under` (optional; grouping only)
+  - `rn.parent` (optional; defines node parent/topology)
+  - `rn.after` (optional list; additional merge-order constraints)
+  - `rn.linear.issue_id` / `rn.linear.identifier` (optional; filled after `rn sync --from linear` / `rn sync --to linear`)
+  - `rn.github.issue_id` / `rn.github.issue_key` (optional; seam for later)
+  - `rn.node.branch` (optional; filled when linked/created)
 - Body conventions (v0):
   - `rn` may manage a “synced” section populated from Linear (or other providers).
   - Users may keep a “local notes / agent brief” section that `rn` never overwrites.
 
 ##### Reference forms (v0)
 
-Fields like `group_under`, `stacked_on`, and `must_land_after` accept a task ref in one of these forms:
+Fields like `rn.group_under`, `rn.parent`, and `rn.after` accept a task ref in one of these forms:
 
 - Local id: `T-123` (within the current epic)
 - Linear issue key: `ABC-123`
@@ -133,16 +135,16 @@ If a ref is ambiguous (matches multiple tasks), error in v0 (do not guess).
 
 ````md
 ---
-id: T-3
-group_under: T-1
-stacked_on: RED-122
-must_land_after:
-  - T-2
-linear:
-  issue_id: 00000000-0000-0000-0000-000000000000
-  identifier: RED-123
-node:
-  branch: rn/redesmyn/RED-123-rn-sync
+rn:
+  group_under: T-1
+  parent: RED-122
+  after:
+    - T-2
+  linear:
+    issue_id: 00000000-0000-0000-0000-000000000000
+    identifier: RED-123
+  node:
+    branch: rn/redesmyn/RED-123-rn-sync
 ---
 
 # RED-123 Implement `rn sync`
@@ -161,7 +163,7 @@ node:
 Redesmyn splits “authority” by concern:
 
 - **Local (task docs + DB projection)** is canonical for:
-  - branch graph topology (`stacked_on`)
+  - branch graph topology (`parent`)
   - agent instructions / local briefs
   - deterministic, reproducible “bootstrap this epic on a new machine”
 - **Linear** is canonical for:
@@ -297,12 +299,12 @@ These are enforced by the daemon and by `rn` when possible:
 - **Task**
   - `taskId`
   - `epicId`
-  - `localId`: `T-<NNN>` (stable within an epic; used by local docs and refs like `stacked_on`)
+  - `localId`: `T-<NNN>` (stable within an epic; used by local docs and refs like `parent`)
   - `title`, `body`
   - `refs`: `{ linearIssueId?, linearIssueKey?, githubIssueId?, localPath? }`
   - `groupUnderTaskId | null` (grouping only; maps to Linear parent/sub-issue)
-  - `stackedOnTaskId | null` (single; defines node parent/topology)
-  - `mustLandAfterTaskIds[]` (additional merge-order constraints; does not affect topology)
+  - `parentTaskId | null` (single; defines node parent/topology)
+  - `afterTaskIds[]` (additional merge-order constraints; does not affect topology)
   - `state` (todo/in_progress/done/blocked; provider-specific mapping)
   - `nodeId | null` (the primary node for this task, if assigned)
   - `agentId | null` (the task’s agent, if any)
@@ -529,7 +531,7 @@ This is the stable surface for both humans and agents.
 
 - `rn gh status|sync`
 - `rn linear auth|status|whoami`
-- `rn linear import --project <id> [--epic <epic>] [--create-nodes | --no-create-nodes]` (v0 bootstrap; deprecated in favor of `rn sync --from linear`; errors when multiple blockers require choosing a single `stacked_on`)
+- `rn linear import --project <id> [--epic <epic>] [--create-nodes | --no-create-nodes]` (v0 bootstrap; deprecated in favor of `rn sync --from linear`; errors when multiple blockers require choosing a single `parent`)
 
 ## 13) Web UI (v0)
 

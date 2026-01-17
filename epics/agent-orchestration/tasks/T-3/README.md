@@ -1,8 +1,8 @@
 ---
-id: T-3
-stacked_on: T-2
-node:
-  branch: rn/agent-orchestration/T-3-runner-tmux-cli
+rn:
+  node:
+    branch: rn/agent-orchestration/T-3-runner-tmux-cli
+  parent: T-2
 ---
 
 # T-3 Daemon + CLI: spawn/attach/stop per-task agents (tmux-first)

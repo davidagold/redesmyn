@@ -1,8 +1,8 @@
 ---
-id: T-2
-stacked_on: T-1
-node:
-  branch: rn/agent-orchestration/T-2-hosts-sessions-api
+rn:
+  node:
+    branch: rn/agent-orchestration/T-2-hosts-sessions-api
+  parent: T-1
 ---
 
 # T-2 DB + API: hosts, sessions, and orchestration mutations

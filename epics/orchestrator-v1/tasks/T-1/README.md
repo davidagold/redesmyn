@@ -1,9 +1,9 @@
 ---
-id: T-1
 epic: orchestrator-v1
-stacked_on:
 branch:
   suggested: rn/orchestrator-v1/T-1-resume-tokens
+rn:
+  parent: null
 ---
 
 # T-1 Conversation continuity + resume tokens (Codex-first)

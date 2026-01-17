@@ -1,8 +1,8 @@
 ---
-id: T-13
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-13-harness-amp
+rn:
+  node:
+    branch: rn/agent-orchestration/T-13-harness-amp
+  parent: T-15
 ---
 
 # T-13 Harness adapter: Amp

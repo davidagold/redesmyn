@@ -1,8 +1,8 @@
 ---
-id: T-6
-stacked_on: T-4
-node:
-  branch: rn/agent-orchestration/T-6-websocket-stream
+rn:
+  node:
+    branch: rn/agent-orchestration/T-6-websocket-stream
+  parent: T-4
 ---
 
 # T-6 WebSocket: live graph updates (activity + presence)

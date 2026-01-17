@@ -1,11 +1,11 @@
 ---
-id: T-4
-stacked_on: T-3
-node:
-  branch: rn/linear-integration/T-4-sync-to-linear
-linear:
-  issue_id: b790eca1-b0f3-4161-9c04-c44774ccdf97
-  identifier: RED-14
+rn:
+  node:
+    branch: rn/linear-integration/T-4-sync-to-linear
+  linear:
+    issue_id: b790eca1-b0f3-4161-9c04-c44774ccdf97
+    identifier: RED-14
+  parent: T-3
 ---
 
 # T-4 `rn sync --to linear`: create/update issues + overwrite semantics
@@ -17,7 +17,7 @@ linear:
   - update linked issues with naive overwrite (title/description/state/dependencies)
   - apply the epic slug label to created/updated issues
 - Push dependency mapping:
-  - `stacked_on` and `must_land_after` become “blocked by” edges (best-effort)
+  - `parent` and `after` become “blocked by” edges (best-effort)
 
 ## Acceptance Criteria
 

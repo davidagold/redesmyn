@@ -1,8 +1,8 @@
 ---
-id: T-5
-stacked_on: T-3
-node:
-  branch: rn/redesmyn/task-5-worktree-path
+rn:
+  node:
+    branch: rn/redesmyn/task-5-worktree-path
+  parent: T-3
 ---
 
 # T-5 Worktrees: record `nodes.worktree_path`

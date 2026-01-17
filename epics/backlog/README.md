@@ -1,9 +1,10 @@
 ---
-slug: backlog
-name: Backlog
-root_branch: main
-linear:
-  project_id: null
+rn:
+  slug: backlog
+  name: Backlog
+  root_branch: main
+  linear:
+    project_id: null
 ---
 
 # Backlog Epic: Control Doc (Stub)

@@ -1,9 +1,9 @@
 ---
-id: T-3
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-3-git-mechanics
+rn:
+  node:
+    branch: rn/tests-v0/T-3-git-mechanics
+  parent: T-1
+  after: []
 ---
 
 # T-3 Git mechanics (unit + integration)

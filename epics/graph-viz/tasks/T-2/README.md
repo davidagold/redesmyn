@@ -1,8 +1,8 @@
 ---
-id: T-2
-stacked_on: T-1
-node:
-  branch: rn/graph-viz/task-2-interactions-selection
+rn:
+  node:
+    branch: rn/graph-viz/task-2-interactions-selection
+  parent: T-1
 ---
 
 # T-2 Graph interactions + selection model

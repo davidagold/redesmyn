@@ -1,12 +1,12 @@
 ---
-id: T-6
 epic: harness-interface-v0
-stacked_on: T-2
 branch:
   suggested: rn/harness-interface-v0/T-6-agent-doctor
-linear:
-  issue_id: ef3c0d08-31ca-49e2-9b1e-4f9fa51f3324
-  identifier: RED-23
+rn:
+  linear:
+    issue_id: ef3c0d08-31ca-49e2-9b1e-4f9fa51f3324
+    identifier: RED-23
+  parent: T-2
 ---
 
 # T-6 Agent doctor + capabilities surface (UI + CLI)

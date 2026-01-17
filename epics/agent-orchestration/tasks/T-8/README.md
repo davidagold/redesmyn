@@ -1,8 +1,8 @@
 ---
-id: T-8
-stacked_on: T-7
-node:
-  branch: rn/agent-orchestration/T-8-dashboard-graph-actions
+rn:
+  node:
+    branch: rn/agent-orchestration/T-8-dashboard-graph-actions
+  parent: T-7
 ---
 
 # T-8 Dashboard: graph-first agent actions

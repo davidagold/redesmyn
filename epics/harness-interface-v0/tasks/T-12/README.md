@@ -1,12 +1,12 @@
 ---
-id: T-12
 epic: harness-interface-v0
-stacked_on: T-11
 branch:
   suggested: rn/harness-interface-v0/T-12-task-card-messaging
-linear:
-  issue_id: null
-  identifier: null
+rn:
+  linear:
+    issue_id: null
+    identifier: null
+  parent: T-11
 ---
 
 # T-12 UI: task card messaging (structured + interactive send, resume, interrupt)

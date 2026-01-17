@@ -1,8 +1,8 @@
 ---
-id: T-5
-stacked_on: T-3
-node:
-  branch: rn/agent-orchestration/T-5-messages-commands
+rn:
+  node:
+    branch: rn/agent-orchestration/T-5-messages-commands
+  parent: T-3
 ---
 
 # T-5 Messages + commands (moved to separate epic)

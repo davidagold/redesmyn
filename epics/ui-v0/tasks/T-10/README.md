@@ -1,8 +1,8 @@
 ---
-id: T-10
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-10-epic-menu-hover-full-width
+rn: {}
 ---
 
 # T-10 Epic menu hover background should be full width

@@ -1,12 +1,12 @@
 ---
-id: T-11
 epic: harness-interface-v0
-stacked_on: T-10
 branch:
   suggested: rn/harness-interface-v0/T-11-structured-resume-transport
-linear:
-  issue_id: null
-  identifier: null
+rn:
+  linear:
+    issue_id: null
+    identifier: null
+  parent: T-10
 ---
 
 # T-11 Structured continuation transport: resume-by-id turns (enables T-5)

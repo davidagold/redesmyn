@@ -1,11 +1,11 @@
 ---
-id: T-14
 epic: harness-interface-v0
-stacked_on: T-7
-must_land_after:
-- T-10
 branch:
   suggested: rn/harness-interface-v0/T-14-structured-log-capture-race
+rn:
+  parent: T-7
+  after:
+  - T-10
 ---
 
 # T-14 Structured tmux log capture race (missing `thread.started` / early events)

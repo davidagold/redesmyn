@@ -1,9 +1,9 @@
 ---
-id: T-1
-stacked_on: null
-must_land_after: []
-node:
-  branch: rn/github-integration/T-1-github-auth
+rn:
+  node:
+    branch: rn/github-integration/T-1-github-auth
+  parent: null
+  after: []
 ---
 
 # T-1 Machine-scoped GitHub auth (OAuth) + credential store

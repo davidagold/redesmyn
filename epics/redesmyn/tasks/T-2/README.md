@@ -1,8 +1,8 @@
 ---
-id: T-2
-stacked_on: T-1
-node:
-  branch: rn/redesmyn/task-2-api-epics-tasks-nodes
+rn:
+  node:
+    branch: rn/redesmyn/task-2-api-epics-tasks-nodes
+  parent: T-1
 ---
 
 # T-2 API: expose epics/tasks/nodes/agents in /v1

@@ -1,8 +1,8 @@
 ---
-id: T-11
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-11-harness-claude-code
+rn:
+  node:
+    branch: rn/agent-orchestration/T-11-harness-claude-code
+  parent: T-15
 ---
 
 # T-11 Harness adapter: Claude Code

@@ -1,9 +1,9 @@
 ---
-id: T-1
 epic: ui-v0
-stacked_on:
 branch:
   suggested: rn/ui-v0/T-1-ready-to-merge-spine
+rn:
+  parent: null
 ---
 
 # T-1 “Ready to merge” should align with merge semantics
@@ -34,7 +34,7 @@ Make the UI behavior match the merge mental model:
 
 When the user toggles “Ready to merge” **on** for task `T`:
 
-- Identify `T`’s **merge spine** (via `stacked_on` / `parent_task_id`), from root → leaf.
+- Identify `T`’s **merge spine** (via `parent` / `parent_task_id`), from root → leaf.
 - Compute the **active spine** = spine tasks that are not already “merged” (v0 proxy: `TaskState.Done`).
 - Mark all active spine tasks `merge_ready_at = now` in a single operation (best-effort, but prefer atomicity).
 

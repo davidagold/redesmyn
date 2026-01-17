@@ -1,7 +1,7 @@
 ---
-id: T-4
-node:
-  branch: rn/git-mechanics-v0/T-4-skip-done-spine
+rn:
+  node:
+    branch: rn/git-mechanics-v0/T-4-skip-done-spine
 ---
 
 # T-4 Skip rebasing already-merged/done spine tasks when merging

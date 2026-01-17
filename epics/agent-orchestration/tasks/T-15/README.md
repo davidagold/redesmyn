@@ -1,8 +1,8 @@
 ---
-id: T-15
-stacked_on: T-3
-node:
-  branch: rn/agent-orchestration/T-15-harness-profiles-doctor
+rn:
+  node:
+    branch: rn/agent-orchestration/T-15-harness-profiles-doctor
+  parent: T-3
 ---
 
 # T-15 Launch configurations + `rn agent doctor` validation

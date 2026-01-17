@@ -1,8 +1,8 @@
 ---
-id: T-17
-stacked_on: T-16
-node:
-  branch: rn/agent-orchestration/T-17-agent-model-simplify
+rn:
+  node:
+    branch: rn/agent-orchestration/T-17-agent-model-simplify
+  parent: T-16
 ---
 
 # T-17 Agent model + status: simplify + make tmux the source of truth

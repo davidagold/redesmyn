@@ -1,8 +1,8 @@
 ---
-id: T-3
-stacked_on: T-2
-node:
-  branch: rn/messages-commands/T-3-runner-delivery
+rn:
+  node:
+    branch: rn/messages-commands/T-3-runner-delivery
+  parent: T-2
 ---
 
 # T-3 Runner + harness integration: delivery modes (hooks/cooperative/manual)

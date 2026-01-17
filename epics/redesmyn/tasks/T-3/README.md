@@ -1,8 +1,8 @@
 ---
-id: T-3
-stacked_on: T-2
-node:
-  branch: rn/redesmyn/task-3-dashboard-epic-graph
+rn:
+  node:
+    branch: rn/redesmyn/task-3-dashboard-epic-graph
+  parent: T-2
 ---
 
 # T-3 Dashboard: epic overview + node graph (v0)

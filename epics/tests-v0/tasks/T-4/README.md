@@ -1,9 +1,9 @@
 ---
-id: T-4
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-4-api-integration
+rn:
+  node:
+    branch: rn/tests-v0/T-4-api-integration
+  parent: T-1
+  after: []
 ---
 
 # T-4 API integration tests (ASGI + DB)

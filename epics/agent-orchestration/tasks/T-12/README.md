@@ -1,8 +1,8 @@
 ---
-id: T-12
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-12-harness-cursor
+rn:
+  node:
+    branch: rn/agent-orchestration/T-12-harness-cursor
+  parent: T-15
 ---
 
 # T-12 Harness adapter: Cursor

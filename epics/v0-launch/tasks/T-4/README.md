@@ -1,6 +1,6 @@
 ---
-id: T-4
-stacked_on: T-1
+rn:
+  parent: T-1
 ---
 
 # T-4 Daemon agent lifecycle: start/stop/restart via protocol

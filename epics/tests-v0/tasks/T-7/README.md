@@ -1,9 +1,9 @@
 ---
-id: T-7
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-7-cli-integration
+rn:
+  node:
+    branch: rn/tests-v0/T-7-cli-integration
+  parent: T-1
+  after: []
 ---
 
 # T-7 CLI integration tests
@@ -20,8 +20,8 @@ Validate that key CLI commands work end-to-end against real repo state and the l
   - refuses nesting by default (unless `--nested`)
   - respects `--no-create`
 - `rn sync --from local --no-create-branches`:
-  - still syncs **task topology** (e.g., `stacked_on` → `parent_task_id`)
   - does **not** assign/create branches
+  - still syncs **task topology** (e.g., `parent` → `parent_task_id`)
 - `rn merge` / `rn restack`:
   - prints a plan and prompts for confirmation by default
   - supports a non-interactive `-y` path

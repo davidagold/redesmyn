@@ -1,9 +1,9 @@
 ---
-id: T-5
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-5-daemon-ws
+rn:
+  node:
+    branch: rn/tests-v0/T-5-daemon-ws
+  parent: T-1
+  after: []
 ---
 
 # T-5 Daemon/WS protocol + runtime integration tests

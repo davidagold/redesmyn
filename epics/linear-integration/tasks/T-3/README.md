@@ -1,11 +1,11 @@
 ---
-id: T-3
-stacked_on: T-2
-node:
-  branch: rn/linear-integration/T-3-sync-from-linear
-linear:
-  issue_id: 948137cf-96c4-4765-8cd2-5337dfda019c
-  identifier: RED-13
+rn:
+  node:
+    branch: rn/linear-integration/T-3-sync-from-linear
+  linear:
+    issue_id: 948137cf-96c4-4765-8cd2-5337dfda019c
+    identifier: RED-13
+  parent: T-2
 ---
 
 # T-3 `rn sync --from linear`: label-filtered import + ID allocation + parent selection
@@ -18,8 +18,8 @@ linear:
   - allocate stable local ids (`T-###`) for imported issues and persist the association
   - infer topology constraints from blockers:
     - 0 blockers → no parent
-    - 1 blocker → set `stacked_on`
-    - >1 blockers → interactive parent selection (including “No parent”); store remaining blockers in `must_land_after`
+    - 1 blocker → set `parent`
+    - >1 blockers → interactive parent selection (including “No parent”); store remaining blockers in `after`
 
 ## Acceptance Criteria
 

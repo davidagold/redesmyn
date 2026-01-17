@@ -1,9 +1,10 @@
 ---
-slug: linear-integration
-name: Linear Integration
-root_branch: main
-linear:
-  project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
+rn:
+  slug: linear-integration
+  name: Linear Integration
+  root_branch: main
+  linear:
+    project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
 ---
 
 # Linear Integration Epic: Control Doc (Canonical)
@@ -33,7 +34,7 @@ The user should:
   - pull Linear issues → local task docs + DB tasks
   - filter by a label matching the epic slug (see §4.2)
   - allocate stable local task ids (`T-###`) for imported issues
-  - infer `stacked_on`/`must_land_after` from Linear blockers with an interactive “pick parent” flow for multi-blockers
+  - infer `parent`/`after` from Linear blockers with an interactive “pick parent” flow for multi-blockers
 - `rn sync --to linear`:
   - create issues for local-only tasks and apply the epic label
   - overwrite title/description/state/dependencies for linked issues (naive overwrite)
@@ -88,12 +89,12 @@ Scoping rule (v0):
 
 ### 4.3 Dependencies mapping (best-effort, lossy)
 
-- Local `stacked_on` (single parent) maps to one Linear “blocked by” edge.
-- Local `must_land_after` maps to additional “blocked by” edges.
+- Local `parent` (single parent) maps to one Linear “blocked by” edge.
+- Local `after` maps to additional “blocked by” edges.
 - On pull:
-  - 0 blockers → `stacked_on = null`
-  - 1 blocker → set `stacked_on` to that issue
-  - >1 blockers → prompt user to pick `stacked_on` (including “No parent”), and store the remaining blockers in `must_land_after`
+  - 0 blockers → `parent = null`
+  - 1 blocker → set `parent` to that issue
+  - >1 blockers → prompt user to pick `parent` (including “No parent”), and store the remaining blockers in `after`
 
 ### 4.4 State mapping (coarse)
 

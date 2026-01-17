@@ -1,7 +1,7 @@
 ---
-id: T-3
-node:
-  branch: rn/git-mechanics-v1/T-3-abort-merge-run
+rn:
+  node:
+    branch: rn/git-mechanics-v1/T-3-abort-merge-run
 ---
 
 # T-3 Abort merge runs (cancel) + future rollback design

@@ -1,6 +1,6 @@
 ---
-id: T-8
-stacked_on: T-1
+rn:
+  parent: T-1
 ---
 
 # T-8 Package dashboard assets for installs

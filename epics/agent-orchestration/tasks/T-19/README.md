@@ -1,8 +1,8 @@
 ---
-id: T-19
-stacked_on: T-18
-node:
-  branch: rn/agent-orchestration/T-19-merge
+rn:
+  node:
+    branch: rn/agent-orchestration/T-19-merge
+  parent: T-18
 ---
 
 # T-19 Merge workflow: “ready to merge” + `rn merge`

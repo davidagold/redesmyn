@@ -1,12 +1,12 @@
 ---
-id: T-8
 epic: harness-interface-v0
-stacked_on: null
 branch:
   suggested: rn/harness-interface-v0/T-8-remove-agent-construct
-linear:
-  issue_id: 262fc098-360b-4047-a2e6-c66ff26f07e0
-  identifier: RED-25
+rn:
+  linear:
+    issue_id: 262fc098-360b-4047-a2e6-c66ff26f07e0
+    identifier: RED-25
+  parent: null
 ---
 
 # T-8 Remove DB `Agent` construct; “Agent” is the program (not “Harness”)

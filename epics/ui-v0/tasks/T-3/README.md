@@ -1,8 +1,8 @@
 ---
-id: T-3
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-3-frontend-refactor
+rn: {}
 ---
 
 # T-3 Frontend refactor (v0 legibility + reuse)

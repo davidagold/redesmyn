@@ -1,8 +1,8 @@
 ---
-id: T-9
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-9-left-align-commit-titles
+rn: {}
 ---
 
 # T-9 Left-align commit titles (keep trunk spacing invariant)

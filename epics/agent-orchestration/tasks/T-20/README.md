@@ -1,8 +1,8 @@
 ---
-id: T-20
-stacked_on: T-19
-node:
-  branch: rn/agent-orchestration/T-20-merge-complete
+rn:
+  node:
+    branch: rn/agent-orchestration/T-20-merge-complete
+  parent: T-19
 ---
 
 # T-20 Merge UX: complete styling + auto-mark merged ancestors

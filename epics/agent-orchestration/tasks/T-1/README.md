@@ -1,8 +1,8 @@
 ---
-id: T-1
-stacked_on:
-node:
-  branch: rn/agent-orchestration/T-1-agent-runtime-architecture
+rn:
+  node:
+    branch: rn/agent-orchestration/T-1-agent-runtime-architecture
+  parent: null
 ---
 
 # T-1 Agent runtime architecture + contracts

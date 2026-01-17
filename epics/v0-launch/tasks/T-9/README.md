@@ -1,7 +1,7 @@
 ---
-id: T-9
-stacked_on: T-7
-must_land_after:
+rn:
+  parent: T-7
+  after:
   - T-8
 ---
 

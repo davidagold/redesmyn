@@ -1,8 +1,8 @@
 ---
-id: T-1
-stacked_on:
-node:
-  branch: rn/git-mechanics-v0/T-1-cascade-merge
+rn:
+  node:
+    branch: rn/git-mechanics-v0/T-1-cascade-merge
+  parent: null
 ---
 
 # T-1 Stack-preserving cascade merge (CLI + API + UI)

@@ -1,6 +1,6 @@
 ---
-id: T-1
-stacked_on: null
+rn:
+  parent: null
 ---
 
 # T-1 V0 CLI contract: remove `rn observer` + remove `rn dev`

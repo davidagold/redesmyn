@@ -1,8 +1,8 @@
 ---
-id: T-10
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-10-harness-codex
+rn:
+  node:
+    branch: rn/agent-orchestration/T-10-harness-codex
+  parent: T-15
 ---
 
 # T-10 Harness adapter: Codex

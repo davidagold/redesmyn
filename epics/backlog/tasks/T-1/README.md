@@ -1,5 +1,5 @@
 ---
-id: T-1
+rn: {}
 ---
 
 # T-1 Rebase: update worktree-bound branch refs

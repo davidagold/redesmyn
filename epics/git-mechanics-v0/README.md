@@ -1,9 +1,10 @@
 ---
-slug: git-mechanics-v0
-name: Git Mechanics v0
-root_branch: main
-linear:
-  project_id: null
+rn:
+  slug: git-mechanics-v0
+  name: Git Mechanics v0
+  root_branch: main
+  linear:
+    project_id: null
 ---
 
 # Git Mechanics v0 Epic: Control Doc (Canonical)

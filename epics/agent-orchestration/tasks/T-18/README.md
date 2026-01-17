@@ -1,8 +1,8 @@
 ---
-id: T-18
-stacked_on: T-17
-node:
-  branch: rn/agent-orchestration/T-18-sandboxing
+rn:
+  node:
+    branch: rn/agent-orchestration/T-18-sandboxing
+  parent: T-17
 ---
 
 # T-18 Sandboxing: run harnesses in a controlled environment

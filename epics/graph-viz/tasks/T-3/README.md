@@ -1,8 +1,8 @@
 ---
-id: T-3
-stacked_on: T-1
-node:
-  branch: rn/graph-viz/task-3-elk-layout
+rn:
+  node:
+    branch: rn/graph-viz/task-3-elk-layout
+  parent: T-1
 ---
 
 # T-3 Deterministic layout (ELK) + fit-to-view

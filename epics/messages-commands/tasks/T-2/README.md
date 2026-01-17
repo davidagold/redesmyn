@@ -1,8 +1,8 @@
 ---
-id: T-2
-stacked_on: T-1
-node:
-  branch: rn/messages-commands/T-2-db-api
+rn:
+  node:
+    branch: rn/messages-commands/T-2-db-api
+  parent: T-1
 ---
 
 # T-2 DB + API: messages, threads, and command loop

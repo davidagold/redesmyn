@@ -1,9 +1,9 @@
 ---
-id: T-4
-stacked_on: T-3
-must_land_after: []
-node:
-  branch: rn/github-integration/T-4-dashboard-github-ui
+rn:
+  node:
+    branch: rn/github-integration/T-4-dashboard-github-ui
+  parent: T-3
+  after: []
 ---
 
 # T-4 Dashboard UX: icon-only integration indicators + task-card PR badge

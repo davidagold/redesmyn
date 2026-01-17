@@ -1,9 +1,9 @@
 ---
-id: T-2
-stacked_on: null
-must_land_after: []
-node:
-  branch: rn/github-integration/T-2-github-repo-association
+rn:
+  node:
+    branch: rn/github-integration/T-2-github-repo-association
+  parent: null
+  after: []
 ---
 
 # T-2 GitHub repo association (auto-detect + overrides) + epic-level badge

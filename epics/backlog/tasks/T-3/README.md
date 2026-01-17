@@ -1,9 +1,9 @@
 ---
-id: T-3
 epic: backlog
-stacked_on:
 branch:
   suggested: rn/backlog/T-3-linear-auth-recovery
+rn:
+  parent: null
 ---
 
 # T-3 Linear: recover from 401 “not authenticated” in server API

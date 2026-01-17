@@ -1,6 +1,6 @@
 ---
-id: T-6
-stacked_on: T-2
+rn:
+  parent: T-2
 ---
 
 # T-6 `rn daemon up/down/status`: background daemon + attach/registry ergonomics

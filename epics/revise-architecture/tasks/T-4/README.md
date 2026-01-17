@@ -1,11 +1,11 @@
 ---
-id: T-4
-stacked_on: T-3
-node:
-  branch: rn/revise-architecture/T-4-rn-up
-linear:
-  issue_id: f1b429df-7ad2-4c7d-9082-14bc93b32c60
-  identifier: RED-33
+rn:
+  node:
+    branch: rn/revise-architecture/T-4-rn-up
+  linear:
+    issue_id: f1b429df-7ad2-4c7d-9082-14bc93b32c60
+    identifier: RED-33
+  parent: T-3
 ---
 
 # T-4 CLI UX: `rn daemon up/down/status` + consolidate server/daemon concepts

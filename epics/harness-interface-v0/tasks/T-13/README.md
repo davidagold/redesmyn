@@ -1,12 +1,12 @@
 ---
-id: T-13
 epic: harness-interface-v0
-stacked_on: T-12
 branch:
   suggested: rn/harness-interface-v0/T-13-surface-external-session-id
-linear:
-  issue_id: null
-  identifier: null
+rn:
+  linear:
+    issue_id: null
+    identifier: null
+  parent: T-12
 ---
 
 # T-13 UI: surface external session id (thread/session) when available

@@ -1,11 +1,11 @@
 ---
-id: T-8
-stacked_on: T-1
-node:
-  branch: rn/revise-architecture/T-8-agent-config-session
-linear:
-  issue_id: c0c8a260-e51c-479e-aa65-320effe4a6aa
-  identifier: RED-37
+rn:
+  node:
+    branch: rn/revise-architecture/T-8-agent-config-session
+  linear:
+    issue_id: c0c8a260-e51c-479e-aa65-320effe4a6aa
+    identifier: RED-37
+  parent: T-1
 ---
 
 # T-8 Split agent config from agent sessions (AgentConfig + AgentSession)

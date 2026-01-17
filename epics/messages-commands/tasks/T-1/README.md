@@ -1,8 +1,8 @@
 ---
-id: T-1
-stacked_on:
-node:
-  branch: rn/messages-commands/T-1-design
+rn:
+  node:
+    branch: rn/messages-commands/T-1-design
+  parent: null
 ---
 
 # T-1 Design: messaging + commands model + UX

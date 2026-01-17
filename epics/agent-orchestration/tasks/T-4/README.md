@@ -1,8 +1,8 @@
 ---
-id: T-4
-stacked_on: T-3
-node:
-  branch: rn/agent-orchestration/T-4-repo-observer-telemetry
+rn:
+  node:
+    branch: rn/agent-orchestration/T-4-repo-observer-telemetry
+  parent: T-3
 ---
 
 # T-4 Repo observer: commits + worktree telemetry → events

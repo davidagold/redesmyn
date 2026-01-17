@@ -1,11 +1,11 @@
 ---
-id: T-5
-stacked_on: T-2
-node:
-  branch: rn/linear-integration/T-5-dashboard-linear-sync
-linear:
-  issue_id: 2be4144e-5201-461e-8982-6e0107ab57ed
-  identifier: RED-15
+rn:
+  node:
+    branch: rn/linear-integration/T-5-dashboard-linear-sync
+  linear:
+    issue_id: 2be4144e-5201-461e-8982-6e0107ab57ed
+    identifier: RED-15
+  parent: T-2
 ---
 
 # T-5 Dashboard: unified “Linear” sync menu button (epic + task)

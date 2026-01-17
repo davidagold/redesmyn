@@ -1,11 +1,11 @@
 ---
-id: T-5
-stacked_on: T-2
-node:
-  branch: rn/revise-architecture/T-5-dashboard-daemon-status
-linear:
-  issue_id: cb10b4c4-ed31-413c-bfd9-a62a981cd713
-  identifier: RED-34
+rn:
+  node:
+    branch: rn/revise-architecture/T-5-dashboard-daemon-status
+  linear:
+    issue_id: cb10b4c4-ed31-413c-bfd9-a62a981cd713
+    identifier: RED-34
+  parent: T-2
 ---
 
 # T-5 Dashboard: daemon status + offline guidance

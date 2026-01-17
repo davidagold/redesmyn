@@ -1,11 +1,11 @@
 ---
-id: T-3
-stacked_on: T-2
-node:
-  branch: rn/revise-architecture/T-3-daemon
-linear:
-  issue_id: 6747f8cb-5619-4faa-897f-ea4d7d1c96f5
-  identifier: RED-32
+rn:
+  node:
+    branch: rn/revise-architecture/T-3-daemon
+  linear:
+    issue_id: 6747f8cb-5619-4faa-897f-ea4d7d1c96f5
+    identifier: RED-32
+  parent: T-2
 ---
 
 # T-3 Daemon: connect + telemetry + orchestration loop

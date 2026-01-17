@@ -1,10 +1,10 @@
 ---
-id: T-5
-stacked_on: null
-must_land_after:
+rn:
+  node:
+    branch: rn/github-integration/T-5-pr-status-details
+  parent: null
+  after:
   - T-4
-node:
-  branch: rn/github-integration/T-5-pr-status-details
 ---
 
 # T-5 Nice-to-have: PR checks/review/close affordances

@@ -1,12 +1,12 @@
 ---
-id: T-10
 epic: harness-interface-v0
-stacked_on: T-3
 branch:
   suggested: rn/harness-interface-v0/T-10-structured-exec-events
-linear:
-  issue_id: b2435ea5-1887-4e55-8e23-5bb3a12565ad
-  identifier: RED-18
+rn:
+  linear:
+    issue_id: b2435ea5-1887-4e55-8e23-5bb3a12565ad
+    identifier: RED-18
+  parent: T-3
 ---
 
 # T-10 Structured exec mode + semantic event stream plumbing (enables T-5/T-9)

@@ -1,11 +1,11 @@
 ---
-id: T-2
-stacked_on: T-1
-node:
-  branch: rn/linear-integration/T-2-linear-client-write
-linear:
-  issue_id: e173b21e-02b2-4f33-9b1b-aace082e8199
-  identifier: RED-12
+rn:
+  node:
+    branch: rn/linear-integration/T-2-linear-client-write
+  linear:
+    issue_id: e173b21e-02b2-4f33-9b1b-aace082e8199
+    identifier: RED-12
+  parent: T-1
 ---
 
 # T-2 Linear client: write support (labels, state, dependencies, create/update)

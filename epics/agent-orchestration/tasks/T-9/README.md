@@ -1,10 +1,10 @@
 ---
-id: T-9
-stacked_on: T-4
-must_land_after:
+rn:
+  node:
+    branch: rn/agent-orchestration/T-9-worktree-ux
+  parent: T-4
+  after:
   - T-2
-node:
-  branch: rn/agent-orchestration/T-9-worktree-ux
 ---
 
 # T-9 Worktrees UX: `rn shell` + worktree status surfaces

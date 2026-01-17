@@ -1,15 +1,15 @@
 ---
-id: T-5
 epic: harness-interface-v0
-stacked_on: T-11
-must_land_after:
-- T-2
-- T-4
 branch:
   suggested: rn/harness-interface-v0/T-5-conflict-auto-assist
-linear:
-  issue_id: 97b1529a-24bb-4ddf-8856-67afbe5a4f9c
-  identifier: RED-22
+rn:
+  linear:
+    issue_id: 97b1529a-24bb-4ddf-8856-67afbe5a4f9c
+    identifier: RED-22
+  parent: T-11
+  after:
+  - T-2
+  - T-4
 ---
 
 # T-5 Conflict auto-assist + gated auto-resume (repo clean + agent turn complete)

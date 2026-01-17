@@ -1,8 +1,8 @@
 ---
-id: T-4
-stacked_on: T-3
-node:
-  branch: rn/redesmyn/task-4-remove-task-authority
+rn:
+  node:
+    branch: rn/redesmyn/task-4-remove-task-authority
+  parent: T-3
 ---
 
 # T-4 Remove task authority

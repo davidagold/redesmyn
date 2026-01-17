@@ -1,12 +1,12 @@
 ---
-id: T-9
 epic: harness-interface-v0
-stacked_on: T-10
 branch:
   suggested: rn/harness-interface-v0/T-9-agent-message-preview
-linear:
-  issue_id: 847901fe-17cd-418b-890d-f105558f747b
-  identifier: RED-26
+rn:
+  linear:
+    issue_id: 847901fe-17cd-418b-890d-f105558f747b
+    identifier: RED-26
+  parent: T-10
 ---
 
 # T-9 UI: task card agent message preview (1-line, truncated)

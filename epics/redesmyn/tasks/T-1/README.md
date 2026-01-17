@@ -1,8 +1,8 @@
 ---
-id: T-1
-stacked_on:
-node:
-  branch: rn/redesmyn/task-1-dogfood-cli
+rn:
+  node:
+    branch: rn/redesmyn/task-1-dogfood-cli
+  parent: null
 ---
 
 # T-1 Dogfood: implement epic/node/task/agent commands

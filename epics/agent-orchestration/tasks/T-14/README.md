@@ -1,8 +1,8 @@
 ---
-id: T-14
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-14-harness-opencode
+rn:
+  node:
+    branch: rn/agent-orchestration/T-14-harness-opencode
+  parent: T-15
 ---
 
 # T-14 Harness adapter: OpenCode

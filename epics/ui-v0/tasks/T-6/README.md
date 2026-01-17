@@ -1,8 +1,8 @@
 ---
-id: T-6
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-6-error-tooltip-removal
+rn: {}
 ---
 
 # T-6 Remove tooltip that duplicates error details already shown in the callout

@@ -1,6 +1,6 @@
 ---
-id: T-3
-stacked_on: T-5
+rn:
+  parent: T-5
 ---
 
 # T-3 Remove local mode: make the control plane pure

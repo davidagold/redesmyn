@@ -1,8 +1,8 @@
 ---
-id: T-8
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-8-graph-selection-simplify
+rn: {}
 ---
 
 # T-8 Remove graph on-select viewport behavior + diagonalization repositioning

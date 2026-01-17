@@ -1,12 +1,13 @@
 ---
-slug: harness-interface-v0
-name: Harness interface v0
-root_branch: main
 supersedes:
 - epic: agent-orchestration
   scope: harness-related unfinished work (profiles/adapters/doctor)
-linear:
-  project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
+rn:
+  slug: harness-interface-v0
+  name: Harness interface v0
+  root_branch: main
+  linear:
+    project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
 ---
 
 # Harness Interface v0 Epic: Control Doc (Canonical)

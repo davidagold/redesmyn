@@ -1,10 +1,11 @@
 ---
-slug: github-integration
-name: GitHub Integration
-root_branch: main
 github:
   host: github.com
   auth: oauth_machine_scoped
+rn:
+  slug: github-integration
+  name: GitHub Integration
+  root_branch: main
 ---
 
 # GitHub Integration Epic: Control Doc (Canonical)

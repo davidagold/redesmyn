@@ -1,8 +1,8 @@
 ---
-id: T-5
-stacked_on:
-node:
-  branch: rn/git-mechanics-v0/T-5-squash-merge-mode
+rn:
+  node:
+    branch: rn/git-mechanics-v0/T-5-squash-merge-mode
+  parent: null
 ---
 
 # T-5 Squash merge mode (one commit per spine task)

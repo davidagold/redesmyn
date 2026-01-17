@@ -1,8 +1,8 @@
 ---
-id: T-4
-stacked_on: T-1
-node:
-  branch: rn/graph-viz/task-4-commit-strings-api
+rn:
+  node:
+    branch: rn/graph-viz/task-4-commit-strings-api
+  parent: T-1
 ---
 
 # T-4 Commit strings (API + data model)

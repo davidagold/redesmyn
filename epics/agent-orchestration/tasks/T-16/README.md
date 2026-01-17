@@ -1,8 +1,8 @@
 ---
-id: T-16
-stacked_on: T-15
-node:
-  branch: rn/agent-orchestration/T-16-settings-defaults
+rn:
+  node:
+    branch: rn/agent-orchestration/T-16-settings-defaults
+  parent: T-15
 ---
 
 # T-16 Settings defaults: harness + prelude configuration

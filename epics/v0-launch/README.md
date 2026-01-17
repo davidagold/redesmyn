@@ -1,9 +1,10 @@
 ---
-slug: v0-launch
-name: V0 Launch
-root_branch: main
-linear:
-  project_id: null
+rn:
+  slug: v0-launch
+  name: V0 Launch
+  root_branch: main
+  linear:
+    project_id: null
 ---
 
 # V0 Launch Epic: Control Doc (Canonical)
@@ -84,7 +85,7 @@ This work can be parallelized into tracks, then merged in a controlled order:
 - **Track D — Startup UX + dev glue**
   - T-6 (`rn daemon up/down/status`) → T-7 (`rn up/down`) → T-9 (`justfile` coherence)
 
-Where a task depends on multiple tracks, we express the merge sequencing via `must_land_after` in the task metadata.
+Where a task depends on multiple tracks, we express merge sequencing via `rn.after` in the task metadata.
 
 ## 8) Notes / constraints
 

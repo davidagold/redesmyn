@@ -1,9 +1,10 @@
 ---
-slug: agent-orchestration
-name: Agent Orchestration
-root_branch: main
-linear:
-  project_id: null
+rn:
+  slug: agent-orchestration
+  name: Agent Orchestration
+  root_branch: main
+  linear:
+    project_id: null
 ---
 
 # Agent Orchestration Epic: Control Doc (Canonical)

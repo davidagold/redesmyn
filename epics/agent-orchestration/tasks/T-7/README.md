@@ -1,8 +1,8 @@
 ---
-id: T-7
-stacked_on: T-6
-node:
-  branch: rn/agent-orchestration/T-7-dashboard-graph-presence
+rn:
+  node:
+    branch: rn/agent-orchestration/T-7-dashboard-graph-presence
+  parent: T-6
 ---
 
 # T-7 Dashboard: agent presence + activity integrated into the graph

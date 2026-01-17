@@ -1,10 +1,10 @@
 ---
-id: T-7
-stacked_on: T-2
-must_land_after:
+rn:
+  node:
+    branch: rn/graph-viz/task-7-focus-mode-diagonal-bias
+  parent: T-2
+  after:
   - T-3
-node:
-  branch: rn/graph-viz/task-7-focus-mode-diagonal-bias
 ---
 
 # T-7 (Bonus) Focus mode: diagonal branch bias

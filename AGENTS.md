@@ -4,7 +4,7 @@
 
 - Work one task per branch/worktree, and commit as you go (avoid large uncommitted states).
 - Prefer clean, thoughtfully organized, change-sized commits; avoid mixing unrelated concerns (e.g. keep layout vs. markdown vs. UX changes separate) so history stays easy to rebase/split.
-- Keep task branches stacked: each task branch should be based on the tip of its parent task branch (`stacked_on`), rebasing as needed.
+- Keep task branches stacked: each task branch should be based on the tip of its parent task branch (`parent`), rebasing as needed.
 - For any Python usage that relies on project packages/scripts, use `uv` (e.g. `uv run …`, `uv sync`); avoid `pip install`.
 - Strive for self-documenting code via clear names and sensible factoring; if logic/settings are non-obvious or easy to break, add a brief comment explaining why.
 - Keep the codebase well-typed: prefer typed data models (Pydantic, enums, `Literal`/union types) over unstructured `str`/`dict` payloads unless there is a compelling necessity.

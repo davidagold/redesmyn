@@ -1,12 +1,12 @@
 ---
-id: T-15
 epic: harness-interface-v0
-stacked_on: T-14
 branch:
   suggested: rn/harness-interface-v0/T-15-session-as-conversation
-linear:
-  issue_id: null
-  identifier: null
+rn:
+  linear:
+    issue_id: null
+    identifier: null
+  parent: T-14
 ---
 
 # T-15 Session semantics: `AgentSession` == conversation, turns are events

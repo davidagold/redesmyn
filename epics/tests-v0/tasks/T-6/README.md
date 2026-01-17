@@ -1,9 +1,9 @@
 ---
-id: T-6
-stacked_on: T-1
-must_land_after: []
-node:
-  branch: rn/tests-v0/T-6-projections
+rn:
+  node:
+    branch: rn/tests-v0/T-6-projections
+  parent: T-1
+  after: []
 ---
 
 # T-6 Projections / graph integration tests
