@@ -88,3 +88,15 @@ The client library should:
 - Depends on Domain 1 client protocol contract (T-12, T-15) and envelope/schema (T-9/T-10).
 - Depends on Domain 2 event hub (T-18) and DB schema (T-17).
 
+## Reference implementation (today; client API orientation only)
+
+- Client ↔ control plane (TS/HTTP today):
+  - `openapi/openapi.json` (current HTTP API surface).
+  - `dashboard/src/api.ts` (HTTP client for `/v1/*`).
+  - `dashboard/src/hooks/useEventStream.ts` (WebSocket client for `/v1/ws`).
+  - `dashboard/src/hooks/useGraph.ts` (query usage pattern for epic graph).
+- Client ↔ control plane (CLI today):
+  - `redesmyn/cli.py` (CLI currently talks directly to the local DB and repo, not to the server API).
+- Tests (Python today):
+  - `tests/e2e/test_ui_happy_path.py` (browser-driven UI test via HTTP).
+  - `tests/test_epic_graph.py` (integration tests against `/v1/epics/{epic}/graph`).

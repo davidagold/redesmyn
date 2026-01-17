@@ -97,3 +97,18 @@ Even at skeleton stage, establish the pattern:
 - Depends on Domain 1 client protocol contract (T-12) for the control plane “client-facing” surface.
 - Depends on Domain 0 storage scaffolding (T-6) and config/logging conventions (T-4, T-5).
 
+## Reference implementation (today; for behavior orientation only)
+
+- Control plane (Python today):
+  - `redesmyn/api.py` (FastAPI app; lifespan wiring; mounts dashboard assets; exposes REST `/v1/*`, UI WS `/v1/ws`, and daemon WS `/v1/daemon/ws`).
+  - `redesmyn/cli.py` (`rn server run` and `rn debug dev` process model).
+  - `redesmyn/settings.py` (runtime config: host/port, runner mode, feature toggles).
+  - `justfile` (`just dev` and related workflows).
+- Client surfaces (Python/TS today):
+  - `openapi/openapi.json` (current REST surface used by the dashboard).
+  - `dashboard/src/api.ts` (HTTP client for `/v1/*`).
+  - `dashboard/src/hooks/useEventStream.ts` (WS client for `/v1/ws`).
+- Test harness (Python today):
+  - `tests/scenarios/scenario.py` (in-process ASGI app + temp repo/DB wiring).
+  - `tests/test_api_integration.py` (API behavior expectations).
+  - `tests/test_smoke_integration.py` (smoke coverage).

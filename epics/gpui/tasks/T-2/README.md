@@ -76,3 +76,15 @@ Store ULIDs as `BLOB(16)` for performance/index size, with helpers to render rea
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
+
+## Reference implementation (today; identity surfaces)
+
+- DB identity (today):
+  - `redesmyn/db/models.py` (uses int primary keys for many domain rows; `workspace_id`/`repo_id` are strings).
+- API/WS identity (today):
+  - `openapi/openapi.json` (many ids are integer-shaped today).
+  - `redesmyn/ws_protocol.py` (JSON messages contain ids as numbers/strings).
+  - `dashboard/src/hooks/useEventStream.ts` (event payloads like `taskId: number`).
+- Tests that lean on current id shapes:
+  - `tests/test_epic_graph.py`
+  - `tests/test_cli_integration.py`

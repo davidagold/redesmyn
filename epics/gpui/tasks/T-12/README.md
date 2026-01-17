@@ -87,3 +87,13 @@ For local UDS:
 - Depends on `epics/gpui/tasks/T-10/README.md` (protobuf schema pipeline).
 - Informs Domain 2 (control plane API implementation) and Domain 8 (CLI integration).
 
+## Reference implementation (today; client API surfaces)
+
+- HTTP API (Python today):
+  - `redesmyn/api.py` (`/v1/*` REST endpoints; serves dashboard and websocket endpoints).
+  - `openapi/openapi.json` (client-facing REST surface).
+- CLI client (Python today):
+  - `redesmyn/cli.py` (uses `httpx` to call the control plane HTTP API; includes local fallbacks for some ops).
+- Dashboard client (TS today):
+  - `dashboard/src/api.ts` + `dashboard/src/api/v1.ts` (HTTP client + generated types).
+  - `dashboard/src/hooks/useEventStream.ts` (WS client for `/v1/ws`).

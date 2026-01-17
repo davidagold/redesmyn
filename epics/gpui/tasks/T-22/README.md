@@ -76,3 +76,16 @@ At least one integration test should exercise the UDS server path end-to-end:
   - event hub (T-18),
   - and the AI testability contract (T-15).
 
+## Reference implementation (today; testing orientation only)
+
+- Scenario-based integration harness (Python today):
+  - `tests/scenarios/scenario.py` (temp git repo + SQLite DB + in-process ASGI app + in-process daemon connection registry).
+  - `tests/scenarios/seeds/git.py` and `tests/scenarios/variants.py` (common seeded graphs/repos for tests).
+  - `tests/helpers/ws.py` (in-process WebSocket helpers).
+- Current integration tests to mirror/learn from:
+  - `tests/test_daemon_ws_runtime_integration.py` (daemon WS + command routing + merge.run event ingestion).
+  - `tests/test_epic_graph.py` (graph response expectations).
+  - `tests/test_git_mechanics_planning.py` / `tests/test_git_mechanics_execution.py` (plan/execution semantics in the current system).
+- E2E harness (Python today):
+  - `tests/e2e/` (Playwright-based tests)
+  - `tests/README.md` (test conventions)

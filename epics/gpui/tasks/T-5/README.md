@@ -69,3 +69,12 @@ During the split-codebase port:
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Should coordinate with `epics/gpui/tasks/T-6/README.md` (DB config), `epics/gpui/tasks/T-7/README.md` (transport endpoints), and the desktop/server/daemon crate scaffolds from T-1.
+
+## Reference implementation (today; configuration layering)
+
+- Settings (Python today):
+  - `redesmyn/settings.py` (`pydantic_settings`; env prefix `REDESMYN_`; `.env` support).
+- Orchestration defaults (Python today):
+  - `redesmyn/orchestration_config.py` (TOML config layering: global XDG config + repo-scoped config under state dir).
+- CLI usage (Python today):
+  - `redesmyn/cli.py` (calls `load_settings(...)`; also sets env vars in `rn debug dev`).

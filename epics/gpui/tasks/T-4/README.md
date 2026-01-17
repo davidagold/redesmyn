@@ -67,3 +67,11 @@ Define conventions so user actions can be traced and correlated with UI state:
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Should coordinate with `epics/gpui/tasks/T-3/README.md` (error rendering/logging) and `epics/gpui/tasks/T-7/README.md` (message tracing + wiretap).
+
+## Reference implementation (today; logging/tracing)
+
+- Logging config (Python today):
+  - `redesmyn/logging_config.py` (`structlog` + rotating file handler under repo state dir).
+- Primary call sites (Python today):
+  - `redesmyn/api.py` (calls `configure_logging(state_dir=ctx.state_dir)` on startup).
+  - `redesmyn/cli.py` (calls `configure_logging(...)` for some commands / flows).

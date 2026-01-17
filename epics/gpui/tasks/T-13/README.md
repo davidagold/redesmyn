@@ -57,3 +57,10 @@ Extend the Rust CLI skeleton (T-8) with subcommands like:
 - Depends on `epics/gpui/tasks/T-10/README.md` (schema/codegen).
 - Depends on `epics/gpui/tasks/T-8/README.md` (Rust CLI skeleton) for integration.
 
+## Reference implementation (today; protocol debugging)
+
+- Current observability relies on JSON + devtools (today):
+  - `redesmyn/ws_protocol.py` and `dashboard/src/hooks/useEventStream.ts` (human-readable WS payloads).
+  - `redesmyn/logging_config.py` + `redesmyn/api.py` (structured logs for runtime debugging).
+- Existing dev workflow (today):
+  - `redesmyn/cli.py` (`rn debug dev` runs a single-origin dev setup that makes network inspection easy).

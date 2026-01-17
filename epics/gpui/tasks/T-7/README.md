@@ -92,3 +92,13 @@ Add minimal tooling hooks:
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) for `msg_id`/ids in envelopes.
 - Should coordinate with `epics/gpui/tasks/T-4/README.md` (message tracing + wiretap spans).
+
+## Reference implementation (today; transports)
+
+- UI event stream (Python + TS today):
+  - `redesmyn/event_stream.py` + `redesmyn/ws_runtime.py` (server-side WS runtime for `/v1/ws`).
+  - `redesmyn/ws_protocol.py` (JSON message schema).
+  - `dashboard/src/hooks/useEventStream.ts` (client-side WS protocol/types).
+- Daemon ↔ control plane (Python today):
+  - `redesmyn/api.py` (`/v1/daemon/ws` websocket handler).
+  - `tests/test_daemon_ws_runtime_integration.py` (integration behavior expectations).

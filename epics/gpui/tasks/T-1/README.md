@@ -158,3 +158,14 @@ Enforce these rules by crate dependencies (and add a short doc explaining the in
 
 - This ticket is a prerequisite for all other Domain 0 tickets.
 - After this lands, Domain 0 tickets are intended to be runnable in parallel (one task per branch/worktree) with minimal merge conflicts by working primarily within their dedicated crates.
+
+## Reference implementation (today; for behavior orientation only)
+
+- Repo layout (today):
+  - `redesmyn/` (Python control plane + daemon)
+  - `dashboard/` (React web UI)
+  - `openapi/openapi.json` (OpenAPI surface consumed by the dashboard)
+  - `tests/` (integration + e2e coverage)
+- Developer workflows (today):
+  - `justfile` (entrypoints such as `just dev`)
+  - `redesmyn/cli.py` (Python `rn` commands)

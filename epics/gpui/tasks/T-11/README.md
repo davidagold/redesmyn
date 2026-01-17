@@ -124,3 +124,11 @@ Do not over-design sequencing/acks in v1:
 - Depends on `epics/gpui/tasks/T-10/README.md` (protobuf schema pipeline).
 - Informs later implementation work in Domain 2 (control plane core) and Domain 3 (daemon core).
 
+## Reference implementation (today; daemon stream behavior)
+
+- Daemon stream (Python today):
+  - `redesmyn/api.py` (`/v1/daemon/ws` websocket handler `daemon_ws()`).
+  - `redesmyn/ws_runtime.py` (`DaemonConnectionRegistry`; routing/broadcast mechanics).
+  - `redesmyn/ws_protocol.py` (message types exchanged today).
+- Tests (Python today):
+  - `tests/test_daemon_ws_runtime_integration.py`

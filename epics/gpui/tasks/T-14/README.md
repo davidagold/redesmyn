@@ -95,3 +95,14 @@ Client subscriptions should be able to stream:
 - Depends on `epics/gpui/tasks/T-10/README.md` (schema/codegen).
 - Informs Domain 2 (storage schema), Domain 4 (agent runtime), and Domain 7/8 (session viewer + diff systems).
 
+## Reference implementation (today; sessions + messaging)
+
+- Agent/session runtime (Python today):
+  - `redesmyn/agent_driver.py` (agent session lifecycle; emits assistant message events and updates).
+  - `redesmyn/agent_turn_transport.py` (structured turn transport for agent interfaces).
+  - `redesmyn/task_agent_messaging.py` (repo-scoped “send message” behavior and conflict handling).
+- Control plane API (Python today):
+  - `redesmyn/api.py` (`POST /v1/tasks/{task_id}/agent/message`).
+- Dashboard UI (TS today):
+  - `dashboard/src/components/graph/TaskCard.tsx` (message composer; “no silent actions” pending states).
+  - `dashboard/src/hooks/useEventStream.ts` (`agent.assistant_message` and turn events in the stream).

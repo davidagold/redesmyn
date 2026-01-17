@@ -78,3 +78,13 @@ Add a short doc describing:
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Should coordinate with `epics/gpui/tasks/T-7/README.md` (protocol error envelope) and `epics/gpui/tasks/T-8/README.md` (CLI exit codes/output).
+
+## Reference implementation (today; error handling patterns)
+
+- API errors (Python today):
+  - `redesmyn/api.py` (FastAPI endpoints returning `HTTPException` / `JSONResponse` with `detail`).
+  - `redesmyn/schemas/core.py` (request/response types; error `detail` conventions).
+  - `redesmyn/task_agent_messaging.py` (`TaskAgentMessageError` with `status_code`; conflict detail conventions).
+- CLI errors (Python today):
+  - `redesmyn/cli.py` (Typer commands; uses `typer.Exit(...)` codes).
+  - `tests/test_cli_integration.py` (asserts CLI behavior/exit codes).

@@ -74,3 +74,12 @@ On failure, tests should emit:
 - Builds on T-23/T-24/T-26/T-28, and later on T-29/T-30.
 - Complements the control-plane harness in T-22.
 
+## Reference implementation (today; integration testing orientation only)
+
+- Existing repo/worktree fixtures (Python today):
+  - `tests/scenarios/scenario.py` (creates a temp repo and worktrees; provides in-process app + daemon registry).
+  - `tests/scenarios/seeds/git.py` (real conflict scenarios and stacks used by merge/restack tests).
+- Existing “close to daemon” integration coverage today:
+  - `tests/test_daemon_ws_runtime_integration.py` (daemon WS registry + routing behavior).
+  - `tests/test_git_mechanics_planning.py` / `tests/test_git_mechanics_execution.py` (real git + worktree planning/execution).
+  - `tests/test_agent_worktree_autobranch.py` (worktree creation semantics used by agents).

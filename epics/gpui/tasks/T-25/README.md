@@ -97,3 +97,16 @@ Emit status updates that allow UI/CLI to display:
 - Depends on daemon skeleton (T-23) and daemon protocol contract (T-11).
 - Coordinated with Domain 2 command routing (T-19) once implemented.
 
+## Reference implementation (today; lease orientation only)
+
+- Lease model and helpers (Python today):
+  - `redesmyn/db/models.py` (`RepoExecutorLease` table).
+  - `redesmyn/repo_executor_leases.py` (`acquire_or_refresh_primary`, `get_primary_host_key`, etc.).
+- Where leases are used today (Python):
+  - `redesmyn/api.py`:
+    - lifespan task periodically refreshes the local lease in `runner_mode=local`,
+    - `GET /v1/epics/{epic}/graph` reacquires lease on-demand in local mode if missing.
+    - `daemon_ws()` heartbeat handler refreshes lease when a daemon reports the repo as attached.
+- Tests (Python today):
+  - `tests/test_repo_executor_lease_local_fallback.py` (epic graph reacquires primary lease in local mode).
+  - `tests/test_epic_graph.py` (trunk timeline keyed by host/lease).

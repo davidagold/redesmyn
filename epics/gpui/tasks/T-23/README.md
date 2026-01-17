@@ -117,3 +117,15 @@ Use `tracing` conventions (T-4):
 - Depends on Domain 1 daemon stream contract (T-11) and schema pipeline (T-10).
 - Depends on logging conventions (T-4) and config layer (T-5) once implemented.
 
+## Reference implementation (today; daemon runtime orientation only)
+
+- Daemon runtime (Python today):
+  - `redesmyn/daemon_runtime.py` (daemon loop, control-plane client, reconnect/backoff, command models).
+  - `redesmyn/ws_protocol.py` (message types exchanged with the control plane today).
+- Control plane WS handler (Python today):
+  - `redesmyn/api.py` (`@v1.websocket("/daemon/ws")` handler `daemon_ws()`).
+  - `redesmyn/ws_runtime.py` (`DaemonConnectionRegistry` runtime connection registry).
+- Tests (Python today):
+  - `tests/test_daemon_ws_runtime_integration.py` (in-process daemon WS behavior and routing).
+- Design notes:
+  - `epics/revise-architecture/README.md` (daemon/control-plane split intent and protocol direction).

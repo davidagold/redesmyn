@@ -100,3 +100,11 @@ Planner tests use temp repos and small task graphs.
 - Depends on git backend (T-26), worktree service (T-27), and lease enforcement (T-25).
 - Execution is implemented in T-30.
 
+## Reference implementation (today; planning orientation only)
+
+- Planner logic (Python today):
+  - `redesmyn/git_mechanics_v0.py` (`build_merge_cascade_plan`, `build_restack_plan`, plan step ordering, and precondition checks).
+  - `redesmyn/git_mechanics_v0.py` (`MergePlanError` and other error contracts used by UI/CLI).
+- Tests (Python today):
+  - `tests/test_git_mechanics_planning.py` (plan structure and ordering semantics).
+  - `tests/scenarios/seeds/git.py` (repo/worktree fixtures used by planning tests).

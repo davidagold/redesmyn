@@ -89,3 +89,18 @@ No sleeps for correctness; drive execution deterministically.
 
 - Depends on planning (T-29), worktrees (T-27), leases (T-25), and daemon/control-plane command protocol (T-11/T-19).
 
+## Reference implementation (today; execution/resume orientation only)
+
+- Execution engine (Python today):
+  - `redesmyn/git_mechanics_v0.py` (`execute_merge_cascade_plan`, `execute_restack_plan`, per-step updates via `MergeRunStepUpdate`).
+  - `redesmyn/merge_runs.py` (persisting merge run state; emitting events consumed by UI).
+  - `redesmyn/merge_conflict_assist.py` (conflict assist supervisor; interacts with merge run state).
+- API surfaces today (Python):
+  - `redesmyn/api.py`:
+    - `POST /v1/tasks/{task_id}/merge`
+    - `POST /v1/tasks/{task_id}/restack`
+    - `POST /v1/merge-runs/{run_id}/resume`
+    - `POST /v1/merge-runs/{run_id}/cancel`
+- Tests (Python today):
+  - `tests/test_git_mechanics_execution.py` (blocked/conflict behavior; resume semantics; restack correctness).
+  - `tests/test_api_integration.py` (merge/restack endpoints create merge run records; running agent blocking contract).

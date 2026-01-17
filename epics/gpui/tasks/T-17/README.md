@@ -96,3 +96,16 @@ Add indices for the primary query patterns:
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) and `epics/gpui/tasks/T-6/README.md` (sqlx scaffold).
 - Informed by Domain 1 contracts (T-9..T-15).
 
+## Reference implementation (today; schema/migration orientation only)
+
+- ORM schema (Python today):
+  - `redesmyn/db/models.py` (SQLAlchemy ORM; includes tables like `tasks`, `agent_sessions`, `merge_runs`, `events`, `repo_executor_leases`, etc.).
+  - `redesmyn/domain/enums.py` (enum values persisted to DB today).
+- Migrations (Python today, Alembic):
+  - `alembic.ini`
+  - `redesmyn/db/migrate.py`
+  - `redesmyn/db/alembic/` (migration scripts)
+  - `scripts/check_migrations.py`
+- Tests (Python today):
+  - `tests/test_migrations_db.py` (migrations apply and match ORM tables).
+  - `tests/test_sqlite_pragmas.py` (SQLite settings expectations).

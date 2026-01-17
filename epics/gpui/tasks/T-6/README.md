@@ -62,3 +62,13 @@ Create the minimal tables needed to validate the scaffolding:
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) for key types.
+
+## Reference implementation (today; DB + migrations)
+
+- Storage layer (Python today):
+  - `redesmyn/db/models.py` (SQLAlchemy ORM; current domain source of truth).
+  - `redesmyn/db/session.py` (engine/session creation; Alembic upgrade/init policy; SQLite pragmas).
+  - `redesmyn/db/migrate.py` + `redesmyn/db/alembic/versions/` (migrations).
+- Tests (Python today):
+  - `tests/test_migrations_db.py`
+  - `tests/test_sqlite_pragmas.py`

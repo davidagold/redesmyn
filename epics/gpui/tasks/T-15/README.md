@@ -155,3 +155,12 @@ Tests should be able to choose between:
   - `epics/gpui/tasks/T-12/README.md` (client protocol over UDS),
   - `epics/gpui/tasks/T-14/README.md` (session events + artifacts contract).
 
+## Reference implementation (today; tests as precedent)
+
+- Python integration harness (today):
+  - `tests/scenarios/scenario.py` (in-process ASGI app + temp repo/DB wiring).
+  - `tests/test_api_integration.py` and `tests/test_smoke_integration.py` (baseline integration coverage).
+- Browser UI e2e tests (today):
+  - `tests/e2e/test_ui_happy_path.py` (Playwright-driven happy path assertions).
+- Dashboard unit tests (today):
+  - `dashboard/tests/` (UI model + graph utilities tested in Node).

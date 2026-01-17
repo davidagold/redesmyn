@@ -87,3 +87,17 @@ The EpicGraph query must make it easy for tests to assert outcomes:
 - Depends on schema (T-17) and event/subscription patterns (T-18).
 - Consumed by the client API server (T-20) and later by the GPUI UI.
 
+## Reference implementation (today; epic graph orientation only)
+
+- Control plane graph query (Python today):
+  - `redesmyn/api.py` (`GET /v1/epics/{epic}/graph` implemented by `epic_graph()`).
+  - `redesmyn/schemas/core.py` (`EpicGraphResponse`, `TaskResponse`, `AgentSessionResponse`, `MergeRunSummaryResponse`, `TrunkTimelineResponse`, etc.).
+  - `redesmyn/repo_executor.py` (repo executor status surface included in graph response).
+- Dashboard usage (TS today):
+  - `dashboard/src/hooks/useGraph.ts`
+  - `dashboard/src/routes/EpicView.tsx`
+  - `dashboard/src/components/graph/GraphView.tsx`
+- Tests (Python today):
+  - `tests/test_epic_graph.py` (task topology, agent session overlay, merge run overlay, trunk timeline presence).
+  - `tests/test_repo_executor_lease_local_fallback.py` (local-mode lease reacquisition behavior surfaced via epic graph).
+  - `tests/test_daemon_ws_runtime_integration.py` (daemon attach affects epic graph repo executor status).

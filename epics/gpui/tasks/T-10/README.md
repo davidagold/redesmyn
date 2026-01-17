@@ -94,3 +94,13 @@ Add tests that assert:
 - Depends on `epics/gpui/tasks/T-9/README.md` (envelope + rules).
 - Unblocks daemon/client protocol implementation and all transports/codecs.
 
+## Reference implementation (today; codegen precedent)
+
+- OpenAPI generation (Python today):
+  - `scripts/export_openapi.py` (exports spec).
+  - `openapi/openapi.json` (spec consumed by the dashboard).
+- TS client generation (today):
+  - `dashboard/package.json` (`api:update`, `api:gen` scripts).
+  - `dashboard/src/api/v1.ts` (generated client types).
+- Non-OpenAPI realtime protocol (today):
+  - `redesmyn/ws_protocol.py` + `dashboard/src/hooks/useEventStream.ts` (hand-rolled JSON WS protocol).

@@ -81,3 +81,15 @@ No fragile parsing of human-oriented output.
 - Depends on daemon skeleton (T-23) only for wiring; can be developed largely independently.
 - Used by worktree management (T-27), observation/projections (T-28), and merge/restack (T-29/T-30).
 
+## Reference implementation (today; git execution orientation only)
+
+- Git subprocess wrappers (Python today):
+  - `redesmyn/git_subprocess.py` (invocation helpers).
+  - `redesmyn/repo.py` (git helpers like ancestry checks, in-progress op detection, worktree helpers).
+  - `redesmyn/git_proxy.py` (git proxying rules used by `rn git …`).
+- Higher-level git mechanics (Python today):
+  - `redesmyn/git_mechanics_v0.py` (merge/restack planning + execution; consumes repo/worktree helpers).
+- Tests (Python today):
+  - `tests/test_git_mechanics_planning.py`
+  - `tests/test_git_mechanics_execution.py`
+  - `tests/scenarios/scenario.py` and `tests/scenarios/seeds/git.py` (real git repo/worktree fixtures).

@@ -87,3 +87,18 @@ Provide a test harness that can:
 - Depends on `epics/gpui/tasks/T-17/README.md` (events table + schema).
 - Builds on Domain 1 envelope/subscription contract (T-9, T-12, T-15).
 
+## Reference implementation (today; event pipeline orientation only)
+
+- Event persistence + broadcast (Python today):
+  - `redesmyn/db/models.py` (`Event` table).
+  - `redesmyn/api.py` (`_append_event`, `_broadcast_event`).
+- Realtime event stream to UI (Python today):
+  - `redesmyn/event_stream.py` (WebSocket stream protocol: hello/event/error/resync/pong).
+  - `redesmyn/ws_runtime.py` (`JsonWebSocketHub` fanout + sender loop).
+  - `redesmyn/api.py` (`@v1.websocket("/ws")`).
+- Dashboard consumption (TS today):
+  - `dashboard/src/hooks/useEventStream.ts`
+  - `dashboard/src/api/useEpicCacheSync.ts`
+- Tests (Python today):
+  - `tests/test_api_integration.py` (event payloads are JSON-serializable).
+  - `tests/test_daemon_ws_runtime_integration.py` (broadcast path and WS payload shape).

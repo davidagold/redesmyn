@@ -85,3 +85,14 @@ Provide structured “worktree health” data for the observation loop (T-28) an
 - Depends on git backend abstraction (T-26) and lease enforcement (T-25) for mutating ops.
 - Used later by agent runtime (Domain 4) and merge/restack execution (T-30).
 
+## Reference implementation (today; worktree orientation only)
+
+- Worktree creation/repair (Python today):
+  - `redesmyn/agent_runtime.py` (`ensure_task_worktree`, `checkout_task_worktree`, worktree/branch semantics used by agents).
+  - `redesmyn/repo.py` (`git_worktree_add` and related helpers).
+  - `redesmyn/cli.py` (`rn sync --from local` sets `branch_name` and repairs worktree branch mismatch in some cases).
+- Current worktree layout (Python today):
+  - `.redesmyn/worktrees/…` (layout appears in tests; exact policy lives in the Python worktree helpers).
+- Tests (Python today):
+  - `tests/test_agent_worktree_autobranch.py` (auto-branch + worktree creation semantics).
+  - `tests/test_cli_integration.py` (worktree layout and branch mismatch repair scenarios).

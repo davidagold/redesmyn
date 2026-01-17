@@ -105,3 +105,15 @@ Provide tests that:
 - Depends on daemon runtime skeleton (T-23).
 - Informs observation/worktrees/git subsystems (T-27, T-28) which require an attached repo root.
 
+## Reference implementation (today; repo identity/attach orientation only)
+
+- Repo identity (Python today):
+  - `redesmyn/repo_identity.py` (`DEFAULT_WORKSPACE_ID`, `RepoKey`, `compute_repo_id()`).
+  - `redesmyn/db/models.py` (`Repository` row includes `workspace_id`, `repo_id`, `repo_root`).
+  - `redesmyn/orchestrator.py` and `redesmyn/cli.py` (`rn init` and repo initialization paths).
+- “Attach” semantics today (Python):
+  - `redesmyn/ws_protocol.py` (`DaemonHello.attached_repos`, `DaemonHeartbeat.attached_repos`).
+  - `redesmyn/api.py` (`daemon_ws()` stores attached repos on connection and updates on heartbeat).
+  - `redesmyn/ws_runtime.py` (`DaemonConnectionRegistry` stores attached repo scopes and is queried by `/v1/daemons`).
+- Tests (Python today):
+  - `tests/test_daemon_ws_runtime_integration.py` (attaching a repo updates repo executor status in epic graph).

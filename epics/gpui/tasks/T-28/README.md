@@ -97,3 +97,19 @@ Provide deterministic tests that:
 - Integrates with lease status (T-25) and worktree health (T-27).
 - Consumed by control-plane ingestion and projections (Domain 2).
 
+## Reference implementation (today; observation/telemetry orientation only)
+
+- Observation loop (Python today):
+  - `redesmyn/repo_observer.py` (polling loop + observation state).
+  - `redesmyn/git_telemetry.py` / `redesmyn/git_projections.py` (projection computation and persistence).
+  - `redesmyn/db/models.py` (projection tables such as `git_ref_states`, `git_trunk_timelines`, `git_merge_bases`, and by-instance variants).
+- Telemetry transport today (Python):
+  - `redesmyn/ws_protocol.py` (`DaemonEvent` with `event_type` + `data`).
+  - `redesmyn/api.py` `daemon_ws()` handler ingests `DaemonEvent` and appends it to the event log for UI streaming.
+- UI consumption today (TS):
+  - `dashboard/src/hooks/useEventStream.ts` (live events)
+  - `dashboard/src/api/useEpicCacheSync.ts` (event-driven cache invalidation)
+- Tests (Python today):
+  - There are limited direct “repo observer” tests today; closest coverage is:
+    - `tests/test_epic_graph.py` (trunk timeline presence and host-key scoping),
+    - `tests/test_daemon_ws_runtime_integration.py` (daemon events ingested and reflected in merge run state).

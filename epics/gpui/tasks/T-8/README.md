@@ -71,3 +71,11 @@ Include a few early “developer utility” commands that reinforce the architec
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
 - Should coordinate with `epics/gpui/tasks/T-3/README.md` (exit codes + error formatting).
 - Optionally depends on `epics/gpui/tasks/T-7/README.md` if we include protocol decode tooling in the initial CLI skeleton.
+
+## Reference implementation (today; `rn` CLI)
+
+- CLI entrypoints (Python today):
+  - `redesmyn/__main__.py` (module entrypoint).
+  - `redesmyn/cli.py` (Typer app; includes `rn sync`, `rn debug dev`, merge run commands, etc.).
+- CLI integration tests (Python today):
+  - `tests/test_cli_integration.py`

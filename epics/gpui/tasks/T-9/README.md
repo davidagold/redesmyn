@@ -113,3 +113,10 @@ Minimum fields:
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes).
 - Unblocks the rest of Domain 1 (schema/codegen, daemon protocol, client API, tooling).
 
+## Reference implementation (today; envelope-ish semantics)
+
+- WS protocol (Python today):
+  - `redesmyn/ws_protocol.py` (JSON message schema; hello/ping/resync-ish patterns).
+  - `redesmyn/event_stream.py` + `redesmyn/ws_runtime.py` (runtime behavior for `/v1/ws`).
+- WS protocol (TS today):
+  - `dashboard/src/hooks/useEventStream.ts` (event union + resync/hello message shapes).
