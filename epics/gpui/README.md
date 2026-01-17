@@ -138,8 +138,10 @@ We will deliberately choose which parts to port, redesign, or drop as we proceed
 - `epics/gpui/tasks/T-12/README.md`: Client ↔ control plane API protocol over Unix socket (multiplexed requests + subscriptions).
 - `epics/gpui/tasks/T-13/README.md`: Protocol tooling + wiretap (`rn protocol …`).
 - `epics/gpui/tasks/T-14/README.md`: Artifact references + structured session events (contract).
+- `epics/gpui/tasks/T-15/README.md`: AI-first testability surfaces (wait primitives + semantic UI snapshot + UI driver contract).
 
 Sequencing intent:
 
 - Define the envelope and schema pipeline first (T-9, T-10).
 - Then execute daemon stream protocol, client API protocol, and tooling in parallel (T-11..T-14).
+- Treat testability as a first-class requirement: T-15 defines the automation surfaces early so later domains can build against stable contracts.
