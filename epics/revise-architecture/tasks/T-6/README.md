@@ -1,8 +1,4 @@
-# T-6 Merge Node into Task (single graph primitive)
-
-## Metadata
-
-```yaml
+---
 id: T-6
 stacked_on: T-1
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 531f7793-b301-4746-bdfb-b516946e2402
   identifier: RED-35
-```
+---
+
+# T-6 Merge Node into Task (single graph primitive)
 
 ## Brief (local)
 

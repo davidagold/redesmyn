@@ -1,16 +1,14 @@
-# Agent Orchestration Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Agent Orchestration** epic: intent, v0 spec, sequencing, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: agent-orchestration
 name: Agent Orchestration
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Agent Orchestration Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Agent Orchestration** epic: intent, v0 spec, sequencing, and key decisions. Keep it current.
 
 ## 1) Vision
 

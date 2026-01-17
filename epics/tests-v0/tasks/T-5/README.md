@@ -1,14 +1,12 @@
-# T-5 Daemon/WS protocol + runtime integration tests
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-5-daemon-ws
-```
+---
+
+# T-5 Daemon/WS protocol + runtime integration tests
 
 ## Goal
 

@@ -1,16 +1,14 @@
-# Git Mechanics v0 Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Git Mechanics v0** epic: intent, sequencing, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: git-mechanics-v0
 name: Git Mechanics v0
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Git Mechanics v0 Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Git Mechanics v0** epic: intent, sequencing, and key decisions. Keep it current.
 
 ## 1) Vision
 

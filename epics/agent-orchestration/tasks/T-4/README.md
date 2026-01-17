@@ -1,13 +1,11 @@
-# T-4 Repo observer: commits + worktree telemetry → events
-
-## Metadata
-
-```yaml
+---
 id: T-4
 stacked_on: T-3
 node:
   branch: rn/agent-orchestration/T-4-repo-observer-telemetry
-```
+---
+
+# T-4 Repo observer: commits + worktree telemetry → events
 
 ## Brief (local)
 

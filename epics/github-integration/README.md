@@ -1,17 +1,15 @@
-# GitHub Integration Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **GitHub Integration** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: github-integration
 name: GitHub Integration
 root_branch: main
 github:
   host: github.com
   auth: oauth_machine_scoped
-```
+---
+
+# GitHub Integration Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **GitHub Integration** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
 
 ## 1) Vision
 
@@ -107,4 +105,3 @@ v0 introduces a global toggle:
 - `epics/github-integration/tasks/T-3/README.md`: PR create/open + PR auto-detection + push/force-push toggle + persist PR identity.
 - `epics/github-integration/tasks/T-4/README.md`: Dashboard UX: icon-only integration indicators (Linear + GitHub) + task-card PR badge.
 - `epics/github-integration/tasks/T-5/README.md`: Nice-to-have: PR checks/review/close affordances (post-v0).
-

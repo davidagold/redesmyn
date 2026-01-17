@@ -1,12 +1,10 @@
-# T-4 Skip rebasing already-merged/done spine tasks when merging
-
-## Metadata
-
-```yaml
+---
 id: T-4
 node:
   branch: rn/git-mechanics-v0/T-4-skip-done-spine
-```
+---
+
+# T-4 Skip rebasing already-merged/done spine tasks when merging
 
 ## Problem
 
@@ -64,4 +62,3 @@ No dedicated UI changes required, but plan previews (CLI + dashboard) should mak
   - Merge (no descendants)
   - Merge and Restack (strict)
   - Merge then Restack (relaxed)
-

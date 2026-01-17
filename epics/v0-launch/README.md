@@ -1,16 +1,14 @@
-# V0 Launch Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **V0 Launch** epic: intent, sequencing, and key decisions.
-
-## Metadata
-
-```yaml
+---
 slug: v0-launch
 name: V0 Launch
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# V0 Launch Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **V0 Launch** epic: intent, sequencing, and key decisions.
 
 ## 1) Vision
 

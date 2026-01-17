@@ -1,8 +1,4 @@
-# T-15 Session semantics: `AgentSession` == conversation, turns are events
-
-## Metadata
-
-```yaml
+---
 id: T-15
 epic: harness-interface-v0
 stacked_on: T-14
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: null
   identifier: null
-```
+---
+
+# T-15 Session semantics: `AgentSession` == conversation, turns are events
 
 ## Motivation
 

@@ -1,12 +1,10 @@
-# T-3 Abort merge runs (cancel) + future rollback design
-
-## Metadata
-
-```yaml
+---
 id: T-3
 node:
   branch: rn/git-mechanics-v1/T-3-abort-merge-run
-```
+---
+
+# T-3 Abort merge runs (cancel) + future rollback design
 
 ## Brief (local)
 
@@ -128,4 +126,3 @@ Abort intentionally does not roll back. For a future **Rollback** feature:
 - Aborting a `resumable` merge run marks the run `canceled` (no git operation performed).
 - UI messaging clearly distinguishes Abort vs Rollback (“Abort does not roll back completed steps”).
 - A follow-up note/design section exists (in this task) for a future Rollback feature and its required plan snapshot data.
-

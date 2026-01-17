@@ -1,8 +1,4 @@
-# T-2 Linear client: write support (labels, state, dependencies, create/update)
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: e173b21e-02b2-4f33-9b1b-aace082e8199
   identifier: RED-12
-```
+---
+
+# T-2 Linear client: write support (labels, state, dependencies, create/update)
 
 ## Brief (local)
 

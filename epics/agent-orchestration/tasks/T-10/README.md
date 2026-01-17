@@ -1,13 +1,11 @@
-# T-10 Harness adapter: Codex
-
-## Metadata
-
-```yaml
+---
 id: T-10
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-10-harness-codex
-```
+---
+
+# T-10 Harness adapter: Codex
 
 ## Brief (local)
 

@@ -1,11 +1,9 @@
-# T-1 V0 CLI contract: remove `rn observer` + remove `rn dev`
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on: null
-```
+---
+
+# T-1 V0 CLI contract: remove `rn observer` + remove `rn dev`
 
 ## Plan
 

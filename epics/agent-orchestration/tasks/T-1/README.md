@@ -1,13 +1,11 @@
-# T-1 Agent runtime architecture + contracts
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on:
 node:
   branch: rn/agent-orchestration/T-1-agent-runtime-architecture
-```
+---
+
+# T-1 Agent runtime architecture + contracts
 
 ## Brief (local)
 

@@ -1,13 +1,11 @@
-# T-16 Settings defaults: harness + prelude configuration
-
-## Metadata
-
-```yaml
+---
 id: T-16
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-16-settings-defaults
-```
+---
+
+# T-16 Settings defaults: harness + prelude configuration
 
 ## Brief (local)
 

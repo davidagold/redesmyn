@@ -1,13 +1,11 @@
-# T-3 Frontend refactor (v0 legibility + reuse)
-
-## Metadata
-
-```yaml
+---
 id: T-3
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-3-frontend-refactor
-```
+---
+
+# T-3 Frontend refactor (v0 legibility + reuse)
 
 ## Problem
 

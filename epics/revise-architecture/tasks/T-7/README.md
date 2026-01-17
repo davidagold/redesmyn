@@ -1,8 +1,4 @@
-# T-7 Remove server git execution; consolidate git proxying locally
-
-## Metadata
-
-```yaml
+---
 id: T-7
 stacked_on: T-1
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: f4f4dd84-233e-4b7b-a9db-67ea1d7bce4f
   identifier: RED-36
-```
+---
+
+# T-7 Remove server git execution; consolidate git proxying locally
 
 ## Brief (local)
 

@@ -1,13 +1,11 @@
-# T-2 DB + API: messages, threads, and command loop
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 node:
   branch: rn/messages-commands/T-2-db-api
-```
+---
+
+# T-2 DB + API: messages, threads, and command loop
 
 ## Brief (local)
 
@@ -24,4 +22,3 @@ node:
 
 - Messages and command transitions are durable and queryable.
 - APIs are typed and versionable; payloads are modeled (no “stringly-typed dict soup”).
-

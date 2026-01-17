@@ -1,16 +1,14 @@
-# Backlog Epic: Control Doc (Stub)
-
-This epic captures follow-up work discovered while dogfooding Redesmyn epics. These tasks are intentionally cross-cutting and may later be moved into a more specific epic once the target architecture is clearer.
-
-## Metadata
-
-```yaml
+---
 slug: backlog
 name: Backlog
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Backlog Epic: Control Doc (Stub)
+
+This epic captures follow-up work discovered while dogfooding Redesmyn epics. These tasks are intentionally cross-cutting and may later be moved into a more specific epic once the target architecture is clearer.
 
 ## 1) Vision
 

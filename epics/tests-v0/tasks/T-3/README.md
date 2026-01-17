@@ -1,14 +1,12 @@
-# T-3 Git mechanics (unit + integration)
-
-## Metadata
-
-```yaml
+---
 id: T-3
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-3-git-mechanics
-```
+---
+
+# T-3 Git mechanics (unit + integration)
 
 ## Goal
 

@@ -1,13 +1,11 @@
-# T-1 Design: messaging + commands model + UX
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on:
 node:
   branch: rn/messages-commands/T-1-design
-```
+---
+
+# T-1 Design: messaging + commands model + UX
 
 ## Brief (local)
 
@@ -22,4 +20,3 @@ node:
 
 - The control doc is updated with the agreed v0 data model and UX.
 - Clear “degraded mode” behavior is specified for harnesses without hooks.
-

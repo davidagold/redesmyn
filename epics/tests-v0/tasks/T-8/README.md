@@ -1,14 +1,12 @@
-# T-8 Playwright thin happy path (UI end-to-end)
-
-## Metadata
-
-```yaml
+---
 id: T-8
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-8-playwright-happy-path
-```
+---
+
+# T-8 Playwright thin happy path (UI end-to-end)
 
 ## Goal
 

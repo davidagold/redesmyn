@@ -1,13 +1,11 @@
-# T-9 Left-align commit titles (keep trunk spacing invariant)
-
-## Metadata
-
-```yaml
+---
 id: T-9
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-9-left-align-commit-titles
-```
+---
+
+# T-9 Left-align commit titles (keep trunk spacing invariant)
 
 ## Problem
 
@@ -33,4 +31,3 @@ Improve readability by left-aligning commit titles while preserving the existing
 - Long/truncated titles preserve the existing positioning relative to the trunk and SHA column.
 - No regressions in node layout/interaction.
 - `just check` remains green.
-

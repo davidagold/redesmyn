@@ -1,13 +1,11 @@
-# T-6 WebSocket: live graph updates (activity + presence)
-
-## Metadata
-
-```yaml
+---
 id: T-6
 stacked_on: T-4
 node:
   branch: rn/agent-orchestration/T-6-websocket-stream
-```
+---
+
+# T-6 WebSocket: live graph updates (activity + presence)
 
 ## Brief (local)
 

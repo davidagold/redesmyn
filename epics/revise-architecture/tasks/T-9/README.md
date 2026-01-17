@@ -1,8 +1,4 @@
-# T-9 Repo instances + canonical executor routing (migration)
-
-## Metadata
-
-```yaml
+---
 id: T-9
 stacked_on: T-2
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 9d96c5f2-f3d4-434e-8a7d-8568b5c64e26
   identifier: RED-38
-```
+---
+
+# T-9 Repo instances + canonical executor routing (migration)
 
 ## Context / Motivation
 

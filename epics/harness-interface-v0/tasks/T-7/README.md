@@ -1,8 +1,4 @@
-# T-7 AgentDriver (session supervisor: liveness + logs + semantics + events)
-
-## Metadata
-
-```yaml
+---
 id: T-7
 epic: harness-interface-v0
 stacked_on: T-1
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: c5c5fee7-9a02-4a08-8f07-e72dfdf0e19e
   identifier: RED-24
-```
+---
+
+# T-7 AgentDriver (session supervisor: liveness + logs + semantics + events)
 
 ## Problem
 

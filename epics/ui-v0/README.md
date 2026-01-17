@@ -1,16 +1,14 @@
-# UI v0 Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **UI v0** epic: intent, scope, v0 readiness criteria, and task map. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: ui-v0
 name: UI v0
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# UI v0 Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **UI v0** epic: intent, scope, v0 readiness criteria, and task map. Keep it current.
 
 ## 1) Vision
 

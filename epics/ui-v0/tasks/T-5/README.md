@@ -1,13 +1,11 @@
-# T-5 Remove redundant inline red error text from task cards
-
-## Metadata
-
-```yaml
+---
 id: T-5
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-5-task-card-error-dedupe
-```
+---
+
+# T-5 Remove redundant inline red error text from task cards
 
 ## Problem
 

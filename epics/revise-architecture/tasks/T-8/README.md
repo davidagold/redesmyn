@@ -1,8 +1,4 @@
-# T-8 Split agent config from agent sessions (AgentConfig + AgentSession)
-
-## Metadata
-
-```yaml
+---
 id: T-8
 stacked_on: T-1
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: c0c8a260-e51c-479e-aa65-320effe4a6aa
   identifier: RED-37
-```
+---
+
+# T-8 Split agent config from agent sessions (AgentConfig + AgentSession)
 
 ## Background / Motivation
 

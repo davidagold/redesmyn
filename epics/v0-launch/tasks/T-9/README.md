@@ -1,13 +1,11 @@
-# T-9 Simplify `justfile`: dev-only glue aligned with CLI
-
-## Metadata
-
-```yaml
+---
 id: T-9
 stacked_on: T-7
 must_land_after:
   - T-8
-```
+---
+
+# T-9 Simplify `justfile`: dev-only glue aligned with CLI
 
 ## Plan
 

@@ -1,8 +1,4 @@
-# T-5 Dashboard: daemon status + offline guidance
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-2
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: cb10b4c4-ed31-413c-bfd9-a62a981cd713
   identifier: RED-34
-```
+---
+
+# T-5 Dashboard: daemon status + offline guidance
 
 ## Brief (local)
 

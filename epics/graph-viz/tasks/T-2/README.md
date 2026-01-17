@@ -1,13 +1,11 @@
-# T-2 Graph interactions + selection model
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 node:
   branch: rn/graph-viz/task-2-interactions-selection
-```
+---
+
+# T-2 Graph interactions + selection model
 
 ## Brief (local)
 

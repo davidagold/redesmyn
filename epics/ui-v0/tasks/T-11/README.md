@@ -1,13 +1,11 @@
-# T-11 Graph: animate task card expansion with layout reflow
-
-## Metadata
-
-```yaml
+---
 id: T-11
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-11-graph-node-expand-reflow
-```
+---
+
+# T-11 Graph: animate task card expansion with layout reflow
 
 ## Problem
 

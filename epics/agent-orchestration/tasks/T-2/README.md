@@ -1,13 +1,11 @@
-# T-2 DB + API: hosts, sessions, and orchestration mutations
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 node:
   branch: rn/agent-orchestration/T-2-hosts-sessions-api
-```
+---
+
+# T-2 DB + API: hosts, sessions, and orchestration mutations
 
 ## Brief (local)
 

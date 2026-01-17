@@ -1,13 +1,11 @@
-# T-7 Dashboard: agent presence + activity integrated into the graph
-
-## Metadata
-
-```yaml
+---
 id: T-7
 stacked_on: T-6
 node:
   branch: rn/agent-orchestration/T-7-dashboard-graph-presence
-```
+---
+
+# T-7 Dashboard: agent presence + activity integrated into the graph
 
 ## Brief (local)
 

@@ -1,8 +1,4 @@
-# T-1 Agent interface + capabilities + ShellAgent
-
-## Metadata
-
-```yaml
+---
 id: T-1
 epic: harness-interface-v0
 stacked_on: T-8
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: fbba86a5-c122-4ac4-9494-797523a724f2
   identifier: RED-17
-```
+---
+
+# T-1 Agent interface + capabilities + ShellAgent
 
 ## Problem
 

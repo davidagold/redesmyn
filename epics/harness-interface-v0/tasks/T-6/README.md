@@ -1,8 +1,4 @@
-# T-6 Agent doctor + capabilities surface (UI + CLI)
-
-## Metadata
-
-```yaml
+---
 id: T-6
 epic: harness-interface-v0
 stacked_on: T-2
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: ef3c0d08-31ca-49e2-9b1e-4f9fa51f3324
   identifier: RED-23
-```
+---
+
+# T-6 Agent doctor + capabilities surface (UI + CLI)
 
 ## Problem
 

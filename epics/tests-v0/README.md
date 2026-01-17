@@ -1,16 +1,14 @@
-# Tests v0 Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Tests v0** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: tests-v0
 name: Tests v0
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Tests v0 Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Tests v0** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
 
 ## 1) Vision
 

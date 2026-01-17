@@ -1,16 +1,14 @@
-# Revise Architecture Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Revise Architecture** epic: intent, sequencing, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: revise-architecture
 name: Revise Architecture
 root_branch: main
 linear:
   project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
-```
+---
+
+# Revise Architecture Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Revise Architecture** epic: intent, sequencing, and key decisions. Keep it current.
 
 ## 1) Vision
 

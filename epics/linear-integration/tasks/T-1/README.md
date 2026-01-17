@@ -1,8 +1,4 @@
-# T-1 Machine-scoped Linear auth (PKCE) + refresh
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on: null
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 242facae-d600-472b-a095-8c8cac6e7136
   identifier: RED-11
-```
+---
+
+# T-1 Machine-scoped Linear auth (PKCE) + refresh
 
 ## Brief (local)
 

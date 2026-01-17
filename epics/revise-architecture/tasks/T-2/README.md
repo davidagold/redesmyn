@@ -1,8 +1,4 @@
-# T-2 Server: daemon connection + presence + command delivery
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: a4a477b4-0c9f-4830-a4e8-5bde1c308107
   identifier: RED-31
-```
+---
+
+# T-2 Server: daemon connection + presence + command delivery
 
 ## Brief (local)
 

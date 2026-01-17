@@ -1,8 +1,4 @@
-# T-5 Conflict auto-assist + gated auto-resume (repo clean + agent turn complete)
-
-## Metadata
-
-```yaml
+---
 id: T-5
 epic: harness-interface-v0
 stacked_on: T-11
@@ -14,7 +10,9 @@ branch:
 linear:
   issue_id: 97b1529a-24bb-4ddf-8856-67afbe5a4f9c
   identifier: RED-22
-```
+---
+
+# T-5 Conflict auto-assist + gated auto-resume (repo clean + agent turn complete)
 
 ## Problem
 

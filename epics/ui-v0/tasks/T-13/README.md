@@ -1,13 +1,11 @@
-# T-13 Git action status indicators: reflect run scope and true blocker
-
-## Metadata
-
-```yaml
+---
 id: T-13
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-13-git-action-status-indicators
-```
+---
+
+# T-13 Git action status indicators: reflect run scope and true blocker
 
 ## Problem
 

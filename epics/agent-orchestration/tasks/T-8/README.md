@@ -1,13 +1,11 @@
-# T-8 Dashboard: graph-first agent actions
-
-## Metadata
-
-```yaml
+---
 id: T-8
 stacked_on: T-7
 node:
   branch: rn/agent-orchestration/T-8-dashboard-graph-actions
-```
+---
+
+# T-8 Dashboard: graph-first agent actions
 
 ## Brief (local)
 

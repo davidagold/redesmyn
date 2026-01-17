@@ -1,13 +1,11 @@
-# T-18 Sandboxing: run harnesses in a controlled environment
-
-## Metadata
-
-```yaml
+---
 id: T-18
 stacked_on: T-17
 node:
   branch: rn/agent-orchestration/T-18-sandboxing
-```
+---
+
+# T-18 Sandboxing: run harnesses in a controlled environment
 
 ## Brief (local)
 
@@ -26,4 +24,3 @@ Allow agents to run with tighter filesystem/network constraints while remaining 
 - Users can choose sandbox policy + network behavior via repo config and see it in the UI.
 - Starting an agent under sandbox does not break basic workflows (git, harness auth/state, logs).
 - Failures surface actionable errors (not silent no-ops).
-

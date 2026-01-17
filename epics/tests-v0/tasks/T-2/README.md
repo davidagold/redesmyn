@@ -1,14 +1,12 @@
-# T-2 DB/migrations + schema invariants
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-2-db-migrations
-```
+---
+
+# T-2 DB/migrations + schema invariants
 
 ## Goal
 
@@ -46,4 +44,3 @@ This should be pragmatic: we don’t need exhaustive schema tests, but we should
 
 - `uv run pytest -k migrations` passes.
 - At least one test explicitly covers “legacy schema drift” class of issues (to prevent reintroduction).
-

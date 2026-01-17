@@ -1,8 +1,4 @@
-# T-11 Structured continuation transport: resume-by-id turns (enables T-5)
-
-## Metadata
-
-```yaml
+---
 id: T-11
 epic: harness-interface-v0
 stacked_on: T-10
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: null
   identifier: null
-```
+---
+
+# T-11 Structured continuation transport: resume-by-id turns (enables T-5)
 
 ## Problem
 
@@ -136,4 +134,3 @@ Add tests that validate the “structured continuation turn” contract without 
 - For Codex and Claude Code, Redesmyn can run a follow-up structured turn using a persisted resume handle and a prompt payload.
 - There is a deterministic correlation boundary for “the remediation turn completed” suitable for T-5 gating.
 - T-5 can be updated to depend on this task and remove tmux-based structured messaging assumptions.
-

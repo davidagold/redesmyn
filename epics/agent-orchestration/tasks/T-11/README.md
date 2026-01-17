@@ -1,13 +1,11 @@
-# T-11 Harness adapter: Claude Code
-
-## Metadata
-
-```yaml
+---
 id: T-11
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-11-harness-claude-code
-```
+---
+
+# T-11 Harness adapter: Claude Code
 
 ## Brief (local)
 

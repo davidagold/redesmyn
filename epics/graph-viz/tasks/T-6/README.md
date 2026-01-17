@@ -1,13 +1,11 @@
-# T-6 Graph polish: animations + performance budget
-
-## Metadata
-
-```yaml
+---
 id: T-6
 stacked_on: T-5
 node:
   branch: rn/graph-viz/task-6-graph-polish
-```
+---
+
+# T-6 Graph polish: animations + performance budget
 
 ## Brief (local)
 

@@ -1,14 +1,12 @@
-# T-4 Multi-repo DB + server scoping (design + UX)
-
-## Metadata
-
-```yaml
+---
 id: T-4
 epic: backlog
 stacked_on:
 branch:
   suggested: rn/backlog/T-4-multi-repo-server-scope
-```
+---
+
+# T-4 Multi-repo DB + server scoping (design + UX)
 
 ## Problem
 
@@ -83,4 +81,3 @@ This task should decide whether multi-repo is a real near-term goal or a long-te
 - The app communicates which repo the server is scoped to.
 - If the DB contains multiple repos, the UI makes that discoverable and explains how to switch.
 - No change in default behavior: launching from repo A still only shows repo A’s epics by default.
-

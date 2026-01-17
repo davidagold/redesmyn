@@ -1,11 +1,9 @@
-# T-5 Daemon owns observation + agent monitoring
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-4
-```
+---
+
+# T-5 Daemon owns observation + agent monitoring
 
 ## Plan
 

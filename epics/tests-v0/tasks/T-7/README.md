@@ -1,14 +1,12 @@
-# T-7 CLI integration tests
-
-## Metadata
-
-```yaml
+---
 id: T-7
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-7-cli-integration
-```
+---
+
+# T-7 CLI integration tests
 
 ## Goal
 

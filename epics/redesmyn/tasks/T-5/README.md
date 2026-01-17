@@ -1,13 +1,11 @@
-# T-5 Worktrees: record `nodes.worktree_path`
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-3
 node:
   branch: rn/redesmyn/task-5-worktree-path
-```
+---
+
+# T-5 Worktrees: record `nodes.worktree_path`
 
 ## Brief (local)
 

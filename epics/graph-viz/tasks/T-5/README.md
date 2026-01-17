@@ -1,15 +1,13 @@
-# T-5 Commit strings (rendering + edge interactions)
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-3
 must_land_after:
   - T-4
 node:
   branch: rn/graph-viz/task-5-commit-strings-rendering
-```
+---
+
+# T-5 Commit strings (rendering + edge interactions)
 
 ## Brief (local)
 

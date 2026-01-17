@@ -1,14 +1,12 @@
-# T-4 API integration tests (ASGI + DB)
-
-## Metadata
-
-```yaml
+---
 id: T-4
 stacked_on: T-1
 must_land_after: []
 node:
   branch: rn/tests-v0/T-4-api-integration
-```
+---
+
+# T-4 API integration tests (ASGI + DB)
 
 ## Goal
 

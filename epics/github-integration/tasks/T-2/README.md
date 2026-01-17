@@ -1,14 +1,12 @@
-# T-2 GitHub repo association (auto-detect + overrides) + epic-level badge
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: null
 must_land_after: []
 node:
   branch: rn/github-integration/T-2-github-repo-association
-```
+---
+
+# T-2 GitHub repo association (auto-detect + overrides) + epic-level badge
 
 ## Brief (local)
 

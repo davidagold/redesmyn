@@ -1,16 +1,14 @@
-# Messages + Commands Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Messages + Commands** epic: intent, v0 spec, sequencing, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: messages-commands
 name: Messages + Commands
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Messages + Commands Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Messages + Commands** epic: intent, v0 spec, sequencing, and key decisions. Keep it current.
 
 ## 1) Vision
 
@@ -43,4 +41,3 @@ This epic depends on the core session/runner building blocks defined in `epics/a
 
 - Multi-user collaboration semantics beyond a single user’s cockpit (shared tenancy).
 - Perfect deep integration for every harness; hooks are opportunistic.
-

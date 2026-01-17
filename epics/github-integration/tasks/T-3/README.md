@@ -1,15 +1,13 @@
-# T-3 PR create/open + PR auto-detection + push semantics
-
-## Metadata
-
-```yaml
+---
 id: T-3
 stacked_on: T-1
 must_land_after:
   - T-2
 node:
   branch: rn/github-integration/T-3-github-pr-actions
-```
+---
+
+# T-3 PR create/open + PR auto-detection + push semantics
 
 ## Brief (local)
 

@@ -1,13 +1,11 @@
-# T-12 UI: show in-flight progress for all actions (no “silent” requests)
-
-## Metadata
-
-```yaml
+---
 id: T-12
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-12-inflight-progress-indicators
-```
+---
+
+# T-12 UI: show in-flight progress for all actions (no “silent” requests)
 
 ## Problem
 

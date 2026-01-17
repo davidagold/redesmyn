@@ -1,8 +1,4 @@
-# T-1 Daemon ↔ control plane contracts + naming
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on: null
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 3374fe5d-3ec1-4fab-a128-c1d7de20f956
   identifier: RED-27
-```
+---
+
+# T-1 Daemon ↔ control plane contracts + naming
 
 ## Brief (local)
 

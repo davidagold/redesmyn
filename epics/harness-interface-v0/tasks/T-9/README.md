@@ -1,8 +1,4 @@
-# T-9 UI: task card agent message preview (1-line, truncated)
-
-## Metadata
-
-```yaml
+---
 id: T-9
 epic: harness-interface-v0
 stacked_on: T-10
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: 847901fe-17cd-418b-890d-f105558f747b
   identifier: RED-26
-```
+---
+
+# T-9 UI: task card agent message preview (1-line, truncated)
 
 ## Problem
 

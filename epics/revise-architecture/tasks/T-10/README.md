@@ -1,8 +1,4 @@
-# T-10 Control plane: repo-rootless mode + repo selection by repo key
-
-## Metadata
-
-```yaml
+---
 id: T-10
 stacked_on: T-9
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: cc877a94-a6b7-4eea-bf0c-c39cf5c2f89e
   identifier: RED-28
-```
+---
+
+# T-10 Control plane: repo-rootless mode + repo selection by repo key
 
 ## Problem / Motivation
 

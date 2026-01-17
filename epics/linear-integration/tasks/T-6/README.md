@@ -1,8 +1,4 @@
-# T-6 Linear automation: push local status → Linear + sync indicator
-
-## Metadata
-
-```yaml
+---
 id: T-6
 stacked_on: T-5
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: b4e4b9bc-9357-4f67-86d5-df5abacdb4be
   identifier: RED-16
-```
+---
+
+# T-6 Linear automation: push local status → Linear + sync indicator
 
 ## Brief (local)
 

@@ -1,13 +1,11 @@
-# T-4 Remove redundant Linear connection button from Details panel
-
-## Metadata
-
-```yaml
+---
 id: T-4
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-4-details-linear-button-removal
-```
+---
+
+# T-4 Remove redundant Linear connection button from Details panel
 
 ## Problem
 

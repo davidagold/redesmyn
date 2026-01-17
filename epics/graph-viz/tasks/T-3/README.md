@@ -1,13 +1,11 @@
-# T-3 Deterministic layout (ELK) + fit-to-view
-
-## Metadata
-
-```yaml
+---
 id: T-3
 stacked_on: T-1
 node:
   branch: rn/graph-viz/task-3-elk-layout
-```
+---
+
+# T-3 Deterministic layout (ELK) + fit-to-view
 
 ## Brief (local)
 

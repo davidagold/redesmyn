@@ -1,8 +1,4 @@
-# T-13 UI: surface external session id (thread/session) when available
-
-## Metadata
-
-```yaml
+---
 id: T-13
 epic: harness-interface-v0
 stacked_on: T-12
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: null
   identifier: null
-```
+---
+
+# T-13 UI: surface external session id (thread/session) when available
 
 ## Problem
 
@@ -79,4 +77,3 @@ the visual intent in the provided mock (id chip adjacent to the agent kind).
 - For structured Claude Code sessions, the UI shows the Claude session id (abbreviated) and allows copying the full id.
 - For interactive-only sessions (no `external_session_ref`), the UI shows nothing extra.
 - The feature does not introduce additional API calls or alter message/session routing behavior.
-

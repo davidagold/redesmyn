@@ -1,12 +1,10 @@
-# T-1 Graph viewport foundation (XYFlow)
-
-## Metadata
-
-```yaml
+---
 id: T-1
 node:
   branch: rn/graph-viz/task-1-xyflow-foundation
-```
+---
+
+# T-1 Graph viewport foundation (XYFlow)
 
 ## Brief (local)
 

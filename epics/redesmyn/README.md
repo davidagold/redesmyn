@@ -1,16 +1,14 @@
-# Redesmyn Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Redesmyn** epic: intent, v0 spec, invariants, and key architectural decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: redesmyn
 name: Redesmyn
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Redesmyn Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Redesmyn** epic: intent, v0 spec, invariants, and key architectural decisions. Keep it current.
 
 ## 1) Vision
 
@@ -105,8 +103,8 @@ When importing from Linear:
 #### v0 task doc format (Markdown-first)
 
 - One task per directory under `epics/<slug>/tasks/` (flat at the Redesmyn layer).
-- Use Markdown headers (not YAML frontmatter) for metadata so tasks remain readable/editable without special tooling:
-  - `## Metadata` with a fenced `yaml` block immediately below.
+- Use standard YAML frontmatter for metadata (visible, plain-text, git-friendly):
+  - `---` delimited YAML mapping at the top of the file.
 - Metadata uses stable local IDs so dependencies are unambiguous within an epic:
   - Task local id: `T-<NNN>` (unique within the epic; used for refs like `stacked_on`)
 - Task metadata includes:
@@ -134,10 +132,7 @@ If a ref is ambiguous (matches multiple tasks), error in v0 (do not guess).
 ##### Example: task `README.md`
 
 ````md
-# RED-123 Implement `rn sync`
-
-## Metadata
-```yaml
+---
 id: T-3
 group_under: T-1
 stacked_on: RED-122
@@ -148,7 +143,9 @@ linear:
   identifier: RED-123
 node:
   branch: rn/redesmyn/RED-123-rn-sync
-```
+---
+
+# RED-123 Implement `rn sync`
 
 ## Brief (local)
 …

@@ -1,13 +1,11 @@
-# T-13 Harness adapter: Amp
-
-## Metadata
-
-```yaml
+---
 id: T-13
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-13-harness-amp
-```
+---
+
+# T-13 Harness adapter: Amp
 
 ## Brief (local)
 

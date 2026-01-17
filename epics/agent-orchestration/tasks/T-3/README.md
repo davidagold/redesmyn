@@ -1,13 +1,11 @@
-# T-3 Daemon + CLI: spawn/attach/stop per-task agents (tmux-first)
-
-## Metadata
-
-```yaml
+---
 id: T-3
 stacked_on: T-2
 node:
   branch: rn/agent-orchestration/T-3-runner-tmux-cli
-```
+---
+
+# T-3 Daemon + CLI: spawn/attach/stop per-task agents (tmux-first)
 
 ## Brief (local)
 

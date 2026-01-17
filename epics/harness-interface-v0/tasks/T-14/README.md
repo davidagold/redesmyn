@@ -1,8 +1,4 @@
-# T-14 Structured tmux log capture race (missing `thread.started` / early events)
-
-## Metadata
-
-```yaml
+---
 id: T-14
 epic: harness-interface-v0
 stacked_on: T-7
@@ -10,7 +6,9 @@ must_land_after:
 - T-10
 branch:
   suggested: rn/harness-interface-v0/T-14-structured-log-capture-race
-```
+---
+
+# T-14 Structured tmux log capture race (missing `thread.started` / early events)
 
 ## Problem
 
@@ -68,4 +66,3 @@ or provide an equally reliable source of truth that does not depend on tmux pipe
   (or equivalent deterministic session/turn identifiers).
 - `external_session_ref` is reliably persisted for structured Codex sessions without requiring heuristics.
 - We have enough logging/events to debug “did we start a turn?” and “what are we waiting on?” scenarios.
-

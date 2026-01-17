@@ -1,8 +1,4 @@
-# T-12 Consolidate overlapping backend mechanisms (reduce surface area)
-
-## Metadata
-
-```yaml
+---
 id: T-12
 stacked_on: T-9
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: a2b45498-9059-4e17-ac23-97ac060ab293
   identifier: RED-30
-```
+---
+
+# T-12 Consolidate overlapping backend mechanisms (reduce surface area)
 
 ## Motivation
 

@@ -1,8 +1,4 @@
-# T-4 CLI UX: `rn daemon up/down/status` + consolidate server/daemon concepts
-
-## Metadata
-
-```yaml
+---
 id: T-4
 stacked_on: T-3
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: f1b429df-7ad2-4c7d-9082-14bc93b32c60
   identifier: RED-33
-```
+---
+
+# T-4 CLI UX: `rn daemon up/down/status` + consolidate server/daemon concepts
 
 ## Brief (local)
 

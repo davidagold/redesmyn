@@ -1,13 +1,11 @@
-# T-5 Messages + commands (moved to separate epic)
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-3
 node:
   branch: rn/agent-orchestration/T-5-messages-commands
-```
+---
+
+# T-5 Messages + commands (moved to separate epic)
 
 ## Brief (local)
 

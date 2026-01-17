@@ -1,8 +1,4 @@
-# T-2 Agent kind identification + user override (Codex/Claude/Generic)
-
-## Metadata
-
-```yaml
+---
 id: T-2
 epic: harness-interface-v0
 stacked_on: T-7
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: 8923f91c-4b6c-418f-9e18-83becf08f4d8
   identifier: RED-19
-```
+---
+
+# T-2 Agent kind identification + user override (Codex/Claude/Generic)
 
 ## Problem
 

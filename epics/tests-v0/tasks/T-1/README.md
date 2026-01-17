@@ -1,14 +1,12 @@
-# T-1 Test harness + fixtures + scenario bundles (trunk)
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on:
 must_land_after: []
 node:
   branch: rn/tests-v0/T-1-test-harness
-```
+---
+
+# T-1 Test harness + fixtures + scenario bundles (trunk)
 
 ## Goal
 
@@ -94,4 +92,3 @@ Add a short, explicit guide for writing tests in this repo:
 - Prefer **real git** in temp repos for git mechanics tests; mocks are likely to miss edge cases.
 - Prefer applying Alembic migrations into temp dbs for integration tests; it catches schema drift.
 - Keep the scenario API stable and additive; downstream tasks will build on it.
-

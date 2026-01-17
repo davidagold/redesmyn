@@ -1,8 +1,4 @@
-# T-5 Dashboard: unified “Linear” sync menu button (epic + task)
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on: T-2
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 2be4144e-5201-461e-8982-6e0107ab57ed
   identifier: RED-15
-```
+---
+
+# T-5 Dashboard: unified “Linear” sync menu button (epic + task)
 
 ## Brief (local)
 

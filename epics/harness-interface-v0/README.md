@@ -1,3 +1,14 @@
+---
+slug: harness-interface-v0
+name: Harness interface v0
+root_branch: main
+supersedes:
+- epic: agent-orchestration
+  scope: harness-related unfinished work (profiles/adapters/doctor)
+linear:
+  project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
+---
+
 # Harness Interface v0 Epic: Control Doc (Canonical)
 
 This file is the canonical “control doc” for the **Harness Interface v0** epic: intent, scope, current state, and plan. Keep it current.
@@ -15,19 +26,6 @@ You were looking for **successor** (or “replacement epic”) rather than “su
 - **Driver**: long-running loop that owns an interpreter for a session, persists/broadcasts semantic status, and issues safe high-level operations via transport.
 
 Rationale: the UI and workflows are session-first; the DB `Agent` identity object is legacy/internal; and “harness” reads as a test/process harness, so v0 reserves “transport/runtime” for tmux/pty concerns and uses “Agent” for program semantics.
-
-## Metadata
-
-```yaml
-slug: harness-interface-v0
-name: Harness interface v0
-root_branch: main
-supersedes:
-- epic: agent-orchestration
-  scope: harness-related unfinished work (profiles/adapters/doctor)
-linear:
-  project_id: 0c41f23e-219c-4feb-908b-3dff3cb7e906
-```
 
 ## 1) Why this epic exists
 

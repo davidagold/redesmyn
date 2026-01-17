@@ -1,13 +1,11 @@
-# T-4 Commit strings (API + data model)
-
-## Metadata
-
-```yaml
+---
 id: T-4
 stacked_on: T-1
 node:
   branch: rn/graph-viz/task-4-commit-strings-api
-```
+---
+
+# T-4 Commit strings (API + data model)
 
 ## Brief (local)
 

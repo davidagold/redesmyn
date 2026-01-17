@@ -1,8 +1,4 @@
-# T-3 `rn sync --from linear`: label-filtered import + ID allocation + parent selection
-
-## Metadata
-
-```yaml
+---
 id: T-3
 stacked_on: T-2
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: 948137cf-96c4-4765-8cd2-5337dfda019c
   identifier: RED-13
-```
+---
+
+# T-3 `rn sync --from linear`: label-filtered import + ID allocation + parent selection
 
 ## Brief (local)
 

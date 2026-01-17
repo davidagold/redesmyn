@@ -1,11 +1,9 @@
-# T-2 Repo selection everywhere: `-C/--repo` plumbing
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on: T-1
-```
+---
+
+# T-2 Repo selection everywhere: `-C/--repo` plumbing
 
 ## Plan
 

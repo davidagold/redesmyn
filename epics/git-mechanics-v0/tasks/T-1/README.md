@@ -1,13 +1,11 @@
-# T-1 Stack-preserving cascade merge (CLI + API + UI)
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on:
 node:
   branch: rn/git-mechanics-v0/T-1-cascade-merge
-```
+---
+
+# T-1 Stack-preserving cascade merge (CLI + API + UI)
 
 ## Brief (local)
 
@@ -42,4 +40,3 @@ Dashboard UX requirements (graph-first):
 - Running-agent confirmation is batched (one prompt/modal per request).
 - Dashboard exposes “Ready to merge” and “Merge/Merge stack” from the graph node UI.
 - Progress is reflected in the UI as steps execute (via websocket events).
-

@@ -1,13 +1,11 @@
-# T-2 Surface out-of-sync / left-behind branches in the UI
-
-## Metadata
-
-```yaml
+---
 id: T-2
 stacked_on:
 node:
   branch: rn/git-mechanics-v0/T-2-out-of-sync-indicators
-```
+---
+
+# T-2 Surface out-of-sync / left-behind branches in the UI
 
 ## Brief (local)
 
@@ -29,4 +27,3 @@ UI behaviors:
 - The system can identify a set of “out-of-sync” nodes for an epic (best-effort).
 - The graph UI surfaces the state unobtrusively and provides a clear next action.
 - Detection does not materially degrade dashboard performance.
-

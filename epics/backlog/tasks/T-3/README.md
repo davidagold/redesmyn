@@ -1,14 +1,12 @@
-# T-3 Linear: recover from 401 “not authenticated” in server API
-
-## Metadata
-
-```yaml
+---
 id: T-3
 epic: backlog
 stacked_on:
 branch:
   suggested: rn/backlog/T-3-linear-auth-recovery
-```
+---
+
+# T-3 Linear: recover from 401 “not authenticated” in server API
 
 ## Problem
 
@@ -89,4 +87,3 @@ This is confusing and breaks the “Linear is connected” expectation.
 
 - Implementer should consult Linear’s auth/token docs (and any upstream SDK behavior) to ensure the refresh flow is correct and safe.
 - Prefer minimal surface area: one shared “Linear request” helper that handles retry-on-401 for all server Linear routes, rather than per-route bespoke logic.
-

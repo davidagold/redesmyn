@@ -1,13 +1,11 @@
-# T-5 Squash merge mode (one commit per spine task)
-
-## Metadata
-
-```yaml
+---
 id: T-5
 stacked_on:
 node:
   branch: rn/git-mechanics-v0/T-5-squash-merge-mode
-```
+---
+
+# T-5 Squash merge mode (one commit per spine task)
 
 ## Problem
 
@@ -111,4 +109,3 @@ This task should record the chosen invariant and update any code paths that assu
 - Work branch refs are unchanged after the merge run.
 - The system has a clear and enforceable “done/merged” invariant that remains correct under squash mode (documented and implemented).
 - Existing ff-only behavior remains the default and unchanged unless squash mode is explicitly enabled.
-

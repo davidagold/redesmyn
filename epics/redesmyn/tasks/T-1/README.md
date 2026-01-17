@@ -1,16 +1,13 @@
-# T-1 Dogfood: implement epic/node/task/agent commands
-
-## Metadata
-
-```yaml
+---
 id: T-1
 stacked_on:
 node:
   branch: rn/redesmyn/task-1-dogfood-cli
-```
+---
+
+# T-1 Dogfood: implement epic/node/task/agent commands
 
 ## Brief (local)
 
 - Dogfood Redesmyn by managing the early development tasks in this very repo.
 - Implement CLI primitives for epics/tasks/nodes/agents and basic repo initialization.
-

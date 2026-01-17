@@ -1,13 +1,11 @@
-# T-14 Harness adapter: OpenCode
-
-## Metadata
-
-```yaml
+---
 id: T-14
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-14-harness-opencode
-```
+---
+
+# T-14 Harness adapter: OpenCode
 
 ## Brief (local)
 

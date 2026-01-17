@@ -1,16 +1,14 @@
-# Graph Visualization Epic: Control Doc (Canonical)
-
-This file is the canonical “control doc” for the **Graph Visualization** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
-
-## Metadata
-
-```yaml
+---
 slug: graph-viz
 name: Graph Visualization
 root_branch: main
 linear:
   project_id: null
-```
+---
+
+# Graph Visualization Epic: Control Doc (Canonical)
+
+This file is the canonical “control doc” for the **Graph Visualization** epic: intent, v0 spec, invariants, and key decisions. Keep it current.
 
 ## 1) Vision
 

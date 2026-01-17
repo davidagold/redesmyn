@@ -1,13 +1,11 @@
-# T-10 Epic menu hover background should be full width
-
-## Metadata
-
-```yaml
+---
 id: T-10
 epic: ui-v0
 branch:
   suggested: rn/ui-v0/T-10-epic-menu-hover-full-width
-```
+---
+
+# T-10 Epic menu hover background should be full width
 
 ## Problem
 
@@ -32,4 +30,3 @@ Make the hover (and keyboard-focus) background fill the full width of each menu 
 - Hovering any epic shows a full-width background highlight.
 - The clickable area feels consistent with the visual highlight.
 - `just check` remains green.
-

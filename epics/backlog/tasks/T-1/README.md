@@ -1,10 +1,8 @@
-# T-1 Rebase: update worktree-bound branch refs
-
-## Metadata
-
-```yaml
+---
 id: T-1
-```
+---
+
+# T-1 Rebase: update worktree-bound branch refs
 
 ## Background
 
@@ -53,4 +51,3 @@ The solution must be explicit and safe:
   - cleanly errors if any involved worktree is dirty
   - can be run repeatedly (idempotent)
 - Documentation clearly describes the behavior and constraints.
-

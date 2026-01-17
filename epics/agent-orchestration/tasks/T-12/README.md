@@ -1,13 +1,11 @@
-# T-12 Harness adapter: Cursor
-
-## Metadata
-
-```yaml
+---
 id: T-12
 stacked_on: T-15
 node:
   branch: rn/agent-orchestration/T-12-harness-cursor
-```
+---
+
+# T-12 Harness adapter: Cursor
 
 ## Brief (local)
 

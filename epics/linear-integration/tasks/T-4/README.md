@@ -1,8 +1,4 @@
-# T-4 `rn sync --to linear`: create/update issues + overwrite semantics
-
-## Metadata
-
-```yaml
+---
 id: T-4
 stacked_on: T-3
 node:
@@ -10,7 +6,9 @@ node:
 linear:
   issue_id: b790eca1-b0f3-4161-9c04-c44774ccdf97
   identifier: RED-14
-```
+---
+
+# T-4 `rn sync --to linear`: create/update issues + overwrite semantics
 
 ## Brief (local)
 

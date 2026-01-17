@@ -1,8 +1,4 @@
-# T-12 UI: task card messaging (structured + interactive send, resume, interrupt)
-
-## Metadata
-
-```yaml
+---
 id: T-12
 epic: harness-interface-v0
 stacked_on: T-11
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: null
   identifier: null
-```
+---
+
+# T-12 UI: task card messaging (structured + interactive send, resume, interrupt)
 
 ## Problem
 

@@ -1,14 +1,12 @@
-# T-1 “Ready to merge” should align with merge semantics
-
-## Metadata
-
-```yaml
+---
 id: T-1
 epic: ui-v0
 stacked_on:
 branch:
   suggested: rn/ui-v0/T-1-ready-to-merge-spine
-```
+---
+
+# T-1 “Ready to merge” should align with merge semantics
 
 ## Problem
 

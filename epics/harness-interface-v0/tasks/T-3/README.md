@@ -1,8 +1,4 @@
-# T-3 Codex agent interface implementation (turn detection + capabilities)
-
-## Metadata
-
-```yaml
+---
 id: T-3
 epic: harness-interface-v0
 stacked_on: T-7
@@ -11,7 +7,9 @@ branch:
 linear:
   issue_id: 7fcfebc5-9f96-4f31-8f03-9d8c3e03ab4b
   identifier: RED-20
-```
+---
+
+# T-3 Codex agent interface implementation (turn detection + capabilities)
 
 ## Problem
 
