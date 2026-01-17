@@ -7,7 +7,7 @@ rn:
 
 # T-4 Dashboard: per-node thread + command issuance (graph-first)
 
-## Brief (local)
+## Plan
 
 - Add a per-node message thread to the selection Details panel.
 - Add command issuance UI from the same context (and show command state).

@@ -7,7 +7,7 @@ rn:
 
 # T-6 WebSocket: live graph updates (activity + presence)
 
-## Brief (local)
+## Plan
 
 - Add a WebSocket endpoint that streams:
   - agent/session status changes

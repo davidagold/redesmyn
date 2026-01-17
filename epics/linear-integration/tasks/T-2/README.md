@@ -10,7 +10,7 @@ rn:
 
 # T-2 Linear client: write support (labels, state, dependencies, create/update)
 
-## Brief (local)
+## Plan
 
 - Extend the Linear integration layer to support the operations required for `sync --to linear`:
   - read/write issues in a project

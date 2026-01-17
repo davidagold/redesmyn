@@ -7,7 +7,7 @@ rn:
 
 # T-5 Worktrees: record `nodes.worktree_path`
 
-## Brief (local)
+## Plan
 
 - Ensure that when a worktree is created/attached for a node branch, we persist its location in
   `nodes.worktree_path` so the daemon/UI can reason about local state.

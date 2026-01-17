@@ -7,7 +7,7 @@ rn:
 
 # T-20 Merge UX: complete styling + auto-mark merged ancestors
 
-## Brief (local)
+## Plan
 
 Polish the merge workflow and make completion clearer:
 

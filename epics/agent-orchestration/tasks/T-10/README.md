@@ -7,7 +7,7 @@ rn:
 
 # T-10 Harness adapter: Codex
 
-## Brief (local)
+## Plan
 
 - Add a Codex launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - If Codex supports hooks, use them opportunistically to enrich session state; otherwise rely on generic mechanisms (process lifecycle + repo observer).

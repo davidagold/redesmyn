@@ -7,7 +7,7 @@ rn:
 
 # T-1 Dogfood: implement epic/node/task/agent commands
 
-## Brief (local)
+## Plan
 
 - Dogfood Redesmyn by managing the early development tasks in this very repo.
 - Implement CLI primitives for epics/tasks/nodes/agents and basic repo initialization.

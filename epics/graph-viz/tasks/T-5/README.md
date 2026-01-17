@@ -9,7 +9,7 @@ rn:
 
 # T-5 Commit strings (rendering + edge interactions)
 
-## Brief (local)
+## Plan
 
 - Make “commit strings” feel like a real object in the graph (not a tooltip): selectable, inspectable, and stylable.
 - Implement a custom edge renderer for “commit strings”:

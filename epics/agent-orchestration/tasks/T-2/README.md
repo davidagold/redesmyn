@@ -7,7 +7,7 @@ rn:
 
 # T-2 DB + API: hosts, sessions, and orchestration mutations
 
-## Brief (local)
+## Plan
 
 - Add persistence for runner hosts and agent sessions (migrations + ORM + schemas).
 - Add a `launch_configurations` registry table (string PK) and reference it from sessions:

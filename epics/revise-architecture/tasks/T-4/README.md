@@ -10,7 +10,7 @@ rn:
 
 # T-4 CLI UX: `rn daemon up/down/status` + consolidate server/daemon concepts
 
-## Brief (local)
+## Plan
 
 - Introduce a user-friendly daemon lifecycle:
   - `rn daemon up` (start daemon in the background; connect to control plane)

@@ -10,7 +10,7 @@ rn:
 
 # T-5 Dashboard: daemon status + offline guidance
 
-## Brief (local)
+## Plan
 
 - Surface daemon connection status in the dashboard:
   - **daemon (host) connection**: online/offline + last_seen

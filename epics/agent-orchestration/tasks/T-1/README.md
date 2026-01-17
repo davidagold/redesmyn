@@ -7,7 +7,7 @@ rn:
 
 # T-1 Agent runtime architecture + contracts
 
-## Brief (local)
+## Plan
 
 - Define the v0 control-plane/runner boundary, including what runs where in local-first vs cloud deployment.
 - Specify the data model and contracts for:

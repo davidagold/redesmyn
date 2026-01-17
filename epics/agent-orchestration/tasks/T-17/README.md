@@ -7,7 +7,7 @@ rn:
 
 # T-17 Agent model + status: simplify + make tmux the source of truth
 
-## Brief (local)
+## Plan
 
 Simplify the agent/session ontology and make status reflect reality:
 

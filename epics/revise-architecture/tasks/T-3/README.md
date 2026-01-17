@@ -10,7 +10,7 @@ rn:
 
 # T-3 Daemon: connect + telemetry + orchestration loop
 
-## Brief (local)
+## Plan
 
 - Implement a long-lived daemon process that:
   - maintains an outbound connection to the control plane

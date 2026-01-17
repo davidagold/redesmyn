@@ -7,7 +7,7 @@ rn:
 
 # T-15 Launch configurations + `rn agent doctor` validation
 
-## Brief (local)
+## Plan
 
 - Define a data-driven “launch configuration” format that describes:
   - launch (argv, cwd rules), env injection

@@ -7,7 +7,7 @@ rn:
 
 # T-7 Dashboard: agent presence + activity integrated into the graph
 
-## Brief (local)
+## Plan
 
 - Render agent presence directly on graph nodes:
   - not-started / running / stopped / failed / blocked

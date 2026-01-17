@@ -10,7 +10,7 @@ rn:
 
 # T-6 Merge Node into Task (single graph primitive)
 
-## Brief (local)
+## Plan
 
 Consolidate “graph node” concepts by merging `Node` into `Task` so the graph has a single primitive:
 

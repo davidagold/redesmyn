@@ -16,7 +16,7 @@ This creates ambiguity and paper-cuts:
 - The UI branch graph can look “split”, even though the merged leaf fast-forwarded cleanly.
 - Any logic that relies on branch ref ancestry can produce confusing results.
 
-## Brief (local)
+## Plan
 
 Design and implement an approach that ensures task branches that are checked out in worktrees are updated consistently during rebase workflows.
 

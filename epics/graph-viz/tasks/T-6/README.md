@@ -7,7 +7,7 @@ rn:
 
 # T-6 Graph polish: animations + performance budget
 
-## Brief (local)
+## Plan
 
 - Make the graph feel “alive” and high-quality: tasteful motion and performance discipline are core to the cockpit experience.
 - Smooth transitions for layout changes and graph updates (node movement + edge redraw).

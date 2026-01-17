@@ -10,7 +10,7 @@ rn:
 
 # T-4 `rn sync --to linear`: create/update issues + overwrite semantics
 
-## Brief (local)
+## Plan
 
 - Implement push sync from local task docs/DB to Linear:
   - create Linear issues for tasks without `linear.issue_id`

@@ -6,7 +6,7 @@ rn:
 
 # T-3 Abort merge runs (cancel) + future rollback design
 
-## Brief (local)
+## Plan
 
 Add an **Abort merge run** control (UI + API) that cancels an in-progress merge run safely and predictably, without attempting to undo completed git operations.
 

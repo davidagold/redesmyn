@@ -118,8 +118,8 @@ When importing from Linear:
   - `rn.github.issue_id` / `rn.github.issue_key` (optional; seam for later)
   - `rn.node.branch` (optional; filled when linked/created)
 - Body conventions (v0):
-  - `rn` may manage a “synced” section populated from Linear (or other providers).
-  - Users may keep a “local notes / agent brief” section that `rn` never overwrites.
+  - `rn sync --from linear` overwrites the task doc body (simplistic v0 behavior).
+  - Treat task bodies as tool-managed if you use Linear pull sync.
 
 ##### Reference forms (v0)
 
@@ -149,13 +149,8 @@ rn:
 
 # RED-123 Implement `rn sync`
 
-## Brief (local)
+## Plan
 …
-
-## Synced (from Linear)
-<!-- rn:sync:start -->
-… (auto-managed) …
-<!-- rn:sync:end -->
 ````
 
 #### Sync model (v0)
@@ -164,7 +159,6 @@ Redesmyn splits “authority” by concern:
 
 - **Local (task docs + DB projection)** is canonical for:
   - branch graph topology (`parent`)
-  - agent instructions / local briefs
   - deterministic, reproducible “bootstrap this epic on a new machine”
 - **Linear** is canonical for:
   - workflow state, discussion, comments, team collaboration

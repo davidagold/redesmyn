@@ -7,7 +7,7 @@ rn:
 
 # T-18 Sandboxing: run harnesses in a controlled environment
 
-## Brief (local)
+## Plan
 
 Allow agents to run with tighter filesystem/network constraints while remaining usable:
 

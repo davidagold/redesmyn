@@ -8,7 +8,7 @@ rn:
 
 # T-2 GitHub repo association (auto-detect + overrides) + epic-level badge
 
-## Brief (local)
+## Plan
 
 - Associate GitHub repository identity with an epic, with an optional per-task override.
 - Default to auto-detection from the local git repo (remote parsing).

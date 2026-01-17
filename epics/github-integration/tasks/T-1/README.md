@@ -8,7 +8,7 @@ rn:
 
 # T-1 Machine-scoped GitHub auth (OAuth) + credential store
 
-## Brief (local)
+## Plan
 
 - Add machine-scoped GitHub OAuth authentication for GitHub.com.
 - Persist credentials in OS keychain (not the repo DB).

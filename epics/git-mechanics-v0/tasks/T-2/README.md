@@ -7,7 +7,7 @@ rn:
 
 # T-2 Surface out-of-sync / left-behind branches in the UI
 
-## Brief (local)
+## Plan
 
 Add lightweight detection and UI surfacing for branches that are no longer aligned with the most recent expected timeline (e.g. parent/base advanced due to merges/rebases and the child branch hasn’t been rebased yet).
 

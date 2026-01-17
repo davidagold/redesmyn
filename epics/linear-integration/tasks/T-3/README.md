@@ -10,7 +10,7 @@ rn:
 
 # T-3 `rn sync --from linear`: label-filtered import + ID allocation + parent selection
 
-## Brief (local)
+## Plan
 
 - Implement pull sync from Linear into a single epic:
   - only issues in the configured Linear project with the epic slug label
@@ -26,7 +26,7 @@ rn:
 - `rn sync --from linear` updates the epic’s task docs under `epics/<slug>/tasks/` and updates DB rows.
 - Imported tasks receive stable `T-###` ids, and the mapping to `linear.issue_id` is preserved.
 - Multi-blocker issues prompt for a parent choice and complete without error.
-- The task doc “Brief (local)” is preserved; only the managed metadata + synced section change.
+- Task docs are overwritten on `rn sync --from linear` in v0 (simplistic).
 
 ## Notes / Design
 

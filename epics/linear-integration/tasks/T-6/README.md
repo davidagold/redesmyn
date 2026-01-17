@@ -10,7 +10,7 @@ rn:
 
 # T-6 Linear automation: push local status → Linear + sync indicator
 
-## Brief (local)
+## Plan
 
 - Add automation that updates Linear issue status based on local task lifecycle:
   - When an agent starts running a task, set the linked Linear issue to `in progress`.

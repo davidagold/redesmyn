@@ -7,7 +7,7 @@ rn:
 
 # T-3 Runner + harness integration: delivery modes (hooks/cooperative/manual)
 
-## Brief (local)
+## Plan
 
 - Implement delivery modes per the design:
   - hook-based enrichment (when available)

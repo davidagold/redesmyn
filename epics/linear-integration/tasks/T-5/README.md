@@ -10,7 +10,7 @@ rn:
 
 # T-5 Dashboard: unified “Linear” sync menu button (epic + task)
 
-## Brief (local)
+## Plan
 
 - Add a unified “Linear” sync menu button that can be shown at:
   - epic level (graph header/subheader)

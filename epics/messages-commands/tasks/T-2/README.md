@@ -7,7 +7,7 @@ rn:
 
 # T-2 DB + API: messages, threads, and command loop
 
-## Brief (local)
+## Plan
 
 - Implement persistence for messages/threads and the command loop.
 - Replace ad-hoc `dict` payloads with typed Pydantic payload models wherever feasible (commands, message metadata).

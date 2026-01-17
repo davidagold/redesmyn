@@ -9,7 +9,7 @@ rn:
 
 # T-9 Worktrees UX: `rn shell` + worktree status surfaces
 
-## Brief (local)
+## Plan
 
 - Provide ergonomic worktree-aware navigation:
   - `rn shell -e <epic> -t <T-…>` opens a subshell at the task worktree (ensures it exists)

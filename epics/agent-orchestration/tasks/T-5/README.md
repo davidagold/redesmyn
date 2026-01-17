@@ -7,7 +7,7 @@ rn:
 
 # T-5 Messages + commands (moved to separate epic)
 
-## Brief (local)
+## Plan
 
 Messages and commands are intentionally being designed and implemented in a separate epic:
 

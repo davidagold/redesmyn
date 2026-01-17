@@ -7,7 +7,7 @@ rn:
 
 # T-4 Repo observer: commits + worktree telemetry → events
 
-## Brief (local)
+## Plan
 
 - Implement a host-local observer that emits normalized events for:
   - node branch ref movements and new commits

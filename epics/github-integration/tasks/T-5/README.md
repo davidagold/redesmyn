@@ -9,7 +9,7 @@ rn:
 
 # T-5 Nice-to-have: PR checks/review/close affordances
 
-## Brief (local)
+## Plan
 
 - Extend PR integration with richer state:
   - checks summary (pass/fail/pending),

@@ -7,7 +7,7 @@ rn:
 
 # T-13 Harness adapter: Amp
 
-## Brief (local)
+## Plan
 
 - Add an Amp launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Identify any available hooks and use them opportunistically to enrich session state (optional).

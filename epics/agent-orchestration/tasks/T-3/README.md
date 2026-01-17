@@ -7,7 +7,7 @@ rn:
 
 # T-3 Daemon + CLI: spawn/attach/stop per-task agents (tmux-first)
 
-## Brief (local)
+## Plan
 
 - Implement daemon-owned process lifecycle for **per-task agents**:
   - spawn a harness process in the task’s worktree with consistent env injection

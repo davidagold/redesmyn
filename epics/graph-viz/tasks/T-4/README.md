@@ -7,7 +7,7 @@ rn:
 
 # T-4 Commit strings (API + data model)
 
-## Brief (local)
+## Plan
 
 - Make “commit strings” first-class data, not an afterthought. The UI needs enough structured information to render and inspect commit sequences along nodes/edges.
 - Extend the daemon API so the UI can treat “commit strings” as first-class:

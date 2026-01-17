@@ -7,7 +7,7 @@ rn:
 
 # T-16 Settings defaults: harness + prelude configuration
 
-## Brief (local)
+## Plan
 
 Make agent orchestration configurable and ergonomic for local dogfooding:
 

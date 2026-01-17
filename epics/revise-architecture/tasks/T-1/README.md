@@ -10,7 +10,7 @@ rn:
 
 # T-1 Daemon ↔ control plane contracts + naming
 
-## Brief (local)
+## Plan
 
 - Define the canonical naming and mental model:
   - control plane vs daemon

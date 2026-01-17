@@ -10,7 +10,7 @@ rn:
 
 # T-2 Server: daemon connection + presence + command delivery
 
-## Brief (local)
+## Plan
 
 - Add a server endpoint for daemon connectivity (WebSocket recommended).
 - Define repo attachment on a host-scoped daemon:

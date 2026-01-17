@@ -7,7 +7,7 @@ rn:
 
 # T-12 Harness adapter: Cursor
 
-## Brief (local)
+## Plan
 
 - Add a Cursor launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Define the best-effort attach story (tmux if applicable; otherwise “open in worktree” semantics).

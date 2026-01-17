@@ -8,7 +8,7 @@ rn:
 
 # T-4 Dashboard UX: icon-only integration indicators + task-card PR badge
 
-## Brief (local)
+## Plan
 
 - Add GitHub to the dashboard’s integration affordances.
 - Update the existing Linear affordance to match the new pattern (icon-only).

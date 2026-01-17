@@ -7,7 +7,7 @@ rn:
 
 # T-14 Harness adapter: OpenCode
 
-## Brief (local)
+## Plan
 
 - Add an OpenCode launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Identify any available hooks and use them opportunistically to enrich session state (optional).

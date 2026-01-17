@@ -7,7 +7,7 @@ rn:
 
 # T-1 Stack-preserving cascade merge (CLI + API + UI)
 
-## Brief (local)
+## Plan
 
 Implement a stack-preserving “merge” workflow that works with git worktrees and can safely (as safely as possible in v0) cascade updates through the stack.
 

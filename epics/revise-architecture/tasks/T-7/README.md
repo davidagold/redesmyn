@@ -10,7 +10,7 @@ rn:
 
 # T-7 Remove server git execution; consolidate git proxying locally
 
-## Brief (local)
+## Plan
 
 ~~Eliminate “server == host” assumptions by moving all git execution to the daemon:~~
 Eliminate “server == host” assumptions by moving all git/worktree execution out of the **control plane** and into a **repo executor**

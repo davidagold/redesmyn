@@ -53,7 +53,7 @@ The user should:
 
 - **User-scoped credentials**: tokens belong to a user identity, not a repo.
 - **Determinism over magic**: sync is explicit; the user decides when to pull/push.
-- **Docs stay human-editable**: task docs remain Markdown-first; local “Brief” is never overwritten.
+- **Docs stay human-editable**: task docs remain Markdown-first; v0 sync may overwrite doc bodies (simplistic).
 - **Graph-first UX**: sync affordances should be actionable and non-noisy (no table-heavy “integration settings” screens).
 
 ## 4) Key decisions

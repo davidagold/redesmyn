@@ -7,7 +7,7 @@ rn:
 
 # T-2 Graph interactions + selection model
 
-## Brief (local)
+## Plan
 
 - Make the viewport feel “native” and empathetic: predictable focus, minimal chrome, and no redundant information competing with the graph.
 - Define a consistent interaction model:

@@ -7,7 +7,7 @@ rn:
 
 # T-8 Dashboard: graph-first agent actions
 
-## Brief (local)
+## Plan
 
 - Add task-level actions in the graph/Details panel:
   - start/stop/restart agent

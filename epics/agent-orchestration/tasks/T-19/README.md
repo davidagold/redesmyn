@@ -7,7 +7,7 @@ rn:
 
 # T-19 Merge workflow: “ready to merge” + `rn merge`
 
-## Brief (local)
+## Plan
 
 Support a simple, explicit “merge a stacked task branch” workflow:
 

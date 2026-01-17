@@ -6,7 +6,7 @@ rn:
 
 # T-1 Graph viewport foundation (XYFlow)
 
-## Brief (local)
+## Plan
 
 - Establish the interactive graph “canvas” so users can efficiently explore the **map of work**
   (tasks/nodes/agents) via pan/zoom and selection (Dagster-like ergonomics).

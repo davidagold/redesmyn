@@ -10,7 +10,7 @@ rn:
 
 # T-1 Machine-scoped Linear auth (PKCE) + refresh
 
-## Brief (local)
+## Plan
 
 - Make Linear credentials user-scoped and usable across repos on the same machine.
 - Keep UX smooth: `rn linear auth` should not require the daemon to be running.

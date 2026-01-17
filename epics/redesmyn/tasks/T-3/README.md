@@ -7,7 +7,7 @@ rn:
 
 # T-3 Dashboard: epic overview + node graph (v0)
 
-## Brief (local)
+## Plan
 
 - Show an epic overview page with a graph-first representation of the node tree.
 - Start minimal, but keep the UI extensible for richer graph interactions.

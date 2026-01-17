@@ -7,7 +7,7 @@ rn:
 
 # T-3 Deterministic layout (ELK) + fit-to-view
 
-## Brief (local)
+## Plan
 
 - Make the graph legible at-a-glance: a stable, deterministic layout dramatically reduces cognitive load when exploring the map of work.
 - Integrate ELK to compute stable node positions from the branch topology (tree layout).

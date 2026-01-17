@@ -7,7 +7,7 @@ rn:
 
 # T-11 Harness adapter: Claude Code
 
-## Brief (local)
+## Plan
 
 - Add a Claude Code launch configuration (launch/attach/capabilities) and verify it works end-to-end with the generic runner/session model.
 - Use hooks if available to enrich session state and message/command integration (optional, best-effort).

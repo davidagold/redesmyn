@@ -9,7 +9,7 @@ rn:
 
 # T-3 PR create/open + PR auto-detection + push semantics
 
-## Brief (local)
+## Plan
 
 - Implement PR operations for task branches:
   - create PR (push first if needed),

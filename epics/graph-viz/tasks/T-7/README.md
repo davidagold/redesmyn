@@ -9,7 +9,7 @@ rn:
 
 # T-7 (Bonus) Focus mode: diagonal branch bias
 
-## Brief (local)
+## Plan
 
 When the user focuses a specific branch/stack (centers + zooms it in the viewport), consider a “diagonal bias” layout:
 

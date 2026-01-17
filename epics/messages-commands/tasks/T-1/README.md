@@ -7,7 +7,7 @@ rn:
 
 # T-1 Design: messaging + commands model + UX
 
-## Brief (local)
+## Plan
 
 - Do a dedicated design pass for:
   - message threading model (by session, by node, by epic; history + retention)
