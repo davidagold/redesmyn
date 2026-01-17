@@ -129,3 +129,17 @@ While building `gpui`, we can keep the existing Python/TS implementation alongsi
 - and a compatibility target when we choose “parity first” for a subdomain.
 
 We will deliberately choose which parts to port, redesign, or drop as we proceed.
+
+## 7) Domain 1: Task map (Protocol layer)
+
+- `epics/gpui/tasks/T-9/README.md`: Protocol envelope + versioning + scopes.
+- `epics/gpui/tasks/T-10/README.md`: Protobuf schemas + codegen pipeline.
+- `epics/gpui/tasks/T-11/README.md`: Daemon ↔ control plane stream protocol (handshake, commands, telemetry, resync).
+- `epics/gpui/tasks/T-12/README.md`: Client ↔ control plane API protocol over Unix socket (multiplexed requests + subscriptions).
+- `epics/gpui/tasks/T-13/README.md`: Protocol tooling + wiretap (`rn protocol …`).
+- `epics/gpui/tasks/T-14/README.md`: Artifact references + structured session events (contract).
+
+Sequencing intent:
+
+- Define the envelope and schema pipeline first (T-9, T-10).
+- Then execute daemon stream protocol, client API protocol, and tooling in parallel (T-11..T-14).
