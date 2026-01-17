@@ -145,3 +145,20 @@ Sequencing intent:
 - Define the envelope and schema pipeline first (T-9, T-10).
 - Then execute daemon stream protocol, client API protocol, and tooling in parallel (T-11..T-14).
 - Treat testability as a first-class requirement: T-15 defines the automation surfaces early so later domains can build against stable contracts.
+
+## 8) Domain 2: Task map (Control plane core)
+
+- `epics/gpui/tasks/T-16/README.md`: Headless control plane service skeleton.
+- `epics/gpui/tasks/T-17/README.md`: Control plane DB schema + migrations (sqlx).
+- `epics/gpui/tasks/T-18/README.md`: Event log append + subscription hub.
+- `epics/gpui/tasks/T-19/README.md`: Command engine (persisted lifecycle + routing to daemon).
+- `epics/gpui/tasks/T-20/README.md`: Client API server over UDS (requests + subscriptions).
+- `epics/gpui/tasks/T-21/README.md`: Epic graph query model + projection.
+- `epics/gpui/tasks/T-22/README.md`: Control plane integration test harness (mock daemon + real repo modes).
+
+Sequencing intent:
+
+- Establish schema + minimal service skeleton early (T-16, T-17).
+- Build the event pipeline and command engine next (T-18, T-19).
+- Expose the client API over UDS and validate with integration tests (T-20, T-22).
+- Implement and tune the EpicGraph read model as the primary UI/CLI query (T-21).
