@@ -75,14 +75,14 @@ def write_docs(*, repo_root: Path, epic_slug: str, tasks: list[TaskSpec]) -> Non
     epic_readme.write_text(
         "\n".join(
             [
-                "# CLI Epic",
-                "",
-                "## Metadata",
-                "```yaml",
+                "---",
                 f"slug: {epic_slug}",
                 "name: CLI Epic",
                 "root_branch: main",
-                "```",
+                "",
+                "---",
+                "",
+                "# CLI Epic",
                 "",
             ]
         ),
@@ -103,14 +103,14 @@ def write_docs(*, repo_root: Path, epic_slug: str, tasks: list[TaskSpec]) -> Non
         (task_dir / "README.md").write_text(
             "\n".join(
                 [
-                    f"# {task.title}",
-                    "",
-                    "## Metadata",
-                    "```yaml",
+                    "---",
                     f"id: {task.task_id}",
                     stacked_on_line,
                     *node_lines,
-                    "```",
+                    "",
+                    "---",
+                    "",
+                    f"# {task.title}",
                     "",
                 ]
             ),

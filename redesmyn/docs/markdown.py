@@ -13,6 +13,7 @@ class MarkdownSectionError(ValueError):
 
 _HEADING_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<title>[^#].*?)\s*$")
 _FENCE_RE = re.compile(r"^(?P<fence>`{3,}|~{3,})\s*(?P<lang>[A-Za-z0-9_-]+)?\s*$")
+_FRONTMATTER_DELIMS = {"---", "..."}
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,3 +101,28 @@ def parse_yaml_block(block: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise MarkdownSectionError("YAML metadata must be a mapping/object")
     return data
+
+
+def extract_yaml_frontmatter(markdown: str) -> str:
+    text = markdown
+    if text.startswith("\ufeff"):
+        text = text.removeprefix("\ufeff")
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise MarkdownSectionError(
+            "Missing YAML frontmatter (expected '---' on the first line)"
+        )
+
+    end_idx: int | None = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() in _FRONTMATTER_DELIMS:
+            end_idx = idx
+            break
+
+    if end_idx is None:
+        raise MarkdownSectionError(
+            "Unterminated YAML frontmatter (missing closing '---')"
+        )
+
+    return "\n".join(lines[1:end_idx]).rstrip() + "\n"

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from redesmyn.docs.markdown import (
     MarkdownSectionError,
-    extract_fenced_block_after_heading,
+    extract_yaml_frontmatter,
     parse_yaml_block,
 )
 from redesmyn.docs.metadata import EpicMetadata, TaskMetadata
@@ -46,10 +46,8 @@ def load_epic_doc(path: Path) -> EpicDoc:
         raise DocLoadError(f"Failed to read {path}: {e}") from e
 
     try:
-        block = extract_fenced_block_after_heading(
-            markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
-        )
-        data = parse_yaml_block(block.content)
+        frontmatter = extract_yaml_frontmatter(markdown)
+        data = parse_yaml_block(frontmatter)
         metadata = EpicMetadata.model_validate(data)
     except (MarkdownSectionError, ValidationError) as e:
         raise DocLoadError(f"Invalid epic doc metadata in {path}: {e}") from e
@@ -64,10 +62,8 @@ def load_task_doc(path: Path) -> TaskDoc:
         raise DocLoadError(f"Failed to read {path}: {e}") from e
 
     try:
-        block = extract_fenced_block_after_heading(
-            markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
-        )
-        data = parse_yaml_block(block.content)
+        frontmatter = extract_yaml_frontmatter(markdown)
+        data = parse_yaml_block(frontmatter)
         metadata = TaskMetadata.model_validate(data)
     except (MarkdownSectionError, ValidationError) as e:
         raise DocLoadError(f"Invalid task doc metadata in {path}: {e}") from e

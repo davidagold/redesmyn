@@ -57,7 +57,7 @@ from redesmyn.db import (
 )
 from redesmyn.docs.markdown import (
     MarkdownSectionError,
-    extract_fenced_block_after_heading,
+    extract_yaml_frontmatter,
     parse_yaml_block,
 )
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
@@ -233,6 +233,7 @@ def observer_run_removed() -> None:
         err=True,
     )
     raise typer.Exit(2)
+
 
 merge_run_app = typer.Typer(add_completion=False, help="Merge/restack run management.")
 
@@ -1906,12 +1907,10 @@ async def _sync_from_linear(
 
     def _load_metadata_dict(markdown: str) -> dict[str, Any]:
         try:
-            block = extract_fenced_block_after_heading(
-                markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
-            )
+            frontmatter = extract_yaml_frontmatter(markdown)
         except MarkdownSectionError:
             return {}
-        return parse_yaml_block(block.content)
+        return parse_yaml_block(frontmatter)
 
     def _parse_task_number(task_id: str | None) -> int | None:
         if not task_id:
@@ -2503,12 +2502,10 @@ async def _sync_to_linear(
 
     def _load_metadata_dict(markdown: str) -> dict[str, Any]:
         try:
-            block = extract_fenced_block_after_heading(
-                markdown, heading="Metadata", allowed_langs={"yaml", "yml"}
-            )
+            frontmatter = extract_yaml_frontmatter(markdown)
         except MarkdownSectionError:
             return {}
-        return parse_yaml_block(block.content)
+        return parse_yaml_block(frontmatter)
 
     engine = create_engine(ctx.db_path)
     try:
