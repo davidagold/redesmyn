@@ -6,9 +6,6 @@ import yaml
 
 from redesmyn.docs.markdown import MarkdownSectionError, parse_yaml_block
 
-
-SYNC_START = "<!-- rn:sync:start -->"
-SYNC_END = "<!-- rn:sync:end -->"
 _FRONTMATTER_DELIMS = {"---", "..."}
 
 
@@ -57,16 +54,3 @@ def upsert_rn_metadata(markdown: str, *, rn_data: dict[str, Any]) -> str:
     if rest:
         return (bom + frontmatter + "\n" + rest).rstrip() + "\n"
     return bom + frontmatter
-
-
-def upsert_synced_section(markdown: str, *, title: str, content: str) -> str:
-    body = content.rstrip() + "\n"
-    start = markdown.find(SYNC_START)
-    end = markdown.find(SYNC_END)
-
-    if start != -1 and end != -1 and start < end:
-        start_end = start + len(SYNC_START)
-        return markdown[:start_end] + "\n" + body + markdown[end:]
-
-    section = f"\n## {title}\n\n{SYNC_START}\n{body}{SYNC_END}\n"
-    return markdown.rstrip() + section

@@ -47,3 +47,28 @@ def extract_yaml_frontmatter(markdown: str) -> str:
         )
 
     return "\n".join(lines[1:end_idx]).rstrip() + "\n"
+
+
+def split_yaml_frontmatter_document(markdown: str) -> tuple[dict[str, Any], str]:
+    text = markdown
+    if text.startswith("\ufeff"):
+        text = text.removeprefix("\ufeff")
+
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+
+    end_idx: int | None = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() in _FRONTMATTER_DELIMS:
+            end_idx = idx
+            break
+    if end_idx is None:
+        raise MarkdownSectionError(
+            "Unterminated YAML frontmatter (missing closing '---')"
+        )
+
+    frontmatter_raw = "\n".join(lines[1:end_idx]).rstrip() + "\n"
+    data = parse_yaml_block(frontmatter_raw)
+    body = "\n".join(lines[end_idx + 1 :]).lstrip("\n").rstrip() + "\n"
+    return data, body

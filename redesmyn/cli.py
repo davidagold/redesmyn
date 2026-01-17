@@ -59,10 +59,11 @@ from redesmyn.docs.markdown import (
     MarkdownSectionError,
     extract_yaml_frontmatter,
     parse_yaml_block,
+    split_yaml_frontmatter_document,
 )
 from redesmyn.docs.loader import DocLoadError, load_epic_doc, load_task_doc
 from redesmyn.docs.metadata import TaskMetadata
-from redesmyn.docs.writer import upsert_rn_metadata, upsert_synced_section
+from redesmyn.docs.writer import dump_yaml, upsert_rn_metadata
 from redesmyn.domain.enums import (
     AgentKindSelection,
     BlockPolicy,
@@ -2120,7 +2121,7 @@ async def _sync_from_linear(
         if target_readme.exists():
             markdown = target_readme.read_text(encoding="utf-8")
         else:
-            markdown = f"# {issue.identifier} {issue.title}\n\n## Plan\n\n"
+            markdown = f"# {issue.identifier} {issue.title}\n\n"
 
         existing_meta = _load_metadata_dict(markdown)
         existing_parent = None
@@ -2181,19 +2182,20 @@ async def _sync_from_linear(
 
         markdown = upsert_rn_metadata(markdown, rn_data=existing_meta)
 
-        synced_lines: list[str] = []
-        if issue.state_type:
-            synced_lines.append(f"State: {issue.state_type}")
-        if issue.description:
-            synced_lines.append("")
-            synced_lines.append(issue.description.strip())
-
-        markdown = upsert_synced_section(
-            markdown,
-            title="Synced (from Linear)",
-            content="\n".join(synced_lines).rstrip(),
+        issue_body = (issue.description or "").strip()
+        body_markdown = (
+            f"# {issue.identifier} {issue.title}\n\n{issue_body}\n".rstrip() + "\n"
         )
-        target_readme.write_text(markdown, encoding="utf-8")
+        existing_frontmatter, _ = split_yaml_frontmatter_document(markdown)
+        next_frontmatter = dict(existing_frontmatter)
+        next_frontmatter["rn"] = dict(existing_meta)
+        next_markdown = (
+            "---\n"
+            + dump_yaml(next_frontmatter)
+            + "---\n\n"
+            + body_markdown.lstrip("\n")
+        )
+        target_readme.write_text(next_markdown.rstrip() + "\n", encoding="utf-8")
 
     stats = await _sync_from_local(
         ctx, epic=epic_row.slug, create_branches=create_branches
@@ -2233,39 +2235,6 @@ async def _sync_from_linear(
             await engine.dispose()
 
     return stats
-
-
-def _extract_markdown_section(markdown: str, *, heading: str) -> str | None:
-    lines = markdown.splitlines()
-    target = heading.strip().lower()
-
-    heading_index: int | None = None
-    heading_level: int | None = None
-    for idx, line in enumerate(lines):
-        if not line.startswith("#"):
-            continue
-        hashes, sep, title = line.partition(" ")
-        if not sep or not hashes or not set(hashes) <= {"#"}:
-            continue
-        if title.strip().lower() != target:
-            continue
-        heading_index = idx
-        heading_level = len(hashes)
-        break
-
-    if heading_index is None or heading_level is None:
-        return None
-
-    body: list[str] = []
-    for line in lines[heading_index + 1 :]:
-        if line.startswith("#"):
-            hashes, sep, _ = line.partition(" ")
-            if sep and hashes and set(hashes) <= {"#"} and len(hashes) <= heading_level:
-                break
-        body.append(line)
-
-    content = "\n".join(body).strip()
-    return content or None
 
 
 def _looks_like_uuid(value: str) -> bool:
@@ -2400,10 +2369,15 @@ def _task_ref_from_doc(doc_path: Path, meta: TaskMetadata) -> str | None:
     return None
 
 
-def _extract_task_plan(markdown: str) -> str | None:
-    return _extract_markdown_section(
-        markdown, heading="Plan"
-    ) or _extract_markdown_section(markdown, heading="Brief (local)")
+def _linear_description_from_doc_markdown(markdown: str) -> str | None:
+    _, body = split_yaml_frontmatter_document(markdown)
+    lines = body.splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+        while lines and not lines[0].strip():
+            lines = lines[1:]
+    description = "\n".join(lines).strip()
+    return description or None
 
 
 def _linear_title_from_doc(
@@ -2650,7 +2624,7 @@ async def _sync_to_linear(
                         identifier=meta.linear.identifier if meta.linear else None,
                         local_id=local_ref,
                     )
-                    brief = _extract_task_plan(doc.markdown)
+                    brief = _linear_description_from_doc_markdown(doc.markdown)
                     task_state = task_row.state if task_row.state else TaskState.Todo
                     desired_state_type = linear_state_type_from_task_state(task_state)
 
@@ -3018,7 +2992,7 @@ async def _sync_to_linear(
                     identifier=meta.linear.identifier if meta.linear else None,
                     local_id=local_ref,
                 )
-                brief = _extract_task_plan(doc.markdown)
+                brief = _linear_description_from_doc_markdown(doc.markdown)
 
                 task_state = task_row.state if task_row.state else TaskState.Todo
                 state_type = linear_state_type_from_task_state(task_state)
