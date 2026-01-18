@@ -24,6 +24,19 @@ Examples:
 - `cd rust && cargo run -p rn -- version`
 - `cd rust && cargo run -p rn -- bench startup`
 
+Conventions:
+
+- Structured output: `--output human|json` (default: `human`).
+- Exit codes (aligned with the shared T-3 error categories):
+  - `0`: success
+  - `1`: internal/unexpected
+  - `2`: invalid request / CLI usage
+  - `3`: not found
+  - `4`: conflict
+  - `5`: unauthorized
+  - `6`: unavailable
+  - `130`: interrupted (Ctrl-C)
+
 Install to `PATH`:
 
 - `cd rust && cargo install --path crates/rn --bin rn-rs`
