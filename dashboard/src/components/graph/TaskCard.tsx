@@ -14,6 +14,7 @@ import { ApiHttpError, type TaskAgentMessageConflictAction } from "@/api"
 import { queryKeys } from "@/api/queryKeys"
 import {
   useCancelMergeRunMutation,
+  useOpenTaskGithubPullRequestMutation,
   useMergeTaskMutation,
   useRestartTaskAgentMutation,
   useRestackTaskMutation,
@@ -37,6 +38,7 @@ import {
   runningAgentsSummary,
 } from "@/lib/runningAgentsConflict"
 import { AgentStatusIcon } from "@/components/agents/AgentStatusIcon"
+import { GithubIcon } from "@/components/github/GithubIcon"
 import { LinearIcon } from "@/components/linear/LinearIcon"
 import { Markdown, MarkdownInline } from "@/components/markdown"
 import { ProceedAnywayDialog } from "@/components/ui/proceed-anyway-dialog"
@@ -75,6 +77,7 @@ import {
 } from "@/components/ui/tooltip"
 import { MergeReadySpineConfirmDialog } from "@/components/merge-ready/MergeReadySpineConfirmDialog"
 import { useMergeReadySpineConfirm } from "@/hooks/useMergeReadySpineConfirm"
+import { useGitHubStatus } from "@/hooks/useGitHubStatus"
 import {
   ArrowUp,
   EllipsisVertical,
@@ -401,7 +404,7 @@ export function TaskCard({
   const [pendingAction, setPendingAction] =
     useState<"start" | "stop" | "restart" | "attach" | null>(null)
   const [pendingMerge, setPendingMerge] =
-    useState<"ready" | "merge" | "mergeStack" | "restack" | "resume" | "cancel" | null>(
+    useState<"ready" | "merge" | "mergeStack" | "restack" | "resume" | "cancel" | "githubPr" | null>(
       null,
     )
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
@@ -470,14 +473,17 @@ export function TaskCard({
     useState<string | null>(null)
   const [mergeReadySpineNotice, setMergeReadySpineNotice] =
     useState<string | null>(null)
+  const [githubPrNotice, setGithubPrNotice] = useState<string | null>(null)
   const [gitActionInProgress, setGitActionInProgress] = useState<{
-    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready"
+    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready" | "githubPr"
     startedAt: number
     initialMergeRunId: string | null
     initialMergeRunStatus: string | null
     initialMergeReadyAt: string | null
   } | null>(null)
   const mergeReadySpineConfirm = useMergeReadySpineConfirm()
+  const githubStatus = useGitHubStatus()
+  const openGithubPr = useOpenTaskGithubPullRequestMutation()
   const lastBlockedRebaseToastRunIdRef = useRef<string | null>(null)
   const prevBlockedRebaseRef = useRef<{
     runId: string | null
@@ -490,7 +496,7 @@ export function TaskCard({
     useIsFetching({ queryKey: queryKeys.epicGraph(node.epicId) }) > 0
 
   function beginGitAction(
-    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready",
+    kind: "merge" | "mergeStack" | "restack" | "resume" | "ready" | "githubPr",
   ) {
     setGitActionInProgress({
       kind,
@@ -509,6 +515,13 @@ export function TaskCard({
     const elapsedMs = Date.now() - gitActionInProgress.startedAt
     if (elapsedMs > 15_000) {
       setGitActionInProgress(null)
+      return
+    }
+
+    if (gitActionInProgress.kind === "githubPr") {
+      if (pendingMerge !== "githubPr") {
+        setGitActionInProgress(null)
+      }
       return
     }
 
@@ -532,6 +545,7 @@ export function TaskCard({
     gitActionInProgress,
     mergeRun?.runId,
     mergeRun?.status,
+    pendingMerge,
     task?.mergeReadyAt,
   ])
 
@@ -690,6 +704,19 @@ export function TaskCard({
   const canMerge =
     taskId !== null && task?.state !== "blocked" && task?.state !== "done"
 
+  const githubPrDisabledReason =
+    pendingMerge !== null
+      ? "Action in progress"
+      : canResumeMerge
+        ? "Resolve the blocked merge/restack run first."
+        : (gitDisabledReason ??
+          (task?.branchName
+            ? null
+            : "Task has no branch backing (sync branches first).") ??
+          (githubStatus.status?.connected === false
+            ? "GitHub is not connected"
+            : null))
+
   const agentComposerDraftTrimmed = agentComposerDraft.trim()
   const harnessStructuredKind = inferStructuredAgentFromCommand(harnessCommand)
   const composerInterfaceMode = harnessStructuredKind
@@ -725,6 +752,61 @@ export function TaskCard({
       setActionErrorFromException("Copy attach command", e)
     } finally {
       setPendingAction(null)
+    }
+  }
+
+  async function handleOpenGithubPullRequest() {
+    if (taskId === null) {
+      return
+    }
+    if (!task?.branchName) {
+      setActionError({
+        title: "Open PR failed",
+        summary: "Task has no branch backing.",
+        raw: "Task has no branch backing.",
+      })
+      return
+    }
+
+    setPendingMerge("githubPr")
+    beginGitAction("githubPr")
+    clearActionError()
+    setGithubPrNotice(null)
+
+    const popup = window.open("about:blank", "_blank", "noreferrer")
+    const popupBlocked = !popup
+
+    if (popup) {
+      try {
+        popup.document.title = `Opening PR… (task ${taskId})`
+      } catch {
+        // Best-effort only.
+      }
+    }
+
+    try {
+      const result = await openGithubPr.mutateAsync({
+        epicId: node.epicId,
+        taskId,
+      })
+      if (popup) {
+        popup.location.assign(result.url)
+        return
+      }
+
+      window.open(result.url, "_blank", "noreferrer")
+      if (popupBlocked) {
+        void copyToClipboard(result.url)
+          .then(() => setGithubPrNotice("Popups blocked; PR URL copied."))
+          .catch(() =>
+            setGithubPrNotice("Popups blocked; PR URL ready to copy."),
+          )
+      }
+    } catch (e) {
+      popup?.close()
+      setActionErrorFromException("Open PR", e)
+    } finally {
+      setPendingMerge(null)
     }
   }
 
@@ -1679,6 +1761,30 @@ export function TaskCard({
                     "Rebase this branch and downstream branches to keep the stack intact."}
                 </TooltipContent>
               </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={(triggerProps) => (
+                    <DropdownMenuItem
+                      {...triggerProps}
+                      disabled={githubPrDisabledReason !== null}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        void handleOpenGithubPullRequest()
+                      }}
+                    >
+                      <GithubIcon className="size-3.5" />
+                      {pendingMerge === "githubPr"
+                        ? "Opening PR…"
+                        : "Push + Open PR"}
+                    </DropdownMenuItem>
+                  )}
+                />
+                <TooltipContent side="right" sideOffset={12} align="center">
+                  {githubPrDisabledReason ??
+                    "Push this branch to GitHub and open (or create) a PR."}
+                </TooltipContent>
+              </Tooltip>
               <DropdownMenuSeparator />
               <Tooltip>
                 <TooltipTrigger
@@ -2233,6 +2339,12 @@ export function TaskCard({
             <SuccessToastCallout
               message={blockedRebaseCompletionNotice}
               onDismiss={() => setBlockedRebaseCompletionNotice(null)}
+            />
+          ) : null}
+          {githubPrNotice ? (
+            <SuccessToastCallout
+              message={githubPrNotice}
+              onDismiss={() => setGithubPrNotice(null)}
             />
           ) : null}
         </div>

@@ -574,6 +574,26 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  "/v1/tasks/{task_id}/github/pr/open": {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /**
+     * Open Task Github Pr
+     * @description Push branch + open/create a same-repo GitHub PR for a task.
+     */
+    post: operations["open_task_github_pr_v1_tasks__task_id__github_pr_open_post"]
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   "/v1/tasks/{task_id}/github/repo": {
     parameters: {
       query?: never
@@ -1039,15 +1059,6 @@ export interface components {
        */
       type: "none"
     }
-    /** GithubRepoResponse */
-    GithubRepoResponse: {
-      /** Host */
-      host: string
-      /** Owner */
-      owner: string
-      /** Repo */
-      repo: string
-    }
     /** GitHubIntegrationConfigResponse */
     GitHubIntegrationConfigResponse: {
       /**
@@ -1060,6 +1071,14 @@ export interface components {
     GitHubIntegrationConfigUpdateRequest: {
       /** Autoforcepush */
       autoForcePush?: boolean | null
+    }
+    /** GitHubPullRequestOpenResponse */
+    GitHubPullRequestOpenResponse: {
+      /** Prid */
+      prId: string
+      task: components["schemas"]["TaskResponse"]
+      /** Url */
+      url: string
     }
     /** GitHubStatusResponse */
     GitHubStatusResponse: {
@@ -1083,6 +1102,15 @@ export interface components {
        * @default false
        */
       warning: boolean
+    }
+    /** GithubRepoResponse */
+    GithubRepoResponse: {
+      /** Host */
+      host: string
+      /** Owner */
+      owner: string
+      /** Repo */
+      repo: string
     }
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -2970,6 +2998,37 @@ export interface operations {
         }
         content: {
           "application/json": components["schemas"]["TaskAgentStopResponse"]
+        }
+      }
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"]
+        }
+      }
+    }
+  }
+  open_task_github_pr_v1_tasks__task_id__github_pr_open_post: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        task_id: number
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          "application/json": components["schemas"]["GitHubPullRequestOpenResponse"]
         }
       }
       /** @description Validation Error */

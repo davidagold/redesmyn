@@ -1138,29 +1138,6 @@
         "title": "ExternalSessionNoneResponse",
         "type": "object"
       },
-      "GithubRepoResponse": {
-        "properties": {
-          "host": {
-            "title": "Host",
-            "type": "string"
-          },
-          "owner": {
-            "title": "Owner",
-            "type": "string"
-          },
-          "repo": {
-            "title": "Repo",
-            "type": "string"
-          }
-        },
-        "required": [
-          "host",
-          "owner",
-          "repo"
-        ],
-        "title": "GithubRepoResponse",
-        "type": "object"
-      },
       "GitHubIntegrationConfigResponse": {
         "properties": {
           "autoForcePush": {
@@ -1187,6 +1164,28 @@
           }
         },
         "title": "GitHubIntegrationConfigUpdateRequest",
+        "type": "object"
+      },
+      "GitHubPullRequestOpenResponse": {
+        "properties": {
+          "prId": {
+            "title": "Prid",
+            "type": "string"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskResponse"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "prId",
+          "url"
+        ],
+        "title": "GitHubPullRequestOpenResponse",
         "type": "object"
       },
       "GitHubStatusResponse": {
@@ -1262,6 +1261,29 @@
           "connectedAt"
         ],
         "title": "GitHubStatusResponse",
+        "type": "object"
+      },
+      "GithubRepoResponse": {
+        "properties": {
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "owner",
+          "repo"
+        ],
+        "title": "GithubRepoResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -5030,6 +5052,46 @@
           }
         },
         "summary": "Stop Task Agent"
+      }
+    },
+    "/v1/tasks/{task_id}/github/pr/open": {
+      "post": {
+        "description": "Push branch + open/create a same-repo GitHub PR for a task.",
+        "operationId": "open_task_github_pr_v1_tasks__task_id__github_pr_open_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubPullRequestOpenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Open Task Github Pr"
       }
     },
     "/v1/tasks/{task_id}/github/repo": {

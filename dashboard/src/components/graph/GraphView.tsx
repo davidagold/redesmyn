@@ -5,6 +5,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { useQueryClient } from "@tanstack/react-query"
+import { openTaskGithubPullRequest } from "@/api"
+import { queryKeys } from "@/api/queryKeys"
 import { useSetTaskMergeReadyMutation } from "@/api/mutations"
 import { computeGitMutationsDisabledReason } from "@/lib/repo-daemon-status"
 import { cn } from "@/lib/utils"
@@ -30,6 +33,7 @@ import { FlowBranchNode, type FlowBranchNodeType } from "./FlowBranchNode"
 import { CommitStringEdge } from "./CommitStringEdge"
 import { TrunkNode, type TrunkNodeType } from "./TrunkNode"
 import { RoundedSmoothStepEdge } from "./RoundedSmoothStepEdge"
+import { useGitHubStatus } from "@/hooks/useGitHubStatus"
 import {
   GRAPH_EDGE_STYLE_ANIMATION_MS,
   GRAPH_LAYOUT_ANIMATION_MS,
@@ -56,6 +60,7 @@ import { type FlowPosition, layoutTree } from "./flowLayout"
 import { computeNodeSpan } from "./nodeSpan"
 
 interface GraphViewProps {
+  epicId: number
   rootNodes: GraphNode[]
   childrenByParent: Map<number | null, GraphNode[]>
   tasksById: Map<number, Task>
@@ -133,6 +138,7 @@ function positionsMatch(
 }
 
 export function GraphView({
+  epicId,
   rootNodes,
   childrenByParent,
   tasksById,
@@ -152,7 +158,9 @@ export function GraphView({
   onSelectEdge,
   onClearSelection,
 }: GraphViewProps) {
+  const queryClient = useQueryClient()
   const setMergeReady = useSetTaskMergeReadyMutation()
+  const githubStatus = useGitHubStatus()
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
@@ -161,6 +169,12 @@ export function GraphView({
   const [elkLayoutSettled, setElkLayoutSettled] = useState(false)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [bulkMergeReadyPending, setBulkMergeReadyPending] = useState(false)
+  const [bulkGithubPrProgress, setBulkGithubPrProgress] = useState<{
+    completed: number
+    total: number
+    failed: number
+    popupsBlocked: number
+  } | null>(null)
   const [selectionBarMounted, setSelectionBarMounted] = useState(false)
   const [selectionBarVisible, setSelectionBarVisible] = useState(false)
   const selectionBarHideTimerRef = useRef<number | null>(null)
@@ -309,6 +323,142 @@ export function GraphView({
     selectedMergeReadyTaskCounts.selectedNotDoneWithBranchCount,
     selectedMergeReadyTaskIds.length,
   ])
+
+  const selectedGithubPrTaskIds = useMemo(() => {
+    const taskIds = new Set<number>()
+
+    for (const selectedNodeId of selectedNodeIds) {
+      const task = tasksById.get(selectedNodeId) ?? null
+      if (!task || task.state === "done") {
+        continue
+      }
+      if (!task.branchName) {
+        continue
+      }
+      taskIds.add(task.id)
+    }
+
+    return [...taskIds].sort((a, b) => a - b)
+  }, [selectedNodeIds, tasksById])
+
+  const openPrsDisabledReason = useMemo(() => {
+    if (bulkGithubPrProgress) {
+      return "Opening PRs…"
+    }
+    if (gitMutationsDisabledReason) {
+      return gitMutationsDisabledReason
+    }
+    if (githubStatus.status?.connected === false) {
+      return "GitHub is not connected"
+    }
+    if (selectedGithubPrTaskIds.length === 0) {
+      if (selectedMergeReadyTaskCounts.selectedNotDoneCount === 0) {
+        return "No eligible selected tasks"
+      }
+      if (selectedMergeReadyTaskCounts.selectedNotDoneWithBranchCount === 0) {
+        return "No selected tasks have branches"
+      }
+      return "No eligible selected tasks"
+    }
+    return null
+  }, [
+    bulkGithubPrProgress,
+    gitMutationsDisabledReason,
+    githubStatus.status?.connected,
+    selectedGithubPrTaskIds.length,
+    selectedMergeReadyTaskCounts.selectedNotDoneCount,
+    selectedMergeReadyTaskCounts.selectedNotDoneWithBranchCount,
+  ])
+
+  async function handleBulkOpenPullRequests() {
+    if (openPrsDisabledReason) {
+      return
+    }
+
+    setSelectionNotice(null)
+
+    const taskIds = selectedGithubPrTaskIds
+    const selectedCount = selectedNodeIds.size
+
+    const popupByTaskId = new Map<number, Window | null>()
+    let popupsBlocked = 0
+
+    for (const taskId of taskIds) {
+      const popup = window.open("about:blank", "_blank", "noreferrer")
+      popupByTaskId.set(taskId, popup)
+      if (!popup) {
+        popupsBlocked += 1
+        continue
+      }
+      try {
+        popup.document.title = `Opening PR… (task ${taskId})`
+      } catch {
+        // Best-effort only; browsers may restrict access to about:blank.
+      }
+    }
+
+    setBulkGithubPrProgress({
+      completed: 0,
+      total: taskIds.length,
+      failed: 0,
+      popupsBlocked,
+    })
+
+    const failures: Array<{ taskId: number error: unknown }> = []
+
+    try {
+      for (const taskId of taskIds) {
+        const popup = popupByTaskId.get(taskId) ?? null
+        try {
+          const result = await openTaskGithubPullRequest(taskId)
+          if (popup) {
+            popup.location.assign(result.url)
+          } else {
+            window.open(result.url, "_blank", "noreferrer")
+          }
+        } catch (error) {
+          failures.push({ taskId, error })
+          popup?.close()
+        } finally {
+          setBulkGithubPrProgress((current) =>
+            current
+              ? {
+                  ...current,
+                  completed: current.completed + 1,
+                  failed: failures.length,
+                }
+              : current,
+          )
+        }
+      }
+    } finally {
+      setBulkGithubPrProgress(null)
+    }
+
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.epicGraph(epicId),
+    })
+
+    const popupNote =
+      popupsBlocked > 0
+        ? ` (popups blocked for ${popupsBlocked}/${taskIds.length})`
+        : ""
+
+    if (failures.length > 0) {
+      const first = failures[0]?.error
+      const message = first instanceof Error ? first.message : String(first)
+      setSelectionNotice(
+        `Opened ${taskIds.length - failures.length}/${taskIds.length} PRs${popupNote}; ${failures.length} failed: ${message}`,
+      )
+      return
+    }
+
+    setSelectionNotice(
+      taskIds.length === selectedCount
+        ? `Opened ${taskIds.length} PRs${popupNote}`
+        : `Opened ${taskIds.length} of ${selectedCount} selected PRs${popupNote}`,
+    )
+  }
 
   async function handleBulkMarkReady() {
     if (markReadyDisabledReason) {
@@ -1148,6 +1298,51 @@ export function GraphView({
                     </TooltipContent>
                   </Tooltip>
                 )}
+                {(() => {
+                  const label = bulkGithubPrProgress
+                    ? `PRs ${bulkGithubPrProgress.completed}/${bulkGithubPrProgress.total}…`
+                    : "Open PRs"
+
+                  if (openPrsDisabledReason) {
+                    return (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-none border-0 border-l border-border/60"
+                        onClick={() => void handleBulkOpenPullRequests()}
+                        disabledReason={openPrsDisabledReason}
+                      >
+                        {label}
+                      </Button>
+                    )
+                  }
+
+                  return (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={(triggerProps) => (
+                          <Button
+                            {...triggerProps}
+                            variant="outline"
+                            size="sm"
+                            className={cn(
+                              "rounded-none border-0 border-l border-border/60",
+                              triggerProps.className,
+                            )}
+                            onClick={() => void handleBulkOpenPullRequests()}
+                          >
+                            {label}
+                          </Button>
+                        )}
+                      />
+                      <TooltipContent side="bottom" sideOffset={10}>
+                        Push branches to GitHub and open (or create) pull
+                        requests for {selectedGithubPrTaskIds.length} selected
+                        task(s).
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                })()}
               </div>
               <Button variant="ghost" size="sm" onClick={onClearSelection}>
                 Clear

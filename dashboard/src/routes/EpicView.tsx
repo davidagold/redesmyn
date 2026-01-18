@@ -1228,6 +1228,7 @@ export function EpicView() {
             onClose={closeConfig}
           />
           <GraphView
+            epicId={graph.epic.id}
             rootNodes={rootNodes}
             childrenByParent={childrenByParent}
             tasksById={tasksById}

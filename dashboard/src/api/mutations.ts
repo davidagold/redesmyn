@@ -15,6 +15,7 @@ import type {
 import {
   bulkTaskAgentActions,
   cancelMergeRun,
+  openTaskGithubPullRequest,
   mergeTask,
   postLinearLogout,
   postTaskAgentMessage,
@@ -158,6 +159,21 @@ export function useSetTaskMergeReadyMutation() {
       queryClient.setQueryData<EpicGraph>(
         queryKeys.epicGraph(task.epicId),
         (graph) => (graph ? updateTaskInGraph(graph, task) : graph),
+      )
+    },
+  })
+}
+
+export function useOpenTaskGithubPullRequestMutation() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variables: { epicId: number taskId: number }) =>
+      openTaskGithubPullRequest(variables.taskId),
+    onSuccess: (result, variables) => {
+      queryClient.setQueryData<EpicGraph>(
+        queryKeys.epicGraph(variables.epicId),
+        (graph) => (graph ? updateTaskInGraph(graph, result.task) : graph),
       )
     },
   })
