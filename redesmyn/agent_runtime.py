@@ -165,12 +165,6 @@ def agent_session_codex_last_message_path(
 def _codex_exec_argv_with_output_last_message(
     argv: list[str], *, output_path: Path
 ) -> list[str]:
-    for token in argv:
-        if token in {"-o", "--output-last-message"}:
-            return argv
-        if token.startswith("--output-last-message="):
-            return argv
-
     codex_idx: int | None = None
     for idx, token in enumerate(argv):
         if not token or token.startswith("-"):
@@ -185,6 +179,21 @@ def _codex_exec_argv_with_output_last_message(
         exec_idx = argv.index("exec", codex_idx + 1)
     except ValueError:
         return argv
+
+    # If the caller already includes `--output-last-message`, override the path
+    # to ensure we write into the current session directory.
+    updated = list(argv)
+    for idx in range(exec_idx + 1, len(updated)):
+        token = updated[idx]
+        if token.startswith("--output-last-message="):
+            updated[idx] = f"--output-last-message={output_path}"
+            return updated
+        if token in {"-o", "--output-last-message"}:
+            if (idx + 1) < len(updated):
+                updated[idx + 1] = str(output_path)
+            else:
+                updated.append(str(output_path))
+            return updated
 
     insert_at = exec_idx + 1
     return [
@@ -381,9 +390,20 @@ def write_agent_launcher(
     for key, value in env.items():
         lines.append(f"export {key}={shlex.quote(value)}")
 
-    # Give tmux a beat to attach pipe-pane so we don't miss very early harness
-    # output in the log.
-    lines.append("sleep 0.2")
+    # Attach `pipe-pane` *before* the harness runs so we don't miss early output
+    # (e.g. `thread.started`) in structured modes.
+    lines.extend(
+        [
+            'PIPE_CMD="cat >> \\"$LOG_PATH\\""',
+            "if command -v tmux >/dev/null 2>&1; then",
+            '  if [ -n "${TMUX_PANE:-}" ]; then',
+            '    tmux pipe-pane -o -t "$TMUX_PANE" "$PIPE_CMD" || echo "warning: tmux pipe-pane failed"',
+            "  else",
+            '    tmux pipe-pane -o "$PIPE_CMD" || echo "warning: tmux pipe-pane failed"',
+            "  fi",
+            "fi",
+        ]
+    )
     lines.append(f"EXIT_CODE_PATH={shlex.quote(str(exit_code_path))}")
     lines.append("set +e")
     if stdin_path is not None:
@@ -1002,7 +1022,12 @@ async def start_tmux_session(
 
     _tmux_kill_session(name=tmux_name)
     _tmux_new_session(name=tmux_name, cwd=worktree_path, script_path=script_path)
-    _tmux_pipe_to_log(name=tmux_name, log_path=log_path)
+    try:
+        _tmux_pipe_to_log(name=tmux_name, log_path=log_path)
+    except RuntimeError:
+        # Launcher attaches pipe-pane best-effort; avoid failing agent startup if
+        # the secondary attachment fails.
+        pass
     return AttachTmux(session=tmux_name, socket_path=None, log_path=str(log_path))
 
 
