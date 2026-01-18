@@ -47,7 +47,10 @@ Add tables (names illustrative):
 
 - `agent_sessions`
   - `session_id` (ULID BLOB(16))
-  - `task_id` (ULID BLOB(16))
+  - **scope**:
+    - `scope_kind` (`task` | `epic`)
+    - `task_id` (ULID BLOB(16), nullable)
+    - `epic_id` (ULID BLOB(16), nullable)
   - `repo_id`/`workspace_id` (ULID BLOB(16) / string per our final decision)
   - `agent_kind` (enum string)
   - `interface_mode` (enum string)
@@ -56,7 +59,7 @@ Add tables (names illustrative):
   - timestamps
 - `session_events`
   - `event_id` (ULID BLOB(16))
-  - `session_id`, `task_id`, `repo_id` (indexed)
+  - `session_id`, `task_id`, `epic_id`, `repo_id` (indexed)
   - `kind` (small enum string for filtering)
   - `created_at`
   - `payload` (protobuf bytes; JSON optional for debug)
@@ -89,6 +92,7 @@ Expose storage methods (names illustrative):
 - `insert_agent_session(...)`
 - `append_session_event(...)`
 - `list_task_sessions(task_id, pagination)`
+- `get_or_create_epic_session(epic_id) -> session_id` (supports the left session pane in the desktop app; see T-47)
 - `get_session_events(session_id, pagination, filters)`
 
 ### 4) Client query surfaces
@@ -96,6 +100,7 @@ Expose storage methods (names illustrative):
 Define control-plane query methods (over the client API protocol) sufficient for the session viewer:
 
 - list sessions for a task (and current active session)
+- get or create the epic-scoped session id for an epic (one per epic)
 - fetch session event history with pagination
 - subscribe to new session events for a session or task
 
@@ -134,4 +139,3 @@ Exact method names belong to the client API schema (T-12), but this ticket must 
 - UI expectations (TS today):
   - `dashboard/src/components/graph/TaskCard.tsx` (message composer; pending states).
   - `dashboard/src/hooks/useEventStream.ts` (agent events in the stream).
-

@@ -55,12 +55,13 @@ Define a `SessionEvent` union with (at minimum) these categories:
 - `UserMessage` / `AssistantMessage` (chat-like events; include short preview fields)
 - `ToolInvocation` / `ToolResult` (structured tool events)
 - `StatusUpdate` (turn state, blocking, progress)
-- `ArtifactEmitted` (ties artifacts to a session/task)
+- `ArtifactEmitted` (ties artifacts to a session/scope)
 
 Rules:
 
 - Session events must be queryable by:
-  - `task_id`, `session_id`, time range, and event kind.
+  - `session_id`, time range, and event kind, and
+  - **scope** (task-scoped sessions and epic-scoped sessions are both supported).
 - Keep payloads compact; link to artifacts for large content.
 - Preserve forward compatibility via an `UnknownSessionEvent` fallback.
 
