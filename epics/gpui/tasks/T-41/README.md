@@ -62,7 +62,7 @@ Port the current semantics precisely:
 
 - Determine desired interface mode from configured harness (or explicit preference).
 - Structured mode:
-  - **Session semantics:** `agent_session_id` is the **conversation id**. A structured message send creates a new **turn** (events), not a new session row.
+  - **Session semantics:** for structured agents that support a resumable conversation id (Codex at minimum; ideally CC too), `agent_session_id` is the **conversation id**. A structured message send creates a new **turn** (events), not a new session row.
   - If a resumable structured session exists (external session ref present), send via resume-by-id.
   - If a structured turn is in progress for that resumable session:
     - on_conflict=fail → 409 conflict (“turn in progress”)
@@ -105,6 +105,11 @@ Also ensure we follow the “session == conversation; turns are events” rule:
 - continuing a structured conversation updates/extends the existing session,
 - `stop_session_and_start_new` explicitly ends the conversation and creates a new session,
 - and turn lifecycle is represented by `TurnStarted` / `TurnCompleted` session events (not by creating new sessions).
+
+If a structured agent cannot reliably expose a resumable conversation id, it is acceptable (for that agent kind only) to treat each “send message” as starting a new conversation, as long as:
+
+- the session viewer still renders durable user/assistant history correctly, and
+- conflict semantics remain coherent and testable.
 
 ### 5) AI-first testability hooks
 

@@ -62,7 +62,9 @@ Add tables (names illustrative):
 
 Conversation invariants (see `epics/harness-interface-v0/tasks/T-15/README.md`):
 
-- `agent_sessions` represent **conversations** (not “turn runs”).
+- `agent_sessions` represent **conversations** (not “turn runs”) for:
+  - interactive sessions (tmux), and
+  - structured sessions that expose a resumable conversation id (Codex at minimum; ideally CC too).
 - For task-scoped sessions: enforce **at most one active conversation** per `(task_id, interface_mode)` (partial unique index where `ended_at IS NULL`).
 - `closed_at` / `ended_at` represent conversation lifecycle; do not set them at structured turn completion.
 - `session_events`

@@ -68,9 +68,12 @@ Rules:
 
 ### 2.1) Session semantics: session == conversation; turns are events
 
-We want the UI/API to treat `session_id` as a **conversation id** in both interactive and structured modes.
+We want the UI/API to treat `session_id` as a **conversation id**:
 
-That means:
+- in interactive mode (tmux), and
+- in structured mode **at least for Codex** (and ideally for other structured agents too, if they expose a resumable conversation handle).
+
+That means (for agents that support it):
 
 - a structured “send message” creates a **new turn**, not a new session,
 - turn lifecycle is represented by events (`TurnStarted` / `TurnCompleted`),
@@ -79,6 +82,11 @@ That means:
 This aligns with (and should stay consistent with) the v0 design note:
 
 - `epics/harness-interface-v0/tasks/T-15/README.md`: Session semantics: `AgentSession` == conversation, turns are events (event-as-turn).
+
+Notes for Claude Code (CC):
+
+- Claude Code “print mode” (`--output-format stream-json`) appears to expose a stable `session_id` and supports `--resume`, so we *expect* this same model to work for CC.
+- If CC cannot reliably provide resumable conversation ids in practice, we can fall back to “new conversation per message” **for CC only**, but the event contract and session viewer must still support turn boundaries and durable message history.
 
 Minimum event payloads (names illustrative; exact fields belong in `.proto`):
 

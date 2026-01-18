@@ -42,7 +42,10 @@ so that later UI work (markdown rendering, composer, pinned chats, task details)
 
 ### 1) Session semantics: session == conversation; turns are events
 
-The session viewer must treat `SessionId` as a **conversation id** in both structured and interactive modes.
+The session viewer must treat `SessionId` as a **conversation id**:
+
+- in interactive mode, and
+- in structured mode for agents that expose a resumable conversation id (Codex at minimum; ideally CC too).
 
 Turn boundaries are represented in the session event stream (not via new session rows), consistent with:
 
