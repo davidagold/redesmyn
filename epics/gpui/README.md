@@ -87,6 +87,13 @@ Session persistence rule:
 
 - Persist all **non-delta / non-chunk** session emissions needed to render conversation history and actionable structured timelines in the native session viewer.
 
+Desktop shell layout direction (GPUI):
+
+- Remove the always-visible left navigation sidebar from the web UI.
+- Use the saved width budget for a **persistently visible, collapsible left pane** that hosts an epic-scoped session view (“overseer” in developer shorthand, but **not** a user-facing construct).
+- The right pane remains graph-first (graph + details).
+- Intentionally omit “target the selected task by default” coupling from the port; leave it as a future UX improvement.
+
 ### 3.5 Graph layout direction
 
 We can replace ReactFlow/ELK with a Rust-native layout engine or our own deterministic layout algorithm.
@@ -221,3 +228,31 @@ Sequencing intent:
 - Stand up daemon execution substrate (T-35) before agent-specific runners (T-37/T-38).
 - Implement Shell/tmux support as a separate, compatibility-focused track (T-36).
 - Land control-plane persistence + agent command semantics early enough that UI/CLI work can proceed without inventing ad-hoc plumbing (T-40/T-41).
+
+## 11) Domain 5: Task map (Desktop UI shell — GPUI)
+
+This domain replaces the web dashboard with a native GPUI desktop app.
+
+Layout direction:
+
+- No persistent navigation sidebar.
+- A persistently visible, collapsible **left session pane** scoped to the selected epic.
+- A graph-first right pane.
+- “Overseer” is developer shorthand only; the UI does not introduce a new user-facing construct.
+
+Tasks:
+
+- `epics/gpui/tasks/T-43/README.md`: GPUI desktop app bootstrap + lifecycle (embed control plane + daemon modules).
+- `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, gpui-component survey, shared widgets).
+- `epics/gpui/tasks/T-45/README.md`: Main split layout (left session pane + right workspace; resizable + collapsible).
+- `epics/gpui/tasks/T-46/README.md`: Epic header + chrome (epic selector, status, refresh, settings/command entrypoints).
+- `epics/gpui/tasks/T-47/README.md`: Epic-scoped session selection (one per epic) + persistence seam (no “overseer” naming).
+- `epics/gpui/tasks/T-48/README.md`: Desktop UI driver + semantic UI snapshot (AI-first testability; local-only).
+- `epics/gpui/tasks/T-49/README.md`: Command palette skeleton (upgrade; not required for initial port).
+
+Sequencing intent:
+
+- Stand up the GPUI app host first (T-43).
+- Build layout + chrome in parallel (T-44..T-46).
+- Define the epic-scoped session selection and persistence seam early so Session Viewer work can plug in cleanly later (T-47).
+- Implement test driver hooks early enough that subsequent UI work is easy for AI/CI to validate (T-48).
