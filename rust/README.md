@@ -13,6 +13,21 @@ Or directly:
 
 - `cd rust && cargo check`
 
+## `rn-rs` (Rust CLI)
+
+During the port, the existing Python CLI remains `rn`. The Rust port’s CLI binary is named `rn-rs` so both can coexist on `PATH`.
+
+Examples:
+
+- `cd rust && cargo run -p rn -- --help`
+- `cd rust && cargo run -p rn -- doctor`
+- `cd rust && cargo run -p rn -- version`
+- `cd rust && cargo run -p rn -- bench startup`
+
+Install to `PATH`:
+
+- `cd rust && cargo install --path crates/rn --bin rn-rs`
+
 ## Crate boundaries (by construction)
 
 Dependency rules (enforced by `Cargo.toml` edges):
