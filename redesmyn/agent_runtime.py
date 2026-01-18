@@ -391,13 +391,18 @@ def write_agent_launcher(
         lines.append(f"export {key}={shlex.quote(value)}")
 
     # Attach `pipe-pane` *before* the harness runs so we don't miss early output
-    # (e.g. `thread.started`) in structured modes.
+    # (e.g. `thread.started`) in structured modes. Target the task's tmux
+    # session explicitly because `TMUX_PANE` may be inherited from the daemon's
+    # environment when the daemon itself is running inside tmux.
     lines.extend(
         [
             'PIPE_CMD="cat >> \\"$LOG_PATH\\""',
             "if command -v tmux >/dev/null 2>&1; then",
-            '  if [ -n "${TMUX_PANE:-}" ]; then',
-            '    tmux pipe-pane -o -t "$TMUX_PANE" "$PIPE_CMD" || echo "warning: tmux pipe-pane failed"',
+            '  PREFIX="${REDESMYN_TMUX_SESSION_PREFIX:-rn-a}"',
+            '  if [ -z "$PREFIX" ]; then PREFIX="rn-a"; fi',
+            '  if [ -n "${REDESMYN_TASK_ID:-}" ]; then',
+            '    SESSION_NAME="${PREFIX}-${REDESMYN_TASK_ID}"',
+            '    tmux pipe-pane -o -t "$SESSION_NAME" "$PIPE_CMD" || echo "warning: tmux pipe-pane failed"',
             "  else",
             '    tmux pipe-pane -o "$PIPE_CMD" || echo "warning: tmux pipe-pane failed"',
             "  fi",
