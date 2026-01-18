@@ -89,6 +89,8 @@ Add tests that assert:
   - Protobuf (wire), and
   - JSON (diagnostic).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-9/README.md` (envelope + rules).

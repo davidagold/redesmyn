@@ -121,6 +121,8 @@ The layout engine itself remains pure; the UI decides when to call it.
 - Layout is fast enough for the v0 perf target (qualitative):
   - ~100 nodes / ~100 edges layout within a frame budget on a modern laptop in release mode.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on ULID/newtypes (T-2) for typed ids (or equivalent typed identity strategy in Rust).

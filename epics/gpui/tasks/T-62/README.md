@@ -94,6 +94,8 @@ Integrate with UI driver (T-48) in T-66.
 - Conflict prompts appear with the correct options (interrupt vs stop-and-start-new), and user choice is honored.
 - Draft is not lost on error.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

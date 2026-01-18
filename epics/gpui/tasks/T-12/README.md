@@ -82,6 +82,8 @@ For local UDS:
   - embedded in-proc clients (no serialization), and
   - out-of-proc clients over UDS (protobuf by default).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-10/README.md` (protobuf schema pipeline).

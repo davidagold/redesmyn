@@ -69,6 +69,8 @@ Define the minimal interfaces needed for future work:
   - exchange one request/response,
   - and receive one structured event.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Builds on the exec-session supervisor conventions (T-35) for lifecycle + backpressure patterns.

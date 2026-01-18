@@ -95,6 +95,8 @@ Planner tests use temp repos and small task graphs.
 - Errors are structured and actionable.
 - Plan types are stable and suitable for UI display and for execution by T-30.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on git backend (T-26), worktree service (T-27), and lease enforcement (T-25).

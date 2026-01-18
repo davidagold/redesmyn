@@ -102,6 +102,8 @@ Add unit tests equivalent to:
 - Resume-by-id argv generation matches the Python semantics (tests pass).
 - Naming is clarified (`Shell` replaces “Generic” in Rust-facing user and developer surfaces).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on ID/newtype foundations (T-2) for stable identifiers referenced by later session runtime code.

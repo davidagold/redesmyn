@@ -82,6 +82,8 @@ The EpicGraph query must make it easy for tests to assert outcomes:
 - Query performance is reasonable for interactive use on moderate graphs (document any known limits).
 - The response is stable and typed, making it suitable for AI-driven tests.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on schema (T-17) and event/subscription patterns (T-18).

@@ -135,6 +135,8 @@ Keep it independent from the graph UI crate; integrate via composition in later 
 - View-model logic is unit tested without GPUI.
 - The consumer-driven API requirements are reflected in the client protocol + control plane plan (T-12/T-40), with explicit cursor semantics.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

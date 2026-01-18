@@ -91,6 +91,8 @@ Provide deterministic tests that:
 - Resync behavior works (on request and on backlog/overflow).
 - Implementation is efficient and structured for future expansion (more projections, more event types).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on git backend abstraction (T-26) and repo attachment (T-24).

@@ -80,6 +80,8 @@ Provide structured “worktree health” data for the observation loop (T-28) an
 - Worktree invariants are enforced with actionable errors.
 - Higher-level code can rely on a small, typed API (no ad-hoc worktree shelling out).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on git backend abstraction (T-26) and lease enforcement (T-25) for mutating ops.

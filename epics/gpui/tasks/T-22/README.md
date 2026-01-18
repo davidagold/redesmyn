@@ -68,6 +68,8 @@ At least one integration test should exercise the UDS server path end-to-end:
 - Tests can trigger actions and assert outcomes deterministically.
 - Mock daemon mode is sufficient to test “no silent actions” semantics (command updates visible immediately).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

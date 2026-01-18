@@ -58,6 +58,8 @@ Support trunk-aware layout anchoring:
 - When trunk data is present, the trunk column renders and the graph offsets appropriately.
 - When trunk data is absent, the graph renders normally with no special casing leaks.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Can be implemented after core graph rendering is stable (T-50..T-54).

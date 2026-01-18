@@ -75,6 +75,8 @@ Add unit tests equivalent to:
   - and turn/message event emission.
 - Parser is reusable by the daemon runtime and test harnesses.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on the structured session event contract (T-14) for the event vocabulary and size constraints.

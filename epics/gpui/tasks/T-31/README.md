@@ -69,6 +69,8 @@ On failure, tests should emit:
 - Tests are deterministic and do not depend on timing sleeps.
 - The harness is reusable for future daemon features (agent runtime, artifacts, etc.).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Builds on T-23/T-24/T-26/T-28, and later on T-29/T-30.

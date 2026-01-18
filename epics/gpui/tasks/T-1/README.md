@@ -154,6 +154,8 @@ Enforce these rules by crate dependencies (and add a short doc explaining the in
 - Workspace structure: `rust/` + `rust/crates/`.
 - ID strategy is ULID/newtypes everywhere (implemented in T-2).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - This ticket is a prerequisite for all other Domain 0 tickets.

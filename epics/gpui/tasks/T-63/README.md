@@ -91,6 +91,8 @@ Extend semantic UI snapshot (T-48) to include:
 - Creating a chat immediately pins it and opens the composer.
 - Unpin/close work and are reflected in the UI snapshot.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

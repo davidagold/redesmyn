@@ -58,6 +58,8 @@ Create the minimal tables needed to validate the scaffolding:
 - The crate provides a clean API surface so control-plane code doesn’t scatter SQL.
 - Migration workflow is documented.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).

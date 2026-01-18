@@ -92,6 +92,8 @@ Do not require real tmux in CI if we can avoid it:
 - A deterministic test covers:
   - start → send text → stop → artifact emitted.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on daemon runtime skeleton (T-23) and worktree mapping (T-27).

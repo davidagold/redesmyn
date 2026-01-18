@@ -66,6 +66,8 @@ Include a few early “developer utility” commands that reinforce the architec
 - Command structure is established and documented.
 - Coexistence with Python `rn` is clear and non-confusing for contributors.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).

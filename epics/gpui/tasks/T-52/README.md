@@ -85,6 +85,8 @@ Even if we stub actions, define the pattern:
 - Expanding a node changes its size and triggers a relayout without overlapping nodes.
 - Node measurement and layout integration is stable and does not cause infinite relayout loops.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on graph scene scaffolding (T-50) and UI foundations (T-44).

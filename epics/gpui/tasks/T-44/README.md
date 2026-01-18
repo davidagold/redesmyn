@@ -97,6 +97,8 @@ Implement a shared pattern for UI-triggered actions:
 - At least one view uses the shared widgets (so we know they work end-to-end).
 - The gpui-component survey is written down in this ticket and/or a short doc for implementers.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on GPUI app bootstrap (T-43).

@@ -79,6 +79,8 @@ When failures occur:
   - interrupt semantics
   - durable session history
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on control plane agent command semantics (T-41) and session persistence (T-40).

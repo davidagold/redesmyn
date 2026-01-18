@@ -90,6 +90,8 @@ Prefer semantic assertions for most tests.
   3) trigger refresh,
   4) query UI snapshot and assert in-flight → complete transitions.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on the testability contract (T-15).

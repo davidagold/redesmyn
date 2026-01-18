@@ -81,6 +81,8 @@ At minimum:
 - Prepending older history does not jump the viewport.
 - When user is not at bottom, new events do not steal scroll; “new messages” indicator appears and scroll-to-bottom works.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on UI foundations (T-44) and the session view-model/cursor semantics (T-59).

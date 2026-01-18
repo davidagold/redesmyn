@@ -100,6 +100,8 @@ Provide tests that:
 - Attach/detach is idempotent and safe.
 - Tests are deterministic and cheap to run.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on daemon runtime skeleton (T-23).

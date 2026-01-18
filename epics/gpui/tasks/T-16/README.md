@@ -92,6 +92,8 @@ Even at skeleton stage, establish the pattern:
 - The codebase structure makes it hard to violate the daemon/control-plane boundary (dependency graph).
 - A minimal integration test starts the control plane, connects a client, and performs a `Health/Status` request (method can be stubbed initially).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on Domain 1 client protocol contract (T-12) for the control plane “client-facing” surface.

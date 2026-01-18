@@ -85,6 +85,8 @@ No sleeps for correctness; drive execution deterministically.
 - Blocked/resumable flows work and are observable to clients.
 - Execution is safe (lease + worktree + in-progress checks) and failure modes are actionable.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on planning (T-29), worktrees (T-27), leases (T-25), and daemon/control-plane command protocol (T-11/T-19).

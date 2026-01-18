@@ -82,6 +82,8 @@ Provide a test harness that can:
 - Subscriptions work in-process and over the client API with cursor resume.
 - Tests can “wait for event” deterministically using event-driven primitives.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-17/README.md` (events table + schema).

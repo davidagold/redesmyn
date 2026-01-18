@@ -67,6 +67,8 @@ We keep this as an explicit future UX improvement.
 - Left pane can be resized and collapsed and the state persists.
 - Placeholders render without performance issues.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on GPUI app bootstrap (T-43).

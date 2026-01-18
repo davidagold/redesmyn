@@ -63,6 +63,8 @@ Define conventions so user actions can be traced and correlated with UI state:
 - Switching between dev output and JSON output is one config flag.
 - Logging policy is documented and provides a safe default (no giant payload dumps).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).

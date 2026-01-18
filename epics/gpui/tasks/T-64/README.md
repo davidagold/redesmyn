@@ -88,6 +88,8 @@ At minimum:
 - User can send a message and immediately sees pending state and subsequent events.
 - Interactive sessions show a clear attach placeholder.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

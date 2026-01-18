@@ -66,6 +66,8 @@ Even if the real actions land later:
 - Pan-to-selection reserves space when the panel is open (T-54).
 - The panel content updates correctly as selection changes.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on desktop chrome and selection state wiring (T-46) and UI foundations (T-44).

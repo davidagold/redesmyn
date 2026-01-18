@@ -108,6 +108,8 @@ Even in scaffolding, establish the UI pattern:
   - node views (T-52),
   - and edge rendering (T-53).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on the desktop split layout (T-45) and UI foundations (T-44).

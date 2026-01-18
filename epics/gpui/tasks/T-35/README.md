@@ -95,6 +95,8 @@ Implement a principled interrupt story:
 - A deterministic integration test covers:
   - start session → emit events → stop session.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on daemon runtime skeleton (T-23).

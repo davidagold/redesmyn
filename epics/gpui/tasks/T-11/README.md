@@ -119,6 +119,8 @@ Do not over-design sequencing/acks in v1:
   - daemon implementers and control-plane implementers can build independently and interoperate.
 - The design keeps the control plane free of repo filesystem assumptions.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-10/README.md` (protobuf schema pipeline).

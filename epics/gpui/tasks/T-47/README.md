@@ -106,6 +106,8 @@ We may later add explicit UX affordances to “act on selected task(s)” from t
 - Selecting an epic shows a stable list of pinned chat sessions and allows picking one for the left pane (placeholder content is fine).
 - Pins and session metadata are persisted in control plane storage and are queryable.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on control plane session persistence (T-40) and client query surfaces (T-12/T-20).

@@ -143,6 +143,8 @@ Exact method names belong to the client API schema (T-12), but this ticket must 
   - ULIDs as `BLOB(16)`,
   - payload as protobuf bytes (JSON debug optional).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on control-plane schema/migrations foundations (T-17) and the session event contract (T-14).

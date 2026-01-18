@@ -91,6 +91,8 @@ Add indices for the primary query patterns:
   - and graph queries.
 - Indexes exist for the primary access patterns (documented in the ticket or code).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes) and `epics/gpui/tasks/T-6/README.md` (sqlx scaffold).

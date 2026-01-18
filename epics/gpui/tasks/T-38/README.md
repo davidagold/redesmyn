@@ -72,6 +72,8 @@ Do not require Claude installed:
   - and interrupt behavior.
 - Resume-by-id turns match the Python semantics (T-32 tests + runner-level integration).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on exec-session supervisor (T-35).

@@ -69,6 +69,8 @@ Avoid sleeps.
   3) assert selection + details panel state via semantic snapshot,
   4) toggle focus mode and assert the snapshot changes.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on the UI driver contract (T-48) and the graph scene (T-50).

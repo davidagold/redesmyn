@@ -76,6 +76,8 @@ No fragile parsing of human-oriented output.
 - The default CLI backend is correct, well-typed, and test-covered.
 - The design clearly documents what would be required to implement a Rust-native backend later.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on daemon skeleton (T-23) only for wiring; can be developed largely independently.

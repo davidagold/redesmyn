@@ -70,6 +70,8 @@ The exact affordances can start minimal; the important part is the mechanism.
 - Hovering an edge highlights it and selection works (coarse hit testing is acceptable).
 - LOD bands work: labels/ticks appear/disappear based on zoom without janky rerenders.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on graph scene scaffolding (T-50).

@@ -75,6 +75,8 @@ When positions change (layout recompute):
 - Focus mode reduces the graph to a stable span path.
 - Layout recomputes animate smoothly without visible jank on small graphs.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on graph scene scaffolding (T-50) and layout engine bounds (T-51).

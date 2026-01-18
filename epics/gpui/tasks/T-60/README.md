@@ -93,6 +93,8 @@ The markdown renderer must be usable for:
 - `SessionView` can render a realistic Codex response (multiple headings + lists + fenced code blocks) without noticeable jank.
 - A small unit test suite validates markdown parsing → block model (no GPUI required).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on UI foundations (T-44).

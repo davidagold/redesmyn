@@ -112,6 +112,8 @@ Use `tracing` conventions (T-4):
 - Lifecycle is embeddable: desktop app can start/stop the daemon module without reaching into internals.
 - Code structure makes it hard to violate the daemon/control-plane boundary.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on Domain 1 daemon stream contract (T-11) and schema pipeline (T-10).

@@ -92,6 +92,8 @@ Emit status updates that allow UI/CLI to display:
 - Lease renewal logic is robust and testable.
 - UI/CLI can surface “who is primary” and “why my command was rejected” without guesswork.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on daemon skeleton (T-23) and daemon protocol contract (T-11).

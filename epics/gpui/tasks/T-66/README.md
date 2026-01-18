@@ -105,6 +105,8 @@ Optionally add a test for the interactive placeholder:
 - A session viewer workflow can be executed end-to-end via UI driver actions with no coordinate clicks.
 - The semantic snapshot contains enough information to make assertions without pixel diffs.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

@@ -60,6 +60,8 @@ Implement multi-selection and a selection action bar in the GPUI graph:
 - Selection bar appears/disappears correctly and is keyboard accessible.
 - At least one bulk action executes through the normal “command” pattern (even if it is a stub command in v0).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on graph scene scaffolding (T-50) and UI foundations (T-44).

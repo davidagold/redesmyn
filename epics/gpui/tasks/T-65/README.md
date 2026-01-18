@@ -82,6 +82,8 @@ Expose in the semantic UI snapshot:
 - Interactive sessions show a clear, non-confusing placeholder with attach actions.
 - Clicking attach produces immediate visible progress and deterministic state transitions in the UI snapshot.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on:

@@ -89,6 +89,8 @@ so tests and `rn` can wait without polling.
 - Client can issue a command and wait for completion deterministically (no sleeps).
 - The control plane never executes repo-local actions directly; it only dispatches.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on Domain 1 daemon stream contract (T-11) and client contract (T-12/T-15).

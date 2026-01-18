@@ -52,6 +52,8 @@ Extend the Rust CLI skeleton (T-8) with subcommands like:
 - A developer can generate test frames to exercise parsers.
 - The tool is safe by default (no accidental giant dumps).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-10/README.md` (schema/codegen).

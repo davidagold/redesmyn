@@ -88,6 +88,8 @@ Add unit tests equivalent to:
   - and busy timeout degradation.
 - Parser is reusable by daemon runtime and by any future tooling that needs to interpret Codex output.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on the structured session event contract (T-14) for the event vocabulary and size constraints.

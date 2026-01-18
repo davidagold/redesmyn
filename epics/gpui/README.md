@@ -33,6 +33,7 @@ Supported OS: **macOS + Linux**. Windows is not required for this epic.
 - **Strong typing**: prefer newtypes + enums and typed models; avoid “stringly typed” payloads.
 - **Performance is a product feature**: design for high-throughput event streams, large diffs, and smooth UI interactions.
 - **Observability without noise**: structured tracing by default; rich debugging hooks when needed.
+- **Logging is part of “done”**: every new behavior adds deliberate `tracing` spans/logs using `redesmyn_logging` (key lifecycle + errors; no noisy per-request/per-tick spam; no large payloads by default).
 - **No silent actions**: every mutation has immediate visible progress; prevent accidental duplicate requests.
 - **Maintainability first**: idiomatic Rust, small modules, readable factoring, and incremental testability.
 

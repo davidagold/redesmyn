@@ -108,6 +108,8 @@ Minimum fields:
 - All later protocol messages in this epic reference and reuse this envelope (no bespoke headers).
 - Versioning and encoding rules are explicit enough that two implementers can build compatible code without guessing.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-2/README.md` (ULID/newtypes).

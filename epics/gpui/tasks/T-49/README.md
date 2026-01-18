@@ -60,6 +60,8 @@ Include:
 - The command palette opens, filters, and runs at least the minimal command set.
 - Commands obey the shared in-flight/error conventions (T-44).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on UI foundations (T-44).

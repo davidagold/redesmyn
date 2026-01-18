@@ -132,6 +132,8 @@ The implementation must support deterministic tests:
   5) and query back durable session history from the DB.
 - Conflict codes and behaviors match the current Python semantics closely enough that existing UI confirm flows can be reproduced without inventing new logic.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on command engine (T-19) and client API surface (T-12).

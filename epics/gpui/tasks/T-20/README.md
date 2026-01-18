@@ -83,6 +83,8 @@ The client library should:
 - Subscriptions are stable and do not require polling.
 - Tests are deterministic and do not use `sleep` for correctness.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on Domain 1 client protocol contract (T-12, T-15) and envelope/schema (T-9/T-10).

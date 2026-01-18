@@ -78,6 +78,8 @@ The runner must be testable without real Codex installed:
 - Resume-by-id turn execution uses the canonical builder semantics (T-32).
 - Interrupt semantics work and are observable.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on exec-session supervisor (T-35).

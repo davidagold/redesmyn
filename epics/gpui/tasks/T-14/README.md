@@ -133,6 +133,8 @@ Client subscriptions should be able to stream:
 - The contract explicitly forbids embedding large blobs in durable events.
 - The schema is sufficient to design the native session viewer and diff viewer without inventing new primitives.
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-10/README.md` (schema/codegen).

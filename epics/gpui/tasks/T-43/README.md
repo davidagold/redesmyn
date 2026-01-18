@@ -90,6 +90,8 @@ No design work is required here; that’s in T-44..T-46.
 - Dependency graph preserves daemon/control-plane separation by construction.
 - There is a documented “how to run the desktop app” section (dev flags, logs, config paths).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on control plane service skeleton (T-16).

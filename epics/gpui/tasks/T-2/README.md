@@ -73,6 +73,8 @@ Store ULIDs as `BLOB(16)` for performance/index size, with helpers to render rea
 - DB and wire encoding strategies are explicitly tested and documented.
 - The crate is tiny, fast to compile, and has no heavy dependencies outside what’s needed (`ulid`, `serde`, minimal `sqlx` support).
 
+- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+
 ## Dependencies / sequencing
 
 - Depends on `epics/gpui/tasks/T-1/README.md` (workspace + crate skeletons).
