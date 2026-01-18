@@ -256,3 +256,34 @@ Sequencing intent:
 - Build layout + chrome in parallel (T-44..T-46).
 - Define the epic-scoped session selection and persistence seam early so Session Viewer work can plug in cleanly later (T-47).
 - Implement test driver hooks early enough that subsequent UI work is easy for AI/CI to validate (T-48).
+
+## 12) Domain 6: Task map (Graph view + layout engine)
+
+This domain ports the graph-first UI to GPUI and replaces ReactFlow/ELK with a Rust-native renderer and layout engine.
+
+Core requirements:
+
+- Deterministic layout (stable across runs for the same input).
+- Smooth, responsive interactions (pan/zoom/select) with clear selection state.
+- Support dynamic relayout when task cards expand/collapse (variable node sizes).
+- “No silent actions” (graph-triggered mutations must show immediate in-flight feedback).
+- AI-first testability: the graph must be driveable and assertable via semantic UI snapshot surfaces (T-48).
+
+Tasks:
+
+- `epics/gpui/tasks/T-50/README.md`: Graph scene + renderer scaffolding (GPUI canvas, camera, hit-testing).
+- `epics/gpui/tasks/T-51/README.md`: Deterministic layout engine v1 (variable node sizes; expand/collapse relayout).
+- `epics/gpui/tasks/T-52/README.md`: Task node view (compact/expanded; measurement; selection affordances).
+- `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
+- `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection, focus mode path).
+- `epics/gpui/tasks/T-55/README.md`: Details panel (drawer) + selection model integration.
+- `epics/gpui/tasks/T-56/README.md`: Bulk selection + action bar (multi-select UX).
+- `epics/gpui/tasks/T-57/README.md`: Trunk timeline column (commit marks; base alignment; optional but planned).
+- `epics/gpui/tasks/T-58/README.md`: Graph testability surfaces (extend UI driver + semantic snapshot for graph).
+
+Sequencing intent:
+
+- Land renderer + layout foundations early (T-50, T-51).
+- Build node/edge rendering and viewport behaviors in parallel (T-52..T-54).
+- Integrate details and bulk actions after selection/interaction are stable (T-55, T-56).
+- Keep trunk timeline optional so it doesn’t block core graph parity (T-57).
