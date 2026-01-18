@@ -49,14 +49,32 @@ impl std::error::Error for ParseIdError {
     }
 }
 
-#[cfg(feature = "sqlx")]
-#[derive(Debug)]
-struct IdBytesLengthError {
+/// An error produced when decoding an ID from a byte slice of the wrong length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdBytesLengthError {
     id_type: &'static str,
     actual_len: usize,
 }
 
-#[cfg(feature = "sqlx")]
+impl IdBytesLengthError {
+    fn new(id_type: &'static str, actual_len: usize) -> Self {
+        Self {
+            id_type,
+            actual_len,
+        }
+    }
+
+    #[must_use]
+    pub fn id_type(&self) -> &'static str {
+        self.id_type
+    }
+
+    #[must_use]
+    pub fn actual_len(&self) -> usize {
+        self.actual_len
+    }
+}
+
 impl fmt::Display for IdBytesLengthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -68,7 +86,6 @@ impl fmt::Display for IdBytesLengthError {
     }
 }
 
-#[cfg(feature = "sqlx")]
 impl std::error::Error for IdBytesLengthError {}
 
 macro_rules! ulid_id {
@@ -111,18 +128,22 @@ macro_rules! ulid_id {
                 self.0.to_bytes()
             }
 
-            #[cfg(feature = "sqlx")]
-            fn from_bytes_slice(bytes: &[u8]) -> Result<Self, IdBytesLengthError> {
+            pub fn try_from_bytes_slice(bytes: &[u8]) -> Result<Self, IdBytesLengthError> {
                 if bytes.len() != 16 {
-                    return Err(IdBytesLengthError {
-                        id_type: stringify!($name),
-                        actual_len: bytes.len(),
-                    });
+                    return Err(IdBytesLengthError::new(stringify!($name), bytes.len()));
                 }
 
                 let mut array = [0_u8; 16];
                 array.copy_from_slice(bytes);
                 Ok(Self::from_bytes(array))
+            }
+        }
+
+        impl TryFrom<&[u8]> for $name {
+            type Error = IdBytesLengthError;
+
+            fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+                Self::try_from_bytes_slice(value)
             }
         }
 
@@ -165,7 +186,7 @@ macro_rules! ulid_id {
             where
                 S: serde::Serializer,
             {
-                serializer.serialize_str(&self.0.to_string())
+                serializer.collect_str(&self.0)
             }
         }
 
@@ -216,7 +237,7 @@ macro_rules! ulid_id {
                 value: sqlx::sqlite::SqliteValueRef<'r>,
             ) -> Result<Self, sqlx::error::BoxDynError> {
                 let bytes = <&[u8] as sqlx::Decode<sqlx::sqlite::Sqlite>>::decode(value)?;
-                Ok(Self::from_bytes_slice(bytes)?)
+                Ok(Self::try_from_bytes_slice(bytes)?)
             }
         }
     };
@@ -276,6 +297,14 @@ mod tests {
 
         let parsed: TaskId = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn bytes_roundtrip() {
+        let id = WorkspaceId::new();
+        let bytes = id.to_bytes();
+        let decoded = WorkspaceId::try_from_bytes_slice(&bytes).unwrap();
+        assert_eq!(decoded, id);
     }
 
     #[cfg(feature = "sqlx")]
