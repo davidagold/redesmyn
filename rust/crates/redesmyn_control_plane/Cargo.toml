@@ -14,3 +14,4 @@ redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_storage.workspace = true
 redesmyn_transport.workspace = true
+thiserror.workspace = true
