@@ -335,8 +335,16 @@ def _seed_codex_home(*, src_dir: Path, dst_dir: Path, warnings: list[str]) -> No
     ):
         src_file = src_dir / name
         dst_file = dst_dir / name
-        if not src_file.is_file() or dst_file.exists():
+        if not src_file.is_file():
             continue
+        if dst_file.exists():
+            if name != "auth.json":
+                continue
+            try:
+                if dst_file.stat().st_mtime_ns >= src_file.stat().st_mtime_ns:
+                    continue
+            except OSError:
+                pass
         try:
             shutil.copy2(src_file, dst_file)
         except OSError as e:
