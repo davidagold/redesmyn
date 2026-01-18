@@ -62,6 +62,7 @@ Port the current semantics precisely:
 
 - Determine desired interface mode from configured harness (or explicit preference).
 - Structured mode:
+  - **Session semantics:** `agent_session_id` is the **conversation id**. A structured message send creates a new **turn** (events), not a new session row.
   - If a resumable structured session exists (external session ref present), send via resume-by-id.
   - If a structured turn is in progress for that resumable session:
     - on_conflict=fail → 409 conflict (“turn in progress”)
@@ -98,6 +99,12 @@ Ensure that, as part of these flows:
 - user messages and assistant messages become durable session events (T-14),
 - and are persisted (T-40),
 - while delta/chunk events are not persisted.
+
+Also ensure we follow the “session == conversation; turns are events” rule:
+
+- continuing a structured conversation updates/extends the existing session,
+- `stop_session_and_start_new` explicitly ends the conversation and creates a new session,
+- and turn lifecycle is represented by `TurnStarted` / `TurnCompleted` session events (not by creating new sessions).
 
 ### 5) AI-first testability hooks
 
@@ -136,4 +143,3 @@ The implementation must support deterministic tests:
   - `redesmyn/api.py` (`POST /v1/tasks/{task_id}/agent/message`).
 - UI confirm flows (TS today):
   - `dashboard/src/components/graph/TaskCard.tsx` (conflict prompts, pending “Sending…” state).
-

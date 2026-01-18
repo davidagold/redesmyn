@@ -91,6 +91,7 @@ Desktop shell layout direction (GPUI):
 
 - Remove the always-visible left navigation sidebar from the web UI.
 - Use the saved width budget for a **persistently visible, collapsible left pane** that hosts a session view for a user-managed chat pinned to the selected epic (“overseer” in developer shorthand, but **not** a user-facing construct).
+- Pin semantics: an epic has **0/1** pinned chat session; a chat session can be pinned to **0..N** epics.
 - The right pane remains graph-first (graph + details).
 - Intentionally omit “target the selected task by default” coupling from the port; leave it as a future UX improvement.
 
@@ -287,3 +288,29 @@ Sequencing intent:
 - Build node/edge rendering and viewport behaviors in parallel (T-52..T-54).
 - Integrate details and bulk actions after selection/interaction are stable (T-55, T-56).
 - Keep trunk timeline optional so it doesn’t block core graph parity (T-57).
+
+## 13) Domain 7: Task map (Session viewer + chat consolidation)
+
+This domain builds the reusable native **session viewer** used for:
+
+- user-managed chat sessions pinned to the selected epic (left pane), and
+- task-scoped agent sessions in the graph/details surface.
+
+Core requirements:
+
+- Full markdown rendering for messages.
+- Session semantics: **session == conversation; turns are events** (event-as-turn).
+- Scroll performance: virtualized feed + stable scroll anchoring.
+- “No silent actions”: visible in-flight state for send/load/attach flows.
+- AI-first testability: driveable via UI driver + assertable via semantic snapshots (T-48).
+
+Tasks:
+
+- `epics/gpui/tasks/T-59/README.md`: Session viewer foundations (event→view model + pagination + subscriptions).
+- `epics/gpui/tasks/T-60/README.md`: Full markdown rendering for session messages (GPUI).
+- `epics/gpui/tasks/T-61/README.md`: SessionView virtualized feed + scroll behaviors.
+- `epics/gpui/tasks/T-62/README.md`: Session composer + conflict/confirm UX (preserve v0 semantics).
+- `epics/gpui/tasks/T-63/README.md`: Left pane pinned chat session viewer (no “overseer” naming).
+- `epics/gpui/tasks/T-64/README.md`: Task details session view (latest session only).
+- `epics/gpui/tasks/T-65/README.md`: Interactive (tmux) session placeholder UX (attach/copy; no terminal emulator in port).
+- `epics/gpui/tasks/T-66/README.md`: Session viewer AI-testability (UI driver actions + semantic snapshot + tests).

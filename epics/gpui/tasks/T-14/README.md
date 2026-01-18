@@ -52,6 +52,7 @@ Rules:
 Define a `SessionEvent` union with (at minimum) these categories:
 
 - `SessionStarted` / `SessionEnded`
+- `TurnStarted` / `TurnCompleted` (turn-as-event; see “Session semantics” below)
 - `UserMessage` / `AssistantMessage` (chat-like events; include short preview fields)
 - `ToolInvocation` / `ToolResult` (structured tool events)
 - `StatusUpdate` (turn state, blocking, progress)
@@ -64,6 +65,39 @@ Rules:
   - **scope** (task-scoped sessions and user-managed chat sessions are both supported).
 - Keep payloads compact; link to artifacts for large content.
 - Preserve forward compatibility via an `UnknownSessionEvent` fallback.
+
+### 2.1) Session semantics: session == conversation; turns are events
+
+We want the UI/API to treat `session_id` as a **conversation id** in both interactive and structured modes.
+
+That means:
+
+- a structured “send message” creates a **new turn**, not a new session,
+- turn lifecycle is represented by events (`TurnStarted` / `TurnCompleted`),
+- and the session viewer can render a correct “timeline” without reconstructing conversations from multiple session rows.
+
+This aligns with (and should stay consistent with) the v0 design note:
+
+- `epics/harness-interface-v0/tasks/T-15/README.md`: Session semantics: `AgentSession` == conversation, turns are events (event-as-turn).
+
+Minimum event payloads (names illustrative; exact fields belong in `.proto`):
+
+- `TurnStarted`
+  - `session_id`
+  - `turn_id: Option<String>` (best-effort; stable within an external harness when available)
+  - `interface_mode`
+  - `external_session_ref` (when structured; best-effort)
+  - optional: `idempotency_key`, `log_offset_bytes`
+- `TurnCompleted`
+  - `session_id`
+  - `turn_id: Option<String>`
+  - `interface_mode`
+  - `external_session_ref` (best-effort)
+  - optional: `exit_code` / structured error
+- `UserMessage` / `AssistantMessage`
+  - `session_id`
+  - `turn_id: Option<String>` (null allowed)
+  - message body (bounded) + preview fields
 
 ### 3) Event log vs session events vs telemetry
 

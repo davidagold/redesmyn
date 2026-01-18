@@ -59,19 +59,25 @@ Add tables (names illustrative):
     - `title` (nullable)
     - `closed_at` (nullable)
   - timestamps
+
+Conversation invariants (see `epics/harness-interface-v0/tasks/T-15/README.md`):
+
+- `agent_sessions` represent **conversations** (not “turn runs”).
+- For task-scoped sessions: enforce **at most one active conversation** per `(task_id, interface_mode)` (partial unique index where `ended_at IS NULL`).
+- `closed_at` / `ended_at` represent conversation lifecycle; do not set them at structured turn completion.
 - `session_events`
   - `event_id` (ULID BLOB(16))
   - `session_id`, `task_id`, `repo_id` (indexed)
   - `kind` (small enum string for filtering)
+  - optional `turn_id` (string; best-effort; indexed) to support “turn as event” timelines
   - `created_at`
   - `payload` (protobuf bytes; JSON optional for debug)
   - preview columns (optional, for fast list rendering)
 - `artifacts` (if not already present in Domain 2 schema evolution)
 - `session_pins`
+  - `epic_id` (ULID BLOB(16), PRIMARY KEY)
   - `session_id` (ULID BLOB(16))
-  - `epic_id` (ULID BLOB(16))
-  - (unique constraint on `session_id, epic_id`)
-  - index by `epic_id` for “list pinned chats for epic”
+  - index by `session_id` for “list epics pinned to this chat”
 
 ### 2) Durability policy: no deltas in DB
 
@@ -102,8 +108,8 @@ Expose storage methods (names illustrative):
 - `create_chat_session(title?) -> session_id`
 - `close_chat_session(session_id)`
 - `list_chat_sessions(filters...)`
-- `pin_chat_session_to_epic(session_id, epic_id)`
-- `unpin_chat_session_from_epic(session_id, epic_id)`
+- `pin_chat_session_to_epic(session_id, epic_id)` (set/replace; epic has 0/1 pinned)
+- `unpin_chat_session_from_epic(epic_id)`
 - `get_session_events(session_id, pagination, filters)`
 
 ### 4) Client query surfaces
@@ -112,7 +118,7 @@ Define control-plane query methods (over the client API protocol) sufficient for
 
 - list sessions for a task (and current active session)
 - manage chat sessions (create/close/list)
-- manage pins to epics (pin/unpin/list pinned for epic)
+- manage pins to epics (pin/unpin/get pinned for epic; list epics pinned to chat optional)
 - fetch session event history with pagination
 - subscribe to new session events for a session or task
 

@@ -45,9 +45,16 @@ This is still “just a session”; it is not a new user-facing entity.
 
 Support pinning a chat session to an epic:
 
-- pinned to **zero or more** epics (start with 0/1 in the UI if we want, but keep the data model flexible),
+- a chat can be pinned to **zero or more** epics,
+- an epic can have **at most one** pinned chat session (0/1),
 - pin/unpin is a lightweight metadata operation (does not end the session),
 - pins are persisted in the control plane DB.
+
+Semantics:
+
+- pinning a chat session to an epic is **set/replace**:
+  - if the epic already has a pinned chat, it is replaced,
+  - the replaced chat remains open (not closed) unless the user explicitly closes it.
 
 ### 3) Control plane API surface
 
@@ -56,21 +63,21 @@ Expose methods (names illustrative) over the client API:
 - `CreateChatSession { title? } -> { session_id }`
 - `CloseChatSession { session_id }` (marks closed/ended; does not delete history)
 - `ListChatSessions { filters… } -> { sessions… }` (at minimum: list sessions pinned to an epic)
-- `PinChatSessionToEpic { session_id, epic_id }`
-- `UnpinChatSessionFromEpic { session_id, epic_id }`
+- `PinChatSessionToEpic { session_id, epic_id }` (set/replace; epic has 0/1 pinned)
+- `UnpinChatSessionFromEpic { epic_id }` (clears the epic’s pin)
 
 Semantics:
 
 - chat sessions are durable and queryable (session id stable across restarts),
 - closing a chat session is idempotent,
-- listing pinned sessions for an epic is deterministic and stable.
+- the epic’s pinned chat session is deterministic and stable.
 
 ### 4) Persistence
 
 Persist the mapping in the control plane (preferred), e.g.:
 
 - store sessions in `agent_sessions` (with `scope_kind = chat`),
-- store pins in a small join table (e.g. `session_pins(session_id, epic_id)`),
+- store pins in a small table keyed by epic (e.g. `session_pins(epic_id PRIMARY KEY, session_id)`),
 - optionally store a `title` and `closed_at` for chat sessions.
 
 Do **not** store this as UI-only local state; we want:
@@ -82,8 +89,9 @@ Do **not** store this as UI-only local state; we want:
 
 When the selected epic changes:
 
-- UI lists chat sessions pinned to that epic and lets the user choose one to display.
-- UI supports creating a new chat session (optionally pinned to the current epic).
+- UI shows the epic’s pinned chat session if one exists, otherwise an empty state.
+- UI supports creating a new chat session and pinning it to the current epic.
+- UI supports pinning an existing chat session to the current epic (replacing any existing pin).
 - UI supports closing the currently displayed chat session.
 
 Do **not** implement default targeting of selected tasks from this pane in the port.
