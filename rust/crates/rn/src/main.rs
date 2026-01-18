@@ -9,7 +9,12 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::Serialize;
+
+fn exit_code_from_i32(code: i32) -> ExitCode {
+    ExitCode::from(u8::try_from(code).unwrap_or(1))
+}
 
 fn main() -> ExitCode {
     let output_for_clap_errors = OutputFormat::detect_from_env_args();
@@ -25,10 +30,10 @@ fn main() -> ExitCode {
 
     match run(cli, &output) {
         CommandOutcome::Success => ExitCode::SUCCESS,
-        CommandOutcome::ExitCode(code) => ExitCode::from(code),
+        CommandOutcome::ExitCode(code) => exit_code_from_i32(code),
         CommandOutcome::Failure(err) => {
             output.print_error(&err);
-            ExitCode::from(err.exit_code())
+            exit_code_from_i32(err.exit_code())
         }
     }
 }
@@ -39,7 +44,7 @@ fn exit_from_clap_error(err: clap::Error, output_format: OutputFormat) -> ExitCo
         clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
             ExitCode::SUCCESS
         }
-        _ => ExitCode::from(ExitCodeValue::InvalidRequest as u8),
+        _ => exit_code_from_i32(ErrorCategory::InvalidRequest.exit_code()),
     };
 
     // For `--help`/`--version`, respect clap’s default rendering/stream choice.
@@ -56,7 +61,7 @@ fn exit_from_clap_error(err: clap::Error, output_format: OutputFormat) -> ExitCo
             let _ = err.print();
         }
         OutputFormat::Json => {
-            let error = CliError::new(ErrorCategory::InvalidRequest, err.to_string());
+            let error = ErrorEnvelope::new(ErrorCategory::InvalidRequest, err.to_string());
             Output::new(OutputFormat::Json).print_error(&error);
         }
     }
@@ -195,72 +200,8 @@ struct BenchStartupArgs {
 #[derive(Debug)]
 enum CommandOutcome {
     Success,
-    ExitCode(u8),
-    Failure(CliError),
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
-#[allow(dead_code)]
-enum ExitCodeValue {
-    /// The user passed invalid flags, invalid input, or violated a precondition.
-    InvalidRequest = 2,
-    /// The requested entity does not exist.
-    NotFound = 3,
-    /// The request was valid, but cannot be applied due to current state.
-    Conflict = 4,
-    /// Authentication/authorization failure.
-    Unauthorized = 5,
-    /// The operation is temporarily unavailable (e.g. a daemon is down).
-    Unavailable = 6,
-    /// Any unexpected error.
-    Internal = 1,
-    /// Ctrl-C / SIGINT.
-    Interrupted = 130,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
-enum ErrorCategory {
-    InvalidRequest,
-    NotFound,
-    Conflict,
-    Unauthorized,
-    Unavailable,
-    Internal,
-}
-
-#[derive(Debug)]
-struct CliError {
-    category: ErrorCategory,
-    message: String,
-}
-
-impl CliError {
-    fn new(category: ErrorCategory, message: impl Into<String>) -> Self {
-        Self {
-            category,
-            message: message.into(),
-        }
-    }
-
-    fn exit_code(&self) -> u8 {
-        match self.category {
-            ErrorCategory::InvalidRequest => ExitCodeValue::InvalidRequest as u8,
-            ErrorCategory::NotFound => ExitCodeValue::NotFound as u8,
-            ErrorCategory::Conflict => ExitCodeValue::Conflict as u8,
-            ErrorCategory::Unauthorized => ExitCodeValue::Unauthorized as u8,
-            ErrorCategory::Unavailable => ExitCodeValue::Unavailable as u8,
-            ErrorCategory::Internal => ExitCodeValue::Internal as u8,
-        }
-    }
-}
-
-impl From<io::Error> for CliError {
-    fn from(err: io::Error) -> Self {
-        Self::new(ErrorCategory::Internal, err.to_string())
-    }
+    ExitCode(i32),
+    Failure(ErrorEnvelope),
 }
 
 struct Output {
@@ -284,27 +225,13 @@ impl Output {
         writeln!(&mut stderr)
     }
 
-    fn print_error(&self, err: &CliError) {
+    fn print_error(&self, err: &ErrorEnvelope) {
         match self.format {
             OutputFormat::Human => {
                 let _ = writeln!(io::stderr(), "error: {}", err.message);
             }
             OutputFormat::Json => {
-                #[derive(Serialize)]
-                struct Envelope<'a> {
-                    error: Body<'a>,
-                }
-                #[derive(Serialize)]
-                struct Body<'a> {
-                    category: ErrorCategory,
-                    message: &'a str,
-                }
-                let _ = self.print_json_stderr(&Envelope {
-                    error: Body {
-                        category: err.category,
-                        message: &err.message,
-                    },
-                });
+                let _ = self.print_json_stderr(err);
             }
         }
     }
@@ -339,7 +266,7 @@ fn doctor(_args: DoctorArgs, output: &Output) -> CommandOutcome {
     let cwd = match env::current_dir() {
         Ok(cwd) => cwd,
         Err(err) => {
-            return CommandOutcome::Failure(CliError::new(
+            return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::Internal,
                 format!("failed to read cwd: {err}"),
             ));
@@ -402,7 +329,10 @@ fn doctor(_args: DoctorArgs, output: &Output) -> CommandOutcome {
         }
         OutputFormat::Json => {
             if let Err(err) = output.print_json_stdout(&report) {
-                return CommandOutcome::Failure(CliError::from(err));
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
             }
         }
     }
@@ -410,7 +340,7 @@ fn doctor(_args: DoctorArgs, output: &Output) -> CommandOutcome {
     if report.ok {
         CommandOutcome::Success
     } else {
-        CommandOutcome::ExitCode(ExitCodeValue::InvalidRequest as u8)
+        CommandOutcome::ExitCode(ErrorCategory::InvalidRequest.exit_code())
     }
 }
 
@@ -432,7 +362,7 @@ fn protocol(cmd: ProtocolCommands, output: &Output) -> CommandOutcome {
 fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome {
     match args.codec {
         ProtocolCodec::Protobuf => {
-            return CommandOutcome::Failure(CliError::new(
+            return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::Unavailable,
                 "protobuf decoding is not available yet (depends on T-7 transport + codec scaffolding)",
             ));
@@ -448,7 +378,7 @@ fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome 
     let json_value: serde_json::Value = match serde_json::from_slice(&input_bytes) {
         Ok(value) => value,
         Err(err) => {
-            return CommandOutcome::Failure(CliError::new(
+            return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::InvalidRequest,
                 format!(
                     "failed to parse JSON input: {err}\n(note: protocol framing decode is not implemented yet; this currently only pretty-prints JSON)"
@@ -475,7 +405,10 @@ fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome 
         }
         OutputFormat::Json => {
             if let Err(err) = output.print_json_stdout(&json_value) {
-                return CommandOutcome::Failure(CliError::from(err));
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
             }
         }
     }
@@ -483,13 +416,25 @@ fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome 
     CommandOutcome::Success
 }
 
-fn read_all_input(input: Option<PathBuf>) -> Result<Vec<u8>, CliError> {
-    let mut bytes = Vec::new();
+fn read_all_input(input: Option<PathBuf>) -> Result<Vec<u8>, ErrorEnvelope> {
     match input {
-        Some(path) => fs::File::open(&path)?.read_to_end(&mut bytes)?,
-        None => io::stdin().lock().read_to_end(&mut bytes)?,
-    };
-    Ok(bytes)
+        Some(path) => fs::read(&path).map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to read input file {}: {err}", path.display()),
+            )
+        }),
+        None => {
+            let mut bytes = Vec::new();
+            io::stdin().lock().read_to_end(&mut bytes).map_err(|err| {
+                ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read stdin: {err}"),
+                )
+            })?;
+            Ok(bytes)
+        }
+    }
 }
 
 fn version(args: VersionArgs, output: &Output) -> CommandOutcome {
@@ -512,7 +457,10 @@ fn version(args: VersionArgs, output: &Output) -> CommandOutcome {
         }
         OutputFormat::Json => {
             if let Err(err) = output.print_json_stdout(&VersionInfo { name, version }) {
-                return CommandOutcome::Failure(CliError::from(err));
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
             }
         }
     }
@@ -541,7 +489,7 @@ fn bench_startup(args: BenchStartupArgs, output: &Output) -> CommandOutcome {
     let exe = match env::current_exe() {
         Ok(exe) => exe,
         Err(err) => {
-            return CommandOutcome::Failure(CliError::new(
+            return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::Internal,
                 format!("failed to locate current executable: {err}"),
             ));
@@ -561,7 +509,7 @@ fn bench_startup(args: BenchStartupArgs, output: &Output) -> CommandOutcome {
             Ok(mut child) => {
                 if let Ok(status) = child.wait() {
                     if !status.success() {
-                        return CommandOutcome::Failure(CliError::new(
+                        return CommandOutcome::Failure(ErrorEnvelope::new(
                             ErrorCategory::Internal,
                             format!("warmup run exited non-zero: {status}"),
                         ));
@@ -569,7 +517,7 @@ fn bench_startup(args: BenchStartupArgs, output: &Output) -> CommandOutcome {
                 }
             }
             Err(err) => {
-                return CommandOutcome::Failure(CliError::new(
+                return CommandOutcome::Failure(ErrorEnvelope::new(
                     ErrorCategory::Unavailable,
                     format!("failed to spawn child process: {err}"),
                 ));
@@ -592,13 +540,13 @@ fn bench_startup(args: BenchStartupArgs, output: &Output) -> CommandOutcome {
                 samples.push(elapsed);
             }
             Ok(status) => {
-                return CommandOutcome::Failure(CliError::new(
+                return CommandOutcome::Failure(ErrorEnvelope::new(
                     ErrorCategory::Internal,
                     format!("bench run exited non-zero: {status}"),
                 ));
             }
             Err(err) => {
-                return CommandOutcome::Failure(CliError::new(
+                return CommandOutcome::Failure(ErrorEnvelope::new(
                     ErrorCategory::Unavailable,
                     format!("failed to spawn child process: {err}"),
                 ));
@@ -637,7 +585,10 @@ fn bench_startup(args: BenchStartupArgs, output: &Output) -> CommandOutcome {
         }
         OutputFormat::Json => {
             if let Err(err) = output.print_json_stdout(&row) {
-                return CommandOutcome::Failure(CliError::from(err));
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
             }
         }
     }
