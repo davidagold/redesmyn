@@ -4,7 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from redesmyn.db.models import Epic, Task
-from redesmyn.git import GitCommandError, branch_exists, git_is_ancestor, git_push
+from redesmyn.repo import GitCommandError, branch_exists, git_is_ancestor, git_push
 from redesmyn.integrations.github_pr import (
     GitHubPullRequestInfo,
     GitHubPullRequestRef,
