@@ -90,7 +90,7 @@ Session persistence rule:
 Desktop shell layout direction (GPUI):
 
 - Remove the always-visible left navigation sidebar from the web UI.
-- Use the saved width budget for a **persistently visible, collapsible left pane** that hosts an epic-scoped session view (“overseer” in developer shorthand, but **not** a user-facing construct).
+- Use the saved width budget for a **persistently visible, collapsible left pane** that hosts a session view for a user-managed chat pinned to the selected epic (“overseer” in developer shorthand, but **not** a user-facing construct).
 - The right pane remains graph-first (graph + details).
 - Intentionally omit “target the selected task by default” coupling from the port; leave it as a future UX improvement.
 
@@ -246,7 +246,7 @@ Tasks:
 - `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, gpui-component survey, shared widgets).
 - `epics/gpui/tasks/T-45/README.md`: Main split layout (left session pane + right workspace; resizable + collapsible).
 - `epics/gpui/tasks/T-46/README.md`: Epic header + chrome (epic selector, status, refresh, settings/command entrypoints).
-- `epics/gpui/tasks/T-47/README.md`: Epic-scoped session selection (one per epic) + persistence seam (no “overseer” naming).
+- `epics/gpui/tasks/T-47/README.md`: User-managed chat sessions + epic pins (no “overseer” naming).
 - `epics/gpui/tasks/T-48/README.md`: Desktop UI driver + semantic UI snapshot (AI-first testability; local-only).
 - `epics/gpui/tasks/T-49/README.md`: Command palette skeleton (upgrade; not required for initial port).
 

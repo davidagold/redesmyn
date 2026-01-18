@@ -47,6 +47,9 @@ Support actions like:
 
 - open/select epic
 - collapse/expand left session pane
+- create chat session
+- close chat session
+- pin/unpin chat session to current epic
 - trigger refresh
 - (later) select task in graph (stub acceptable until Domain 6)
 
@@ -96,4 +99,3 @@ Prefer semantic assertions for most tests.
 
 - Web e2e testing today:
   - `tests/e2e/test_ui_happy_path.py` (Playwright).
-

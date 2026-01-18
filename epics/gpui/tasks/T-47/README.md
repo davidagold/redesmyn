@@ -8,80 +8,95 @@ rn:
     - T-40
 ---
 
-# T-47 Epic-scoped session selection (one per epic) + persistence seam (no “overseer” naming) (Domain 5)
+# T-47 User-managed chat sessions + epic pins (no “overseer” naming) (Domain 5)
 
 ## Problem
 
-We want the desktop shell to host a persistently visible left session pane.
+We want the desktop shell to host a persistently visible left session pane with a “check-in/review/orchestration” chat.
 
-This pane represents an epic-scoped session:
+Earlier we considered “exactly one chat session per epic”. That is too rigid:
 
-- one per epic,
-- not task-bound,
-- used for check-ins/review/orchestration work,
-- but **not** introduced as a new user-facing construct (“overseer” is developer shorthand only).
+- users should be able to create/close these chats freely,
+- and optionally pin them to epics (so multiple epics can be active concurrently without mixing context).
 
-If we don’t define how this session is identified and persisted, later work will either:
+If we don’t define how these chats are identified, pinned, and persisted, later work will either:
 
 - invent ad-hoc UI-only state (hard to test and not shareable across clients), or
-- accidentally turn “overseer” into a first-class domain object.
+- accidentally make “overseer” a first-class user-facing construct (we don’t want that).
 
 ## Goal
 
-Define and implement the *minimal seam* that lets the UI obtain the epic-scoped session id and render it in the left pane without introducing a new conceptual object.
+Implement **user-managed chat sessions** (a kind of session that is not task-bound) and a **pinning model** that associates these sessions to epics.
+
+The UI continues to present this as “just a session/chat view” without introducing a new named concept.
 
 ## Requirements
 
-### 1) Session scoping model
+### 1) Session scoping model (task vs chat)
 
 Extend session identity to support a scope like:
 
 - `Task { task_id }` (normal task sessions)
-- `Epic { epic_id }` (epic-scoped session for the left pane)
+- `Chat` (not task-bound; user-managed conversation)
 
 This is still “just a session”; it is not a new user-facing entity.
 
-### 2) Control plane API surface
+### 2) Pinning model (chat ↔ epic)
 
-Expose a method (name illustrative) over the client API:
+Support pinning a chat session to an epic:
 
-- `GetOrCreateEpicSession { epic_id } -> { session_id }`
+- pinned to **zero or more** epics (start with 0/1 in the UI if we want, but keep the data model flexible),
+- pin/unpin is a lightweight metadata operation (does not end the session),
+- pins are persisted in the control plane DB.
+
+### 3) Control plane API surface
+
+Expose methods (names illustrative) over the client API:
+
+- `CreateChatSession { title? } -> { session_id }`
+- `CloseChatSession { session_id }` (marks closed/ended; does not delete history)
+- `ListChatSessions { filters… } -> { sessions… }` (at minimum: list sessions pinned to an epic)
+- `PinChatSessionToEpic { session_id, epic_id }`
+- `UnpinChatSessionFromEpic { session_id, epic_id }`
 
 Semantics:
 
-- exactly one epic-scoped session exists per epic (idempotent),
-- session id is stable across restarts,
-- session is repo-scoped (by the epic’s repo scope).
+- chat sessions are durable and queryable (session id stable across restarts),
+- closing a chat session is idempotent,
+- listing pinned sessions for an epic is deterministic and stable.
 
-### 3) Persistence
+### 4) Persistence
 
 Persist the mapping in the control plane (preferred), e.g.:
 
-- store the epic session id on the epic row, or
-- store in a small `epic_sessions` table keyed by `epic_id`.
+- store sessions in `agent_sessions` (with `scope_kind = chat`),
+- store pins in a small join table (e.g. `session_pins(session_id, epic_id)`),
+- optionally store a `title` and `closed_at` for chat sessions.
 
 Do **not** store this as UI-only local state; we want:
 
 - multi-client consistency (desktop + `rn` + future clients),
 - and AI-first testability (stable ids and queryable state).
 
-### 4) UI integration
+### 5) UI integration
 
 When the selected epic changes:
 
-- UI resolves the epic’s session id via the control plane and binds the left pane to it.
+- UI lists chat sessions pinned to that epic and lets the user choose one to display.
+- UI supports creating a new chat session (optionally pinned to the current epic).
+- UI supports closing the currently displayed chat session.
 
 Do **not** implement default targeting of selected tasks from this pane in the port.
 
-### 5) Future direction (not in this ticket)
+### 6) Future direction (not in this ticket)
 
 We may later add explicit UX affordances to “act on selected task(s)” from the epic session, but this is out of scope for the port.
 
 ## Acceptance criteria
 
-- Selecting an epic results in a stable epic-scoped session id.
-- The desktop left pane can bind to that session id (even if the view is still a placeholder).
-- The mapping is persisted in control plane storage and is queryable.
+- The control plane supports creating/closing chat sessions and pinning them to epics.
+- Selecting an epic shows a stable list of pinned chat sessions and allows picking one for the left pane (placeholder content is fine).
+- Pins and session metadata are persisted in control plane storage and are queryable.
 
 ## Dependencies / sequencing
 
@@ -90,8 +105,7 @@ We may later add explicit UX affordances to “act on selected task(s)” from t
 
 ## Reference implementation (today; for orientation only)
 
-- There is no epic-scoped session today; this is new.
+- There is no user-managed/pinnable “orchestration chat” today; this is new.
 - Task-scoped messaging and session hints today:
   - `dashboard/src/components/graph/TaskCard.tsx` (task message composer).
   - `redesmyn/task_agent_messaging.py` (send-message semantics).
-

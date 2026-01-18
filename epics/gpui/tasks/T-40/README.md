@@ -48,23 +48,30 @@ Add tables (names illustrative):
 - `agent_sessions`
   - `session_id` (ULID BLOB(16))
   - **scope**:
-    - `scope_kind` (`task` | `epic`)
+    - `scope_kind` (`task` | `chat`)
     - `task_id` (ULID BLOB(16), nullable)
-    - `epic_id` (ULID BLOB(16), nullable)
   - `repo_id`/`workspace_id` (ULID BLOB(16) / string per our final decision)
   - `agent_kind` (enum string)
   - `interface_mode` (enum string)
   - `status` (running/blocked/stopped/error)
   - `external_session_ref` (small JSON or typed fields; keep query intent in mind)
+  - optional metadata for chat sessions:
+    - `title` (nullable)
+    - `closed_at` (nullable)
   - timestamps
 - `session_events`
   - `event_id` (ULID BLOB(16))
-  - `session_id`, `task_id`, `epic_id`, `repo_id` (indexed)
+  - `session_id`, `task_id`, `repo_id` (indexed)
   - `kind` (small enum string for filtering)
   - `created_at`
   - `payload` (protobuf bytes; JSON optional for debug)
   - preview columns (optional, for fast list rendering)
 - `artifacts` (if not already present in Domain 2 schema evolution)
+- `session_pins`
+  - `session_id` (ULID BLOB(16))
+  - `epic_id` (ULID BLOB(16))
+  - (unique constraint on `session_id, epic_id`)
+  - index by `epic_id` for “list pinned chats for epic”
 
 ### 2) Durability policy: no deltas in DB
 
@@ -92,7 +99,11 @@ Expose storage methods (names illustrative):
 - `insert_agent_session(...)`
 - `append_session_event(...)`
 - `list_task_sessions(task_id, pagination)`
-- `get_or_create_epic_session(epic_id) -> session_id` (supports the left session pane in the desktop app; see T-47)
+- `create_chat_session(title?) -> session_id`
+- `close_chat_session(session_id)`
+- `list_chat_sessions(filters...)`
+- `pin_chat_session_to_epic(session_id, epic_id)`
+- `unpin_chat_session_from_epic(session_id, epic_id)`
 - `get_session_events(session_id, pagination, filters)`
 
 ### 4) Client query surfaces
@@ -100,7 +111,8 @@ Expose storage methods (names illustrative):
 Define control-plane query methods (over the client API protocol) sufficient for the session viewer:
 
 - list sessions for a task (and current active session)
-- get or create the epic-scoped session id for an epic (one per epic)
+- manage chat sessions (create/close/list)
+- manage pins to epics (pin/unpin/list pinned for epic)
 - fetch session event history with pagination
 - subscribe to new session events for a session or task
 

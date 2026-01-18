@@ -61,7 +61,7 @@ Rules:
 
 - Session events must be queryable by:
   - `session_id`, time range, and event kind, and
-  - **scope** (task-scoped sessions and epic-scoped sessions are both supported).
+  - **scope** (task-scoped sessions and user-managed chat sessions are both supported).
 - Keep payloads compact; link to artifacts for large content.
 - Preserve forward compatibility via an `UnknownSessionEvent` fallback.
 
