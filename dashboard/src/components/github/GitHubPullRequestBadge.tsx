@@ -68,7 +68,9 @@ export function GitHubPullRequestBadge({
   const { status: githubStatus } = useGitHubStatus()
   const canFetch = githubStatus?.connected ?? false
 
-  const { ref, pullRequest } = useGitHubPullRequest(prId, { enabled: canFetch })
+  const { ref, pullRequest } = useGitHubPullRequest(prId, {
+    enabled: canFetch,
+  })
   if (!ref) {
     return null
   }
