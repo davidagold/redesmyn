@@ -38,6 +38,7 @@ pub use crate::payload::{Payload, payload};
 /// without adding a direct dependency.
 pub use tracing;
 
+use std::io::IsTerminal as _;
 use std::sync::OnceLock;
 
 static LOGGING_CONFIG: OnceLock<LoggingConfig> = OnceLock::new();
@@ -58,7 +59,8 @@ pub fn try_init_with_config(
 ) -> Result<(), tracing::dispatcher::SetGlobalDefaultError> {
     let _ = LOGGING_CONFIG.set(config.clone());
 
-    let dispatch = crate::subscriber::build_dispatch(config, std::io::stderr);
+    let use_ansi = matches!(config.format, LogFormat::Pretty) && std::io::stderr().is_terminal();
+    let dispatch = crate::subscriber::build_dispatch(config, std::io::stderr, use_ansi);
     tracing::dispatcher::set_global_default(dispatch)
 }
 
@@ -120,6 +122,7 @@ mod tests {
                 payload_policy: PayloadPolicy::MetadataOnly,
             },
             writer,
+            false,
         );
 
         tracing::dispatcher::with_default(&dispatch, || {
@@ -150,6 +153,7 @@ mod tests {
                 payload_policy: PayloadPolicy::MetadataOnly,
             },
             writer,
+            false,
         );
 
         tracing::dispatcher::with_default(&dispatch, || {

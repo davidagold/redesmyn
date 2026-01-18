@@ -5,7 +5,11 @@ use crate::{LogFormat, LoggingConfig};
 
 const DEFAULT_FILTER_DIRECTIVES: &str = "info";
 
-pub(crate) fn build_dispatch<W>(config: LoggingConfig, make_writer: W) -> tracing::Dispatch
+pub(crate) fn build_dispatch<W>(
+    config: LoggingConfig,
+    make_writer: W,
+    use_ansi: bool,
+) -> tracing::Dispatch
 where
     W: for<'a> tracing_subscriber::fmt::MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -19,7 +23,7 @@ where
                 .with_line_number(true)
                 .with_thread_names(true)
                 .with_target(false)
-                .with_ansi(false)
+                .with_ansi(use_ansi)
                 .compact();
 
             tracing::Dispatch::new(tracing_subscriber::registry().with(filter).with(fmt_layer))
