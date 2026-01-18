@@ -15,6 +15,7 @@ redesmyn_control_plane = { path = "crates/redesmyn_control_plane" }
 redesmyn_daemon = { path = "crates/redesmyn_daemon" }
 redesmyn_domain = { path = "crates/redesmyn_domain" }
 redesmyn_exec = { path = "crates/redesmyn_exec" }
+redesmyn_errors = { path = "crates/redesmyn_errors" }
 redesmyn_git = { path = "crates/redesmyn_git" }
 redesmyn_ids = { path = "crates/redesmyn_ids" }
 redesmyn_logging = { path = "crates/redesmyn_logging" }
