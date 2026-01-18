@@ -18,13 +18,15 @@ export type GitHubPullRequestBadgeProps = {
   activeBackground?: boolean
 }
 
+type PullRequestState = {
+  merged: boolean
+  draft: boolean
+  state: "open" | "closed"
+}
+
 function prBorderClass(options: {
   taskState: Task["state"]
-  pr: {
-    merged: boolean
-    draft: boolean
-    state: "open" | "closed"
-  } | null
+  pr: PullRequestState | null
 }) {
   const { taskState, pr } = options
 
@@ -45,9 +47,7 @@ function prBorderClass(options: {
     : "border-muted-foreground/40"
 }
 
-function prStateLabel(
-  pr: { merged: boolean draft: boolean state: "open" | "closed" } | null,
-) {
+function prStateLabel(pr: PullRequestState | null) {
   if (!pr) {
     return null
   }
