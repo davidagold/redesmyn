@@ -76,6 +76,17 @@ We are moving toward a **native session viewer** that is a “wrapper around a s
   - in a left-hand “overseer agent” pane, and
   - on-demand from the graph (e.g., expanded task card / details).
 
+Agent runtime priority (implementation order for this epic):
+
+1) **Codex (structured)** (highest priority)
+2) **Shell** (tmux; interactive/unstructured)
+3) **Claude Code** (structured)
+4) **App-server** agents (future-facing; skeleton in this epic)
+
+Session persistence rule:
+
+- Persist all **non-delta / non-chunk** session emissions needed to render conversation history and actionable structured timelines in the native session viewer.
+
 ### 3.5 Graph layout direction
 
 We can replace ReactFlow/ELK with a Rust-native layout engine or our own deterministic layout algorithm.
@@ -181,3 +192,32 @@ Sequencing intent:
 - Implement the git/worktree substrate (T-26, T-27), then observation/telemetry (T-28).
 - Build merge/restack as a plan+execute split (T-29, T-30) so UI/CLI can preview plans and execution can be resumable.
 - Keep real-repo integration tests close to the daemon implementation (T-31) to enforce AI-friendly determinism.
+
+## 10) Domain 4: Task map (Agent runtime + sessions)
+
+This domain ports/redesigns agent execution around **durable structured session events** (T-14) while preserving the key behaviors we rely on today:
+
+- resume-by-id turns (structured agents),
+- “send message” conflict handling semantics,
+- interrupt semantics.
+
+Tasks:
+
+- `epics/gpui/tasks/T-32/README.md`: Agent kind taxonomy + interface mode inference + resume-by-id turn builder (Shell naming).
+- `epics/gpui/tasks/T-33/README.md`: Codex structured parser → session events (pure state machine + tests).
+- `epics/gpui/tasks/T-34/README.md`: Claude Code structured parser → session events (pure state machine + tests).
+- `epics/gpui/tasks/T-35/README.md`: Daemon exec-session supervisor (process lifecycle + event streaming + backpressure).
+- `epics/gpui/tasks/T-36/README.md`: Daemon Shell (tmux) session runtime (attach/send/interrupt + log artifacts).
+- `epics/gpui/tasks/T-37/README.md`: Daemon Codex runner (structured) (exec-based; output-last-message capture).
+- `epics/gpui/tasks/T-38/README.md`: Daemon Claude Code runner (structured) (exec-based).
+- `epics/gpui/tasks/T-39/README.md`: Daemon app-server agent runtime skeleton.
+- `epics/gpui/tasks/T-40/README.md`: Control plane session persistence + query surfaces (sqlx).
+- `epics/gpui/tasks/T-41/README.md`: Control plane agent commands + “send message” semantics (conflicts/resume/interrupt) + API methods.
+- `epics/gpui/tasks/T-42/README.md`: End-to-end agent session integration tests (mock agents, determinism, persistence).
+
+Sequencing intent:
+
+- Build parser + argv utilities early (T-32..T-34) so runtime implementers have stable building blocks.
+- Stand up daemon execution substrate (T-35) before agent-specific runners (T-37/T-38).
+- Implement Shell/tmux support as a separate, compatibility-focused track (T-36).
+- Land control-plane persistence + agent command semantics early enough that UI/CLI work can proceed without inventing ad-hoc plumbing (T-40/T-41).
