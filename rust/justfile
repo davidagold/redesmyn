@@ -1,0 +1,14 @@
+set shell := ["bash", "-cu"]
+
+check:
+    cargo check
+
+test:
+    cargo test
+
+fmt:
+    cargo fmt --all
+
+clippy:
+    cargo clippy --all-targets --all-features
+

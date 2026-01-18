@@ -131,10 +131,10 @@ Enforce these rules by crate dependencies (and add a short doc explaining the in
 ### 3) Build/lint ergonomics
 
 - Add `just` commands (or equivalent) that do not disrupt existing flows:
-  - `just rust:check`
-  - `just rust:test`
-  - `just rust:fmt`
-  - `just rust:clippy`
+  - `just rust::check`
+  - `just rust::test`
+  - `just rust::fmt`
+  - `just rust::clippy`
 
 ### 4) Split-codebase friendliness
 

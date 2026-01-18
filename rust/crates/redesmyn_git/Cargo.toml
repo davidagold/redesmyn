@@ -1,0 +1,13 @@
+[package]
+name = "redesmyn_git"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_domain = { path = "../redesmyn_domain" }
+redesmyn_ids = { path = "../redesmyn_ids" }
+redesmyn_protocol = { path = "../redesmyn_protocol" }
+

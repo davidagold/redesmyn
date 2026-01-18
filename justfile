@@ -2,6 +2,9 @@ set shell := ["bash", "-cu"]
 
 default: check
 
+# Rust workspace commands (cargo check/test/fmt/clippy).
+mod rust
+
 dashboard-package:
     @cd dashboard && if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || ! cmp -s package-lock.json node_modules/.package-lock.json; then npm ci && cp package-lock.json node_modules/.package-lock.json; fi
     cd dashboard && npm run build

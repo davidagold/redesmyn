@@ -1,0 +1,13 @@
+[package]
+name = "rn"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_config = { path = "../redesmyn_config" }
+redesmyn_logging = { path = "../redesmyn_logging" }
+redesmyn_protocol = { path = "../redesmyn_protocol" }
+

@@ -25,3 +25,6 @@ dashboard/dist/
 
 # Packaged dashboard build artifact (generated, not committed)
 redesmyn/dashboard_assets/dist/
+
+# Rust
+rust/target/

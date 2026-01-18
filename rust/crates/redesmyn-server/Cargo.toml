@@ -1,0 +1,13 @@
+[package]
+name = "redesmyn-server"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_config = { path = "../redesmyn_config" }
+redesmyn_control_plane = { path = "../redesmyn_control_plane" }
+redesmyn_logging = { path = "../redesmyn_logging" }
+

@@ -1,0 +1,11 @@
+[package]
+name = "redesmyn_domain"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_ids = { path = "../redesmyn_ids" }
+
