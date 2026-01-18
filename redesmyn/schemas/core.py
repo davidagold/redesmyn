@@ -836,6 +836,12 @@ class GitHubIntegrationConfigUpdateRequest(ApiRequest):
     auto_force_push: bool | None = None
 
 
+class GitHubPullRequestOpenResponse(ApiResponse):
+    task: TaskResponse
+    pr_id: str
+    url: str
+
+
 class LinearProjectResponse(ApiResponse):
     id: str
     name: str

@@ -95,6 +95,11 @@ from redesmyn.integrations.github_config import (
     load_github_integration_config,
     update_github_integration_config,
 )
+from redesmyn.integrations.github_pr import GitHubPullRequestError
+from redesmyn.integrations.github_pr_actions import (
+    GitHubPullRequestActionError,
+    ensure_task_pull_request,
+)
 from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import (
@@ -154,6 +159,7 @@ from redesmyn.schemas.core import (
     ExternalSessionRefResponse,
     GitHubIntegrationConfigResponse,
     GitHubIntegrationConfigUpdateRequest,
+    GitHubPullRequestOpenResponse,
     GitHubStatusResponse,
     LinearProjectResponse,
     LinearStatusResponse,
@@ -2118,6 +2124,60 @@ async def github_config_update(
         )
     cfg = load_github_integration_config(ctx)
     return GitHubIntegrationConfigResponse(auto_force_push=cfg.auto_force_push)
+
+
+@v1.post(
+    "/tasks/{task_id}/github/pr/open", response_model=GitHubPullRequestOpenResponse
+)
+async def open_task_github_pr(
+    http_request: Request, task_id: int
+) -> GitHubPullRequestOpenResponse:
+    """Push branch + open/create a same-repo GitHub PR for a task."""
+    app = _app_from_request(http_request)
+    ctx = app.state.ctx
+    cfg = load_github_integration_config(ctx)
+
+    store = default_github_credential_store()
+    creds = store.get()
+    if creds is None:
+        raise HTTPException(status_code=400, detail="GitHub is not connected")
+
+    sessionmaker = app.state.sessionmaker
+    async with sessionmaker() as session:
+        task = await _require_task(session, task_id=task_id)
+        epic_row = await session.get(Epic, task.epic_id)
+        if epic_row is None:
+            raise HTTPException(status_code=404, detail="Epic not found")
+
+        tasks = list(
+            await session.scalars(select(Task).where(Task.epic_id == task.epic_id))
+        )
+        tasks_by_id: dict[int, Task] = {row.id: row for row in tasks}
+
+        try:
+            pr = await ensure_task_pull_request(
+                ctx.repo_root,
+                epic=epic_row,
+                task=task,
+                tasks_by_id=tasks_by_id,
+                access_token=creds.access_token,
+                allow_force_with_lease=cfg.auto_force_push,
+            )
+        except GitHubPullRequestActionError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except GitHubPullRequestError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+        task.github_pr_id = pr.ref.to_id()
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+
+    return GitHubPullRequestOpenResponse(
+        task=TaskResponse.model_validate(task, from_attributes=True),
+        pr_id=pr.ref.to_id(),
+        url=pr.url,
+    )
 
 
 @v1.post("/linear/logout", response_model=LinearStatusResponse)
