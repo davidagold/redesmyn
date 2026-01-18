@@ -23,12 +23,6 @@ pub enum ValidationError {
 
     #[error("daemon.worktree_root must not be empty")]
     EmptyWorktreeRoot,
-
-    #[error("failed to determine base directory for relative paths")]
-    NoBaseDir,
-
-    #[error("dotenv file failed to load: {path}")]
-    DotenvFailed { path: PathBuf },
 }
 
 #[derive(Debug, Error)]
@@ -41,6 +35,12 @@ pub enum LoadConfigError {
         path: PathBuf,
         #[source]
         source: dotenvy::Error,
+    },
+
+    #[error("failed to determine base directory for relative paths")]
+    NoBaseDir {
+        #[source]
+        source: std::io::Error,
     },
 
     #[error(transparent)]

@@ -57,10 +57,10 @@ impl Default for LoadConfigOptions {
 
 pub fn load_rust_config(options: LoadConfigOptions) -> Result<RustConfig, LoadConfigError> {
     let repo_root = options.repo_root.or_else(discover_repo_root_from_cwd);
-    let base_dir = repo_root
-        .clone()
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let base_dir = match repo_root.as_ref() {
+        Some(repo_root) => repo_root.clone(),
+        None => std::env::current_dir().map_err(|source| LoadConfigError::NoBaseDir { source })?,
+    };
 
     load_dotenv_if_configured(options.dotenv, repo_root.as_deref(), &base_dir)?;
 
