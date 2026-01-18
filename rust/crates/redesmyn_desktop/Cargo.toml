@@ -7,9 +7,8 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_config = { path = "../redesmyn_config" }
-redesmyn_control_plane = { path = "../redesmyn_control_plane" }
-redesmyn_daemon = { path = "../redesmyn_daemon" }
-redesmyn_logging = { path = "../redesmyn_logging" }
-redesmyn_transport = { path = "../redesmyn_transport" }
-
+redesmyn_config.workspace = true
+redesmyn_control_plane.workspace = true
+redesmyn_daemon.workspace = true
+redesmyn_logging.workspace = true
+redesmyn_transport.workspace = true

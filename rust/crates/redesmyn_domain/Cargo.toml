@@ -7,5 +7,4 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_ids = { path = "../redesmyn_ids" }
-
+redesmyn_ids.workspace = true

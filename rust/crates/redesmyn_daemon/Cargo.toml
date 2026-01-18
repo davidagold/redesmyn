@@ -7,12 +7,11 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_config = { path = "../redesmyn_config" }
-redesmyn_domain = { path = "../redesmyn_domain" }
-redesmyn_exec = { path = "../redesmyn_exec" }
-redesmyn_git = { path = "../redesmyn_git" }
-redesmyn_ids = { path = "../redesmyn_ids" }
-redesmyn_logging = { path = "../redesmyn_logging" }
-redesmyn_protocol = { path = "../redesmyn_protocol" }
-redesmyn_transport = { path = "../redesmyn_transport" }
-
+redesmyn_config.workspace = true
+redesmyn_domain.workspace = true
+redesmyn_exec.workspace = true
+redesmyn_git.workspace = true
+redesmyn_ids.workspace = true
+redesmyn_logging.workspace = true
+redesmyn_protocol.workspace = true
+redesmyn_transport.workspace = true
