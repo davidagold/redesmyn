@@ -3530,7 +3530,7 @@ def daemon_run(
     from redesmyn.settings import load_settings
 
     ctx = get_repo_context()
-    settings = load_settings(repo_root=ctx.repo_root)
+    settings = load_settings(repo_root=ctx.repo_root, worktree_root=ctx.worktree_root)
 
     inferred_workspace_id = workspace_id
     inferred_repo_id = repo_id
@@ -3745,7 +3745,7 @@ def merge_run_cancel(
 
     from redesmyn.settings import load_settings
 
-    settings = load_settings(repo_root=ctx.repo_root)
+    settings = load_settings(repo_root=ctx.repo_root, worktree_root=ctx.worktree_root)
     base_url = (
         control_plane
         or os.environ.get("REDESMYN_CONTROL_PLANE_ORIGIN")
@@ -4322,13 +4322,19 @@ async def _maybe_migrate_repo_linear_auth_to_keychain(
 def _load_settings_for_linear(ctx: RepoContext | None) -> RedesmynSettings:
     from redesmyn.settings import load_settings
 
-    return load_settings(repo_root=ctx.repo_root if ctx else None)
+    return load_settings(
+        repo_root=ctx.repo_root if ctx else None,
+        worktree_root=ctx.worktree_root if ctx else None,
+    )
 
 
 def _load_settings_for_github(ctx: RepoContext | None) -> RedesmynSettings:
     from redesmyn.settings import load_settings
 
-    return load_settings(repo_root=ctx.repo_root if ctx else None)
+    return load_settings(
+        repo_root=ctx.repo_root if ctx else None,
+        worktree_root=ctx.worktree_root if ctx else None,
+    )
 
 
 async def _require_fresh_linear_credentials(
@@ -5020,6 +5026,7 @@ def github_pr_open(
     typer.echo(url)
     if sys.stdout.isatty():
         webbrowser.open(url)
+
 
 @linear_app.command("auth")
 def linear_auth(

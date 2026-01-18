@@ -332,7 +332,10 @@ async def _maybe_require_fresh_linear_credentials(
         return None
 
     try:
-        settings = load_settings(repo_root=ctx.repo_root)
+        settings = load_settings(
+            repo_root=ctx.repo_root,
+            worktree_root=ctx.worktree_root,
+        )
         token = await refresh_access_token(settings, refresh_token=creds.refresh_token)
     except Exception:
         return None

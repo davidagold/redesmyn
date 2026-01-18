@@ -44,8 +44,16 @@ class RedesmynSettings(BaseSettings):
     github_scopes: str = "repo"
 
 
-def load_settings(*, repo_root: Path | None = None) -> RedesmynSettings:
-    env_file = repo_root / ".env" if repo_root is not None else None
+def load_settings(
+    *, repo_root: Path | None = None, worktree_root: Path | None = None
+) -> RedesmynSettings:
+    env_file: Path | None = None
+    if worktree_root is not None:
+        candidate = worktree_root / ".env"
+        if candidate.exists():
+            env_file = candidate
+    if env_file is None and repo_root is not None:
+        env_file = repo_root / ".env"
     kwargs: dict[str, Any] = {}
     if env_file is not None:
         kwargs["_env_file"] = env_file
