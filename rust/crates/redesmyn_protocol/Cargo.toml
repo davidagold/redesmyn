@@ -7,8 +7,8 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_ids.workspace = true
 redesmyn_errors.workspace = true
+redesmyn_ids.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
