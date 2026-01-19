@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-4-tracing-logging
+  suggested: rn/gpui/T-4-logging
 rn:
   parent: T-1
 ---
