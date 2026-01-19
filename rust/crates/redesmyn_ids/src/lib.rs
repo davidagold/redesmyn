@@ -259,7 +259,7 @@ ulid_id!(/// Identifier for a command (idempotency key and/or persisted command 
 CommandId);
 ulid_id!(/// Identifier for an event (append-only event log record).
 EventId);
-ulid_id!(/// Identifier for a protocol message frame (transport-level correlation).
+ulid_id!(/// Identifier for a protocol message (idempotency + dedupe key).
 MsgId);
 
 #[cfg(test)]
