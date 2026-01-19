@@ -687,6 +687,29 @@ async fn can_insert_and_query_core_schema() {
         "expected tasks composite parent FK violation for cross-epic parent"
     );
 
+    // Deleting a parent detaches children (no implicit subtree deletes).
+    sqlx::query("DELETE FROM tasks WHERE id = ?1")
+        .bind(parent_task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let (remaining_child_parent_id,): (Option<TaskId>,) =
+        sqlx::query_as("SELECT parent_task_id FROM tasks WHERE id = ?1")
+            .bind(child_task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining_child_parent_id, None);
+
+    let (child_still_exists,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE id = ?1")
+            .bind(child_task_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(child_still_exists, 1);
+
     // Session scope chains must be consistent: repo -> epic, epic -> task.
     let result = sqlx::query(
         r#"
