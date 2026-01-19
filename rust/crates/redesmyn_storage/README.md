@@ -13,8 +13,15 @@ Core tables:
 
 Notes:
 
-- **Scope referential integrity**: `*_scope_workspace_id` / `*_scope_repo_id` columns use foreign
-  keys to avoid orphaned scoped rows. Deleting a workspace/repo cascades to scoped rows.
+- **Scope referential integrity**: repo-scoped rows use a composite foreign key
+  `(scope_workspace_id, scope_repo_id) -> repositories(workspace_id, id)` to prevent impossible
+  pairings (workspace A + repo B). Deleting a repo cascades to scoped rows; deleting a workspace
+  cascades via repos.
+- **Task topology integrity**: `tasks.parent_task_id` is constrained within an epic via
+  `(epic_id, parent_task_id) -> tasks(epic_id, id)` (no cross-epic parents). Deleting a task
+  cascades to its descendants.
+- **Session scope chains**: `session_events` enforce repo → epic and epic → task consistency using
+  composite foreign keys; task-scoped rows must include `epic_id`.
 - **Sessions**: v0 does not create a dedicated `sessions` table. `session_id` is recorded on
   `session_events`; session listing/metadata can be derived via grouping/aggregation. We can add a
   `sessions` table later once we need durable session metadata (titles, last_event_at, etc.).
