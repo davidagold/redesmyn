@@ -23,7 +23,7 @@ For the graph specifically, we need stable, semantic assertions for:
 
 - selection state,
 - camera state,
-- and key UI affordances (details panel open, multi-select bar visible, etc.).
+- and key UI affordances (expanded task card state, multi-select bar visible, etc.).
 
 ## Goal
 
@@ -38,7 +38,7 @@ Add driver actions:
 - select node by id
 - clear selection
 - toggle focus mode
-- open/close details panel (if separate from selection)
+- toggle expanded task card (if separate from selection; v0 can equate selection with expansion)
 - multi-select add/remove node
 - (optional) zoom/pan to deterministic positions
 
@@ -49,7 +49,7 @@ Add snapshot fields sufficient to assert graph state:
 - selected node id / edge id
 - multi-selected node ids (sorted)
 - focus mode enabled
-- details panel open + which entity it reflects
+- expanded task card open + which task it reflects
 - camera: zoom + pan (coarse values acceptable; do not require exact floats)
 
 ### 3) Deterministic waiting
@@ -66,7 +66,7 @@ Avoid sleeps.
 - A deterministic test can:
   1) open an epic,
   2) select a node by id,
-  3) assert selection + details panel state via semantic snapshot,
+  3) assert selection + expanded-task state via semantic snapshot,
   4) toggle focus mode and assert the snapshot changes.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
@@ -80,4 +80,3 @@ Avoid sleeps.
 - Browser-driven UI tests today:
   - `tests/e2e/test_ui_happy_path.py` (Playwright selectors such as task card click + details open).
   - Graph routing/selection in `dashboard/src/routes/EpicView.tsx` and `dashboard/src/components/graph/GraphView.tsx`.
-

@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-64-task-session-view-in-details
+  suggested: rn/gpui/T-64-task-session-view-in-expanded-card
 rn:
   parent: T-55
   after:
@@ -10,7 +10,7 @@ rn:
     - T-62
 ---
 
-# T-64 Task details: show latest task session (conversation) via SessionView (Domain 7)
+# T-64 Expanded task card: show latest task session (conversation) via SessionView (Domain 7)
 
 ## Problem
 
@@ -26,11 +26,11 @@ In the GPUI port we want a more coherent session viewer:
 
 - a scrollable conversation history,
 - with turn boundaries and durable events,
-- integrated into the task details surface.
+- integrated into the expanded task card.
 
 ## Goal
 
-Integrate the reusable `SessionView` into the task details surface so users can:
+Integrate the reusable `SessionView` into the expanded task card (T-55) so users can:
 
 - see the latest task session’s conversation history (session == conversation),
 - send messages with the same conflict semantics as v0,
@@ -53,7 +53,7 @@ Optional (nice): a lightweight “New session” action that corresponds to stop
 
 ### 2) Embed SessionView
 
-Render `SessionView` within the details panel:
+Render `SessionView` within the expanded task card’s Session column:
 
 - history + live updates,
 - markdown rendering,
@@ -79,7 +79,7 @@ All mutations in this surface (send/stop/restart/attach) must:
 
 At minimum:
 
-- focusing the details panel allows tabbing to the composer,
+- focusing the expanded card allows tabbing to the composer,
 - hitting “Send” keeps focus predictable (return to input).
 
 ## Acceptance criteria
@@ -93,7 +93,7 @@ At minimum:
 ## Dependencies / sequencing
 
 - Depends on:
-  - details panel integration (T-55),
+  - expanded task card surface (T-55),
   - session viewer pipeline + list + composer (T-59/T-61/T-62).
 
 ## Reference implementation (today; for behavior orientation only)

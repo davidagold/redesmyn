@@ -331,7 +331,7 @@ Tasks:
 - `epics/gpui/tasks/T-52/README.md`: Task node view (compact/expanded; measurement; selection affordances).
 - `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
 - `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection, focus mode path).
-- `epics/gpui/tasks/T-55/README.md`: Details panel (drawer) + selection model integration.
+- `epics/gpui/tasks/T-55/README.md`: Expanded task card: details + selection integration (no sidebar drawer).
 - `epics/gpui/tasks/T-56/README.md`: Bulk selection + action bar (multi-select UX).
 - `epics/gpui/tasks/T-57/README.md`: Trunk timeline column (commit marks; base alignment; optional but planned).
 - `epics/gpui/tasks/T-58/README.md`: Graph testability surfaces (extend UI driver + semantic snapshot for graph).
@@ -365,6 +365,6 @@ Tasks:
 - `epics/gpui/tasks/T-61/README.md`: SessionView virtualized feed + scroll behaviors.
 - `epics/gpui/tasks/T-62/README.md`: Session composer + conflict/confirm UX (preserve v0 semantics).
 - `epics/gpui/tasks/T-63/README.md`: Left pane pinned chat session viewer (no “overseer” naming).
-- `epics/gpui/tasks/T-64/README.md`: Task details session view (latest session only).
+- `epics/gpui/tasks/T-64/README.md`: Expanded task card: latest session view (latest session only).
 - `epics/gpui/tasks/T-65/README.md`: Interactive (tmux) session placeholder UX (attach/copy; no terminal emulator in port).
 - `epics/gpui/tasks/T-66/README.md`: Session viewer AI-testability (UI driver actions + semantic snapshot + tests).
