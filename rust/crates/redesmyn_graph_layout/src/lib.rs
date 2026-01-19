@@ -116,6 +116,12 @@ pub struct LayoutOutput<Id> {
     pub bounds: Rect,
 }
 
+/// A stable, allocation-free view into a computed layout.
+///
+/// Prefer the pattern `layout_in_place(...); output_view()` to avoid holding a
+/// mutable borrow of the engine while you iterate the results.
+///
+/// The id at index `i` corresponds to `positions[i]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayoutOutputView<'a, Id> {
     /// Stable node order (sorted by id).
@@ -138,7 +144,12 @@ pub enum LayoutError<Id> {
 /// A topology-cached, allocation-free-per-layout forest layout engine.
 ///
 /// `new(...)` builds and validates topology once. Subsequent calls to
-/// [`Self::layout`] reuse internal buffers and perform no heap allocations.
+/// [`Self::layout_in_place`] reuse internal buffers and perform no heap
+/// allocations.
+///
+/// For ergonomics (and to avoid borrow pitfalls), prefer:
+/// - `engine.layout_in_place(config);`
+/// - `let view = engine.output_view();`
 #[derive(Debug, Clone)]
 pub struct ForestLayoutEngine<Id> {
     /// Stable node order (sorted by id).
@@ -257,6 +268,19 @@ where
         &self.positions
     }
 
+    /// Returns a lightweight view into the most recently computed layout.
+    ///
+    /// Prefer `layout_in_place(...); output_view()` if you want to compute layout
+    /// and then freely call other `&self` getters while iterating the view.
+    #[must_use]
+    pub fn output_view(&self) -> LayoutOutputView<'_, Id> {
+        LayoutOutputView {
+            ids: &self.ids,
+            positions: &self.positions,
+            bounds: self.bounds,
+        }
+    }
+
     pub fn set_size(&mut self, id: Id, size: Size) -> Result<(), LayoutError<Id>> {
         if !size.is_non_negative() {
             return Err(LayoutError::NegativeNodeSize { id, size });
@@ -280,7 +304,10 @@ where
         Ok(())
     }
 
-    pub fn layout(&mut self, config: LayoutConfig) -> LayoutOutputView<'_, Id> {
+    /// Recomputes heights + positions in-place and returns the forest bounds.
+    ///
+    /// This is allocation-free after engine construction.
+    pub fn layout_in_place(&mut self, config: LayoutConfig) -> Rect {
         self.recompute_subtree_heights(config);
         self.recompute_positions(config);
         self.bounds = compute_bounds(self.sizes.iter().copied(), self.positions.iter().copied())
@@ -291,12 +318,17 @@ where
                     height: 0,
                 },
             });
+        self.bounds
+    }
 
-        LayoutOutputView {
-            ids: &self.ids,
-            positions: &self.positions,
-            bounds: self.bounds,
-        }
+    /// Convenience API that recomputes layout and returns a view.
+    ///
+    /// The returned view is tied to the mutable borrow created by this call. If
+    /// you want to compute layout and then freely call other getters while you
+    /// iterate, prefer `layout_in_place(config); engine.output_view()`.
+    pub fn layout(&mut self, config: LayoutConfig) -> LayoutOutputView<'_, Id> {
+        self.layout_in_place(config);
+        self.output_view()
     }
 
     fn recompute_subtree_heights(&mut self, config: LayoutConfig) {
@@ -425,15 +457,17 @@ where
     Id: Copy + Ord + std::fmt::Debug,
 {
     let mut engine = ForestLayoutEngine::new(nodes, options)?;
-    let view = engine.layout(config);
+    let bounds = engine.layout_in_place(config);
     let mut positions = BTreeMap::new();
-    for (id, point) in view.ids.iter().copied().zip(view.positions.iter().copied()) {
+    for (id, point) in engine
+        .ids()
+        .iter()
+        .copied()
+        .zip(engine.positions().iter().copied())
+    {
         positions.insert(id, point);
     }
-    Ok(LayoutOutput {
-        positions,
-        bounds: view.bounds,
-    })
+    Ok(LayoutOutput { positions, bounds })
 }
 
 fn validate_node_sizes<Id: Copy>(nodes: &[LayoutNode<Id>]) -> Result<(), LayoutError<Id>> {
@@ -1091,7 +1125,7 @@ mod tests {
             ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
 
         alloc_counter::CountingAllocator::begin();
-        engine.layout(config);
+        engine.layout_in_place(config);
         let (idx_3, idx_4, idx_10, baseline_pos_3, baseline_pos_4, baseline_pos_10) = {
             let ids = engine.ids();
             let positions = engine.positions();
@@ -1132,7 +1166,7 @@ mod tests {
             },
         ] {
             engine.set_size(2, size).expect("set_size should succeed");
-            engine.layout(config);
+            engine.layout_in_place(config);
             {
                 let positions = engine.positions();
                 assert_no_overlaps(engine.ids(), positions, engine.sizes());
