@@ -242,12 +242,12 @@ fn from_proto_daemon_event(value: i32) -> Result<DaemonEvent, CodecError> {
 
 // Temporary (Domain 0 scaffolding): inline `prost` message definitions.
 //
-// This will be replaced by the T-10 Protobuf schema + codegen pipeline so the
-// wire format is driven by .proto files instead of hand-written Rust structs.
+// This will be replaced by the real daemon ↔ control plane Protobuf schema in
+// Domain 1 (T-11), generated via the T-10 codegen pipeline, so the wire format
+// is driven by `.proto` files instead of hand-written Rust structs.
 //
 // Important: the `tag = ...` numbers below are part of the wire compatibility
-// contract. T-10 must generate an identical schema (including tags) so that
-// older/newer components can communicate during development.
+// contract until the T-11 migration lands. Do not change them casually.
 mod proto {
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Envelope {
