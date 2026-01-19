@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-7-transport-codecs
+  suggested: rn/gpui/T-7-transport
 rn:
   parent: T-2
 ---
