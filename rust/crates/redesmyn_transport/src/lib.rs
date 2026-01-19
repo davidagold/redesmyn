@@ -9,8 +9,8 @@
 
 use std::{future::Future, pin::Pin};
 
+use redesmyn_logging::tracing::{self, field};
 use redesmyn_protocol::daemon::{DaemonFrame, MessageEnvelope};
-use tracing::field;
 
 pub mod codec;
 pub mod framed;

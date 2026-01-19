@@ -1,3 +1,4 @@
+use prost::Message;
 use redesmyn_ids::{CommandId, HostId, IdBytesLengthError, MsgId, RunId};
 use redesmyn_protocol::daemon::{
     CommandAck, CommandAckStatus, DAEMON_PROTOCOL_VERSION, DaemonCommand, DaemonEvent, DaemonFrame,
@@ -239,6 +240,10 @@ fn from_proto_daemon_event(value: i32) -> Result<DaemonEvent, CodecError> {
     }
 }
 
+// Temporary (Domain 0 scaffolding): inline `prost` message definitions.
+//
+// This will be replaced by the T-10 Protobuf schema + codegen pipeline so the
+// wire format is driven by .proto files instead of hand-written Rust structs.
 mod proto {
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Envelope {
@@ -335,4 +340,3 @@ mod proto {
         }
     }
 }
-use prost::Message;
