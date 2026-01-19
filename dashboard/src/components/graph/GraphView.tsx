@@ -112,6 +112,11 @@ type TrunkLayout = {
   commitPadding: number
 }
 
+type BulkGithubPrFailure = {
+  taskId: number
+  error: unknown
+}
+
 function positionsMatch(
   from: Map<number, FlowPosition>,
   to: Map<number, FlowPosition>,
@@ -404,7 +409,7 @@ export function GraphView({
       popupsBlocked,
     })
 
-    const failures: Array<{ taskId: number error: unknown }> = []
+    const failures: BulkGithubPrFailure[] = []
 
     try {
       for (const taskId of taskIds) {

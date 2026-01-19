@@ -46,6 +46,11 @@ type StopTaskAgentVariables = {
   taskId: number
 }
 
+type OpenTaskGithubPullRequestVariables = {
+  epicId: number
+  taskId: number
+}
+
 type LinearSyncVariables = {
   epicId: number | null
   epicSlug: string
@@ -168,7 +173,7 @@ export function useOpenTaskGithubPullRequestMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (variables: { epicId: number taskId: number }) =>
+    mutationFn: (variables: OpenTaskGithubPullRequestVariables) =>
       openTaskGithubPullRequest(variables.taskId),
     onSuccess: (result, variables) => {
       queryClient.setQueryData<EpicGraph>(
