@@ -244,6 +244,10 @@ fn from_proto_daemon_event(value: i32) -> Result<DaemonEvent, CodecError> {
 //
 // This will be replaced by the T-10 Protobuf schema + codegen pipeline so the
 // wire format is driven by .proto files instead of hand-written Rust structs.
+//
+// Important: the `tag = ...` numbers below are part of the wire compatibility
+// contract. T-10 must generate an identical schema (including tags) so that
+// older/newer components can communicate during development.
 mod proto {
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Envelope {

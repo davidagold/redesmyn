@@ -18,6 +18,13 @@ use crate::{BoxFuture, DaemonConnection, TransportError};
 
 pub const DEFAULT_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
+fn map_read_exact_error(err: std::io::Error) -> TransportError {
+    match err.kind() {
+        std::io::ErrorKind::UnexpectedEof => TransportError::ChannelClosed,
+        _ => TransportError::Io(err),
+    }
+}
+
 #[derive(Debug)]
 pub struct FramedEndpoint<C, S> {
     codec: C,
@@ -68,7 +75,10 @@ where
 
     pub async fn recv_frame(&mut self) -> Result<DaemonFrame, TransportError> {
         let mut len_buf = [0_u8; 4];
-        self.read.read_exact(&mut len_buf).await?;
+        self.read
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(map_read_exact_error)?;
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > self.max_frame_len {
             return Err(TransportError::FrameTooLarge {
@@ -78,7 +88,10 @@ where
         }
 
         let mut bytes = vec![0_u8; len];
-        self.read.read_exact(&mut bytes).await?;
+        self.read
+            .read_exact(&mut bytes)
+            .await
+            .map_err(map_read_exact_error)?;
         let frame = self.codec.decode_frame(&bytes)?;
 
         let span = crate::span_for_envelope("daemon.framed.recv", &frame.envelope);
