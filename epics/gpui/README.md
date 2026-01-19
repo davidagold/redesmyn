@@ -258,7 +258,7 @@ This domain ports/redesigns agent execution around **durable structured session 
 
 Tasks:
 
-- `epics/gpui/tasks/T-32/README.md`: Agent kind taxonomy + interface mode inference + resume-by-id turn builder (Shell naming).
+- `epics/gpui/tasks/T-32/README.md`: Agent taxonomy + interface inference + turn builders (structured exec + app-server).
 - `epics/gpui/tasks/T-33/README.md`: Codex structured parser → session events (pure state machine + tests).
 - `epics/gpui/tasks/T-34/README.md`: Claude Code structured parser → session events (pure state machine + tests).
 - `epics/gpui/tasks/T-35/README.md`: Daemon exec-session supervisor (process lifecycle + event streaming + backpressure).
