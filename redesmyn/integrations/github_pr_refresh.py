@@ -90,8 +90,9 @@ async def refresh_epic_pull_request_bases(
 
     Occasionally GitHub PRs appear to keep using an older base branch OID even
     after the base branch advances (e.g. after stack merges/restacks). We work
-    around this by temporarily retargeting the PR base branch and then restoring
-    it, which forces GitHub to recompute the base.
+    around this by first attempting a "no-op" base update (set the base to the
+    same branch again), and falling back to temporarily retargeting the PR base
+    branch and restoring it, which forces GitHub to recompute the base.
     """
     store = default_github_credential_store()
     creds = store.get()
@@ -169,6 +170,54 @@ async def refresh_epic_pull_request_bases(
         if head_sha == base_sha:
             continue
 
+        # Prefer a no-op base update first. In practice, GitHub often refreshes
+        # its comparison base even when you "change" the base branch to the
+        # same value (e.g. `gh pr edit --base gpui` when base is already gpui),
+        # and it avoids noisy timeline entries.
+        try:
+            updated = await update_pull_request_base(
+                owner=ref.owner,
+                repo=ref.repo,
+                number=ref.number,
+                base_branch=base_branch,
+                access_token=access_token,
+            )
+        except GitHubPullRequestError as e:
+            log.warning(
+                "github.pr_base_refresh.noop_failed",
+                task_id=task.id,
+                pr_id=pr_id,
+                base_branch=base_branch,
+                error=str(e),
+            )
+        else:
+            updated_sha = (updated.base_sha or "").strip()
+            if not updated_sha:
+                try:
+                    updated = await fetch_pull_request(
+                        owner=ref.owner,
+                        repo=ref.repo,
+                        number=ref.number,
+                        access_token=access_token,
+                    )
+                except GitHubPullRequestError:
+                    updated = updated
+                updated_sha = (updated.base_sha or "").strip()
+
+            if updated_sha == head_sha:
+                refreshed += 1
+                log.info(
+                    "github.pr_base_refreshed",
+                    task_id=task.id,
+                    pr_id=pr_id,
+                    method="noop",
+                    base_branch=base_branch,
+                    old_base_sha=base_sha,
+                    base_head_sha=head_sha,
+                    new_base_sha=updated.base_sha,
+                )
+                continue
+
         temp_base = await _choose_temporary_base_branch(
             owner=ref.owner,
             repo=ref.repo,
@@ -218,10 +267,12 @@ async def refresh_epic_pull_request_bases(
             "github.pr_base_refreshed",
             task_id=task.id,
             pr_id=pr_id,
+            method="retarget",
             base_branch=base_branch,
             old_base_sha=base_sha,
             base_head_sha=head_sha,
             new_base_sha=updated.base_sha,
+            temp_base=temp_base,
         )
 
     if refreshed:
