@@ -2,5 +2,6 @@
 //!
 //! This crate intentionally does not depend on repo execution crates like `redesmyn_git`.
 
+pub mod client_api;
 pub mod demo;
 pub mod error;

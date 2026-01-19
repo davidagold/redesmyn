@@ -12,3 +12,4 @@ redesmyn_config.workspace = true
 redesmyn_control_plane.workspace = true
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

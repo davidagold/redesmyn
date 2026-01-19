@@ -3,9 +3,180 @@ syntax = "proto3";
 package redesmyn.protocol.v1;
 
 import "envelope.proto";
+import "google/protobuf/timestamp.proto";
 
 // Client ↔ control plane API messages (T-12).
 //
 // This file exists to establish schema ownership + build-time codegen (T-10).
 // The concrete request/response/subscription contracts are defined in T-12.
 
+// A single client ↔ control plane protocol frame.
+//
+// Wire semantics:
+// - `envelope.msg_id` is the globally unique per-frame dedupe key.
+// - `Request.request_id` and `Subscribe.subscription_id` are logical ids used for
+//   multiplexing correlation on a single connection.
+message ClientFrame {
+  ProtocolEnvelope envelope = 1;
+
+  oneof message {
+    Request request = 2;
+    Response response = 3;
+    Subscribe subscribe = 4;
+    Event event = 5;
+    Unsubscribe unsubscribe = 6;
+  }
+}
+
+// Canonical client API methods (initial minimal set; additive).
+enum ClientMethod {
+  CLIENT_METHOD_UNSPECIFIED = 0;
+  CLIENT_METHOD_HEALTH = 1;
+  CLIENT_METHOD_STATUS = 2;
+  CLIENT_METHOD_LIST_EPICS = 3;
+  CLIENT_METHOD_GET_EPIC_GRAPH = 4;
+}
+
+// Request for a control-plane method.
+message Request {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  ClientMethod method = 2;
+
+  oneof payload {
+    HealthRequest health = 10;
+    StatusRequest status = 11;
+    ListEpicsRequest list_epics = 12;
+    GetEpicGraphRequest get_epic_graph = 13;
+  }
+}
+
+enum ResponseStatus {
+  RESPONSE_STATUS_UNSPECIFIED = 0;
+  RESPONSE_STATUS_OK = 1;
+  RESPONSE_STATUS_ERROR = 2;
+}
+
+// Response to a request (correlate via `request_id`).
+message Response {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  ResponseStatus status = 2;
+
+  oneof result {
+    HealthResponse health = 10;
+    StatusResponse status_response = 11;
+    ListEpicsResponse list_epics = 12;
+    GetEpicGraphResponse get_epic_graph = 13;
+    ErrorEnvelope error = 100;
+  }
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  // Minimal liveness signal.
+  bool ok = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  // Protocol version accepted after negotiation.
+  ProtocolVersion accepted_protocol = 1;
+  // Human-facing server name (e.g. "redesmyn-control-plane").
+  string server_name = 2;
+  // Optional build/version identifier (best-effort).
+  string server_version = 3;
+}
+
+message ListEpicsRequest {}
+
+message EpicSummary {
+  string slug = 1;
+  string name = 2;
+}
+
+message ListEpicsResponse {
+  repeated EpicSummary epics = 1;
+}
+
+message GetEpicGraphRequest {
+  // For early integration, epic identity is a stable slug from the repo.
+  string epic_slug = 1;
+}
+
+message EpicTaskNode {
+  string task_slug = 1;
+  string title = 2;
+}
+
+message EpicTaskEdge {
+  string from_task_slug = 1;
+  string to_task_slug = 2;
+}
+
+// Minimal, typed graph representation (schema will evolve; additive changes only).
+message EpicGraph {
+  string epic_slug = 1;
+  repeated EpicTaskNode nodes = 2;
+  repeated EpicTaskEdge edges = 3;
+}
+
+message GetEpicGraphResponse {
+  EpicGraph graph = 1;
+}
+
+// Subscription topic for server-pushed streams.
+enum SubscriptionTopic {
+  SUBSCRIPTION_TOPIC_UNSPECIFIED = 0;
+  SUBSCRIPTION_TOPIC_EVENT_LOG = 1;
+}
+
+// Subscribe to a server stream (correlate events via `subscription_id`).
+message Subscribe {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+  SubscriptionTopic topic = 2;
+
+  oneof filter {
+    EventLogFilter event_log = 10;
+  }
+}
+
+message Unsubscribe {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+}
+
+message Subscribed {
+  SubscriptionTopic topic = 1;
+}
+
+message EventLogFilter {
+  // EventId (ULID bytes, length = 16). If set, start after this id (exclusive).
+  bytes after_event_id = 1;
+}
+
+message EventLogEvent {
+  // EventId (ULID bytes, length = 16).
+  bytes event_id = 1;
+  // Wall-clock timestamp (informational).
+  google.protobuf.Timestamp occurred_at = 2;
+  // Stable event type identifier (e.g. "agent.turn_completed").
+  string event_type = 3;
+  // Best-effort JSON payload for diagnostics/legacy rendering.
+  bytes json_payload = 4;
+}
+
+// Server-pushed event for a subscription.
+message Event {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+
+  oneof event {
+    Subscribed subscribed = 10;
+    EventLogEvent event_log = 11;
+    ErrorEnvelope error = 100;
+  }
+}

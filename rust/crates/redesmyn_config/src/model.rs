@@ -47,6 +47,15 @@ impl RustConfig {
         if self.control_plane.db.path.as_os_str().is_empty() {
             return Err(ValidationError::EmptyDbPath);
         }
+        if self
+            .control_plane
+            .api
+            .client_socket_path
+            .as_os_str()
+            .is_empty()
+        {
+            return Err(ValidationError::EmptyClientSocketPath);
+        }
         if self.daemon.repo_registry_dir.as_os_str().is_empty() {
             return Err(ValidationError::EmptyRepoRegistryDir);
         }
@@ -80,6 +89,7 @@ pub struct ControlPlaneDbConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlPlaneApiConfig {
     pub bind: SocketAddr,
+    pub client_socket_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

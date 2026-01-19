@@ -17,15 +17,21 @@ fn main() {
     ];
 
     for proto in proto_files {
-        println!("cargo:rerun-if-changed={}", proto_root.join(proto).display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            proto_root.join(proto).display()
+        );
     }
 
-    let protoc_path = protoc_bin_vendored::protoc_bin_path()
-        .expect("failed to locate vendored protoc binary");
+    let protoc_path =
+        protoc_bin_vendored::protoc_bin_path().expect("failed to locate vendored protoc binary");
     let protoc_include = protoc_bin_vendored::include_path()
         .expect("failed to locate vendored protoc include directory");
 
-    let protos: Vec<PathBuf> = proto_files.iter().map(|name| proto_root.join(name)).collect();
+    let protos: Vec<PathBuf> = proto_files
+        .iter()
+        .map(|name| proto_root.join(name))
+        .collect();
 
     let mut config = prost_build::Config::new();
     config.protoc_executable(protoc_path);

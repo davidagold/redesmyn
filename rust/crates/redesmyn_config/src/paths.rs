@@ -31,6 +31,10 @@ pub(crate) fn default_repo_registry_dir(base_dir: &Path) -> PathBuf {
     state_dir(base_dir).join("repos")
 }
 
+pub(crate) fn default_control_plane_client_socket_path(base_dir: &Path) -> PathBuf {
+    state_dir(base_dir).join("control_plane.sock")
+}
+
 /// Best-effort repo root discovery by looking for `.git` in `start` or its ancestors.
 pub fn discover_repo_root_from(start: &Path) -> Option<PathBuf> {
     let start_dir = if start.is_dir() {

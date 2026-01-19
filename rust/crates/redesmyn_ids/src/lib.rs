@@ -267,6 +267,10 @@ ulid_id!(/// Identifier for an event (append-only event log record).
 EventId);
 ulid_id!(/// Identifier for a protocol message (idempotency + dedupe key).
 MsgId);
+ulid_id!(/// Identifier for a client API request (multiplexing correlation key).
+RequestId);
+ulid_id!(/// Identifier for a client API subscription (multiplexing correlation key).
+SubscriptionId);
 ulid_id!(/// Identifier for a durable session/conversation.
 SessionId);
 ulid_id!(/// Identifier for a structured session event record.
@@ -301,6 +305,8 @@ mod tests {
         assert_roundtrip!(CommandUpdateId);
         assert_roundtrip!(EventId);
         assert_roundtrip!(MsgId);
+        assert_roundtrip!(RequestId);
+        assert_roundtrip!(SubscriptionId);
         assert_roundtrip!(SessionId);
         assert_roundtrip!(SessionEventId);
         assert_roundtrip!(ArtifactId);

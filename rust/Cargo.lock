@@ -1393,6 +1393,7 @@ dependencies = [
  "redesmyn_control_plane",
  "redesmyn_logging",
  "redesmyn_protocol",
+ "tokio",
 ]
 
 [[package]]
@@ -1417,7 +1418,9 @@ dependencies = [
  "redesmyn_protocol",
  "redesmyn_storage",
  "redesmyn_transport",
+ "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

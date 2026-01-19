@@ -11,7 +11,10 @@ use crate::model::{
     SandboxNetworkMode, SandboxType, WindowConfig, default_api_bind,
     default_executor_max_concurrency, default_window,
 };
-use crate::paths::{default_db_path, default_repo_registry_dir, discover_repo_root_from_cwd};
+use crate::paths::{
+    default_control_plane_client_socket_path, default_db_path, default_repo_registry_dir,
+    discover_repo_root_from_cwd,
+};
 use crate::secret::SecretString;
 
 #[derive(Debug, Clone)]
@@ -195,6 +198,13 @@ fn build_rust_config(
         .bind
         .unwrap_or_else(default_api_bind);
 
+    let client_socket_path = input
+        .control_plane
+        .api
+        .client_socket_path
+        .map(|p| resolve_path(&ctx.base_dir, p))
+        .unwrap_or_else(|| default_control_plane_client_socket_path(&ctx.base_dir));
+
     let max_concurrency = input
         .daemon
         .executor
@@ -220,7 +230,10 @@ fn build_rust_config(
         profile,
         control_plane: ControlPlaneConfig {
             db: ControlPlaneDbConfig { path: db_path },
-            api: ControlPlaneApiConfig { bind: api_bind },
+            api: ControlPlaneApiConfig {
+                bind: api_bind,
+                client_socket_path,
+            },
             auth: ControlPlaneAuthConfig {
                 daemon_token: daemon_token.into(),
             },
@@ -278,6 +291,7 @@ struct ControlPlaneDbConfigInput {
 #[serde(default)]
 struct ControlPlaneApiConfigInput {
     bind: Option<SocketAddr>,
+    client_socket_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

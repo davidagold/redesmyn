@@ -12,6 +12,7 @@ use std::{future::Future, pin::Pin};
 use redesmyn_logging::tracing::{self, field};
 use redesmyn_protocol::daemon::{DaemonFrame, MessageEnvelope};
 
+pub mod client;
 pub mod codec;
 pub mod framed;
 pub mod in_proc;

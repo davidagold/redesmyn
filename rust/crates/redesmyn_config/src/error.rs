@@ -18,6 +18,9 @@ pub enum ValidationError {
     #[error("control_plane.db.path must not be empty")]
     EmptyDbPath,
 
+    #[error("control_plane.api.client_socket_path must not be empty")]
+    EmptyClientSocketPath,
+
     #[error("daemon.repo_registry_dir must not be empty")]
     EmptyRepoRegistryDir,
 

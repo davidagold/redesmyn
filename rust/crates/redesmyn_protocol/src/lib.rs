@@ -18,6 +18,7 @@ pub mod pb {
 
 pub use redesmyn_errors::ErrorCategory;
 
+pub mod client;
 pub mod daemon;
 
 /// Optional structured detail for debugging/UX (no stack traces).
@@ -102,13 +103,11 @@ impl ProtocolVersion {
                 ("peer_major".to_string(), peer.major.to_string()),
                 ("peer_minor".to_string(), peer.minor.to_string()),
             ]);
-            return Err(
-                ErrorEnvelope::new(
-                    ErrorCategory::InvalidRequest,
-                    "Protocol major version mismatch.",
-                )
-                .with_detail(detail),
-            );
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Protocol major version mismatch.",
+            )
+            .with_detail(detail));
         }
 
         Ok(Self {
@@ -133,7 +132,9 @@ impl fmt::Display for ProtocolVersion {
 /// Encoding rules:
 /// - JSON: RFC3339 string
 /// - Protobuf: `google.protobuf.Timestamp` (or equivalent)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Timestamp(#[serde(with = "time::serde::rfc3339")] time::OffsetDateTime);
 
 impl Timestamp {
@@ -275,8 +276,12 @@ impl FromStr for TraceId {
 
         let mut bytes = [0_u8; 16];
         for (i, chunk) in s.as_bytes().chunks_exact(2).enumerate() {
-            let hi = (chunk[0] as char).to_digit(16).ok_or_else(|| ParseTraceIdError::new(s))?;
-            let lo = (chunk[1] as char).to_digit(16).ok_or_else(|| ParseTraceIdError::new(s))?;
+            let hi = (chunk[0] as char)
+                .to_digit(16)
+                .ok_or_else(|| ParseTraceIdError::new(s))?;
+            let lo = (chunk[1] as char)
+                .to_digit(16)
+                .ok_or_else(|| ParseTraceIdError::new(s))?;
             bytes[i] = ((hi << 4) | lo) as u8;
         }
         Ok(Self(bytes))
@@ -297,8 +302,7 @@ impl<'de> serde::Deserialize<'de> for TraceId {
     where
         D: serde::Deserializer<'de>,
     {
-        let s =
-            <std::borrow::Cow<'de, str> as serde::Deserialize<'de>>::deserialize(deserializer)?;
+        let s = <std::borrow::Cow<'de, str> as serde::Deserialize<'de>>::deserialize(deserializer)?;
         s.parse().map_err(serde::de::Error::custom)
     }
 }
@@ -428,12 +432,21 @@ mod protobuf;
 #[cfg(test)]
 mod tests {
     use super::{
-        DaemonHello, ErrorCategory, ErrorEnvelope, HostId, HostInstanceId, MsgId, ProtocolEnvelope,
-        ProtocolVersion, RepoScope, Scope, Timestamp, TraceId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+        DaemonHello, ErrorCategory, ErrorEnvelope, HostId, HostInstanceId, MsgId, PROTOCOL_MAJOR,
+        PROTOCOL_MINOR, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
     };
+
+    use redesmyn_ids::{EventId, RequestId, SubscriptionId};
 
     use prost::Message;
 
+    use crate::client::{
+        ClientFrame, ClientMessage, EpicGraph, EpicSummary, EpicTaskEdge, EpicTaskNode, Event,
+        EventLogEvent, EventLogFilter, GetEpicGraphRequest, GetEpicGraphResponse, HealthRequest,
+        HealthResponse, ListEpicsRequest, ListEpicsResponse, Request, RequestPayload, Response,
+        ResponseResult, Subscribe, Subscribed, SubscriptionEvent, SubscriptionFilter,
+        SubscriptionTopic, Unsubscribe,
+    };
     use crate::pb::redesmyn::protocol::v1 as pbv1;
 
     #[test]
@@ -457,8 +470,8 @@ mod tests {
     #[test]
     fn trace_id_hex_roundtrips() {
         let trace_id = TraceId::from_bytes([
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-            0x0d, 0x0e, 0x0f,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
         ]);
         let s = trace_id.to_string();
         assert_eq!(s, "000102030405060708090a0b0c0d0e0f");
@@ -475,7 +488,10 @@ mod tests {
     fn timestamp_serializes_as_rfc3339_string() {
         let ts = Timestamp::from(time::OffsetDateTime::from_unix_timestamp(0).unwrap());
         let json = serde_json::to_string(&ts).unwrap();
-        assert!(json.starts_with('\"') && json.ends_with('\"'), "json={json}");
+        assert!(
+            json.starts_with('\"') && json.ends_with('\"'),
+            "json={json}"
+        );
         let decoded: Timestamp = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, ts);
     }
@@ -507,8 +523,8 @@ mod tests {
         let correlation_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap();
         let sent_at: Timestamp = serde_json::from_str(r#""2026-01-19T00:00:00Z""#).unwrap();
         let trace_id = TraceId::from_bytes([
-            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde,
-            0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
+            0xbe, 0xef,
         ]);
         let repo_scope = RepoScope::new(
             "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
@@ -571,8 +587,8 @@ mod tests {
         let correlation_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap();
         let sent_at: Timestamp = serde_json::from_str(r#""2026-01-19T00:00:00Z""#).unwrap();
         let trace_id = TraceId::from_bytes([
-            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde,
-            0xad, 0xbe, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
+            0xbe, 0xef,
         ]);
         let repo_scope = RepoScope::new(
             "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
@@ -625,5 +641,123 @@ mod tests {
         let hello_pb_decoded = pbv1::DaemonHello::decode(hello_bytes.as_slice()).unwrap();
         let hello_decoded = DaemonHello::try_from_protobuf(hello_pb_decoded).unwrap();
         assert_eq!(hello_decoded, hello);
+    }
+
+    #[test]
+    fn protobuf_and_json_roundtrip_for_client_frames() {
+        let request_id = RequestId::new();
+        let subscription_id = SubscriptionId::new();
+
+        let frames = vec![
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Request(Request {
+                    request_id,
+                    payload: RequestPayload::Health(HealthRequest {}),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Response(Response {
+                    request_id,
+                    result: ResponseResult::Health(HealthResponse { ok: true }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Request(Request {
+                    request_id: RequestId::new(),
+                    payload: RequestPayload::ListEpics(ListEpicsRequest {}),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Response(Response {
+                    request_id: RequestId::new(),
+                    result: ResponseResult::ListEpics(ListEpicsResponse {
+                        epics: vec![EpicSummary {
+                            slug: "gpui".to_string(),
+                            name: "GPUI + Rust Port".to_string(),
+                        }],
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Request(Request {
+                    request_id: RequestId::new(),
+                    payload: RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                        epic_slug: "gpui".to_string(),
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Response(Response {
+                    request_id: RequestId::new(),
+                    result: ResponseResult::GetEpicGraph(GetEpicGraphResponse {
+                        graph: EpicGraph {
+                            epic_slug: "gpui".to_string(),
+                            nodes: vec![EpicTaskNode {
+                                task_slug: "T-12".to_string(),
+                                title: "Client API over UDS".to_string(),
+                            }],
+                            edges: vec![EpicTaskEdge {
+                                from_task_slug: "T-10".to_string(),
+                                to_task_slug: "T-12".to_string(),
+                            }],
+                        },
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Subscribe(Subscribe {
+                    subscription_id,
+                    filter: SubscriptionFilter::EventLog(EventLogFilter {
+                        after_event_id: None,
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Event(Event {
+                    subscription_id,
+                    event: SubscriptionEvent::Subscribed(Subscribed {
+                        topic: SubscriptionTopic::EventLog,
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Event(Event {
+                    subscription_id: SubscriptionId::new(),
+                    event: SubscriptionEvent::EventLog(EventLogEvent {
+                        event_id: EventId::new(),
+                        occurred_at: Timestamp::now_utc(),
+                        event_type: "demo.noop".to_string(),
+                        json_payload: vec![1, 2, 3],
+                    }),
+                }),
+            ),
+            ClientFrame::new(
+                ProtocolEnvelope::new(),
+                ClientMessage::Unsubscribe(Unsubscribe {
+                    subscription_id: SubscriptionId::new(),
+                }),
+            ),
+        ];
+
+        for frame in frames {
+            let json = serde_json::to_string(&frame).unwrap();
+            let decoded_json: ClientFrame = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded_json, frame);
+
+            let pb = frame.to_protobuf();
+            let bytes = pb.encode_to_vec();
+            let decoded_pb = pbv1::ClientFrame::decode(bytes.as_slice()).unwrap();
+            let decoded = ClientFrame::try_from_protobuf(decoded_pb).unwrap();
+            assert_eq!(decoded, frame);
+        }
     }
 }

@@ -15,3 +15,7 @@ redesmyn_protocol.workspace = true
 redesmyn_storage.workspace = true
 redesmyn_transport.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true

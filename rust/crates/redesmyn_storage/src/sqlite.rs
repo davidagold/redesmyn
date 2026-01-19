@@ -8,11 +8,11 @@ use std::{
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
+use redesmyn_logging::tracing::{Instrument, info, warn};
 use sqlx::{
     SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
-use redesmyn_logging::tracing::{info, warn, Instrument};
 
 use crate::StorageError;
 
@@ -72,7 +72,9 @@ pub async fn open_test_sqlite_pool() -> Result<SqlitePool, StorageError> {
 
         Ok(pool)
     }
-    .instrument(redesmyn_logging::tracing::info_span!("storage.open_test_sqlite_pool"))
+    .instrument(redesmyn_logging::tracing::info_span!(
+        "storage.open_test_sqlite_pool"
+    ))
     .await
 }
 
@@ -86,7 +88,9 @@ pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
         );
         Ok(())
     }
-    .instrument(redesmyn_logging::tracing::info_span!("storage.apply_migrations"))
+    .instrument(redesmyn_logging::tracing::info_span!(
+        "storage.apply_migrations"
+    ))
     .await
 }
 
