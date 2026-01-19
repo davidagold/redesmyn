@@ -266,6 +266,7 @@ Tasks:
 - `epics/gpui/tasks/T-37/README.md`: Daemon Codex runner (structured) (exec-based; output-last-message capture).
 - `epics/gpui/tasks/T-38/README.md`: Daemon Claude Code runner (structured) (exec-based).
 - `epics/gpui/tasks/T-39/README.md`: Daemon app-server agent runtime skeleton.
+- `epics/gpui/tasks/T-68/README.md`: Codex app-server runner (daemon) (JSON-RPC over stdio; protocol v2).
 - `epics/gpui/tasks/T-40/README.md`: Control plane session persistence + query surfaces (sqlx).
 - `epics/gpui/tasks/T-41/README.md`: Control plane agent commands + “send message” semantics (conflicts/resume/interrupt) + API methods.
 - `epics/gpui/tasks/T-42/README.md`: End-to-end agent session integration tests (mock agents, determinism, persistence).

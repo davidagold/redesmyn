@@ -32,13 +32,12 @@ without fully implementing a specific external protocol yet.
 
 ### 1) Agent runtime taxonomy
 
-Introduce an explicit runtime kind (names illustrative):
+Use the shared taxonomy from T-32:
 
-- `AgentRuntimeKind::ShellTmux`
-- `AgentRuntimeKind::Exec`
-- `AgentRuntimeKind::AppServer`
+- `AgentProvider` (Codex/ClaudeCode/Shell) is the “who/what implementation family”.
+- `AgentRuntimeKind` (ShellTmux/StructuredExec/AppServer) is the “how we talk to it / contract”.
 
-This is separate from agent brand/kind (Codex/Claude/etc).
+The app-server skeleton in this ticket is for `AgentRuntimeKind::AppServer` and must remain provider-agnostic.
 
 ### 2) Minimal skeleton capabilities
 
@@ -80,4 +79,3 @@ Define the minimal interfaces needed for future work:
 
 - Motivation (external; not implemented in Redesmyn today):
   - `codex-rs/app-server` (linked by project notes as the direction for “app-server” agents).
-
