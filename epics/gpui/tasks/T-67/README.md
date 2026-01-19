@@ -1,0 +1,121 @@
+---
+epic: gpui
+branch:
+  suggested: rn/gpui/T-67-legacy-db-import
+rn:
+  parent: T-17
+---
+
+# T-67 Legacy DB → Rust DB import + cutover tooling (Domain 2)
+
+## Problem
+
+During the port we will have **two** databases:
+
+- Legacy Python DB (Alembic): `<repo>/.redesmyn/redesmyn.sqlite3`
+- Rust control plane DB (sqlx): `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+
+We need a principled, low-risk path for:
+
+- existing repos/users with legacy state to move to the Rust DB, and
+- developers to test the Rust control plane without corrupting legacy data.
+
+If we try to have two migration systems modify one DB, or if the Rust control plane silently “upgrades” the legacy DB, we will create non-determinism, hard-to-debug corruption, and irreproducible environments.
+
+## Goal
+
+Provide an explicit, testable import/cutover mechanism that:
+
+- creates the Rust DB (if missing),
+- applies Rust `sqlx` migrations,
+- optionally imports selected legacy state,
+- and leaves the legacy DB untouched as a backup/forensics artifact.
+
+This is a migration *tooling* ticket, not the full control plane implementation.
+
+## Requirements
+
+### 1) Discovery + safety rules
+
+Define a deterministic discovery policy:
+
+- Rust DB path (default): `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+- Legacy DB path (default): `<repo>/.redesmyn/redesmyn.sqlite3`
+
+Safety rules:
+
+- Never write to the legacy DB.
+- Never delete the legacy DB.
+- Import must be explicitly triggered (CLI and/or a clearly visible UI affordance), not a silent background action.
+
+### 2) Import surface (AI-first + CLI-first)
+
+Provide a developer-facing import surface, at minimum via Rust CLI:
+
+- `rn-rs db import-legacy [--repo <path>] [--dry-run] [--json]`
+
+Requirements:
+
+- `--dry-run` reports what would be imported (counts, tables, schema version) without writing.
+- `--json` produces machine-readable output suitable for CI/agent verification.
+- Exit codes follow the shared error conventions (T-3).
+
+Future direction (not required in this ticket):
+
+- a desktop UI flow that guides the user through import and clearly shows progress.
+
+### 3) What to import (initial scope)
+
+Start minimal. Import only what provides immediate value for continuity and UI/UX:
+
+- epics/tasks metadata needed to render the graph (including stable human refs like `T-123` if available),
+- branch/worktree references needed for diff/review surfaces,
+- recent session summaries / last assistant message previews (if cheap),
+- optionally: the legacy `events` table as a **best-effort** history feed (see notes).
+
+Notes:
+
+- The legacy DB uses integer primary keys; the Rust DB uses ULID newtypes. The importer must define an explicit mapping strategy.
+- If we import legacy events, preserve the original `event_type` string (do not attempt to force it into a closed enum) and store payloads in the new Rust event log format.
+
+### 4) ID mapping strategy (explicit)
+
+Define one of these strategies (pick one; document rationale):
+
+1. Store legacy IDs as dedicated columns (e.g. `legacy_task_id INTEGER`) on imported core tables.
+2. Maintain a separate `legacy_id_map` table keyed by `(table_name, legacy_id) -> new_ulid`.
+
+Requirements:
+
+- Import is idempotent (re-running does not duplicate rows).
+- Mapping is queryable for debugging and support.
+
+### 5) Tests
+
+Add a deterministic test that:
+
+- creates a tiny legacy SQLite DB fixture with a small subset of tables/rows (or uses a minimal snapshot),
+- runs the importer into a temp Rust DB,
+- asserts imported counts and key invariants (graph topology preserved, mapping stable),
+- and verifies the legacy DB is unchanged.
+
+## Acceptance criteria
+
+- A developer can run an explicit import command and end up with a valid Rust DB.
+- Import emits deliberate `tracing` logs (start/end + counts + errors), without noisy per-row logs.
+- The process is safe and repeatable (idempotent; no legacy DB mutation).
+
+## Dependencies / sequencing
+
+- Depends on `epics/gpui/tasks/T-17/README.md` (Rust schema + migrations).
+- Uses `rn-rs` as the initial entrypoint (T-8).
+- Informs the desktop onboarding/runtime story once the control plane is embeddable (T-16).
+
+## Reference implementation (today; behavior orientation only)
+
+- Legacy DB schema + migrations:
+  - `redesmyn/db/models.py`
+  - `redesmyn/db/alembic/`
+  - `scripts/check_migrations.py`
+- Legacy “repo-scoped state dir” convention:
+  - `<repo>/.redesmyn/` (contains DB, tasks/, worktrees/, etc.)

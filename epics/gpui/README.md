@@ -106,6 +106,22 @@ Priorities:
 - deterministic behavior,
 - smooth relayout when task cards expand/collapse.
 
+### 3.6 Database strategy (split-codebase period)
+
+During the port we keep the legacy Python/Alembic DB intact and introduce a separate Rust/sqlx DB:
+
+- Legacy DB (Python/Alembic): `<repo>/.redesmyn/redesmyn.sqlite3`
+- Rust DB (control plane, `sqlx`): `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+
+Rationale:
+
+- avoids table/schema collisions during the port,
+- allows Rust to evolve toward ULID/BLOB keys + binary payloads without constraints,
+- keeps migration ownership unambiguous (one migrator per DB),
+- preserves the legacy DB as a backup/forensics artifact.
+
+Import/cutover tooling is explicitly designed and tested (see T-67).
+
 ## 4) Domain map (top-level workstreams)
 
 This epic will be executed as massively parallel work across these domains:
@@ -175,6 +191,7 @@ Sequencing intent:
 - `epics/gpui/tasks/T-20/README.md`: Client API server over UDS (requests + subscriptions).
 - `epics/gpui/tasks/T-21/README.md`: Epic graph query model + projection.
 - `epics/gpui/tasks/T-22/README.md`: Control plane integration test harness (mock daemon + real repo modes).
+- `epics/gpui/tasks/T-67/README.md`: Legacy DB → Rust DB import + cutover tooling.
 
 Sequencing intent:
 

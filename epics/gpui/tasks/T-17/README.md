@@ -77,6 +77,12 @@ Add indices for the primary query patterns:
 - Migrations are applied automatically by the control plane at startup in dev/test.
 - Provide a clear, documented workflow for adding migrations (no manual DB fiddling).
 
+Split DB strategy:
+
+- Rust migrations apply to the Rust DB file only: `<repo>/.redesmyn/redesmyn_rust.sqlite3`.
+- Do not modify the legacy Alembic DB (`<repo>/.redesmyn/redesmyn.sqlite3`) from Rust code.
+- Provide an explicit, testable import/cutover tool as a separate ticket (T-67).
+
 ### 5) Testability
 
 - Provide a deterministic way to create a temporary DB and run migrations for tests.
