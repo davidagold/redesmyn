@@ -1,3 +1,14 @@
+//! Length-delimited framing over an IO stream.
+//!
+//! # Wire format (stable contract)
+//!
+//! A `FramedEndpoint` reads/writes a sequence of frames using:
+//!
+//! - `u32` big-endian length prefix (4 bytes)
+//! - `len` bytes of payload (exactly `len` bytes)
+//!
+//! The payload is produced/consumed by a [`crate::codec::Codec`] (JSON or Protobuf).
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use redesmyn_protocol::daemon::DaemonFrame;
