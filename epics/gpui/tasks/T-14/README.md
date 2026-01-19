@@ -65,6 +65,8 @@ Rules:
   - **scope** (task-scoped sessions and user-managed chat sessions are both supported).
 - Keep payloads compact; link to artifacts for large content.
 - Preserve forward compatibility via an `UnknownSessionEvent` fallback.
+- Persistence should prefer DB-level constraints that prevent impossible scope combinations (CHECKs
+  plus composite foreign keys where practical; see T-17).
 
 ### 2.1) Session semantics: session == conversation; turns are events
 
