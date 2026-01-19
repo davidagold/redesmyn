@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 
 pub use redesmyn_errors::ErrorCategory;
 
+pub mod daemon;
+
 /// Optional structured detail for debugging/UX (no stack traces).
 ///
 /// This is intentionally simple for now (stringly-typed map) and can evolve as
