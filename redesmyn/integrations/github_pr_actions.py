@@ -91,10 +91,12 @@ def effective_upstream_branch_for_task(
         parent = tasks_by_id.get(current_parent_id)
         if parent is None or parent.branch_name is None:
             return base_branch
+        if not branch_exists(repo_root, parent.branch_name):
+            return base_branch
         try:
             merged = git_is_ancestor(repo_root, parent.branch_name, base_branch)
         except Exception:
-            merged = None
+            return base_branch
         if merged is True:
             current_parent_id = parent.parent_task_id
             continue
@@ -217,6 +219,10 @@ async def ensure_task_pull_request(
         base_branch=epic.root_branch,
         tasks_by_id=tasks_by_id,
     )
+    if base_branch == task.branch_name:
+        base_branch = epic.root_branch
+    if base_branch != epic.root_branch and not branch_exists(repo_root, base_branch):
+        base_branch = epic.root_branch
 
     push_branch_for_github_pr(
         repo_root,
@@ -225,7 +231,7 @@ async def ensure_task_pull_request(
     )
 
     # Best-effort: ensure stacked bases exist on the remote, so GitHub can accept the PR base.
-    if base_branch != epic.root_branch and branch_exists(repo_root, base_branch):
+    if base_branch != epic.root_branch:
         push_branch_for_github_pr(
             repo_root,
             branch_name=base_branch,

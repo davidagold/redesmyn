@@ -4860,6 +4860,12 @@ def github_pr_create(
                     base_branch=resolved_epic.root_branch,
                     tasks_by_id=tasks_by_id,
                 )
+                if base_branch == task_row.branch_name:
+                    base_branch = resolved_epic.root_branch
+                if base_branch != resolved_epic.root_branch and not branch_exists(
+                    ctx.repo_root, base_branch
+                ):
+                    base_branch = resolved_epic.root_branch
 
                 repo_ref = _effective_github_repo_ref_for_task(
                     ctx,
@@ -4876,9 +4882,7 @@ def github_pr_create(
                 )
 
                 # Best-effort: ensure stacked bases exist on the remote, so GitHub can accept the PR base.
-                if base_branch != resolved_epic.root_branch and branch_exists(
-                    ctx.repo_root, base_branch
-                ):
+                if base_branch != resolved_epic.root_branch:
                     _push_branch_for_github_pr(
                         ctx,
                         branch_name=base_branch,
