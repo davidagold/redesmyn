@@ -257,7 +257,7 @@ ulid_id!(/// Identifier for a command/run lifecycle execution.
 RunId);
 ulid_id!(/// Identifier for a host (machine) in a multi-host topology.
 HostId);
-ulid_id!(/// Identifier for a daemon process instance (ephemeral identity).
+ulid_id!(/// Identifier for a specific host process instance (ephemeral identity).
 HostInstanceId);
 ulid_id!(/// Identifier for a command (idempotency key and/or persisted command record).
 CommandId);

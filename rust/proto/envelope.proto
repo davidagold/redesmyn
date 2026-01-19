@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Canonical protocol types shared across all boundaries:
+// - daemon ↔ control plane stream (T-11),
+// - client ↔ control plane API (T-12),
+// - artifact/session contracts (T-14),
+// - and JSON diagnostic tooling.
+//
+// This file is the Protobuf counterpart to the Rust-native types in
+// `rust/crates/redesmyn_protocol` and follows the encoding rules from T-9:
+// - ULID/newtypes: 16 raw bytes on the wire.
+// - Timestamp: google.protobuf.Timestamp on the wire.
+//
+// Protobuf design notes:
+// - Avoid `required`; prefer additive changes for forward compatibility.
+// - For bytes-encoded ULIDs and TraceIds, absence is represented by empty bytes.
+
+// Concrete protocol version used during connection establishment.
+message ProtocolVersion {
+  // Incompatible changes.
+  uint32 major = 1;
+  // Additive-only changes.
+  uint32 minor = 2;
+}
+
+// Repo-scoped routing key.
+message RepoScope {
+  // WorkspaceId (ULID bytes, length = 16).
+  bytes workspace_id = 1;
+  // RepoId (ULID bytes, length = 16).
+  bytes repo_id = 2;
+}
+
+// Routing scope (future-proof: add new variants as needed).
+message Scope {
+  oneof kind {
+    RepoScope repo = 1;
+  }
+}
+
+// Stable error categories used across boundaries (protocol/API/CLI).
+enum ErrorCategory {
+  ERROR_CATEGORY_UNSPECIFIED = 0;
+  ERROR_CATEGORY_INVALID_REQUEST = 1;
+  ERROR_CATEGORY_NOT_FOUND = 2;
+  ERROR_CATEGORY_CONFLICT = 3;
+  ERROR_CATEGORY_UNAUTHORIZED = 4;
+  ERROR_CATEGORY_UNAVAILABLE = 5;
+  ERROR_CATEGORY_INTERNAL = 6;
+}
+
+// Minimal structured error envelope that can cross boundaries.
+message ErrorEnvelope {
+  ErrorCategory category = 1;
+  // User-actionable text; avoid stack traces and noisy details.
+  string message = 2;
+  // Optional structured detail for debugging/UX; avoid large payloads.
+  map<string, string> detail = 3;
+}
+
+// Canonical protocol envelope for all cross-boundary messages.
+message ProtocolEnvelope {
+  // Protocol major version (incompatible changes); stored as u16 in Rust.
+  uint32 protocol_major = 1;
+  // Protocol minor version (additive-only changes); stored as u16 in Rust.
+  uint32 protocol_minor = 2;
+
+  // MsgId (ULID bytes, length = 16).
+  bytes msg_id = 3;
+  // Informational wall-clock timestamp (monotonic ordering is not assumed).
+  google.protobuf.Timestamp sent_at = 4;
+
+  // Optional routing scope for the message.
+  Scope scope = 5;
+
+  // Optional request/response correlation id (MsgId ULID bytes, length = 16).
+  bytes correlation_id = 6;
+
+  // Optional distributed trace id (raw bytes, length = 16).
+  bytes trace_id = 7;
+}
+

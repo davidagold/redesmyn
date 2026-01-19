@@ -9,7 +9,12 @@
 use std::collections::BTreeMap;
 use std::{fmt, str::FromStr};
 
-use redesmyn_ids::{MsgId, RepoId, WorkspaceId};
+use redesmyn_ids::{HostId, HostInstanceId, MsgId, RepoId, WorkspaceId};
+
+#[doc(hidden)]
+pub mod pb {
+    include!(concat!(env!("OUT_DIR"), "/redesmyn_protocol_pb.rs"));
+}
 
 pub use redesmyn_errors::ErrorCategory;
 
@@ -408,12 +413,28 @@ impl ProtocolEnvelope {
     }
 }
 
+/// Daemon → control plane handshake payload (T-11).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DaemonHello {
+    pub host_id: HostId,
+    pub host_instance_id: HostInstanceId,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+    pub supported_protocol: ProtocolVersion,
+}
+
+mod protobuf;
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ErrorCategory, ErrorEnvelope, MsgId, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope,
-        Timestamp, TraceId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+        DaemonHello, ErrorCategory, ErrorEnvelope, HostId, HostInstanceId, MsgId, ProtocolEnvelope,
+        ProtocolVersion, RepoScope, Scope, Timestamp, TraceId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
     };
+
+    use prost::Message;
+
+    use crate::pb::redesmyn::protocol::v1 as pbv1;
 
     #[test]
     fn error_envelope_serializes_with_expected_shape() {
@@ -518,5 +539,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(scope, Scope::Unknown);
+    }
+
+    #[test]
+    fn daemon_hello_json_roundtrips() {
+        let hello = DaemonHello {
+            host_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
+            host_instance_id: "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap(),
+            capabilities: vec!["git".into(), "agents".into()],
+            supported_protocol: ProtocolVersion::new(1, 7),
+        };
+
+        let json = serde_json::to_value(&hello).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "host_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "host_instance_id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                "capabilities": ["git", "agents"],
+                "supported_protocol": { "major": 1, "minor": 7 },
+            })
+        );
+
+        let decoded: DaemonHello = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, hello);
+    }
+
+    #[test]
+    fn protobuf_roundtrips_for_envelope_and_daemon_hello() {
+        let msg_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
+        let correlation_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap();
+        let sent_at: Timestamp = serde_json::from_str(r#""2026-01-19T00:00:00Z""#).unwrap();
+        let trace_id = TraceId::from_bytes([
+            0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde,
+            0xad, 0xbe, 0xef,
+        ]);
+        let repo_scope = RepoScope::new(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
+        );
+
+        let envelope = ProtocolEnvelope {
+            protocol_major: PROTOCOL_MAJOR,
+            protocol_minor: PROTOCOL_MINOR,
+            msg_id,
+            sent_at,
+            scope: Some(Scope::Repo { repo: repo_scope }),
+            correlation_id: Some(correlation_id),
+            trace_id: Some(trace_id),
+        };
+
+        let envelope_pb = envelope.to_protobuf();
+        assert_eq!(envelope_pb.msg_id, msg_id.to_bytes().to_vec());
+        assert_eq!(
+            envelope_pb.correlation_id,
+            correlation_id.to_bytes().to_vec()
+        );
+        assert_eq!(envelope_pb.trace_id, trace_id.to_bytes().to_vec());
+        let sent_at_pb = envelope_pb.sent_at.as_ref().unwrap();
+        let sent_at_dt = sent_at.into_offset_date_time();
+        assert_eq!(sent_at_pb.seconds, sent_at_dt.unix_timestamp());
+        assert_eq!(sent_at_pb.nanos, sent_at_dt.nanosecond() as i32);
+
+        let envelope_bytes = envelope_pb.encode_to_vec();
+        let envelope_pb_decoded =
+            pbv1::ProtocolEnvelope::decode(envelope_bytes.as_slice()).unwrap();
+        let envelope_decoded = ProtocolEnvelope::try_from_protobuf(envelope_pb_decoded).unwrap();
+        assert_eq!(envelope_decoded, envelope);
+
+        let hello = DaemonHello {
+            host_id: HostId::new(),
+            host_instance_id: HostInstanceId::new(),
+            capabilities: vec!["git".into(), "agents".into()],
+            supported_protocol: ProtocolVersion::CURRENT,
+        };
+
+        let hello_pb = hello.to_protobuf();
+        assert_eq!(hello_pb.host_id, hello.host_id.to_bytes().to_vec());
+        assert_eq!(
+            hello_pb.host_instance_id,
+            hello.host_instance_id.to_bytes().to_vec()
+        );
+
+        let hello_bytes = hello_pb.encode_to_vec();
+        let hello_pb_decoded = pbv1::DaemonHello::decode(hello_bytes.as_slice()).unwrap();
+        let hello_decoded = DaemonHello::try_from_protobuf(hello_pb_decoded).unwrap();
+        assert_eq!(hello_decoded, hello);
     }
 }

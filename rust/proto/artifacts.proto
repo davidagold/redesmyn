@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+// Artifact references and session event contracts (T-14).
+//
+// This file starts minimal in T-10 and will be expanded as the artifact/session
+// event contract is implemented.
+
+// Small, stable artifact kind enum. Additive changes are allowed.
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_LOG = 1;
+  ARTIFACT_KIND_DIFF = 2;
+  ARTIFACT_KIND_PATCH = 3;
+  ARTIFACT_KIND_FILE_SNAPSHOT = 4;
+  ARTIFACT_KIND_TRACE = 5;
+}
+
+// Content hash for integrity/dedup. Algorithm is a stable string identifier.
+message Hash {
+  string algorithm = 1;
+  bytes digest = 2;
+}
+
+// Storage backend is an implementation detail; hints are best-effort.
+message StorageHint {
+  oneof hint {
+    string local_path = 1;
+    string blob_key = 2;
+  }
+}
+
+// Stable reference to content stored out-of-band.
+message ArtifactRef {
+  // ArtifactId (ULID bytes, length = 16).
+  bytes artifact_id = 1;
+  ArtifactKind kind = 2;
+  Hash content_hash = 3;
+  uint64 byte_len = 4;
+  string mime = 5;
+  StorageHint storage_hint = 6;
+}
+
+// Forward-compatible placeholder for session event union fallbacks (T-14).
+message UnknownSessionEvent {
+  // Stable session event type identifier.
+  string event_type = 1;
+  // Best-effort JSON payload for diagnostics/legacy rendering.
+  bytes json_payload = 2;
+}
+
