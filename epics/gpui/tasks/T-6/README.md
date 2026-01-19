@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-6-sqlx-storage-scaffold
+  suggested: rn/gpui/T-6-control-plane-storage-scaffold
 rn:
   parent: T-2
 ---

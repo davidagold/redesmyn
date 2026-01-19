@@ -7,6 +7,10 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_domain.workspace = true
-redesmyn_ids.workspace = true
-redesmyn_protocol.workspace = true
+redesmyn_ids = { workspace = true, features = ["sqlx"] }
+redesmyn_logging.workspace = true
+sqlx = { workspace = true, features = ["migrate", "sqlite", "runtime-tokio"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
