@@ -4,12 +4,17 @@
 //! `parent_id` pointer (tree edges). The layout is pure and deterministic:
 //! identical inputs produce identical outputs.
 //!
-//! Call [`layout_forest`] whenever topology or node sizes change. v1 only uses
-//! tree edges; non-tree edges (blockers, constraints) can be layered on later.
+//! For high-performance use (e.g. per-frame expand/collapse relayout), prefer
+//! [`ForestLayoutEngine`]: build topology once, update sizes cheaply, and rerun
+//! layout without heap allocations.
+//!
+//! [`layout_forest`] remains available as a convenience wrapper that allocates
+//! and rebuilds topology each call.
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(test), forbid(unsafe_code))]
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 /// A 2D point in logical pixels.
 ///
@@ -111,12 +116,288 @@ pub struct LayoutOutput<Id> {
     pub bounds: Rect,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutOutputView<'a, Id> {
+    /// Stable node order (sorted by id).
+    ///
+    /// The position for `ids[i]` is `positions[i]`.
+    pub ids: &'a [Id],
+    pub positions: &'a [Point],
+    pub bounds: Rect,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutError<Id> {
     DuplicateNodeId { id: Id },
     NegativeNodeSize { id: Id, size: Size },
+    UnknownNodeId { id: Id },
     UnknownParentId { id: Id, parent_id: Id },
     CycleDetected { id: Id },
+}
+
+/// A topology-cached, allocation-free-per-layout forest layout engine.
+///
+/// `new(...)` builds and validates topology once. Subsequent calls to
+/// [`Self::layout`] reuse internal buffers and perform no heap allocations.
+#[derive(Debug, Clone)]
+pub struct ForestLayoutEngine<Id> {
+    /// Stable node order (sorted by id).
+    ids: Vec<Id>,
+    /// Lookup-only map (determinism does not depend on iteration).
+    index_by_id: BTreeMap<Id, usize>,
+
+    parent_index: Vec<Option<usize>>,
+    roots: Vec<usize>,
+
+    children: Vec<usize>,
+    child_range: Vec<Range<usize>>,
+
+    postorder: Vec<usize>,
+
+    sizes: Vec<Size>,
+
+    subtree_heights: Vec<i32>,
+    children_block_heights: Vec<i32>,
+    positions: Vec<Point>,
+    bounds: Rect,
+
+    layout_stack: Vec<LayoutFrame>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LayoutFrame {
+    node_index: usize,
+    next_child_pos: usize,
+    next_child_top_y: i32,
+    child_x: i32,
+}
+
+impl<Id> ForestLayoutEngine<Id>
+where
+    Id: Copy + Ord + std::fmt::Debug,
+{
+    pub fn new(
+        nodes: impl IntoIterator<Item = LayoutNode<Id>>,
+        options: LayoutOptions,
+    ) -> Result<Self, LayoutError<Id>> {
+        let mut input_nodes: Vec<LayoutNode<Id>> = nodes.into_iter().collect();
+        let span = redesmyn_logging::tracing::debug_span!(
+            "graph_layout.engine_new",
+            node_count = input_nodes.len(),
+            unknown_parent_policy = ?options.unknown_parent_policy,
+        );
+        let _guard = span.enter();
+
+        validate_node_sizes(&input_nodes)?;
+        input_nodes.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        validate_unique_ids(&input_nodes)?;
+
+        let node_count = input_nodes.len();
+        let mut ids = Vec::with_capacity(node_count);
+        let mut sizes = Vec::with_capacity(node_count);
+        for node in &input_nodes {
+            ids.push(node.id);
+            sizes.push(node.size);
+        }
+
+        let index_by_id = build_index_by_id(&ids);
+        let parent_index = build_parent_index(&input_nodes, &index_by_id, options)?;
+        let roots = roots_in_stable_order(&parent_index);
+
+        let (children, child_range) = build_children_adjacency(&parent_index, node_count);
+        detect_cycles(&ids, &children, &child_range)?;
+
+        let postorder = build_postorder(&roots, &children, &child_range, node_count);
+
+        Ok(Self {
+            ids,
+            index_by_id,
+            parent_index,
+            roots,
+            children,
+            child_range,
+            postorder,
+            sizes,
+            subtree_heights: vec![0; node_count],
+            children_block_heights: vec![0; node_count],
+            positions: vec![Point { x: 0, y: 0 }; node_count],
+            bounds: Rect {
+                origin: Point { x: 0, y: 0 },
+                size: Size {
+                    width: 0,
+                    height: 0,
+                },
+            },
+            layout_stack: Vec::with_capacity(node_count),
+        })
+    }
+
+    #[must_use]
+    pub fn ids(&self) -> &[Id] {
+        &self.ids
+    }
+
+    #[must_use]
+    pub fn sizes(&self) -> &[Size] {
+        &self.sizes
+    }
+
+    #[must_use]
+    pub fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    #[must_use]
+    pub fn parent_index(&self) -> &[Option<usize>] {
+        &self.parent_index
+    }
+
+    #[must_use]
+    pub fn positions(&self) -> &[Point] {
+        &self.positions
+    }
+
+    pub fn set_size(&mut self, id: Id, size: Size) -> Result<(), LayoutError<Id>> {
+        if !size.is_non_negative() {
+            return Err(LayoutError::NegativeNodeSize { id, size });
+        }
+
+        let Some(&index) = self.index_by_id.get(&id) else {
+            return Err(LayoutError::UnknownNodeId { id });
+        };
+
+        self.sizes[index] = size;
+        Ok(())
+    }
+
+    pub fn set_sizes(
+        &mut self,
+        sizes: impl IntoIterator<Item = (Id, Size)>,
+    ) -> Result<(), LayoutError<Id>> {
+        for (id, size) in sizes {
+            self.set_size(id, size)?;
+        }
+        Ok(())
+    }
+
+    pub fn layout(&mut self, config: LayoutConfig) -> LayoutOutputView<'_, Id> {
+        self.recompute_subtree_heights(config);
+        self.recompute_positions(config);
+        self.bounds = compute_bounds(self.sizes.iter().copied(), self.positions.iter().copied())
+            .unwrap_or(Rect {
+                origin: config.origin,
+                size: Size {
+                    width: 0,
+                    height: 0,
+                },
+            });
+
+        LayoutOutputView {
+            ids: &self.ids,
+            positions: &self.positions,
+            bounds: self.bounds,
+        }
+    }
+
+    fn recompute_subtree_heights(&mut self, config: LayoutConfig) {
+        for &node_index in &self.postorder {
+            let range = self.child_range[node_index].clone();
+            let mut children_total_height = 0_i32;
+            let mut child_count = 0_usize;
+            for &child_index in &self.children[range] {
+                if child_count > 0 {
+                    children_total_height =
+                        children_total_height.saturating_add(config.sibling_spacing);
+                }
+                children_total_height =
+                    children_total_height.saturating_add(self.subtree_heights[child_index]);
+                child_count += 1;
+            }
+
+            self.children_block_heights[node_index] = children_total_height;
+            let node_height = self.sizes[node_index].height;
+            self.subtree_heights[node_index] = node_height.max(children_total_height);
+        }
+    }
+
+    fn recompute_positions(&mut self, config: LayoutConfig) {
+        self.layout_stack.clear();
+
+        let roots_len = self.roots.len();
+        let mut next_root_top_y = config.origin.y;
+        for root_slot in 0..roots_len {
+            let root_index = self.roots[root_slot];
+            self.push_layout_frame(root_index, config.origin.x, next_root_top_y, config);
+
+            while !self.layout_stack.is_empty() {
+                let next_child = {
+                    let frame = self.layout_stack.last_mut().expect("not empty");
+                    let node_index = frame.node_index;
+                    let child_end = self.child_range[node_index].end;
+                    if frame.next_child_pos >= child_end {
+                        None
+                    } else {
+                        let child_index = self.children[frame.next_child_pos];
+                        frame.next_child_pos += 1;
+                        let child_x = frame.child_x;
+                        let child_subtree_top_y = frame.next_child_top_y;
+                        frame.next_child_top_y = frame.next_child_top_y.saturating_add(
+                            self.subtree_heights[child_index]
+                                .saturating_add(config.sibling_spacing),
+                        );
+                        Some((child_index, child_x, child_subtree_top_y))
+                    }
+                };
+
+                match next_child {
+                    Some((child_index, child_x, child_subtree_top_y)) => {
+                        self.push_layout_frame(child_index, child_x, child_subtree_top_y, config);
+                    }
+                    None => {
+                        self.layout_stack.pop();
+                    }
+                }
+            }
+
+            next_root_top_y = next_root_top_y.saturating_add(
+                self.subtree_heights[root_index].saturating_add(config.root_spacing),
+            );
+        }
+    }
+
+    fn push_layout_frame(
+        &mut self,
+        node_index: usize,
+        x: i32,
+        subtree_top_y: i32,
+        config: LayoutConfig,
+    ) {
+        let subtree_height = self.subtree_heights[node_index];
+        let node_height = self.sizes[node_index].height;
+        let node_y = subtree_top_y.saturating_add((subtree_height - node_height) / 2);
+        self.positions[node_index] = Point { x, y: node_y };
+
+        let range = self.child_range[node_index].clone();
+        if range.start == range.end {
+            return;
+        }
+
+        let children_total_height = self.children_block_heights[node_index];
+        let next_child_top_y =
+            subtree_top_y.saturating_add((subtree_height - children_total_height) / 2);
+        let child_x = x.saturating_add(
+            self.sizes[node_index]
+                .width
+                .saturating_add(config.layer_spacing),
+        );
+
+        self.layout_stack.push(LayoutFrame {
+            node_index,
+            next_child_pos: range.start,
+            next_child_top_y,
+            child_x,
+        });
+    }
 }
 
 /// Computes a deterministic layout for a rooted forest.
@@ -143,90 +424,71 @@ pub fn layout_forest_with_options<Id>(
 where
     Id: Copy + Ord + std::fmt::Debug,
 {
-    let input_nodes: Vec<LayoutNode<Id>> = nodes.into_iter().collect();
-    let span = redesmyn_logging::tracing::debug_span!(
-        "graph_layout.layout_forest",
-        node_count = input_nodes.len(),
-        layer_spacing = config.layer_spacing,
-        sibling_spacing = config.sibling_spacing,
-        root_spacing = config.root_spacing,
-        unknown_parent_policy = ?options.unknown_parent_policy,
-    );
-    let _guard = span.enter();
-
-    let nodes_by_id = build_nodes_by_id(&input_nodes)?;
-    let children_by_parent = build_children_by_parent(&nodes_by_id, options.unknown_parent_policy)?;
-    detect_cycles(&nodes_by_id, &children_by_parent)?;
-
-    let roots = roots_in_stable_order(&nodes_by_id);
-    let subtree_heights = compute_subtree_heights(&nodes_by_id, &children_by_parent, config);
-
+    let mut engine = ForestLayoutEngine::new(nodes, options)?;
+    let view = engine.layout(config);
     let mut positions = BTreeMap::new();
-    let mut next_root_top_y = config.origin.y;
-    for root_id in roots {
-        let subtree_height = subtree_heights.get(&root_id).copied().unwrap_or_default();
-        layout_subtree(
-            root_id,
-            &nodes_by_id,
-            &children_by_parent,
-            &subtree_heights,
-            config,
-            config.origin.x,
-            next_root_top_y,
-            &mut positions,
-        );
-        next_root_top_y =
-            next_root_top_y.saturating_add(subtree_height.saturating_add(config.root_spacing));
+    for (id, point) in view.ids.iter().copied().zip(view.positions.iter().copied()) {
+        positions.insert(id, point);
     }
-
-    let bounds = compute_bounds(&nodes_by_id, &positions).unwrap_or(Rect {
-        origin: config.origin,
-        size: Size {
-            width: 0,
-            height: 0,
-        },
-    });
-
-    Ok(LayoutOutput { positions, bounds })
+    Ok(LayoutOutput {
+        positions,
+        bounds: view.bounds,
+    })
 }
 
-fn build_nodes_by_id<Id: Copy + Ord>(
-    input_nodes: &[LayoutNode<Id>],
-) -> Result<BTreeMap<Id, LayoutNode<Id>>, LayoutError<Id>> {
-    let mut nodes_by_id = BTreeMap::new();
-    for node in input_nodes {
+fn validate_node_sizes<Id: Copy>(nodes: &[LayoutNode<Id>]) -> Result<(), LayoutError<Id>> {
+    for node in nodes {
         if !node.size.is_non_negative() {
             return Err(LayoutError::NegativeNodeSize {
                 id: node.id,
                 size: node.size,
             });
         }
-        if nodes_by_id.insert(node.id, *node).is_some() {
-            return Err(LayoutError::DuplicateNodeId { id: node.id });
-        }
     }
-    Ok(nodes_by_id)
+    Ok(())
 }
 
-fn build_children_by_parent<Id: Copy + Ord + std::fmt::Debug>(
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    unknown_parent_policy: UnknownParentPolicy,
-) -> Result<BTreeMap<Id, Vec<Id>>, LayoutError<Id>> {
-    let mut children_by_parent: BTreeMap<Id, Vec<Id>> = BTreeMap::new();
+fn validate_unique_ids<Id: Copy + Ord>(
+    nodes_sorted_by_id: &[LayoutNode<Id>],
+) -> Result<(), LayoutError<Id>> {
+    for window in nodes_sorted_by_id.windows(2) {
+        if window[0].id == window[1].id {
+            return Err(LayoutError::DuplicateNodeId { id: window[0].id });
+        }
+    }
+    Ok(())
+}
 
-    for node in nodes_by_id.values() {
+fn build_index_by_id<Id: Copy + Ord>(ids: &[Id]) -> BTreeMap<Id, usize> {
+    let mut index_by_id = BTreeMap::new();
+    for (index, id) in ids.iter().copied().enumerate() {
+        index_by_id.insert(id, index);
+    }
+    index_by_id
+}
+
+fn build_parent_index<Id: Copy + Ord + std::fmt::Debug>(
+    nodes_sorted_by_id: &[LayoutNode<Id>],
+    index_by_id: &BTreeMap<Id, usize>,
+    options: LayoutOptions,
+) -> Result<Vec<Option<usize>>, LayoutError<Id>> {
+    let mut parent_index = Vec::with_capacity(nodes_sorted_by_id.len());
+    for node in nodes_sorted_by_id {
         let Some(parent_id) = node.parent_id else {
+            parent_index.push(None);
             continue;
         };
-        if !nodes_by_id.contains_key(&parent_id) {
-            match unknown_parent_policy {
+
+        match index_by_id.get(&parent_id).copied() {
+            Some(parent) => parent_index.push(Some(parent)),
+            None => match options.unknown_parent_policy {
                 UnknownParentPolicy::TreatAsRoot => {
                     redesmyn_logging::tracing::debug!(
                         ?parent_id,
                         node_id = ?node.id,
                         "parent_id not found; treating node as root"
                     );
-                    continue;
+                    parent_index.push(None);
                 }
                 UnknownParentPolicy::Error => {
                     return Err(LayoutError::UnknownParentId {
@@ -234,196 +496,178 @@ fn build_children_by_parent<Id: Copy + Ord + std::fmt::Debug>(
                         parent_id,
                     });
                 }
-            }
+            },
         }
-
-        children_by_parent
-            .entry(parent_id)
-            .or_default()
-            .push(node.id);
     }
-
-    for children in children_by_parent.values_mut() {
-        children.sort_unstable();
-    }
-
-    Ok(children_by_parent)
+    Ok(parent_index)
 }
 
-fn roots_in_stable_order<Id: Copy + Ord>(nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>) -> Vec<Id> {
+fn roots_in_stable_order(parent_index: &[Option<usize>]) -> Vec<usize> {
     let mut roots = Vec::new();
-    for node in nodes_by_id.values() {
-        match node.parent_id {
-            None => roots.push(node.id),
-            Some(parent_id) if !nodes_by_id.contains_key(&parent_id) => roots.push(node.id),
-            Some(_) => {}
+    for (index, parent) in parent_index.iter().copied().enumerate() {
+        if parent.is_none() {
+            roots.push(index);
         }
     }
     roots
 }
 
-fn detect_cycles<Id: Copy + Ord + std::fmt::Debug>(
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    children_by_parent: &BTreeMap<Id, Vec<Id>>,
-) -> Result<(), LayoutError<Id>> {
-    let mut state: BTreeMap<Id, VisitState> = BTreeMap::new();
-    for node_id in nodes_by_id.keys().copied() {
-        if state.contains_key(&node_id) {
-            continue;
-        }
-        detect_cycles_dfs(node_id, children_by_parent, &mut state)?;
+fn build_children_adjacency(
+    parent_index: &[Option<usize>],
+    node_count: usize,
+) -> (Vec<usize>, Vec<Range<usize>>) {
+    let mut child_counts = vec![0_usize; node_count];
+    for parent in parent_index.iter().copied().flatten() {
+        child_counts[parent] += 1;
     }
-    Ok(())
+
+    let mut child_range = Vec::with_capacity(node_count);
+    let mut total_children = 0_usize;
+    for count in &child_counts {
+        let start = total_children;
+        total_children += *count;
+        child_range.push(start..total_children);
+    }
+
+    let mut next_child_slot: Vec<usize> = child_range.iter().map(|range| range.start).collect();
+    let mut children = vec![0_usize; total_children];
+
+    for (child_index, parent) in parent_index.iter().copied().enumerate() {
+        let Some(parent_index) = parent else {
+            continue;
+        };
+        let slot = &mut next_child_slot[parent_index];
+        children[*slot] = child_index;
+        *slot += 1;
+    }
+
+    (children, child_range)
 }
 
-fn detect_cycles_dfs<Id: Copy + Ord + std::fmt::Debug>(
-    node_id: Id,
-    children_by_parent: &BTreeMap<Id, Vec<Id>>,
-    state: &mut BTreeMap<Id, VisitState>,
+fn detect_cycles<Id: Copy + std::fmt::Debug>(
+    ids: &[Id],
+    children: &[usize],
+    child_range: &[Range<usize>],
 ) -> Result<(), LayoutError<Id>> {
-    match state.get(&node_id).copied() {
-        Some(VisitState::Visiting) => {
-            redesmyn_logging::tracing::debug!(node_id = ?node_id, "cycle detected");
-            return Err(LayoutError::CycleDetected { id: node_id });
+    let mut state = vec![VisitState::Unvisited; ids.len()];
+    let mut stack: Vec<CycleFrame> = Vec::with_capacity(ids.len());
+
+    for start in 0..ids.len() {
+        if state[start] != VisitState::Unvisited {
+            continue;
         }
-        Some(VisitState::Visited) => return Ok(()),
-        None => {}
+
+        state[start] = VisitState::Visiting;
+        stack.push(CycleFrame {
+            node_index: start,
+            next_child_pos: child_range[start].start,
+        });
+
+        while let Some(frame) = stack.last_mut() {
+            let node_index = frame.node_index;
+            let child_end = child_range[node_index].end;
+            if frame.next_child_pos >= child_end {
+                state[node_index] = VisitState::Visited;
+                stack.pop();
+                continue;
+            }
+
+            let child_index = children[frame.next_child_pos];
+            frame.next_child_pos += 1;
+            match state[child_index] {
+                VisitState::Unvisited => {
+                    state[child_index] = VisitState::Visiting;
+                    stack.push(CycleFrame {
+                        node_index: child_index,
+                        next_child_pos: child_range[child_index].start,
+                    });
+                }
+                VisitState::Visiting => {
+                    redesmyn_logging::tracing::debug!(
+                        node_id = ?ids[child_index],
+                        "cycle detected"
+                    );
+                    return Err(LayoutError::CycleDetected {
+                        id: ids[child_index],
+                    });
+                }
+                VisitState::Visited => {}
+            }
+        }
     }
 
-    state.insert(node_id, VisitState::Visiting);
-    if let Some(children) = children_by_parent.get(&node_id) {
-        for child_id in children {
-            detect_cycles_dfs(*child_id, children_by_parent, state)?;
-        }
-    }
-    state.insert(node_id, VisitState::Visited);
     Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VisitState {
+    Unvisited,
     Visiting,
     Visited,
 }
 
-fn compute_subtree_heights<Id: Copy + Ord>(
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    children_by_parent: &BTreeMap<Id, Vec<Id>>,
-    config: LayoutConfig,
-) -> BTreeMap<Id, i32> {
-    let mut memo: BTreeMap<Id, i32> = BTreeMap::new();
-    for node_id in nodes_by_id.keys().copied() {
-        compute_subtree_height(node_id, nodes_by_id, children_by_parent, config, &mut memo);
-    }
-    memo
+#[derive(Clone, Copy)]
+struct CycleFrame {
+    node_index: usize,
+    next_child_pos: usize,
 }
 
-fn compute_subtree_height<Id: Copy + Ord>(
-    node_id: Id,
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    children_by_parent: &BTreeMap<Id, Vec<Id>>,
-    config: LayoutConfig,
-    memo: &mut BTreeMap<Id, i32>,
-) -> i32 {
-    if let Some(height) = memo.get(&node_id).copied() {
-        return height;
-    }
+fn build_postorder(
+    roots: &[usize],
+    children: &[usize],
+    child_range: &[Range<usize>],
+    node_count: usize,
+) -> Vec<usize> {
+    let mut postorder = Vec::with_capacity(node_count);
+    let mut stack: Vec<PostorderFrame> = Vec::with_capacity(node_count);
 
-    let node_height = nodes_by_id
-        .get(&node_id)
-        .map(|node| node.size.height)
-        .unwrap_or_default();
-    let Some(children) = children_by_parent.get(&node_id) else {
-        memo.insert(node_id, node_height);
-        return node_height;
-    };
+    for &root_index in roots {
+        stack.push(PostorderFrame {
+            node_index: root_index,
+            next_child_pos: child_range[root_index].start,
+        });
 
-    let mut children_total_height = 0_i32;
-    for (idx, child_id) in children.iter().enumerate() {
-        let child_height =
-            compute_subtree_height(*child_id, nodes_by_id, children_by_parent, config, memo);
-        children_total_height = children_total_height.saturating_add(child_height);
-        if idx + 1 < children.len() {
-            children_total_height = children_total_height.saturating_add(config.sibling_spacing);
+        while let Some(frame) = stack.last_mut() {
+            let node_index = frame.node_index;
+            let child_end = child_range[node_index].end;
+            if frame.next_child_pos >= child_end {
+                postorder.push(node_index);
+                stack.pop();
+                continue;
+            }
+
+            let child_index = children[frame.next_child_pos];
+            frame.next_child_pos += 1;
+            stack.push(PostorderFrame {
+                node_index: child_index,
+                next_child_pos: child_range[child_index].start,
+            });
         }
     }
 
-    let subtree_height = node_height.max(children_total_height);
-    memo.insert(node_id, subtree_height);
-    subtree_height
+    postorder
 }
 
-fn layout_subtree<Id: Copy + Ord>(
-    node_id: Id,
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    children_by_parent: &BTreeMap<Id, Vec<Id>>,
-    subtree_heights: &BTreeMap<Id, i32>,
-    config: LayoutConfig,
-    x: i32,
-    subtree_top_y: i32,
-    positions: &mut BTreeMap<Id, Point>,
-) {
-    let Some(node) = nodes_by_id.get(&node_id).copied() else {
-        return;
-    };
-
-    let subtree_height = subtree_heights.get(&node_id).copied().unwrap_or_default();
-    let node_y = subtree_top_y.saturating_add((subtree_height - node.size.height) / 2);
-    positions.insert(node_id, Point { x, y: node_y });
-
-    let Some(children) = children_by_parent.get(&node_id) else {
-        return;
-    };
-    if children.is_empty() {
-        return;
-    }
-
-    let mut children_total_height = 0_i32;
-    for (idx, child_id) in children.iter().enumerate() {
-        let child_subtree_height = subtree_heights.get(child_id).copied().unwrap_or_default();
-        children_total_height = children_total_height.saturating_add(child_subtree_height);
-        if idx + 1 < children.len() {
-            children_total_height = children_total_height.saturating_add(config.sibling_spacing);
-        }
-    }
-
-    let mut next_child_top_y =
-        subtree_top_y.saturating_add((subtree_height - children_total_height) / 2);
-    let child_x = x.saturating_add(node.size.width.saturating_add(config.layer_spacing));
-    for child_id in children {
-        let child_subtree_height = subtree_heights.get(child_id).copied().unwrap_or_default();
-        layout_subtree(
-            *child_id,
-            nodes_by_id,
-            children_by_parent,
-            subtree_heights,
-            config,
-            child_x,
-            next_child_top_y,
-            positions,
-        );
-        next_child_top_y = next_child_top_y
-            .saturating_add(child_subtree_height.saturating_add(config.sibling_spacing));
-    }
+#[derive(Clone, Copy)]
+struct PostorderFrame {
+    node_index: usize,
+    next_child_pos: usize,
 }
 
-fn compute_bounds<Id: Copy + Ord>(
-    nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-    positions: &BTreeMap<Id, Point>,
+fn compute_bounds(
+    sizes: impl IntoIterator<Item = Size>,
+    positions: impl IntoIterator<Item = Point>,
 ) -> Option<Rect> {
     let mut min_x = i32::MAX;
     let mut min_y = i32::MAX;
     let mut max_x = i32::MIN;
     let mut max_y = i32::MIN;
 
-    for (node_id, position) in positions {
-        let Some(node) = nodes_by_id.get(node_id) else {
-            continue;
-        };
+    for (size, position) in sizes.into_iter().zip(positions) {
         min_x = min_x.min(position.x);
         min_y = min_y.min(position.y);
-        max_x = max_x.max(position.x.saturating_add(node.size.width));
-        max_y = max_y.max(position.y.saturating_add(node.size.height));
+        max_x = max_x.max(position.x.saturating_add(size.width));
+        max_y = max_y.max(position.y.saturating_add(size.height));
     }
 
     if min_x == i32::MAX {
@@ -442,6 +686,73 @@ fn compute_bounds<Id: Copy + Ord>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(test)]
+    mod alloc_counter {
+        use std::alloc::{GlobalAlloc, Layout, System};
+        use std::cell::Cell;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        pub struct CountingAllocator;
+
+        static ALLOCATION_CALLS: AtomicUsize = AtomicUsize::new(0);
+        thread_local! {
+            static TRACK_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+        }
+
+        impl CountingAllocator {
+            pub fn begin() {
+                TRACK_ALLOCATIONS.with(|flag| flag.set(true));
+                Self::reset();
+            }
+
+            pub fn end() {
+                TRACK_ALLOCATIONS.with(|flag| flag.set(false));
+            }
+
+            pub fn reset() {
+                ALLOCATION_CALLS.store(0, Ordering::Relaxed);
+            }
+
+            pub fn count() -> usize {
+                ALLOCATION_CALLS.load(Ordering::Relaxed)
+            }
+
+            fn is_tracking() -> bool {
+                TRACK_ALLOCATIONS.with(|flag| flag.get())
+            }
+        }
+
+        unsafe impl GlobalAlloc for CountingAllocator {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                if CountingAllocator::is_tracking() {
+                    ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
+                }
+                unsafe { System.alloc(layout) }
+            }
+
+            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+                if CountingAllocator::is_tracking() {
+                    ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
+                }
+                unsafe { System.alloc_zeroed(layout) }
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                unsafe { System.dealloc(ptr, layout) }
+            }
+
+            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+                if CountingAllocator::is_tracking() {
+                    ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
+                }
+                unsafe { System.realloc(ptr, layout, new_size) }
+            }
+        }
+    }
+
+    #[global_allocator]
+    static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
     fn rect_intersects(a_origin: Point, a_size: Size, b_origin: Point, b_size: Size) -> bool {
         let a = Rect {
@@ -714,5 +1025,155 @@ mod tests {
                 parent_id: 999
             }
         );
+    }
+
+    #[test]
+    fn layout_engine_does_not_allocate_on_layout_after_construction() {
+        let config = LayoutConfig {
+            layer_spacing: 20,
+            sibling_spacing: 10,
+            root_spacing: 15,
+            origin: Point { x: 0, y: 0 },
+        };
+
+        let nodes = vec![
+            LayoutNode {
+                id: 1_u32,
+                parent_id: None,
+                size: Size {
+                    width: 100,
+                    height: 50,
+                },
+            },
+            LayoutNode {
+                id: 2_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 80,
+                    height: 40,
+                },
+            },
+            LayoutNode {
+                id: 4_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 70,
+                    height: 30,
+                },
+            },
+            LayoutNode {
+                id: 3_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 120,
+                    height: 60,
+                },
+            },
+            LayoutNode {
+                id: 10_u32,
+                parent_id: None,
+                size: Size {
+                    width: 90,
+                    height: 90,
+                },
+            },
+            LayoutNode {
+                id: 11_u32,
+                parent_id: Some(10),
+                size: Size {
+                    width: 40,
+                    height: 30,
+                },
+            },
+        ];
+
+        let mut engine =
+            ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
+
+        alloc_counter::CountingAllocator::begin();
+        engine.layout(config);
+        let (idx_3, idx_4, idx_10, baseline_pos_3, baseline_pos_4, baseline_pos_10) = {
+            let ids = engine.ids();
+            let positions = engine.positions();
+            assert_no_overlaps(ids, positions, engine.sizes());
+            let idx_3 = index_of_id(ids, 3);
+            let idx_4 = index_of_id(ids, 4);
+            let idx_10 = index_of_id(ids, 10);
+            (
+                idx_3,
+                idx_4,
+                idx_10,
+                positions[idx_3],
+                positions[idx_4],
+                positions[idx_10],
+            )
+        };
+
+        let mut saw_sibling_push_away = false;
+        let mut saw_child_push_away = false;
+        let mut saw_root_stack_push_away = false;
+
+        for size in [
+            Size {
+                width: 80,
+                height: 40,
+            },
+            Size {
+                width: 120,
+                height: 40,
+            },
+            Size {
+                width: 80,
+                height: 110,
+            },
+            Size {
+                width: 160,
+                height: 70,
+            },
+        ] {
+            engine.set_size(2, size).expect("set_size should succeed");
+            engine.layout(config);
+            {
+                let positions = engine.positions();
+                assert_no_overlaps(engine.ids(), positions, engine.sizes());
+                let pos_3 = positions[idx_3];
+                let pos_4 = positions[idx_4];
+                let pos_10 = positions[idx_10];
+                saw_sibling_push_away |= pos_3.y != baseline_pos_3.y;
+                saw_child_push_away |= pos_4.x != baseline_pos_4.x;
+                saw_root_stack_push_away |= pos_10.y != baseline_pos_10.y;
+            }
+        }
+
+        assert!(
+            saw_sibling_push_away && saw_child_push_away && saw_root_stack_push_away,
+            "expected some neighbor nodes to move when node size changes"
+        );
+
+        alloc_counter::CountingAllocator::end();
+        assert_eq!(alloc_counter::CountingAllocator::count(), 0);
+    }
+
+    fn index_of_id(ids: &[u32], id: u32) -> usize {
+        ids.iter()
+            .position(|candidate| *candidate == id)
+            .expect("id should exist")
+    }
+
+    fn assert_no_overlaps(ids: &[u32], positions: &[Point], sizes: &[Size]) {
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let a_id = ids[i];
+                let b_id = ids[j];
+                let a_pos = positions[i];
+                let b_pos = positions[j];
+                let a_size = sizes[i];
+                let b_size = sizes[j];
+                assert!(
+                    !rect_intersects(a_pos, a_size, b_pos, b_size),
+                    "nodes {a_id} and {b_id} overlap: {a_pos:?} {a_size:?} vs {b_pos:?} {b_size:?}",
+                );
+            }
+        }
     }
 }
