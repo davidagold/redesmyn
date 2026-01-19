@@ -7,5 +7,4 @@ version.workspace = true
 publish = false
 
 [dependencies]
-tracing.workspace = true
-
+redesmyn_logging.workspace = true
