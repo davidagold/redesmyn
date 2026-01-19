@@ -1357,7 +1357,7 @@ dependencies = [
 name = "redesmyn_graph_layout"
 version = "0.1.0"
 dependencies = [
- "tracing",
+ "redesmyn_logging",
 ]
 
 [[package]]

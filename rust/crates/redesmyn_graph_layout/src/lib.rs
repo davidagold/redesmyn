@@ -11,6 +11,9 @@
 
 use std::collections::BTreeMap;
 
+/// A 2D point in logical pixels.
+///
+/// In [`LayoutOutput`], points represent the top-left origin of a node's rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,
@@ -72,6 +75,29 @@ impl Default for LayoutConfig {
     }
 }
 
+/// How to treat a node whose `parent_id` does not appear in the input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnknownParentPolicy {
+    /// Treat the node as a root (useful for partial / filtered forests).
+    TreatAsRoot,
+    /// Reject the input as invalid.
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutOptions {
+    /// Input validation / interpretation policy.
+    pub unknown_parent_policy: UnknownParentPolicy,
+}
+
+impl Default for LayoutOptions {
+    fn default() -> Self {
+        Self {
+            unknown_parent_policy: UnknownParentPolicy::TreatAsRoot,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayoutNode<Id> {
     pub id: Id,
@@ -89,9 +115,14 @@ pub struct LayoutOutput<Id> {
 pub enum LayoutError<Id> {
     DuplicateNodeId { id: Id },
     NegativeNodeSize { id: Id, size: Size },
+    UnknownParentId { id: Id, parent_id: Id },
     CycleDetected { id: Id },
 }
 
+/// Computes a deterministic layout for a rooted forest.
+///
+/// Nodes whose `parent_id` is not present in the input are treated as roots. Use
+/// [`layout_forest_with_options`] with [`UnknownParentPolicy::Error`] to reject such inputs.
 #[must_use]
 pub fn layout_forest<Id>(
     nodes: impl IntoIterator<Item = LayoutNode<Id>>,
@@ -100,18 +131,31 @@ pub fn layout_forest<Id>(
 where
     Id: Copy + Ord + std::fmt::Debug,
 {
+    layout_forest_with_options(nodes, config, LayoutOptions::default())
+}
+
+#[must_use]
+pub fn layout_forest_with_options<Id>(
+    nodes: impl IntoIterator<Item = LayoutNode<Id>>,
+    config: LayoutConfig,
+    options: LayoutOptions,
+) -> Result<LayoutOutput<Id>, LayoutError<Id>>
+where
+    Id: Copy + Ord + std::fmt::Debug,
+{
     let input_nodes: Vec<LayoutNode<Id>> = nodes.into_iter().collect();
-    let span = tracing::debug_span!(
+    let span = redesmyn_logging::tracing::debug_span!(
         "graph_layout.layout_forest",
         node_count = input_nodes.len(),
         layer_spacing = config.layer_spacing,
         sibling_spacing = config.sibling_spacing,
         root_spacing = config.root_spacing,
+        unknown_parent_policy = ?options.unknown_parent_policy,
     );
     let _guard = span.enter();
 
     let nodes_by_id = build_nodes_by_id(&input_nodes)?;
-    let children_by_parent = build_children_by_parent(&nodes_by_id);
+    let children_by_parent = build_children_by_parent(&nodes_by_id, options.unknown_parent_policy)?;
     detect_cycles(&nodes_by_id, &children_by_parent)?;
 
     let roots = roots_in_stable_order(&nodes_by_id);
@@ -166,7 +210,8 @@ fn build_nodes_by_id<Id: Copy + Ord>(
 
 fn build_children_by_parent<Id: Copy + Ord + std::fmt::Debug>(
     nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>,
-) -> BTreeMap<Id, Vec<Id>> {
+    unknown_parent_policy: UnknownParentPolicy,
+) -> Result<BTreeMap<Id, Vec<Id>>, LayoutError<Id>> {
     let mut children_by_parent: BTreeMap<Id, Vec<Id>> = BTreeMap::new();
 
     for node in nodes_by_id.values() {
@@ -174,12 +219,22 @@ fn build_children_by_parent<Id: Copy + Ord + std::fmt::Debug>(
             continue;
         };
         if !nodes_by_id.contains_key(&parent_id) {
-            tracing::debug!(
-                ?parent_id,
-                node_id = ?node.id,
-                "parent_id not found; treating node as root"
-            );
-            continue;
+            match unknown_parent_policy {
+                UnknownParentPolicy::TreatAsRoot => {
+                    redesmyn_logging::tracing::debug!(
+                        ?parent_id,
+                        node_id = ?node.id,
+                        "parent_id not found; treating node as root"
+                    );
+                    continue;
+                }
+                UnknownParentPolicy::Error => {
+                    return Err(LayoutError::UnknownParentId {
+                        id: node.id,
+                        parent_id,
+                    });
+                }
+            }
         }
 
         children_by_parent
@@ -192,7 +247,7 @@ fn build_children_by_parent<Id: Copy + Ord + std::fmt::Debug>(
         children.sort_unstable();
     }
 
-    children_by_parent
+    Ok(children_by_parent)
 }
 
 fn roots_in_stable_order<Id: Copy + Ord>(nodes_by_id: &BTreeMap<Id, LayoutNode<Id>>) -> Vec<Id> {
@@ -228,7 +283,7 @@ fn detect_cycles_dfs<Id: Copy + Ord + std::fmt::Debug>(
 ) -> Result<(), LayoutError<Id>> {
     match state.get(&node_id).copied() {
         Some(VisitState::Visiting) => {
-            tracing::debug!(node_id = ?node_id, "cycle detected");
+            redesmyn_logging::tracing::debug!(node_id = ?node_id, "cycle detected");
             return Err(LayoutError::CycleDetected { id: node_id });
         }
         Some(VisitState::Visited) => return Ok(()),
@@ -630,5 +685,34 @@ mod tests {
 
         let err = layout_forest(nodes, LayoutConfig::default()).expect_err("should detect cycle");
         assert_eq!(err, LayoutError::CycleDetected { id: 1 });
+    }
+
+    #[test]
+    fn can_reject_unknown_parent_ids_when_configured() {
+        let nodes = vec![LayoutNode {
+            id: 1_u32,
+            parent_id: Some(999),
+            size: Size {
+                width: 10,
+                height: 10,
+            },
+        }];
+
+        let err = layout_forest_with_options(
+            nodes,
+            LayoutConfig::default(),
+            LayoutOptions {
+                unknown_parent_policy: UnknownParentPolicy::Error,
+            },
+        )
+        .expect_err("should reject unknown parent_id");
+
+        assert_eq!(
+            err,
+            LayoutError::UnknownParentId {
+                id: 1,
+                parent_id: 999
+            }
+        );
     }
 }
