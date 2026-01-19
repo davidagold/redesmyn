@@ -294,6 +294,7 @@ Layout direction:
 - A persistently visible, collapsible **left session pane** scoped to the selected epic.
 - A graph-first right pane.
 - “Overseer” is developer shorthand only; the UI does not introduce a new user-facing construct.
+- Zed is the primary reference implementation for GPUI ergonomics/perf; implement patterns from scratch (see T-44).
 
 Tasks:
 
