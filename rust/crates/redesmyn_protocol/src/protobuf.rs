@@ -169,7 +169,15 @@ impl Scope {
     #[must_use]
     pub fn to_protobuf(self) -> pbv1::Scope {
         match self {
-            Self::None | Self::Unknown => pbv1::Scope { kind: None },
+            // `Scope` is only present when `ProtocolEnvelope.scope` is `Some(_)`.
+            //
+            // If we encounter a scope kind we don't understand, we still want to preserve the
+            // distinction between:
+            // - "no scope" (`ProtocolEnvelope.scope == None`), and
+            // - "unknown scope kind" (`ProtocolEnvelope.scope == Some(Scope::Unknown)`).
+            //
+            // We represent `Unknown` as an empty `pbv1::Scope` message.
+            Self::Unknown => pbv1::Scope { kind: None },
             Self::Repo { repo } => pbv1::Scope {
                 kind: Some(pbv1::scope::Kind::Repo(repo.to_protobuf())),
             },
@@ -178,7 +186,9 @@ impl Scope {
 
     pub fn try_from_protobuf(proto: pbv1::Scope) -> Result<Self, ErrorEnvelope> {
         match proto.kind {
-            None => Ok(Self::None),
+            // Forward compatibility: older binaries may decode a new scope kind into an "empty"
+            // `pbv1::Scope` message (prost discards unknown fields by default).
+            None => Ok(Self::Unknown),
             Some(pbv1::scope::Kind::Repo(repo)) => Ok(Self::Repo {
                 repo: RepoScope::try_from_protobuf(repo)?,
             }),
