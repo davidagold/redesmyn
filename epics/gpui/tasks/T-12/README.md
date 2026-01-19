@@ -27,6 +27,11 @@ Define a client ↔ control plane API protocol that:
 - supports request/response queries and streaming subscriptions,
 - and uses the same envelope/versioning rules as the rest of the system (T-9).
 
+This protocol must use canonical typed messages:
+
+- `.proto` is the source of truth, generating Rust types in `rust/crates/redesmyn_protocol`,
+- embedded mode may route requests in-proc without serialization, but the semantics must match the out-of-proc protocol.
+
 ## Requirements
 
 ### 1) Transport
@@ -73,6 +78,7 @@ For local UDS:
 
 - Allow forcing JSON codec for the client API in debug mode (optional).
 - Ensure request/response correlation is easy to trace (`trace_id`/`request_id` in spans).
+- Support an optional “codec loopback” mode in embedded dev/tests (encode→decode) to exercise the on-wire codec even when using in-proc clients.
 
 ## Acceptance criteria
 

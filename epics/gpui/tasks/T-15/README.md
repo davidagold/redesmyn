@@ -129,6 +129,7 @@ Define test fixture modes that make AI-driven tests cheap to run:
 
 - **Mock daemon mode**: a deterministic daemon simulator that emits telemetry/events from fixtures without touching a real git repo.
 - **Real repo mode**: a temporary repo/worktree fixture for “true integration” tests.
+- **Embedded codec loopback mode** (optional): in embedded desktop/control-plane tests, run in-proc transports through encode→decode to exercise the wire codec without requiring a network daemon.
 
 Tests should be able to choose between:
 
