@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 redesmyn_ids = { workspace = true, features = ["sqlx"] }
 redesmyn_logging.workspace = true
-sqlx = { workspace = true, features = ["migrate", "sqlite", "runtime-tokio"] }
+sqlx = { workspace = true, features = ["macros", "migrate", "sqlite", "runtime-tokio"] }
 thiserror.workspace = true
 
 [dev-dependencies]

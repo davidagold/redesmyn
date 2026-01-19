@@ -11,7 +11,7 @@ Control-plane persistence (SQLite via `sqlx`).
 
 The control plane (server/desktop host) should call `open_sqlite_pool(db_path).await?` during
 startup. This creates the SQLite pool and applies all pending migrations from `migrations/` (via
-`CARGO_MANIFEST_DIR`).
+`sqlx::migrate!()` embedded migrations).
 
 ### Tests
 
