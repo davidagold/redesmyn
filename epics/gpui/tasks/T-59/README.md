@@ -40,6 +40,8 @@ so that later UI work (markdown rendering, composer, pinned chats, task details)
 
 ## Requirements
 
+Architecture note: follow the GPUI state architecture policy in `epics/gpui/README.md` §3.7 (Presentation Model; explicit + testable). The session viewer view-model types (`SessionFeedState`, `SessionTimelineItem`, etc.) are presentation models; GPUI views render only that view-model and keep IO out of `render()`.
+
 ### 1) Session semantics: session == conversation; turns are events
 
 The session viewer must treat `SessionId` as a **conversation id**:

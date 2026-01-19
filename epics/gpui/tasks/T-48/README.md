@@ -31,6 +31,8 @@ This is local-only and intended for:
 
 ## Requirements
 
+Architecture note: follow the GPUI state architecture policy in `epics/gpui/README.md` §3.7 (Presentation Model; explicit + testable). The UI driver must trigger high-level actions that flow through the same presentation model reducers and command paths as real UI interactions, and semantic snapshots must reflect that explicit state.
+
 ### 1) Driver transport
 
 Expose a local-only automation surface:
