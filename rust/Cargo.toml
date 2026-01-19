@@ -18,6 +18,7 @@ redesmyn_exec = { path = "crates/redesmyn_exec" }
 redesmyn_errors = { path = "crates/redesmyn_errors" }
 redesmyn_git = { path = "crates/redesmyn_git" }
 redesmyn_ids = { path = "crates/redesmyn_ids" }
+redesmyn_graph_layout = { path = "crates/redesmyn_graph_layout" }
 redesmyn_logging = { path = "crates/redesmyn_logging" }
 redesmyn_protocol = { path = "crates/redesmyn_protocol" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
