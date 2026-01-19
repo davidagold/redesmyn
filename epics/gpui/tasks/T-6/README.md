@@ -38,7 +38,15 @@ Create a `redesmyn_storage` crate that provides:
 - Add a migrations directory for the Rust DB schema.
 - Document how migrations are applied in dev/test/prod.
 
-We will keep Alembic for the legacy Python DB until we switch; this ticket does not migrate the existing schema.
+Split-codebase DB strategy (v2 Rust DB):
+
+- The Rust control plane uses a **separate** SQLite database file managed by `sqlx` migrations:
+  - default path: `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+- The legacy Python/Alembic DB remains untouched:
+  - path: `<repo>/.redesmyn/redesmyn.sqlite3`
+  - Rust must not write to, migrate, or “fix up” the legacy DB.
+
+This ticket scaffolds the Rust DB + migration machinery only. Import/cutover from the legacy DB is handled separately (see T-67).
 
 ### 3) Minimal schema stub (for validation)
 

@@ -54,6 +54,12 @@ During the split-codebase port:
 - avoid disrupting the existing Python `.env` conventions,
 - but clearly document which settings are “Rust world” vs “legacy world”.
 
+DB path conventions (split DB strategy):
+
+- Legacy (Python/Alembic) DB remains: `<repo>/.redesmyn/redesmyn.sqlite3`
+- Rust (sqlx) control-plane DB defaults to: `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+- Rust code must **not** auto-migrate or write to the legacy DB; import/cutover is handled separately (see T-67).
+
 ### 4) Validation
 
 - validate required fields at startup,

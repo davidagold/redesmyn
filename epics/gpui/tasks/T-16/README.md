@@ -63,11 +63,17 @@ It must support:
 
 Use the typed config layer (T-5):
 
-- DB path (SQLite via `sqlx`)
+- DB path (SQLite via `sqlx`; split DB strategy)
 - UDS path for client API server (T-12)
 - optional: log dir/state dir paths
 
 Keep defaults sensible for macOS/Linux; do not depend on repo working directory.
+
+Split DB note:
+
+- The control plane’s default DB path is the Rust DB: `<repo>/.redesmyn/redesmyn_rust.sqlite3`.
+- The legacy DB (`<repo>/.redesmyn/redesmyn.sqlite3`) must not be migrated/written by Rust.
+- Legacy → Rust import is a separate flow (see T-67).
 
 ### 4) Concurrency model
 
