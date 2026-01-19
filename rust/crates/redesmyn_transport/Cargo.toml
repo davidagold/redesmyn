@@ -9,3 +9,11 @@ publish = false
 [dependencies]
 redesmyn_ids.workspace = true
 redesmyn_protocol.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

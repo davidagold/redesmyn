@@ -80,7 +80,7 @@ pub struct Heartbeat {
 /// Minimal, typed command placeholder for Domain 0.
 ///
 /// Domain 2 introduces the real command model and routing.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DaemonCommand {
     Noop,
@@ -91,7 +91,7 @@ pub struct DispatchCommand {
     pub command: DaemonCommand,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandAckStatus {
     Accepted,
@@ -104,7 +104,7 @@ pub struct CommandAck {
 }
 
 /// Minimal event placeholder for Domain 0.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DaemonEvent {
     Noop,
@@ -121,4 +121,3 @@ pub enum DaemonMessage {
     CommandAck(CommandAck),
     Event(DaemonEvent),
 }
-
