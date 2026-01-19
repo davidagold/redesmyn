@@ -373,7 +373,7 @@ pub fn build_resume_by_id_exec_turn(
 
     match (provider, external_session_ref) {
         (_, ExternalSessionRef::None) => {
-            tracing::warn!(
+            redesmyn_logging::tracing::warn!(
                 provider = provider.as_str(),
                 "resume-by-id exec turn requested without an external session ref"
             );
@@ -541,7 +541,7 @@ fn build_codex_exec_resume_argv(
     thread_id: &str,
 ) -> Result<Vec<String>, ResumeByIdExecTurnError> {
     let Some(codex_idx) = find_executable_index(base_argv, &["codex"]) else {
-        tracing::warn!("unable to find codex executable in argv");
+        redesmyn_logging::tracing::warn!("unable to find codex executable in argv");
         return Err(ResumeByIdExecTurnError::MissingCodexExecutable);
     };
 
@@ -550,7 +550,7 @@ fn build_codex_exec_resume_argv(
         .skip(codex_idx + 1)
         .position(|t| t == "exec")
     else {
-        tracing::warn!("codex argv missing `exec`");
+        redesmyn_logging::tracing::warn!("codex argv missing `exec`");
         return Err(ResumeByIdExecTurnError::MissingCodexExec);
     };
     let exec_idx = codex_idx + 1 + exec_pos;
@@ -558,7 +558,7 @@ fn build_codex_exec_resume_argv(
     let rest = &base_argv[exec_idx + 1..];
     let options = codex_exec_option_tokens(rest);
     if !options.iter().any(|t| t == "--json") {
-        tracing::warn!("codex argv missing `--json` for structured resume-by-id");
+        redesmyn_logging::tracing::warn!("codex argv missing `--json` for structured resume-by-id");
         return Err(ResumeByIdExecTurnError::CodexMissingJsonFlag);
     }
 
@@ -607,7 +607,7 @@ fn build_claude_exec_resume_argv(
     session_id: &str,
 ) -> Result<Vec<String>, ResumeByIdExecTurnError> {
     let Some(idx) = find_executable_index(base_argv, &["claude", "claude-code"]) else {
-        tracing::warn!("unable to find claude executable in argv");
+        redesmyn_logging::tracing::warn!("unable to find claude executable in argv");
         return Err(ResumeByIdExecTurnError::MissingClaudeExecutable);
     };
 
@@ -664,11 +664,13 @@ fn build_claude_exec_resume_argv(
     }
 
     if !cleaned.iter().any(|t| t == "--print" || t == "-p") {
-        tracing::warn!("claude argv missing `--print` for structured resume-by-id");
+        redesmyn_logging::tracing::warn!(
+            "claude argv missing `--print` for structured resume-by-id"
+        );
         return Err(ResumeByIdExecTurnError::ClaudeMissingPrintFlag);
     }
     if !argv_has_flag_value(&cleaned, "--output-format", "stream-json") {
-        tracing::warn!(
+        redesmyn_logging::tracing::warn!(
             "claude argv missing `--output-format stream-json` for structured resume-by-id"
         );
         return Err(ResumeByIdExecTurnError::ClaudeMissingStreamJsonOutput);
