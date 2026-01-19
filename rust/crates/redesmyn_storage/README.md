@@ -2,6 +2,24 @@
 
 Control-plane persistence (SQLite via `sqlx`).
 
+## Schema (v0)
+
+Core tables:
+
+- Graph: `workspaces`, `repositories`, `epics`, `tasks`, `task_relations`
+- Orchestration: `commands`, `command_updates`, `events`
+- Sessions: `session_events`, `artifacts`
+- Presence: `hosts`, `daemon_presence`
+
+Primary indices (selected):
+
+- `tasks`: by `epic_id`, by `parent_task_id`, and unique `(epic_id, local_ref)` when `local_ref` is
+  present.
+- `commands`: by scope (`scope_kind`, `scope_workspace_id`, `scope_repo_id`), by `state`, and by
+  `target_task_id`.
+- `session_events`: by `session_id`/time and by `task_id`/time.
+- `events`: by scope/time (used by the event log subscription surface).
+
 ## Migrations
 
 - Migrations live in `rust/crates/redesmyn_storage/migrations/`.

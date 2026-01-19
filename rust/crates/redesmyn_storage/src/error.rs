@@ -9,6 +9,9 @@ pub enum StorageError {
         source: std::io::Error,
     },
 
+    #[error("invalid data: {message}")]
+    InvalidData { message: String },
+
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
 

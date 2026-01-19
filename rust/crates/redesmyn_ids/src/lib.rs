@@ -251,16 +251,28 @@ ulid_id!(/// Identifier for an epic (graph root) within a workspace.
 EpicId);
 ulid_id!(/// Identifier for a task node within an epic.
 TaskId);
+ulid_id!(/// Identifier for a relation edge between two tasks.
+TaskRelationId);
 ulid_id!(/// Identifier for a command/run lifecycle execution.
 RunId);
 ulid_id!(/// Identifier for a host (machine) in a multi-host topology.
 HostId);
+ulid_id!(/// Identifier for a daemon process instance (ephemeral identity).
+HostInstanceId);
 ulid_id!(/// Identifier for a command (idempotency key and/or persisted command record).
 CommandId);
+ulid_id!(/// Identifier for a command lifecycle update/progress record.
+CommandUpdateId);
 ulid_id!(/// Identifier for an event (append-only event log record).
 EventId);
 ulid_id!(/// Identifier for a protocol message (idempotency + dedupe key).
 MsgId);
+ulid_id!(/// Identifier for a durable session/conversation.
+SessionId);
+ulid_id!(/// Identifier for a structured session event record.
+SessionEventId);
+ulid_id!(/// Identifier for an artifact reference/metadata record.
+ArtifactId);
 
 #[cfg(test)]
 mod tests {
@@ -281,11 +293,17 @@ mod tests {
         assert_roundtrip!(RepoId);
         assert_roundtrip!(EpicId);
         assert_roundtrip!(TaskId);
+        assert_roundtrip!(TaskRelationId);
         assert_roundtrip!(RunId);
         assert_roundtrip!(HostId);
+        assert_roundtrip!(HostInstanceId);
         assert_roundtrip!(CommandId);
+        assert_roundtrip!(CommandUpdateId);
         assert_roundtrip!(EventId);
         assert_roundtrip!(MsgId);
+        assert_roundtrip!(SessionId);
+        assert_roundtrip!(SessionEventId);
+        assert_roundtrip!(ArtifactId);
     }
 
     #[test]
