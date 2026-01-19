@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "anstyle"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -71,6 +77,44 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "clap"
+version = "4.5.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6e6ff9dcd79cff5cd969a17a545d79e84ab086e444102a591e288a8aa3ce394"
+dependencies = [
+ "clap_builder",
+ "clap_derive",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.5.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa42cf4d2b7a41bc8f663a7cab4031ebafa1bf3875705bfaf8466dc60ab52c00"
+dependencies = [
+ "anstyle",
+ "clap_lex",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.5.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "clap_lex"
+version = "0.7.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "concurrent-queue"
@@ -682,9 +726,11 @@ dependencies = [
 name = "redesmyn-server"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "redesmyn_config",
  "redesmyn_control_plane",
  "redesmyn_logging",
+ "redesmyn_protocol",
 ]
 
 [[package]]
@@ -702,6 +748,7 @@ dependencies = [
  "redesmyn_protocol",
  "redesmyn_storage",
  "redesmyn_transport",
+ "thiserror",
 ]
 
 [[package]]
@@ -734,6 +781,14 @@ name = "redesmyn_domain"
 version = "0.1.0"
 dependencies = [
  "redesmyn_ids",
+]
+
+[[package]]
+name = "redesmyn_errors"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -773,7 +828,10 @@ version = "0.1.0"
 name = "redesmyn_protocol"
 version = "0.1.0"
 dependencies = [
+ "redesmyn_errors",
  "redesmyn_ids",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
