@@ -18,8 +18,8 @@ Notes:
   pairings (workspace A + repo B). Deleting a repo cascades to scoped rows; deleting a workspace
   cascades via repos.
 - **Task topology integrity**: `tasks.parent_task_id` is constrained within an epic via
-  `(epic_id, parent_task_id) -> tasks(epic_id, id)` (no cross-epic parents). Deleting a task
-  cascades to its descendants.
+  `(epic_id, parent_task_id) -> tasks(epic_id, id)` (no cross-epic parents). Deleting a parent task
+  detaches children (`parent_task_id` becomes `NULL`); it does not delete subtrees implicitly.
 - **Session scope chains**: `session_events` enforce repo → epic and epic → task consistency using
   composite foreign keys; task-scoped rows must include `epic_id`.
 - **Sessions**: v0 does not create a dedicated `sessions` table. `session_id` is recorded on
