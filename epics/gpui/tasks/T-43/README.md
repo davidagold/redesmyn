@@ -69,6 +69,11 @@ Implement embedding through the same seams intended for remote mode:
 - Control plane communicates to the daemon via the typed transport trait (T-7/T-11).
 - The desktop UI communicates to the control plane via a client interface; in embedded mode this can be in-proc, but it must preserve the same semantics as the client API (T-12).
 
+Implementation guidance:
+
+- The canonical message schema lives in `rust/crates/redesmyn_protocol`; in-proc embedding must still exercise the same typed message flows (not “call control-plane/daemon internals”).
+- Prefer supporting an embedded “codec loopback” mode (encode→decode) to catch protocol drift early without requiring a remote daemon.
+
 ### 5) Logging + config wiring
 
 - Use the shared typed config layer (T-5) and tracing conventions (T-4).
@@ -105,4 +110,3 @@ No design work is required here; that’s in T-44..T-46.
 - Control plane host (Python today):
   - `redesmyn/api.py` (FastAPI app: REST + WS; serves the dashboard).
   - `redesmyn/cli.py` (process model / dev workflows).
-

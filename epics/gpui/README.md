@@ -52,6 +52,12 @@ Embedding both in the desktop app is an implementation detail:
 - “Remote daemon” uses a **network transport**.
 - The control plane speaks only to a **transport trait**, never daemon internals.
 
+Practical rule (avoid “local mode” drift):
+
+- The canonical cross-boundary message schema lives in `rust/crates/redesmyn_protocol` (generated from `.proto`).
+- All daemon↔control-plane communication (in-proc or remote) is expressed in terms of these typed message enums/structs.
+- In-proc transports may pass typed messages directly for speed, but we also support an optional “codec loopback” mode (encode→decode) to exercise the on-wire codec in embedded dev/tests without changing application architecture.
+
 ### 3.2 Serialization strategy (long-term view)
 
 We optimize for performance while preserving debuggability:

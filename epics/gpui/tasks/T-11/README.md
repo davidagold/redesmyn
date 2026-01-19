@@ -31,7 +31,17 @@ Define the daemon ↔ control plane stream protocol message set and semantics, i
 - command dispatch + lifecycle reporting,
 - and reconnect/resync behavior.
 
+This contract is independent of the concrete transport:
+
+- remote mode: framed network transport with Protobuf codec,
+- embedded mode: in-proc transport passing typed messages (optionally with codec loopback for embedded dev/tests).
+
 ## Requirements
+
+### 0) Canonical message schema
+
+- All message types for this protocol live in `.proto` and generate canonical Rust types in `rust/crates/redesmyn_protocol`.
+- Both daemon and control plane implementations depend on those typed messages via the transport trait (T-7), not bespoke JSON.
 
 ### 1) Handshake
 
