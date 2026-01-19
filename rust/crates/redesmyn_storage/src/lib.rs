@@ -5,7 +5,9 @@
 //! SQLite migrations live in `migrations/` and are applied at runtime via
 //! [`apply_migrations`]. Call [`open_sqlite_pool`] (file-backed) or
 //! [`open_test_sqlite_pool`] (in-memory) to create a pool with migrations
-//! applied.
+//! applied. Migrations are embedded in the binary at compile time (via
+//! `sqlx::migrate!()`), so packaged binaries do not need to access the
+//! `migrations/` directory at runtime.
 //!
 //! # ID mapping (ULID)
 //!

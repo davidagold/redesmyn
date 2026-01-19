@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
+
 use sqlx::{
     SqliteConnection, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -76,11 +78,8 @@ pub async fn open_test_sqlite_pool() -> Result<SqlitePool, StorageError> {
 
 pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
     async {
-        let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-        let migrator = sqlx::migrate::Migrator::new(migrations_dir).await?;
-
         let start = Instant::now();
-        migrator.run(pool).await?;
+        MIGRATOR.run(pool).await?;
         info!(
             elapsed_ms = start.elapsed().as_millis(),
             "sqlite migrations applied"
