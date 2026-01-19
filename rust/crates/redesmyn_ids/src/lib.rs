@@ -255,6 +255,8 @@ ulid_id!(/// Identifier for a command/run lifecycle execution.
 RunId);
 ulid_id!(/// Identifier for a host (machine) in a multi-host topology.
 HostId);
+ulid_id!(/// Identifier for a specific host process instance (ephemeral).
+HostInstanceId);
 ulid_id!(/// Identifier for a command (idempotency key and/or persisted command record).
 CommandId);
 ulid_id!(/// Identifier for an event (append-only event log record).
@@ -283,6 +285,7 @@ mod tests {
         assert_roundtrip!(TaskId);
         assert_roundtrip!(RunId);
         assert_roundtrip!(HostId);
+        assert_roundtrip!(HostInstanceId);
         assert_roundtrip!(CommandId);
         assert_roundtrip!(EventId);
         assert_roundtrip!(MsgId);

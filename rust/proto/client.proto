@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "envelope.proto";
+
+// Client ↔ control plane API messages (T-12).
+//
+// This file exists to establish schema ownership + build-time codegen (T-10).
+// The concrete request/response/subscription contracts are defined in T-12.
+

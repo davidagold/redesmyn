@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "envelope.proto";
+
+// Daemon ↔ control plane stream messages (T-11).
+//
+// This file intentionally starts small: it establishes schema ownership and the
+// codegen pipeline. Message sets and semantics are defined in T-11.
+//
+// Compatibility policy for unknown kinds:
+// - When transporting typed unions (events/session events), always include an
+//   explicit `Unknown*` variant with `type` and `json_payload` so older clients
+//   can still display something meaningful (see T-11/T-14).
+
+// Initial handshake message: daemon → control plane.
+message DaemonHello {
+  // HostId (ULID bytes, length = 16): stable identity for the host/machine.
+  bytes host_id = 1;
+  // Ephemeral process identity (ULID bytes, length = 16).
+  bytes host_instance_id = 2;
+  // Explicit daemon capabilities (stable strings; additive).
+  repeated string capabilities = 3;
+  // Supported protocol version advertised by the daemon.
+  ProtocolVersion supported_protocol = 4;
+}
+
+// Handshake response: control plane → daemon.
+message ControlPlaneHelloAck {
+  // Accepted protocol version after negotiation.
+  ProtocolVersion accepted_protocol = 1;
+  // Optional server capabilities/configuration (additive).
+  repeated string capabilities = 2;
+}
+
+// Forward-compatible placeholder for event union fallbacks (T-11).
+message UnknownEvent {
+  // Stable event type identifier (e.g. "git.commit", "agent.turn_completed").
+  string event_type = 1;
+  // Best-effort JSON payload for diagnostics/legacy rendering.
+  bytes json_payload = 2;
+}
+
