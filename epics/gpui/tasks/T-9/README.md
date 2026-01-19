@@ -66,6 +66,12 @@ Rules:
 - Non-repo-scoped messages must omit scope (`None`) and are routed at the connection level.
 - We intentionally leave room for future scope kinds (e.g. workspace-level) without breaking the envelope.
 
+Persistence note (Domain 2):
+
+- When scope is stored in DB tables as `(workspace_id, repo_id)`, treat it as a single logical
+  identity and prefer composite foreign keys (vs separate FKs) so “mismatched pairs” cannot be
+  persisted (see T-17).
+
 ### 3) Versioning rules
 
 - Major mismatch: reject with a structured error (and close the connection).

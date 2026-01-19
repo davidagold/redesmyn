@@ -48,6 +48,11 @@ Persist:
 - the initial command request (compact payload),
 - and append-only state updates.
 
+Schema note:
+
+- Prefer DB-level constraints that keep scope columns coherent (see T-17), so command lifecycle code
+  can assume scoped rows are internally consistent without re-validating on every query.
+
 ### 2) State machine
 
 Implement a small, explicit state machine aligned with Domain 1:

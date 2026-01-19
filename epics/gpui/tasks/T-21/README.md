@@ -52,6 +52,8 @@ Rules:
 
 - Keep it compact; do not embed large content.
 - Include stable identifiers and “human refs” where helpful (e.g., local task ref).
+- Prefer DB-level constraints that prevent cross-epic parent pointers (T-17), so graph traversal can
+  treat `parent_task_id` as a safe in-epic edge.
 
 ### 2) Computation strategy
 
