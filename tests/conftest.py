@@ -4,7 +4,10 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal
 
+import keyring
 import pytest
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
 
 from redesmyn.api import create_app
 from redesmyn.context import build_repo_context
@@ -24,6 +27,28 @@ from tests.scenarios.seeds.git import (
     seed_merged_parent,
     seed_running_agent,
 )
+
+
+class _MemoryKeyring(KeyringBackend):
+    priority = 1
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self._store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self._store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        try:
+            del self._store[(service, username)]
+        except KeyError as e:
+            raise PasswordDeleteError("Password not found") from e
+
+
+keyring.set_keyring(_MemoryKeyring())
 
 
 def _write_host_identity(*, repo_root: Path, host_key: str) -> None:
