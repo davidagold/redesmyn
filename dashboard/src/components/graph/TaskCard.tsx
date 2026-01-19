@@ -773,37 +773,21 @@ export function TaskCard({
     clearActionError()
     setGithubPrNotice(null)
 
-    const popup = window.open("about:blank", "_blank", "noreferrer")
-    const popupBlocked = !popup
-
-    if (popup) {
-      try {
-        popup.document.title = `Opening PR… (task ${taskId})`
-      } catch {
-        // Best-effort only.
-      }
-    }
-
     try {
       const result = await openGithubPr.mutateAsync({
         epicId: node.epicId,
         taskId,
       })
-      if (popup) {
-        popup.location.assign(result.url)
-        return
-      }
 
-      window.open(result.url, "_blank", "noreferrer")
-      if (popupBlocked) {
+      const opened = window.open(result.url, "_blank", "noreferrer")
+      if (!opened) {
         void copyToClipboard(result.url)
           .then(() => setGithubPrNotice("Popups blocked; PR URL copied."))
           .catch(() =>
-            setGithubPrNotice("Popups blocked; PR URL ready to copy."),
+            setGithubPrNotice("Popups blocked; PR URL: " + result.url),
           )
       }
     } catch (e) {
-      popup?.close()
       setActionErrorFromException("Open PR", e)
     } finally {
       setPendingMerge(null)
