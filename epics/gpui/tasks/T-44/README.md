@@ -60,6 +60,119 @@ We reviewed both Zed’s internal UI kit and `gpui-component` (Longbridge) befor
 - Build a small, maintainable `redesmyn_ui` crate directly on `gpui`, **inspired by Zed’s patterns** (but implemented from scratch).
 - We may selectively adopt **small, narrow** third-party crates (e.g. markdown parsing) later, but avoid importing a full UI kit framework.
 
+## What makes Zed “better” (and what we copy conceptually)
+
+Zed is our primary GPUI reference implementation because it has already solved the same class of problems we have:
+
+- dense, information-rich UI,
+- heavy scrolling + virtualization,
+- lots of keyboard-driven workflows,
+- and strict performance requirements.
+
+We **do not copy/paste Zed code** (license + coupling). We copy *principles and patterns* and implement them from scratch in `redesmyn_ui`.
+
+### A) Layered UI crate organization (merge-friendly)
+
+Zed’s `ui` crate is intentionally structured to avoid a single “god module”:
+
+- `styles/` for tokens + typography + spacing + elevation,
+- `traits/` for behavior composition (`Clickable`, `Disableable`, `AnimationExt`, …),
+- `components/` for reusable widgets,
+- `utils/` for one-off helpers.
+
+We should mirror this structure in `redesmyn_ui` so multiple agents can work in parallel with fewer conflicts.
+
+Reference orientation: Zed `crates/ui/src/ui.rs` and directory layout.
+
+### B) Typed tokens + density/scaling (calm, consistent UI)
+
+Zed avoids “random px soup” by using:
+
+- a spacing scale derived from a small enum (`DynamicSpacing`) with density settings,
+- `px(...)` / `rems(...)` helpers to keep units explicit,
+- semantic colors and typography tokens instead of ad-hoc styling per component.
+
+We should implement:
+
+- a small, typed token model (`Spacing`, `Radius`, `Elevation`, `Typography`, `ColorRole`, …),
+- UI density + scale knobs (even if we only expose defaults initially),
+- and a convention that components consume *tokens*, not raw numbers.
+
+Reference orientation: Zed `crates/ui/src/styles/spacing.rs` (dynamic spacing + density).
+
+### C) “Traits as mixins” for ergonomics (without inheritance)
+
+Zed gets strong composability via trait extensions:
+
+- a base element can become clickable/disableable/animatable/etc. by importing traits,
+- component APIs stay small and predictable,
+- behavior is reusable without deep component hierarchies.
+
+We should implement a small `redesmyn_ui::traits` layer for cross-cutting behaviors:
+
+- `Disableable` (disabled reason UX),
+- `Clickable` (pointer + keyboard activation),
+- `AnimationExt` (house animation presets),
+- `StyledExt` (common style refinements).
+
+Reference orientation: Zed `crates/ui/src/traits/*`.
+
+### D) Animation used deliberately (no spinner wheels, no noisy motion)
+
+Zed leans on GPUI’s `with_animation` and easing to build subtle, low-noise affordances:
+
+- quick in/out transitions for panels and popovers,
+- text-based loading indicators (no “spinner wheel” UI),
+- animations that don’t allocate per-frame.
+
+We should adopt the same mindset:
+
+- animations clarify state transitions and in-flight work,
+- use a tiny set of approved animation durations/easings,
+- avoid per-frame allocations.
+
+Reference orientation:
+
+- Zed `crates/ui/src/styles/animation.rs` (house presets),
+- Zed `crates/ui/src/components/label/spinner_label.rs` (text-based progress).
+
+### E) Keyboard-first: actions, contexts, and predictable precedence
+
+Zed treats keyboard UX as first-class:
+
+- actions are typed (`Action`), namespaced, and routed through context predicates,
+- keybindings are layered and precedence is well-defined.
+
+We should use GPUI’s action system everywhere (and avoid bespoke key handlers per view):
+
+- define actions in a single module per feature area,
+- bind keys with clear contexts,
+- prefer explicit, testable command routing.
+
+Reference orientation: GPUI `keymap.rs` and Zed `crates/zed_actions/src/lib.rs`.
+
+### F) Scroll/virtualization is a “system”, not ad-hoc
+
+Zed invests in scroll behavior as a core UX primitive:
+
+- consistent scrollbars (show/hide behavior, reserved thumb space),
+- scroll handles that are separated from view state,
+- virtualization for large collections.
+
+We should implement `ScrollArea` + `Scrollbar` as foundation primitives and require large surfaces (chat history, graph lists, diffs) to use them.
+
+Reference orientation: Zed `crates/ui/src/components/scrollbar.rs`.
+
+### G) Performance instrumentation built in (but gated)
+
+Zed uses measurements that can be enabled via environment variables to diagnose performance without shipping noisy logs.
+
+We should provide a similar pattern in `redesmyn_ui` and use `redesmyn_logging` spans around:
+
+- layout/measure passes,
+- expensive diff render stages,
+- session list virtualization updates.
+
 ## Requirements
 
 ### 1) Theme model
