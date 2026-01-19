@@ -513,7 +513,10 @@ mod tests {
 
     #[test]
     fn scope_deserializes_unknown_variant() {
-        let scope: Scope = serde_json::from_str(r#"{"type":"workspace"}"#).unwrap();
+        let scope: Scope = serde_json::from_str(
+            r#"{"type":"workspace","workspace_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","extra":{"nested":true}}"#,
+        )
+        .unwrap();
         assert_eq!(scope, Scope::Unknown);
     }
 }
