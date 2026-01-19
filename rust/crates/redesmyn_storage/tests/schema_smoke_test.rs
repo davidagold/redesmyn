@@ -146,52 +146,6 @@ async fn insert_task_relation(
     Ok(())
 }
 
-async fn ensure_invalid_scoped_command_is_rejected(
-    conn: &mut SqliteConnection,
-    repo_id: RepoId,
-    target_task_id: TaskId,
-    now_ms: i64,
-) -> Result<(), StorageError> {
-    let missing_workspace_id = WorkspaceId::new();
-    let result = sqlx::query(
-        r#"
-        INSERT INTO commands (
-            id,
-            created_at_ms,
-            updated_at_ms,
-            scope_kind,
-            scope_workspace_id,
-            scope_repo_id,
-            target_task_id,
-            kind,
-            state,
-            payload
-        )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-        "#,
-    )
-    .bind(CommandId::new())
-    .bind(now_ms)
-    .bind(now_ms)
-    .bind(RepoScopeKind::Repo.as_str())
-    .bind(missing_workspace_id)
-    .bind(repo_id)
-    .bind(target_task_id)
-    .bind("test.invalid_command")
-    .bind(CommandState::Accepted.as_str())
-    .bind(Vec::<u8>::new())
-    .execute(&mut *conn)
-    .await;
-
-    if result.is_ok() {
-        return Err(StorageError::InvalidData {
-            message: "expected foreign key violation for commands.scope_workspace_id".to_owned(),
-        });
-    }
-
-    Ok(())
-}
-
 async fn insert_command(
     conn: &mut SqliteConnection,
     command_id: CommandId,
@@ -319,6 +273,7 @@ async fn insert_task_scoped_session_event(
     session_id: SessionId,
     workspace_id: WorkspaceId,
     repo_id: RepoId,
+    epic_id: EpicId,
     task_id: TaskId,
     artifact_id: Option<ArtifactId>,
     now_ms: i64,
@@ -349,7 +304,7 @@ async fn insert_task_scoped_session_event(
     .bind(SessionScopeKind::Task.as_str())
     .bind(workspace_id)
     .bind(repo_id)
-    .bind(None::<EpicId>)
+    .bind(epic_id)
     .bind(task_id)
     .bind("AssistantMessage")
     .bind(None::<String>)
@@ -423,6 +378,11 @@ async fn can_insert_and_query_core_schema() {
     let child_task_id = TaskId::new();
     let relation_id = TaskRelationId::new();
 
+    let other_workspace_id = WorkspaceId::new();
+    let other_repo_id = RepoId::new();
+    let other_epic_id = EpicId::new();
+    let other_task_id = TaskId::new();
+
     let command_id = CommandId::new();
     let command_update_id = CommandUpdateId::new();
 
@@ -440,6 +400,26 @@ async fn can_insert_and_query_core_schema() {
             insert_workspace(&mut *conn, workspace_id, t0_ms, "local").await?;
             insert_repository(&mut *conn, repo_id, workspace_id, t0_ms, "repo", "Repo").await?;
             insert_epic(&mut *conn, epic_id, repo_id, t0_ms, "gpui", "GPUI").await?;
+
+            insert_workspace(&mut *conn, other_workspace_id, t0_ms, "other").await?;
+            insert_repository(
+                &mut *conn,
+                other_repo_id,
+                other_workspace_id,
+                t0_ms,
+                "other-repo",
+                "Other Repo",
+            )
+            .await?;
+            insert_epic(
+                &mut *conn,
+                other_epic_id,
+                other_repo_id,
+                t0_ms,
+                "other",
+                "Other Epic",
+            )
+            .await?;
 
             insert_task(
                 &mut *conn,
@@ -466,6 +446,19 @@ async fn can_insert_and_query_core_schema() {
             )
             .await?;
 
+            insert_task(
+                &mut *conn,
+                other_task_id,
+                other_epic_id,
+                None,
+                t0_ms,
+                None,
+                "Other task",
+                None,
+                MergeReadiness::Unknown,
+            )
+            .await?;
+
             insert_task_relation(
                 &mut *conn,
                 relation_id,
@@ -475,9 +468,6 @@ async fn can_insert_and_query_core_schema() {
                 TaskRelationKind::After,
             )
             .await?;
-
-            ensure_invalid_scoped_command_is_rejected(&mut *conn, repo_id, child_task_id, t0_ms)
-                .await?;
 
             insert_command(
                 &mut *conn,
@@ -510,6 +500,7 @@ async fn can_insert_and_query_core_schema() {
                 session_id,
                 workspace_id,
                 repo_id,
+                epic_id,
                 child_task_id,
                 Some(artifact_id),
                 t0_ms,
@@ -627,4 +618,153 @@ async fn can_insert_and_query_core_schema() {
     assert_eq!(loaded_event.created_at_ms, t0_ms);
     assert_eq!(loaded_event.kind, "test.event");
     assert_eq!(loaded_event.payload, vec![1, 2, 3]);
+
+    // Composite FK invariants: workspace/repo pairings must exist (prevents workspace A + repo B).
+    let result = sqlx::query(
+        r#"
+        INSERT INTO commands (
+            id,
+            created_at_ms,
+            updated_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            target_task_id,
+            kind,
+            state,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(CommandId::new())
+    .bind(t0_ms)
+    .bind(t0_ms)
+    .bind(RepoScopeKind::Repo.as_str())
+    .bind(workspace_id)
+    .bind(other_repo_id)
+    .bind(child_task_id)
+    .bind("test.invalid_scope_pair")
+    .bind(CommandState::Accepted.as_str())
+    .bind(Vec::<u8>::new())
+    .execute(&pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "expected commands composite scope FK violation for workspace/repo pairing"
+    );
+
+    // Parent pointers must stay within the epic (no cross-epic parents).
+    let result = sqlx::query(
+        r#"
+        INSERT INTO tasks (
+            id,
+            epic_id,
+            parent_task_id,
+            created_at_ms,
+            updated_at_ms,
+            local_ref,
+            title,
+            branch_name,
+            merge_readiness
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "#,
+    )
+    .bind(TaskId::new())
+    .bind(epic_id)
+    .bind(other_task_id)
+    .bind(t0_ms)
+    .bind(t0_ms)
+    .bind(None::<String>)
+    .bind("Invalid parent")
+    .bind(None::<String>)
+    .bind(MergeReadiness::Unknown.as_str())
+    .execute(&pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "expected tasks composite parent FK violation for cross-epic parent"
+    );
+
+    // Session scope chains must be consistent: repo -> epic, epic -> task.
+    let result = sqlx::query(
+        r#"
+        INSERT INTO session_events (
+            id,
+            session_id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            epic_id,
+            task_id,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        "#,
+    )
+    .bind(SessionEventId::new())
+    .bind(SessionId::new())
+    .bind(t0_ms)
+    .bind(SessionScopeKind::Epic.as_str())
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(other_epic_id)
+    .bind(None::<TaskId>)
+    .bind("SessionStarted")
+    .bind(None::<String>)
+    .bind(None::<String>)
+    .bind(None::<ArtifactId>)
+    .bind(Vec::<u8>::new())
+    .execute(&pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "expected session_events repo->epic composite FK violation"
+    );
+
+    let result = sqlx::query(
+        r#"
+        INSERT INTO session_events (
+            id,
+            session_id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            epic_id,
+            task_id,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        "#,
+    )
+    .bind(SessionEventId::new())
+    .bind(SessionId::new())
+    .bind(t0_ms)
+    .bind(SessionScopeKind::Task.as_str())
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(epic_id)
+    .bind(other_task_id)
+    .bind("UserMessage")
+    .bind(None::<String>)
+    .bind(None::<String>)
+    .bind(None::<ArtifactId>)
+    .bind(Vec::<u8>::new())
+    .execute(&pool)
+    .await;
+    assert!(
+        result.is_err(),
+        "expected session_events epic->task composite FK violation"
+    );
 }
