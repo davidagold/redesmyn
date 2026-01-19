@@ -46,7 +46,7 @@ Implement:
 When a node is selected:
 
 - pan it into view,
-- reserve space for the details panel if open,
+- account for expanded node size (expanded task cards are large in this port),
 - keep animation short and calm (no spinning).
 
 ### 3) Focus mode path
@@ -71,7 +71,7 @@ When positions change (layout recompute):
 ## Acceptance criteria
 
 - On first load with no selection, the graph fits into view.
-- Selecting a node pans it into view without hiding behind the details panel.
+- Selecting a node pans it into view reliably (including when the selected task is expanded).
 - Focus mode reduces the graph to a stable span path.
 - Layout recomputes animate smoothly without visible jank on small graphs.
 
@@ -80,11 +80,10 @@ When positions change (layout recompute):
 ## Dependencies / sequencing
 
 - Depends on graph scene scaffolding (T-50) and layout engine bounds (T-51).
-- Interacts with details panel presence (T-55) for reserved-space pan behavior.
+- Interacts with expanded task card behavior (T-52/T-55) for pan-to-selection ergonomics.
 
 ## Reference implementation (today; for behavior orientation only)
 
 - Fit/pan/focus behaviors (web today):
   - `dashboard/src/components/graph/GraphView.tsx` (fitView, pan-to-selection, focus mode).
   - `dashboard/src/components/graph/nodeSpan.ts` (focus path computation).
-
