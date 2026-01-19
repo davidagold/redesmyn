@@ -6,7 +6,7 @@ rn:
   parent: T-2
 ---
 
-# T-32 Agent taxonomy + interface inference + turn builders (structured exec + app-server) (Domain 4)
+# T-32 Agent taxonomy + runtime kind inference + turn builders (structured exec + app-server) (Domain 4)
 
 ## Problem
 
@@ -20,7 +20,7 @@ Agent/session work will be developed in parallel across:
 If we do not centralize:
 
 - **agent taxonomy** (provider vs runtime kind),
-- **interface inference** (structured exec vs tmux vs app-server),
+- **runtime kind inference** (structured exec vs tmux vs app-server),
 - and **turn construction** (resume-by-id turns, and app-server request shapes),
 
 we will produce subtly incompatible behavior across clients/daemons and risk regressing the most important “send message” flows.
@@ -185,7 +185,7 @@ Add unit tests equivalent to:
 - Naming is clarified (`Shell` replaces “Generic” in Rust-facing user and developer surfaces).
 - App-server “turn intent” is represented explicitly (even though the protocol implementation lands later).
 
-- Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
+- Observability: new code paths include deliberate spans/logs via `redesmyn_logging` (avoid direct `tracing` deps; key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
 ## Dependencies / sequencing
 
@@ -195,7 +195,7 @@ Add unit tests equivalent to:
 
 - Agent kind inference (Python today):
   - `redesmyn/agent_kind.py` (`infer_agent_kind_from_argv`, wrapper scanning).
-- Interface mode inference (Python today):
+- Runtime kind inference (Python today; legacy name: "interface mode"):
   - `redesmyn/agent_runtime.py` (`infer_interface_mode_from_argv`).
 - Resume-by-id argv builder (Python today):
   - `redesmyn/agent_turn_transport.py` (`build_resume_by_id_turn`).
