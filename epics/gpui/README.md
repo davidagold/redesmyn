@@ -122,6 +122,35 @@ Rationale:
 
 Import/cutover tooling is explicitly designed and tested (see T-67).
 
+### 3.7 GPUI state architecture (Presentation Model; explicit + testable)
+
+We adopt the “good part” of MVVM (Presentation Model) while avoiding the most failure-prone part (implicit two-way binding magic).
+
+**Layering**
+
+- **Domain state** lives in the headless control plane (event log + read models + APIs). The desktop UI must treat this boundary as remote even when embedded in one process.
+- **Presentation state** lives in GPUI-owned entities/models and exists *because we have a UI*: selection, focus, pan/zoom camera, filters, expanded/collapsed node sizes, diff view options, pagination cursors, in-flight actions, and errors.
+- **Views** are thin projections: `render()` maps presentation state → element tree.
+
+**Flow**
+
+- **Unidirectional data flow**:
+  - control plane events/queries → reduce into presentation state → render,
+  - user actions → commands → visible in-flight state → results/errors → reduce → render.
+- Avoid re-entrancy/event spaghetti: side effects happen in event handlers/tasks; state mutation happens in explicit update contexts; notifications are treated as “deliver after update” (batchy), not “live-wired bindings”.
+
+**Seams for parallelism**
+
+- Prefer multiple small, feature-scoped presentation models (e.g. `GraphSceneState`, `SessionFeedState`, `DetailsPanelState`) over a single “god viewmodel”.
+- Keep rendering/layout/IO separable by construction:
+  - layout engines and view-model reducers should be unit-testable without GPUI,
+  - GPUI views should depend only on typed view-models + shared UI primitives.
+
+**Determinism + AI-first testability**
+
+- Use stable IDs/keys and deterministic ordering rules so semantic UI snapshots can assert state reliably (see T-48/T-58/T-66).
+- Do not depend on implicit “binding-driven” synchronization; all updates must be explicit and observable.
+
 ## 4) Domain map (top-level workstreams)
 
 This epic will be executed as massively parallel work across these domains:
