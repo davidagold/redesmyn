@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 redesmyn_ids.workspace = true
 redesmyn_errors.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
