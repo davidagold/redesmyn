@@ -20,6 +20,7 @@
 mod error;
 
 pub mod events;
+pub mod schema;
 pub mod sqlite;
 
 pub use error::StorageError;
