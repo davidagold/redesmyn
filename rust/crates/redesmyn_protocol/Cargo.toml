@@ -10,6 +10,7 @@ publish = false
 redesmyn_errors.workspace = true
 redesmyn_ids.workspace = true
 serde.workspace = true
+time.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
