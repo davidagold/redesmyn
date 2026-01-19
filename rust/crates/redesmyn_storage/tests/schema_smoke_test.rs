@@ -4,8 +4,411 @@ use redesmyn_ids::{
 };
 use redesmyn_storage::{
     events::{EventRecord, EventScope, get_event, insert_event},
+    schema::{CommandState, MergeReadiness, RepoScopeKind, SessionScopeKind, TaskRelationKind},
     in_transaction, open_test_sqlite_pool,
+    StorageError,
 };
+use sqlx::SqliteConnection;
+
+async fn insert_workspace(
+    conn: &mut SqliteConnection,
+    workspace_id: WorkspaceId,
+    now_ms: i64,
+    name: &str,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(name)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_repository(
+    conn: &mut SqliteConnection,
+    repo_id: RepoId,
+    workspace_id: WorkspaceId,
+    now_ms: i64,
+    slug: &str,
+    title: &str,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(slug)
+    .bind(title)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_epic(
+    conn: &mut SqliteConnection,
+    epic_id: EpicId,
+    repo_id: RepoId,
+    now_ms: i64,
+    slug: &str,
+    title: &str,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(epic_id)
+    .bind(repo_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(slug)
+    .bind(title)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_task(
+    conn: &mut SqliteConnection,
+    task_id: TaskId,
+    epic_id: EpicId,
+    parent_task_id: Option<TaskId>,
+    now_ms: i64,
+    local_ref: Option<&str>,
+    title: &str,
+    branch_name: Option<&str>,
+    merge_readiness: MergeReadiness,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO tasks (
+            id,
+            epic_id,
+            parent_task_id,
+            created_at_ms,
+            updated_at_ms,
+            local_ref,
+            title,
+            branch_name,
+            merge_readiness
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "#,
+    )
+    .bind(task_id)
+    .bind(epic_id)
+    .bind(parent_task_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(local_ref)
+    .bind(title)
+    .bind(branch_name)
+    .bind(merge_readiness.as_str())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_task_relation(
+    conn: &mut SqliteConnection,
+    relation_id: TaskRelationId,
+    now_ms: i64,
+    from_task_id: TaskId,
+    to_task_id: TaskId,
+    kind: TaskRelationKind,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO task_relations (id, created_at_ms, from_task_id, to_task_id, kind)
+        VALUES (?1, ?2, ?3, ?4, ?5)
+        "#,
+    )
+    .bind(relation_id)
+    .bind(now_ms)
+    .bind(from_task_id)
+    .bind(to_task_id)
+    .bind(kind.as_str())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_invalid_scoped_command_is_rejected(
+    conn: &mut SqliteConnection,
+    repo_id: RepoId,
+    target_task_id: TaskId,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    let missing_workspace_id = WorkspaceId::new();
+    let result = sqlx::query(
+        r#"
+        INSERT INTO commands (
+            id,
+            created_at_ms,
+            updated_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            target_task_id,
+            kind,
+            state,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(CommandId::new())
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(RepoScopeKind::Repo.as_str())
+    .bind(missing_workspace_id)
+    .bind(repo_id)
+    .bind(target_task_id)
+    .bind("test.invalid_command")
+    .bind(CommandState::Accepted.as_str())
+    .bind(Vec::<u8>::new())
+    .execute(&mut *conn)
+    .await;
+
+    if result.is_ok() {
+        return Err(StorageError::InvalidData {
+            message: "expected foreign key violation for commands.scope_workspace_id".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+async fn insert_command(
+    conn: &mut SqliteConnection,
+    command_id: CommandId,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    target_task_id: Option<TaskId>,
+    now_ms: i64,
+    kind: &str,
+    state: CommandState,
+    payload: Vec<u8>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO commands (
+            id,
+            created_at_ms,
+            updated_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            target_task_id,
+            kind,
+            state,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(command_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(RepoScopeKind::Repo.as_str())
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(target_task_id)
+    .bind(kind)
+    .bind(state.as_str())
+    .bind(payload)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_command_update(
+    conn: &mut SqliteConnection,
+    update_id: CommandUpdateId,
+    command_id: CommandId,
+    now_ms: i64,
+    state: CommandState,
+    message: Option<&str>,
+    progress_current: Option<i64>,
+    progress_total: Option<i64>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO command_updates (
+            id,
+            command_id,
+            created_at_ms,
+            state,
+            message,
+            progress_current,
+            progress_total,
+            detail
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "#,
+    )
+    .bind(update_id)
+    .bind(command_id)
+    .bind(now_ms)
+    .bind(state.as_str())
+    .bind(message)
+    .bind(progress_current)
+    .bind(progress_total)
+    .bind(None::<Vec<u8>>)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_artifact(
+    conn: &mut SqliteConnection,
+    artifact_id: ArtifactId,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    now_ms: i64,
+    kind: &str,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO artifacts (
+            id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            kind,
+            content_hash,
+            byte_len,
+            mime,
+            storage_hint
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(artifact_id)
+    .bind(now_ms)
+    .bind(RepoScopeKind::Repo.as_str())
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(kind)
+    .bind(None::<String>)
+    .bind(Some(3_i64))
+    .bind(Some("text/plain"))
+    .bind(Some("local://artifact/1"))
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_task_scoped_session_event(
+    conn: &mut SqliteConnection,
+    session_event_id: SessionEventId,
+    session_id: SessionId,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+    artifact_id: Option<ArtifactId>,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO session_events (
+            id,
+            session_id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            epic_id,
+            task_id,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        "#,
+    )
+    .bind(session_event_id)
+    .bind(session_id)
+    .bind(now_ms)
+    .bind(SessionScopeKind::Task.as_str())
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(None::<EpicId>)
+    .bind(task_id)
+    .bind("AssistantMessage")
+    .bind(None::<String>)
+    .bind(Some("hi"))
+    .bind(artifact_id)
+    .bind(Vec::<u8>::new())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_host(
+    conn: &mut SqliteConnection,
+    host_id: HostId,
+    now_ms: i64,
+    hostname: Option<&str>,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO hosts (id, created_at_ms, hostname)
+        VALUES (?1, ?2, ?3)
+        "#,
+    )
+    .bind(host_id)
+    .bind(now_ms)
+    .bind(hostname)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+async fn insert_daemon_presence(
+    conn: &mut SqliteConnection,
+    host_instance_id: HostInstanceId,
+    host_id: HostId,
+    connected_at_ms: i64,
+    last_heartbeat_at_ms: i64,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO daemon_presence (
+            host_instance_id,
+            host_id,
+            connected_at_ms,
+            last_heartbeat_at_ms,
+            disconnected_at_ms
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5)
+        "#,
+    )
+    .bind(host_instance_id)
+    .bind(host_id)
+    .bind(connected_at_ms)
+    .bind(last_heartbeat_at_ms)
+    .bind(None::<i64>)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn can_insert_and_query_core_schema() {
@@ -34,272 +437,88 @@ async fn can_insert_and_query_core_schema() {
 
     in_transaction(&pool, |conn| {
         Box::pin(async move {
-            sqlx::query(
-                r#"
-                INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
-                VALUES (?1, ?2, ?3, ?4)
-                "#,
+            insert_workspace(&mut *conn, workspace_id, t0_ms, "local").await?;
+            insert_repository(&mut *conn, repo_id, workspace_id, t0_ms, "repo", "Repo").await?;
+            insert_epic(&mut *conn, epic_id, repo_id, t0_ms, "gpui", "GPUI").await?;
+
+            insert_task(
+                &mut *conn,
+                parent_task_id,
+                epic_id,
+                None,
+                t0_ms,
+                Some("T-17"),
+                "Parent task",
+                Some("rn/gpui/T-17-parent"),
+                MergeReadiness::Unknown,
             )
-            .bind(workspace_id)
-            .bind(t0_ms)
-            .bind(t0_ms)
-            .bind("local")
-            .execute(&mut *conn)
+            .await?;
+            insert_task(
+                &mut *conn,
+                child_task_id,
+                epic_id,
+                Some(parent_task_id),
+                t0_ms + 1,
+                None,
+                "Child task",
+                Some("rn/gpui/T-17-child"),
+                MergeReadiness::Unknown,
+            )
             .await?;
 
-            sqlx::query(
-                r#"
-                INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
+            insert_task_relation(
+                &mut *conn,
+                relation_id,
+                t0_ms,
+                parent_task_id,
+                child_task_id,
+                TaskRelationKind::After,
             )
-            .bind(repo_id)
-            .bind(workspace_id)
-            .bind(t0_ms)
-            .bind(t0_ms)
-            .bind("repo")
-            .bind("Repo")
-            .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
-                r#"
-                INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "#,
+            ensure_invalid_scoped_command_is_rejected(&mut *conn, repo_id, child_task_id, t0_ms)
+                .await?;
+
+            insert_command(
+                &mut *conn,
+                command_id,
+                workspace_id,
+                repo_id,
+                Some(child_task_id),
+                t0_ms,
+                "task.merge",
+                CommandState::Accepted,
+                Vec::<u8>::new(),
             )
-            .bind(epic_id)
-            .bind(repo_id)
-            .bind(t0_ms)
-            .bind(t0_ms)
-            .bind("gpui")
-            .bind("GPUI")
-            .execute(&mut *conn)
+            .await?;
+            insert_command_update(
+                &mut *conn,
+                command_update_id,
+                command_id,
+                t0_ms + 2,
+                CommandState::Running,
+                Some("starting"),
+                Some(0),
+                Some(1),
+            )
             .await?;
 
-            sqlx::query(
-                r#"
-                INSERT INTO tasks (
-                    id,
-                    epic_id,
-                    parent_task_id,
-                    created_at_ms,
-                    updated_at_ms,
-                    local_ref,
-                    title,
-                    branch_name,
-                    merge_readiness
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                "#,
+            insert_artifact(&mut *conn, artifact_id, workspace_id, repo_id, t0_ms, "log").await?;
+            insert_task_scoped_session_event(
+                &mut *conn,
+                session_event_id,
+                session_id,
+                workspace_id,
+                repo_id,
+                child_task_id,
+                Some(artifact_id),
+                t0_ms,
             )
-            .bind(parent_task_id)
-            .bind(epic_id)
-            .bind(None::<TaskId>)
-            .bind(t0_ms)
-            .bind(t0_ms)
-            .bind("T-17")
-            .bind("Parent task")
-            .bind("rn/gpui/T-17-parent")
-            .bind("unknown")
-            .execute(&mut *conn)
             .await?;
 
-            sqlx::query(
-                r#"
-                INSERT INTO tasks (
-                    id,
-                    epic_id,
-                    parent_task_id,
-                    created_at_ms,
-                    updated_at_ms,
-                    local_ref,
-                    title,
-                    branch_name,
-                    merge_readiness
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                "#,
-            )
-            .bind(child_task_id)
-            .bind(epic_id)
-            .bind(parent_task_id)
-            .bind(t0_ms + 1)
-            .bind(t0_ms + 1)
-            .bind(None::<String>)
-            .bind("Child task")
-            .bind("rn/gpui/T-17-child")
-            .bind("unknown")
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO task_relations (id, created_at_ms, from_task_id, to_task_id, kind)
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                "#,
-            )
-            .bind(relation_id)
-            .bind(t0_ms)
-            .bind(parent_task_id)
-            .bind(child_task_id)
-            .bind("after")
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO commands (
-                    id,
-                    created_at_ms,
-                    updated_at_ms,
-                    scope_kind,
-                    scope_workspace_id,
-                    scope_repo_id,
-                    target_task_id,
-                    kind,
-                    state,
-                    payload
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                "#,
-            )
-            .bind(command_id)
-            .bind(t0_ms)
-            .bind(t0_ms)
-            .bind("repo")
-            .bind(workspace_id)
-            .bind(repo_id)
-            .bind(child_task_id)
-            .bind("task.merge")
-            .bind("accepted")
-            .bind(Vec::<u8>::new())
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO command_updates (
-                    id,
-                    command_id,
-                    created_at_ms,
-                    state,
-                    message,
-                    progress_current,
-                    progress_total,
-                    detail
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-                "#,
-            )
-            .bind(command_update_id)
-            .bind(command_id)
-            .bind(t0_ms + 2)
-            .bind("running")
-            .bind("starting")
-            .bind(0_i64)
-            .bind(1_i64)
-            .bind(None::<Vec<u8>>)
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO artifacts (
-                    id,
-                    created_at_ms,
-                    scope_kind,
-                    scope_workspace_id,
-                    scope_repo_id,
-                    kind,
-                    content_hash,
-                    byte_len,
-                    mime,
-                    storage_hint
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                "#,
-            )
-            .bind(artifact_id)
-            .bind(t0_ms)
-            .bind("repo")
-            .bind(workspace_id)
-            .bind(repo_id)
-            .bind("log")
-            .bind(None::<String>)
-            .bind(Some(3_i64))
-            .bind(Some("text/plain"))
-            .bind(Some("local://artifact/1"))
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO session_events (
-                    id,
-                    session_id,
-                    created_at_ms,
-                    scope_kind,
-                    scope_workspace_id,
-                    scope_repo_id,
-                    epic_id,
-                    task_id,
-                    kind,
-                    turn_id,
-                    message_preview,
-                    artifact_id,
-                    payload
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                "#,
-            )
-            .bind(session_event_id)
-            .bind(session_id)
-            .bind(t0_ms)
-            .bind("task")
-            .bind(workspace_id)
-            .bind(repo_id)
-            .bind(None::<EpicId>)
-            .bind(child_task_id)
-            .bind("AssistantMessage")
-            .bind(None::<String>)
-            .bind(Some("hi"))
-            .bind(Some(artifact_id))
-            .bind(Vec::<u8>::new())
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO hosts (id, created_at_ms, hostname)
-                VALUES (?1, ?2, ?3)
-                "#,
-            )
-            .bind(host_id)
-            .bind(t0_ms)
-            .bind("localhost")
-            .execute(&mut *conn)
-            .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO daemon_presence (
-                    host_instance_id,
-                    host_id,
-                    connected_at_ms,
-                    last_heartbeat_at_ms,
-                    disconnected_at_ms
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5)
-                "#,
-            )
-            .bind(host_instance_id)
-            .bind(host_id)
-            .bind(t0_ms)
-            .bind(t0_ms + 5)
-            .bind(None::<i64>)
-            .execute(&mut *conn)
-            .await?;
+            insert_host(&mut *conn, host_id, t0_ms, Some("localhost")).await?;
+            insert_daemon_presence(&mut *conn, host_instance_id, host_id, t0_ms, t0_ms + 5)
+                .await?;
 
             let event = EventRecord {
                 id: EventId::new(),

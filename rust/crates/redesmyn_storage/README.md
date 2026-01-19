@@ -11,6 +11,16 @@ Core tables:
 - Sessions: `session_events`, `artifacts`
 - Presence: `hosts`, `daemon_presence`
 
+Notes:
+
+- **Scope referential integrity**: `*_scope_workspace_id` / `*_scope_repo_id` columns use foreign
+  keys to avoid orphaned scoped rows. Deleting a workspace/repo cascades to scoped rows.
+- **Sessions**: v0 does not create a dedicated `sessions` table. `session_id` is recorded on
+  `session_events`; session listing/metadata can be derived via grouping/aggregation. We can add a
+  `sessions` table later once we need durable session metadata (titles, last_event_at, etc.).
+- **Enum typing**: schema-constrained `TEXT` values have Rust enums in `redesmyn_storage::schema` to
+  prevent app-level typos (e.g. command states, scope kinds, merge readiness).
+
 Primary indices (selected):
 
 - `tasks`: by `epic_id`, by `parent_task_id`, and unique `(epic_id, local_ref)` when `local_ref` is
