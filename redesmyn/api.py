@@ -100,6 +100,7 @@ from redesmyn.integrations.github_pr_actions import (
     GitHubPullRequestActionError,
     ensure_task_pull_request,
 )
+from redesmyn.integrations.github_pr_refresh import refresh_epic_pull_request_bases
 from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.orchestrator import init_repo
 from redesmyn.orchestration_config import (
@@ -3023,6 +3024,7 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                 continue
 
             if msg_type == "event":
+                refresh_pr_bases: tuple[int, str] | None = None
                 async with sessionmaker() as session:
                     if host_key is not None:
                         host = await session.scalar(
@@ -3045,6 +3047,14 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                                 host_key=host_key,
                                 data=msg.data,
                             )
+                            status_value = msg.data.get("status")
+                            epic_id_value = msg.data.get("epic_id")
+                            if (
+                                isinstance(status_value, str)
+                                and status_value == MergeRunStatus.Succeeded
+                                and isinstance(epic_id_value, int)
+                            ):
+                                refresh_pr_bases = (epic_id_value, run_id_value)
 
                     event = await _append_event(
                         session,
@@ -3056,6 +3066,16 @@ async def daemon_ws(websocket: WebSocket, token: str | None = None) -> None:
                             "connection_id": connection_id,
                             **msg.data,
                         },
+                    )
+                if refresh_pr_bases is not None:
+                    epic_id_value, run_id_value = refresh_pr_bases
+                    _spawn_background_task(
+                        app,
+                        refresh_epic_pull_request_bases(
+                            sessionmaker=app.state.sessionmaker,
+                            epic_id=epic_id_value,
+                        ),
+                        name=f"github:pr_base_refresh:{epic_id_value}:{run_id_value}",
                     )
                 await _broadcast_event(app, event)
                 await websocket.send_json({"type": "event_ack", "event_id": event.id})

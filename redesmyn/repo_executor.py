@@ -31,6 +31,7 @@ from redesmyn.merge_runs import (
     set_merge_run_status,
     upsert_merge_run,
 )
+from redesmyn.integrations.github_pr_refresh import refresh_epic_pull_request_bases
 from redesmyn.repo import GitCommandError
 from redesmyn.repo_identity import RepoKey
 from redesmyn.schemas.core import (
@@ -190,6 +191,7 @@ async def _run_local_merge_run(
     sessionmaker: async_sessionmaker[AsyncSession],
     run_id: str,
     task_id: int,
+    epic_id: int | None,
     operation: Literal["merge", "restack"],
     failure_kind: Literal["merge_ff", "rebase"],
     base_branch: str,
@@ -202,6 +204,14 @@ async def _run_local_merge_run(
             run_id=run_id,
             status=MergeRunStatus.Succeeded,
         )
+        if epic_id is not None:
+            try:
+                await refresh_epic_pull_request_bases(
+                    sessionmaker=sessionmaker,
+                    epic_id=epic_id,
+                )
+            except Exception:
+                pass
     except MergeBlockedByRunningAgents:
         return
     except Exception as e:
@@ -233,6 +243,7 @@ def _spawn_local_merge_run(
     sessionmaker: async_sessionmaker[AsyncSession],
     run_id: str,
     task_id: int,
+    epic_id: int | None,
     operation: Literal["merge", "restack"],
     failure_kind: Literal["merge_ff", "rebase"],
     base_branch: str,
@@ -244,6 +255,7 @@ def _spawn_local_merge_run(
         sessionmaker=sessionmaker,
         run_id=run_id,
         task_id=task_id,
+        epic_id=epic_id,
         operation=operation,
         failure_kind=failure_kind,
         base_branch=base_branch,
@@ -378,6 +390,7 @@ class LocalRepoExecutor:
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             task_id=task_id,
+            epic_id=plan.epic_id,
             operation="merge",
             failure_kind="merge_ff",
             base_branch=plan.base_branch,
@@ -462,6 +475,7 @@ class LocalRepoExecutor:
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             task_id=task_id,
+            epic_id=plan.epic_id,
             operation="restack",
             failure_kind="rebase",
             base_branch=plan.base_branch,
@@ -614,6 +628,7 @@ class LocalRepoExecutor:
             sessionmaker=self.sessionmaker,
             run_id=run_id,
             task_id=task_id,
+            epic_id=plan.epic_id,
             operation=operation,
             failure_kind="rebase" if operation == "restack" else "merge_ff",
             base_branch=plan.base_branch,

@@ -130,6 +130,7 @@ from redesmyn.integrations.github_pr import (
     create_pull_request,
     detect_pull_request_for_branch,
 )
+from redesmyn.integrations.github_pr_refresh import refresh_epic_pull_request_bases
 from redesmyn.integrations.github_status import github_auth_status
 from redesmyn.integrations.linear_state import (
     linear_state_type_from_task_state,
@@ -897,6 +898,15 @@ def merge(
                     status=MergeRunStatus.Succeeded,
                 )
             )
+            try:
+                asyncio.run(
+                    refresh_epic_pull_request_bases(
+                        sessionmaker=sessionmaker,
+                        epic_id=plan.epic_id,
+                    )
+                )
+            except Exception:
+                pass
 
         typer.echo(f"Merged into {plan.base_branch}")
     except MergePlanError as e:
@@ -1065,6 +1075,15 @@ def restack(
                     status=MergeRunStatus.Succeeded,
                 )
             )
+            try:
+                asyncio.run(
+                    refresh_epic_pull_request_bases(
+                        sessionmaker=sessionmaker,
+                        epic_id=plan.epic_id,
+                    )
+                )
+            except Exception:
+                pass
 
         typer.echo("Restacked.")
     except MergePlanError as e:
