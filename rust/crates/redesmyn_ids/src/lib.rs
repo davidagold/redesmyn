@@ -259,6 +259,8 @@ ulid_id!(/// Identifier for a command (idempotency key and/or persisted command 
 CommandId);
 ulid_id!(/// Identifier for an event (append-only event log record).
 EventId);
+ulid_id!(/// Identifier for a protocol message frame (transport-level correlation).
+MsgId);
 
 #[cfg(test)]
 mod tests {
@@ -283,6 +285,7 @@ mod tests {
         assert_roundtrip!(HostId);
         assert_roundtrip!(CommandId);
         assert_roundtrip!(EventId);
+        assert_roundtrip!(MsgId);
     }
 
     #[test]
