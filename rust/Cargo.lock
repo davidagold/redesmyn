@@ -1265,10 +1265,10 @@ name = "redesmyn_domain"
 version = "0.1.0"
 dependencies = [
  "redesmyn_ids",
+ "redesmyn_logging",
  "serde",
  "serde_json",
  "thiserror",
- "tracing",
 ]
 
 [[package]]
