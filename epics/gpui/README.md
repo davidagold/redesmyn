@@ -298,7 +298,7 @@ Layout direction:
 Tasks:
 
 - `epics/gpui/tasks/T-43/README.md`: GPUI desktop app bootstrap + lifecycle (embed control plane + daemon modules).
-- `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, gpui-component survey, shared widgets).
+- `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, shared widgets).
 - `epics/gpui/tasks/T-45/README.md`: Main split layout (left session pane + right workspace; resizable + collapsible).
 - `epics/gpui/tasks/T-46/README.md`: Epic header + chrome (epic selector, status, refresh, settings/command entrypoints).
 - `epics/gpui/tasks/T-47/README.md`: User-managed chat sessions + epic pins (no “overseer” naming).
