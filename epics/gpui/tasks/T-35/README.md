@@ -23,11 +23,24 @@ If we implement agent runners ad-hoc per agent kind, we will duplicate process l
 
 Build a daemon-side **exec session supervisor** that is the shared substrate for structured agents.
 
+Architecture note (important):
+
+- Despite the “exec” name, this ticket should produce a **reusable subprocess supervision core**
+  (process lifecycle + bounded IO + backpressure) that can support multiple structured runtime kinds.
+- Protocol-specific framing/decoding must live behind **adapter types** (runtime-kind-specific),
+  so we do not bake “JSONL on stdout” assumptions into the supervisor core.
+- Concretely, we expect:
+  - Structured exec runners (T-37/T-38) to use an adapter that feeds decoded records into
+    the Codex/Claude parsers (T-33/T-34).
+  - App-server runners (T-39/T-68) to use an adapter that speaks a bidirectional framed protocol
+    (e.g. JSON-RPC with Content-Length framing) and maps notifications/diffs into `SessionEvent`s
+    (T-14).
+
 This supervisor owns:
 
 - process spawn/kill/interrupt,
 - stdout/stderr ingestion,
-- parser invocation (Codex/Claude parsers from T-33/T-34),
+- wire decoding + semantic mapping via adapters (parsers for structured exec; protocol codecs for app-server),
 - durable session event emission (T-14),
 - and backpressure + size limits.
 
@@ -50,8 +63,15 @@ Expose a minimal API internally (names are illustrative):
 ### 2) Output ingestion + parsing
 
 - Read stdout/stderr incrementally (non-blocking, bounded buffering).
-- Feed text into the selected parser (Codex/Claude/app-server).
-- Emit semantic events (ultimately `SessionEvent`) derived from parser output.
+- Route bytes through a runtime-kind adapter:
+  - Structured exec: decode records (often JSONL) → feed into the selected parser (T-33/T-34).
+  - App-server: apply protocol framing/decoding (T-39/T-68) and dispatch request/response/notifications.
+- Emit semantic events (ultimately `SessionEvent`) derived from adapter output.
+
+Supervisor-core requirement:
+
+- The core must support **bidirectional** IO so an app-server adapter can write requests to stdin
+  while concurrently reading framed responses/notifications (with backpressure).
 
 ### 3) Backpressure, size limits, and “no giant payloads”
 
@@ -101,7 +121,10 @@ Implement a principled interrupt story:
 
 - Depends on daemon runtime skeleton (T-23).
 - Depends on repo attachment + worktrees (T-24, T-27).
-- Uses session event contract (T-14) and parsers (T-33/T-34).
+- Uses session event contract (T-14).
+- For structured exec adapters: uses parsers (T-33/T-34).
+- App-server runtime work (T-39/T-68) builds on the same lifecycle/backpressure conventions, but
+  implements its own protocol framing/decoding.
 
 ## Reference implementation (today; for behavior orientation only)
 
@@ -111,4 +134,3 @@ Implement a principled interrupt story:
 - Session supervision loop (Python today):
   - `redesmyn/agent_driver.py` (`supervise_once`, incremental log read, semantic event emission).
   - `tests/test_agent_driver.py`
-
