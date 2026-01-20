@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use redesmyn_logging::tracing;
 use redesmyn_transport::in_proc::InProcEndpoint;
@@ -9,7 +9,8 @@ pub struct DesktopHandle {
     config: Arc<redesmyn_config::RustConfig>,
     runtime: tokio::runtime::Runtime,
     control_plane: Option<redesmyn_control_plane::ControlPlaneHandle>,
-    daemon: Option<redesmyn_daemon::service::DaemonHandle>,
+    control_plane_client: Option<redesmyn_transport::client::in_proc::InProcEndpoint>,
+    daemon: Option<redesmyn_daemon::DaemonHandle>,
     daemon_link: Option<redesmyn_control_plane::DaemonLinkHandle>,
     daemon_host_id: Option<redesmyn_ids::HostId>,
 }
@@ -35,27 +36,49 @@ impl DesktopApp {
             .build()
             .map_err(DesktopStartError::TokioRuntime)?;
 
-        let control_plane = if config.desktop.embed_control_plane {
-            let options = redesmyn_control_plane::ControlPlaneStartOptions::from_config(&config.control_plane);
+        let mut control_plane = if config.desktop.embed_control_plane {
+            let mut options = redesmyn_control_plane::ControlPlaneStartOptions::from_config(
+                &config.control_plane,
+            );
+            options.client_api_socket_path = None;
             Some(runtime.block_on(redesmyn_control_plane::ControlPlane::start(options))?)
         } else {
             None
         };
 
+        let control_plane_client = control_plane
+            .as_mut()
+            .map(|control_plane| control_plane.connect_in_proc_client(64));
+
         let (daemon, daemon_link, daemon_host_id) = if config.desktop.embed_daemon {
             let (control_plane_conn, daemon_conn) = InProcEndpoint::pair(64);
 
-            let daemon = runtime.block_on(async {
-                redesmyn_daemon::service::Daemon::start(config.as_ref().clone(), Box::new(daemon_conn))
-            });
+            let daemon_host_id = redesmyn_ids::HostId::new();
+            let daemon_identity = redesmyn_daemon::HostIdentity::new(daemon_host_id);
 
-            let daemon_host_id = Some(daemon.host_id());
+            let daemon_config = redesmyn_daemon::DaemonRuntimeConfig::new(config.daemon.clone())
+                .with_host_identity(daemon_identity);
+
+            let connector_endpoint = Arc::new(Mutex::new(Some(daemon_conn)));
+            let connector: Arc<dyn redesmyn_daemon::ControlPlaneConnector> = Arc::new(move || {
+                let endpoint = Arc::clone(&connector_endpoint);
+                async move {
+                    let mut guard = endpoint.lock().expect("lock poisoned");
+                    let endpoint = guard
+                        .take()
+                        .ok_or(redesmyn_transport::TransportError::ChannelClosed)?;
+                    Ok(Box::new(endpoint) as Box<dyn redesmyn_transport::DaemonConnection>)
+                }
+            });
 
             let daemon_link = Some(redesmyn_control_plane::DaemonLinkHandle::start(
                 &runtime,
                 control_plane_conn,
             ));
-            (Some(daemon), daemon_link, daemon_host_id)
+
+            let daemon = runtime.block_on(async { redesmyn_daemon::Daemon::start(daemon_config, connector) });
+
+            (Some(daemon), daemon_link, Some(daemon_host_id))
         } else {
             (None, None, None)
         };
@@ -66,6 +89,7 @@ impl DesktopApp {
             config,
             runtime,
             control_plane,
+            control_plane_client,
             daemon,
             daemon_link,
             daemon_host_id,
@@ -82,6 +106,13 @@ impl DesktopHandle {
     #[must_use]
     pub fn daemon_host_id(&self) -> Option<redesmyn_ids::HostId> {
         self.daemon_host_id
+    }
+
+    #[must_use]
+    pub fn take_control_plane_client(
+        &mut self,
+    ) -> Option<redesmyn_transport::client::in_proc::InProcEndpoint> {
+        self.control_plane_client.take()
     }
 
     pub fn shutdown(mut self) {

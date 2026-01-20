@@ -1,9 +1,7 @@
 use std::time::Duration;
 
-use redesmyn_control_plane::ControlPlane;
-use redesmyn_control_plane::ControlPlaneDb;
-use redesmyn_control_plane::ControlPlaneStartOptions;
 use redesmyn_control_plane::client_api::ClientApiCodec;
+use redesmyn_control_plane::{ControlPlane, ControlPlaneDb, ControlPlaneStartOptions};
 use redesmyn_ids::RequestId;
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::client::{
