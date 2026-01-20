@@ -191,3 +191,57 @@ pub struct CommandUpdate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorEnvelope>,
 }
+
+/// Typed daemon capabilities advertised during handshake.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DaemonCapabilities {
+    pub supports_repo_execution: bool,
+    pub supports_worktrees: bool,
+    pub supports_git_observation: bool,
+    pub supports_session_exec: bool,
+    pub supports_session_attach_tmux: bool,
+    pub supports_artifacts: bool,
+}
+
+impl DaemonCapabilities {
+    #[must_use]
+    pub fn to_wire_strings(self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.supports_repo_execution {
+            out.push("supports_repo_execution".to_string());
+        }
+        if self.supports_worktrees {
+            out.push("supports_worktrees".to_string());
+        }
+        if self.supports_git_observation {
+            out.push("supports_git_observation".to_string());
+        }
+        if self.supports_session_exec {
+            out.push("supports_session_exec".to_string());
+        }
+        if self.supports_session_attach_tmux {
+            out.push("supports_session_attach_tmux".to_string());
+        }
+        if self.supports_artifacts {
+            out.push("supports_artifacts".to_string());
+        }
+        out
+    }
+
+    #[must_use]
+    pub fn from_wire_strings<'a>(capabilities: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut out = Self::default();
+        for cap in capabilities {
+            match cap {
+                "supports_repo_execution" => out.supports_repo_execution = true,
+                "supports_worktrees" => out.supports_worktrees = true,
+                "supports_git_observation" => out.supports_git_observation = true,
+                "supports_session_exec" => out.supports_session_exec = true,
+                "supports_session_attach_tmux" => out.supports_session_attach_tmux = true,
+                "supports_artifacts" => out.supports_artifacts = true,
+                _ => {}
+            }
+        }
+        out
+    }
+}
