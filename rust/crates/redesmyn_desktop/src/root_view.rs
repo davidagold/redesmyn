@@ -1,19 +1,26 @@
 use std::sync::Arc;
 
-use gpui::{div, prelude::*, Entity, Window};
+use gpui::{Entity, Window, div, prelude::*};
+use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 #[derive(Debug)]
 pub struct DesktopModel {
     config: Arc<redesmyn_config::RustConfig>,
     daemon_host_id: Option<redesmyn_ids::HostId>,
+    control_plane_client: Option<ClientInProcEndpoint>,
 }
 
 impl DesktopModel {
     #[must_use]
-    pub fn new(config: Arc<redesmyn_config::RustConfig>, daemon_host_id: Option<redesmyn_ids::HostId>) -> Self {
+    pub fn new(
+        config: Arc<redesmyn_config::RustConfig>,
+        daemon_host_id: Option<redesmyn_ids::HostId>,
+        control_plane_client: Option<ClientInProcEndpoint>,
+    ) -> Self {
         Self {
             config,
             daemon_host_id,
+            control_plane_client,
         }
     }
 }
@@ -53,9 +60,18 @@ impl Render for RootView {
                 ))
                 .child(format!(
                     "Daemon host id: {}",
-                    model.daemon_host_id
+                    model
+                        .daemon_host_id
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "<none>".to_string())
+                ))
+                .child(format!(
+                    "Client transport: {}",
+                    if model.control_plane_client.is_some() {
+                        "in-proc"
+                    } else {
+                        "uds"
+                    }
                 ))
                 .child(format!(
                     "Control plane DB: {}",
@@ -63,7 +79,17 @@ impl Render for RootView {
                 ))
                 .child(format!(
                     "Client socket: {}",
-                    model.config.control_plane.api.client_socket_path.display()
+                    if model.control_plane_client.is_some() {
+                        "<disabled (in-proc)>".to_string()
+                    } else {
+                        model
+                            .config
+                            .control_plane
+                            .api
+                            .client_socket_path
+                            .display()
+                            .to_string()
+                    }
                 )),
         )
     }

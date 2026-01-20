@@ -2,18 +2,16 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use redesmyn_logging::tracing;
-use redesmyn_protocol::daemon::{
-    CommandAck, DaemonCommand, DaemonFrame, DaemonMessage, DispatchCommand, HelloRequest,
-    HelloResponse, MessageEnvelope,
-};
+use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
+use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion};
 use redesmyn_transport::in_proc::InProcEndpoint;
 use redesmyn_transport::{DaemonConnection, TransportError};
 
 /// A minimal control-plane↔daemon adapter for embedded daemon mode.
 ///
 /// For now this keeps the in-proc daemon connection drained so heartbeats don't
-/// backpressure the daemon, and performs a basic hello/noop handshake to prove
-/// the wiring works. Higher-level routing belongs in the control-plane domain.
+/// backpressure the daemon, and performs a basic T-11 handshake to prove the
+/// wiring works. Higher-level routing belongs in the control-plane domain.
 #[derive(Debug)]
 pub struct DaemonLinkHandle {
     shutdown_tx: watch::Sender<bool>,
@@ -41,32 +39,49 @@ async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Recei
     let span = tracing::info_span!("control_plane.daemon_link");
     let _enter = span.enter();
 
-    let hello = DaemonFrame::new(
-        MessageEnvelope::new(redesmyn_ids::MsgId::new()),
-        DaemonMessage::HelloRequest(HelloRequest {
-            client_name: "redesmyn-desktop".to_string(),
-        }),
-    );
-    if let Err(err) = conn.send(hello).await {
-        if !matches!(err, TransportError::ChannelClosed) {
-            tracing::warn!(error = %err, "failed to send hello to daemon");
+    let frame = tokio::select! {
+        _ = shutdown_rx.changed() => return,
+        frame = conn.recv() => frame,
+    };
+    let frame = match frame {
+        Ok(frame) => frame,
+        Err(TransportError::ChannelClosed) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, "daemon link transport error");
+            return;
         }
-        return;
-    }
+    };
 
-    let command_id = redesmyn_ids::CommandId::new();
-    let noop = DaemonFrame::new(
-        MessageEnvelope {
-            command_id: Some(command_id),
-            ..MessageEnvelope::new(redesmyn_ids::MsgId::new())
-        },
-        DaemonMessage::DispatchCommand(DispatchCommand {
-            command: DaemonCommand::Noop,
+    let peer_version = frame.envelope.protocol_version();
+    let DaemonMessage::DaemonHello(_) = frame.message else {
+        tracing::warn!(?frame.message, "unexpected daemon message during handshake");
+        return;
+    };
+
+    let accepted = match ProtocolVersion::CURRENT.negotiate(peer_version) {
+        Ok(accepted) => accepted,
+        Err(err) => {
+            tracing::warn!(error = %err.message, "failed to negotiate daemon protocol version");
+            return;
+        }
+    };
+
+    let mut envelope = ProtocolEnvelope::new();
+    envelope.protocol_major = accepted.major;
+    envelope.protocol_minor = accepted.minor;
+    envelope.correlation_id = Some(frame.envelope.msg_id);
+
+    let ack = DaemonFrame::new(
+        envelope,
+        DaemonMessage::ControlPlaneHelloAck(ControlPlaneHelloAck {
+            accepted_protocol: accepted,
+            capabilities: vec!["stub".to_string()],
         }),
     );
-    if let Err(err) = conn.send(noop).await {
+
+    if let Err(err) = conn.send(ack).await {
         if !matches!(err, TransportError::ChannelClosed) {
-            tracing::warn!(error = %err, "failed to send noop command to daemon");
+            tracing::warn!(error = %err, "failed to send handshake ack to daemon");
         }
         return;
     }
@@ -80,7 +95,7 @@ async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Recei
             _ = shutdown_rx.changed() => {}
             frame = conn.recv() => {
                 match frame {
-                    Ok(frame) => handle_daemon_frame(frame).await,
+                    Ok(_frame) => {}
                     Err(TransportError::ChannelClosed) => return,
                     Err(err) => {
                         tracing::warn!(error = %err, "daemon link transport error");
@@ -88,22 +103,6 @@ async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Recei
                     }
                 }
             }
-        }
-    }
-}
-
-async fn handle_daemon_frame(frame: DaemonFrame) {
-    match frame.message {
-        DaemonMessage::HelloResponse(HelloResponse { daemon_name }) => {
-            tracing::info!(daemon_name = %daemon_name, "daemon handshake complete");
-        }
-        DaemonMessage::CommandAck(CommandAck { status }) => {
-            tracing::info!(?status, "daemon command ack");
-        }
-        DaemonMessage::Heartbeat(_) => {}
-        DaemonMessage::Event(_) => {}
-        DaemonMessage::HelloRequest(_) | DaemonMessage::DispatchCommand(_) => {
-            tracing::debug!(?frame.message, "unexpected daemon message");
         }
     }
 }
