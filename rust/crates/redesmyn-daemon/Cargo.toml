@@ -7,6 +7,10 @@ version.workspace = true
 publish = false
 
 [dependencies]
+clap.workspace = true
 redesmyn_config.workspace = true
 redesmyn_daemon.workspace = true
 redesmyn_logging.workspace = true
+redesmyn_protocol.workspace = true
+redesmyn_transport.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "signal", "sync"] }
