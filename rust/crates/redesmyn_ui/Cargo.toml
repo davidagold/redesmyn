@@ -8,7 +8,11 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
+redesmyn_config.workspace = true
+redesmyn_logging.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = { workspace = true, features = ["wayland", "x11"] }
-

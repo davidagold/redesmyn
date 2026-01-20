@@ -4788,6 +4788,11 @@ name = "redesmyn_ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "redesmyn_config",
+ "redesmyn_logging",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

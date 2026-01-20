@@ -29,7 +29,8 @@ redesmyn_ui = { path = "crates/redesmyn_ui" }
 clap = { version = "4.5.54", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 config = "0.14.1"
 dotenvy = "0.15.7"
-gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "macos-blade"] }
+# `runtime_shaders` avoids requiring the Metal toolchain at build time on macOS.
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "macos-blade", "runtime_shaders"] }
 prost = "0.14.3"
 prost-build = "0.14.3"
 prost-types = "0.14.3"
