@@ -1,8 +1,7 @@
 use std::{
     env,
     ffi::OsString,
-    fs,
-    io::{self, Read as _, Write as _},
+    io::{self, Write as _},
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
     time::{Duration, Instant},
@@ -11,6 +10,8 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::Serialize;
+
+mod protocol;
 
 fn exit_code_from_i32(code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(code).unwrap_or(1))
@@ -72,7 +73,7 @@ fn exit_from_clap_error(err: clap::Error, output_format: OutputFormat) -> ExitCo
 fn run(cli: Cli, output: &Output) -> CommandOutcome {
     match cli.command {
         Commands::Doctor(args) => doctor(args, output),
-        Commands::Protocol(cmd) => protocol(cmd, output),
+        Commands::Protocol(cmd) => protocol::protocol(cmd, output),
         Commands::Version(args) => version(args, output),
         Commands::Bench(cmd) => bench(cmd, output),
     }
@@ -132,7 +133,7 @@ enum Commands {
 
     /// Protocol tooling.
     #[command(subcommand)]
-    Protocol(ProtocolCommands),
+    Protocol(protocol::ProtocolCommands),
 
     /// Prints version information.
     Version(VersionArgs),
@@ -144,34 +145,6 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct DoctorArgs {}
-
-#[derive(Debug, Subcommand)]
-enum ProtocolCommands {
-    /// Decodes (or pretty-prints) protocol frames for debugging.
-    Decode(ProtocolDecodeArgs),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "lower")]
-enum ProtocolCodec {
-    Json,
-    Protobuf,
-}
-
-#[derive(Debug, Args)]
-struct ProtocolDecodeArgs {
-    /// Codec to use when decoding input.
-    #[arg(long, value_enum, default_value_t = ProtocolCodec::Json)]
-    codec: ProtocolCodec,
-
-    /// Path to read from (defaults to stdin).
-    #[arg(long)]
-    input: Option<PathBuf>,
-
-    /// Pretty-print JSON output.
-    #[arg(long, default_value_t = true)]
-    pretty: bool,
-}
 
 #[derive(Debug, Args)]
 struct VersionArgs {
@@ -351,90 +324,6 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn protocol(cmd: ProtocolCommands, output: &Output) -> CommandOutcome {
-    match cmd {
-        ProtocolCommands::Decode(args) => protocol_decode(args, output),
-    }
-}
-
-fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome {
-    match args.codec {
-        ProtocolCodec::Protobuf => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                "protobuf decoding is not available yet (depends on T-7 transport + codec scaffolding)",
-            ));
-        }
-        ProtocolCodec::Json => {}
-    }
-
-    let input_bytes = match read_all_input(args.input) {
-        Ok(bytes) => bytes,
-        Err(err) => return CommandOutcome::Failure(err),
-    };
-
-    let json_value: serde_json::Value = match serde_json::from_slice(&input_bytes) {
-        Ok(value) => value,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::InvalidRequest,
-                format!(
-                    "failed to parse JSON input: {err}\n(note: protocol framing decode is not implemented yet; this currently only pretty-prints JSON)"
-                ),
-            ));
-        }
-    };
-
-    match output.format {
-        OutputFormat::Human => {
-            if args.pretty {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json_value)
-                        .unwrap_or_else(|_| "<failed to render JSON>".to_owned())
-                );
-            } else {
-                println!(
-                    "{}",
-                    serde_json::to_string(&json_value)
-                        .unwrap_or_else(|_| "<failed to render JSON>".to_owned())
-                );
-            }
-        }
-        OutputFormat::Json => {
-            if let Err(err) = output.print_json_stdout(&json_value) {
-                return CommandOutcome::Failure(ErrorEnvelope::new(
-                    ErrorCategory::Internal,
-                    format!("failed to write output: {err}"),
-                ));
-            }
-        }
-    }
-
-    CommandOutcome::Success
-}
-
-fn read_all_input(input: Option<PathBuf>) -> Result<Vec<u8>, ErrorEnvelope> {
-    match input {
-        Some(path) => fs::read(&path).map_err(|err| {
-            ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to read input file {}: {err}", path.display()),
-            )
-        }),
-        None => {
-            let mut bytes = Vec::new();
-            io::stdin().lock().read_to_end(&mut bytes).map_err(|err| {
-                ErrorEnvelope::new(
-                    ErrorCategory::Internal,
-                    format!("failed to read stdin: {err}"),
-                )
-            })?;
-            Ok(bytes)
-        }
-    }
 }
 
 fn version(args: VersionArgs, output: &Output) -> CommandOutcome {

@@ -23,6 +23,9 @@ Examples:
 - `cd rust && cargo run -p rn -- doctor`
 - `cd rust && cargo run -p rn -- version`
 - `cd rust && cargo run -p rn -- bench startup`
+- `cd rust && cargo run -p rn -- protocol decode --input frames.bin --codec protobuf --output json --verbose`
+- `cd rust && cargo run -p rn -- protocol encode --input frame.json --codec protobuf --out frames.bin`
+- `cd rust && cargo run -p rn -- protocol tap --output json` (connects to configured client API UDS)
 
 Conventions:
 

@@ -4970,8 +4970,11 @@ name = "rn"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "redesmyn_config",
+ "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
+ "redesmyn_transport",
  "serde",
  "serde_json",
 ]

@@ -19,3 +19,6 @@ serde_json.workspace = true
 
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
+redesmyn_config.workspace = true
+redesmyn_ids.workspace = true
+redesmyn_transport.workspace = true
