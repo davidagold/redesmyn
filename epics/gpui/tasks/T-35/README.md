@@ -67,6 +67,7 @@ Expose a minimal API internally (names are illustrative):
   - Structured exec: decode records (often JSONL) → feed into the selected parser (T-33/T-34).
   - App-server: apply protocol framing/decoding (T-39/T-68) and dispatch request/response/notifications.
 - Emit semantic events (ultimately `SessionEvent`) derived from adapter output.
+  - Turn boundary events (`TurnStarted` / `TurnCompleted`) should carry `external_session_ref` when available.
 
 Supervisor-core requirement:
 
