@@ -1,23 +1,29 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, Event, EventLogEvent, GetEpicGraphResponse, HealthResponse,
     ListEpicsResponse, Response, ResponseResult, StatusResponse, Subscribed, SubscriptionEvent,
+    SubscriptionTopic,
 };
 use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Timestamp};
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
+use crate::event_log::EventLog as ServerEventLog;
 use crate::error::ControlPlaneError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
     Json,
     Protobuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientApiContext {
+    pub event_log: ServerEventLog,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -58,35 +64,77 @@ pub fn bind_client_socket(path: &Path) -> Result<tokio::net::UnixListener, Clien
 pub async fn serve_client_api_uds(
     socket_path: PathBuf,
     codec: ClientApiCodec,
+    ctx: ClientApiContext,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError> {
     let listener = bind_client_socket(&socket_path)?;
 
+    serve_client_api_listener(listener, socket_path, codec, ctx, shutdown).await
+}
+
+#[cfg(unix)]
+pub async fn serve_client_api_listener(
+    listener: tokio::net::UnixListener,
+    socket_path: PathBuf,
+    codec: ClientApiCodec,
+    ctx: ClientApiContext,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError> {
     tracing::info!(
         socket_path = %socket_path.display(),
         codec = ?codec,
         "client API UDS server listening"
     );
 
+    let mut connections = tokio::task::JoinSet::new();
+
     loop {
-        let (stream, _addr) = listener.accept().await?;
-        let task_codec = codec;
+        tokio::select! {
+            _ = shutdown.recv() => break,
+            accept = listener.accept() => {
+                let (stream, _addr) = accept?;
+                let task_codec = codec;
+                let task_ctx = ctx.clone();
+                let mut task_shutdown = shutdown.resubscribe();
 
-        tokio::spawn(async move {
-            let result = match task_codec {
-                ClientApiCodec::Json => handle_connection(stream, JsonCodec::new()).await,
-                ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new()).await,
-            };
+                connections.spawn(async move {
+                    let result = match task_codec {
+                        ClientApiCodec::Json => handle_connection(stream, JsonCodec::new(), task_ctx, &mut task_shutdown).await,
+                        ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new(), task_ctx, &mut task_shutdown).await,
+                    };
 
-            if let Err(err) = result {
-                tracing::warn!(error = %err, "client API connection terminated with error");
+                    if let Err(err) = result {
+                        tracing::warn!(error = %err, "client API connection terminated with error");
+                    }
+                });
             }
-        });
+            Some(join_result) = connections.join_next() => {
+                if let Err(err) = join_result {
+                    tracing::error!(error = %err, "client API connection task panicked");
+                }
+            }
+        }
     }
+
+    while let Some(join_result) = connections.join_next().await {
+        if let Err(err) = join_result {
+            tracing::error!(error = %err, "client API connection task panicked");
+        }
+    }
+
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    tracing::info!("client API UDS server shut down");
+    Ok(())
 }
 
 async fn handle_connection<C>(
     stream: tokio::net::UnixStream,
     codec: C,
+    ctx: ClientApiContext,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError>
 where
     C: Codec + 'static,
@@ -103,20 +151,25 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    run_session(&mut conn).await?;
+    run_session(&mut conn, &ctx, shutdown).await?;
     Ok(())
 }
 
-async fn run_session<C>(conn: &mut C) -> Result<(), ClientApiServeError>
+async fn run_session<C>(
+    conn: &mut C,
+    ctx: &ClientApiContext,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError>
 where
     C: ClientConnection + Send + 'static,
 {
     let mut accepted_protocol: Option<ProtocolVersion> = None;
-    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, ()> = HashMap::new();
-    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, SubscriptionTopic> = HashMap::new();
+    let mut event_log_rx = ctx.event_log.subscribe();
 
     loop {
         tokio::select! {
+            _ = shutdown.recv() => return Ok(()),
             frame = conn.recv() => {
                 let frame = match frame {
                     Ok(frame) => frame,
@@ -162,7 +215,7 @@ where
                     }
                     ClientMessage::Subscribe(sub) => {
                         let subscription_id = sub.subscription_id;
-                        subscriptions.insert(subscription_id, ());
+                        subscriptions.insert(subscription_id, sub.topic());
 
                         let ack = ClientFrame::new(
                             response_envelope(&frame.envelope, accepted),
@@ -173,7 +226,7 @@ where
                         );
                         conn.send(ack).await?;
 
-                        if sub.topic() == redesmyn_protocol::client::SubscriptionTopic::EventLog {
+                        if sub.topic() == SubscriptionTopic::EventLog {
                             let event = ClientFrame::new(
                                 response_envelope(&frame.envelope, accepted),
                                 ClientMessage::Event(Event {
@@ -202,11 +255,23 @@ where
                     }
                 }
             }
-            _ = tick.tick(), if !subscriptions.is_empty() => {
-                let accepted = accepted_protocol.unwrap_or(ProtocolVersion::CURRENT);
-                let ids: Vec<_> = subscriptions.keys().copied().collect();
+            event = event_log_rx.recv(), if subscriptions.values().any(|topic| *topic == SubscriptionTopic::EventLog) => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "event log subscriber lagged; dropping events");
+                        continue;
+                    }
+                };
 
-                for subscription_id in ids {
+                let accepted = accepted_protocol.unwrap_or(ProtocolVersion::CURRENT);
+
+                for (subscription_id, topic) in &subscriptions {
+                    if *topic != SubscriptionTopic::EventLog {
+                        continue;
+                    }
+
                     let mut envelope = ProtocolEnvelope::new();
                     envelope.protocol_major = accepted.major;
                     envelope.protocol_minor = accepted.minor;
@@ -214,13 +279,8 @@ where
                     conn.send(ClientFrame::new(
                         envelope,
                         ClientMessage::Event(Event {
-                            subscription_id,
-                            event: SubscriptionEvent::EventLog(EventLogEvent {
-                                event_id: redesmyn_ids::EventId::new(),
-                                occurred_at: Timestamp::now_utc(),
-                                event_type: "event_log.tick".to_string(),
-                                json_payload: Vec::new(),
-                            }),
+                            subscription_id: *subscription_id,
+                            event: SubscriptionEvent::EventLog(event.clone()),
                         }),
                     ))
                     .await?;

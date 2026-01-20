@@ -3,6 +3,9 @@
 use std::os::unix::fs::PermissionsExt as _;
 use std::time::Duration;
 
+use redesmyn_control_plane::ControlPlane;
+use redesmyn_control_plane::ControlPlaneDb;
+use redesmyn_control_plane::ControlPlaneStartOptions;
 use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_ids::{RequestId, SubscriptionId};
 use redesmyn_protocol::ProtocolEnvelope;
@@ -19,14 +22,12 @@ async fn uds_server_binds_securely_and_supports_requests_and_subscriptions() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let socket_path = tmp.path().join("control_plane.sock");
 
-    let server_socket_path = socket_path.clone();
-    let server = tokio::spawn(async move {
-        redesmyn_control_plane::client_api::serve_client_api_uds(
-            server_socket_path,
-            ClientApiCodec::Protobuf,
-        )
-        .await
-    });
+    let options = ControlPlaneStartOptions {
+        db: ControlPlaneDb::InMemory,
+        client_api_socket_path: Some(socket_path.clone()),
+        client_api_codec: ClientApiCodec::Protobuf,
+    };
+    let server = ControlPlane::start(options).await.expect("start");
 
     for _ in 0..50 {
         if socket_path.exists() {
@@ -136,6 +137,6 @@ async fn uds_server_binds_securely_and_supports_requests_and_subscriptions() {
     assert!(got_subscribed, "did not receive Subscribed event");
     assert!(got_event_log, "did not receive EventLog event");
 
-    server.abort();
-    let _ = server.await;
+    server.shutdown().await;
+    assert!(!socket_path.exists(), "socket file should be removed on shutdown");
 }

@@ -14,6 +14,9 @@ redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_storage.workspace = true
 redesmyn_transport.workspace = true
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio"] }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 
