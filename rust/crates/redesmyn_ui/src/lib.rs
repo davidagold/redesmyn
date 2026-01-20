@@ -11,6 +11,10 @@ pub mod styles;
 pub mod traits;
 pub mod utils;
 
+mod ui_context;
+
+pub use ui_context::UiContext;
+
 pub mod prelude {
     pub use gpui::prelude::*;
 }
