@@ -1432,9 +1432,6 @@ name = "redesmyn_daemon"
 version = "0.1.0"
 dependencies = [
  "redesmyn_config",
- "redesmyn_domain",
- "redesmyn_exec",
- "redesmyn_git",
  "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
