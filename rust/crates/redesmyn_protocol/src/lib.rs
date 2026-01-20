@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::{fmt, str::FromStr};
 
-use redesmyn_ids::{HostId, HostInstanceId, MsgId, RepoId, WorkspaceId};
+use redesmyn_ids::{MsgId, RepoId, WorkspaceId};
 
 #[doc(hidden)]
 pub mod pb {
@@ -29,6 +29,8 @@ pub use session::{
     SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
     ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
 };
+
+pub use daemon::DaemonHello;
 
 /// Optional structured detail for debugging/UX (no stack traces).
 ///
@@ -426,29 +428,25 @@ impl ProtocolEnvelope {
     }
 }
 
-/// Daemon → control plane handshake payload (T-11).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct DaemonHello {
-    pub host_id: HostId,
-    pub host_instance_id: HostInstanceId,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    pub supported_protocol: ProtocolVersion,
-}
-
 mod protobuf;
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DaemonHello, ErrorCategory, ErrorEnvelope, HostId, HostInstanceId, MsgId, PROTOCOL_MAJOR,
-        PROTOCOL_MINOR, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
+        DaemonHello, ErrorCategory, ErrorEnvelope, MsgId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+        ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
     };
 
-    use redesmyn_ids::{EventId, RequestId, SubscriptionId};
+    use redesmyn_ids::{
+        CommandId, EventId, HostId, HostInstanceId, RepoId, RequestId, SubscriptionId, WorkspaceId,
+    };
 
     use prost::Message;
 
+    use crate::daemon::{
+        CommandProgress, CommandState, CommandUpdate, DaemonFrame, DaemonMessage, GitEvent,
+        TelemetryEvent, TelemetryEventBatch,
+    };
     use crate::client::{
         ClientFrame, ClientMessage, EpicGraph, EpicSummary, EpicTaskEdge, EpicTaskNode, Event,
         EventLogEvent, EventLogFilter, GetEpicGraphRequest, GetEpicGraphResponse, HealthRequest,
@@ -659,6 +657,48 @@ mod tests {
         let hello_pb_decoded = pbv1::DaemonHello::decode(hello_bytes.as_slice()).unwrap();
         let hello_decoded = DaemonHello::try_from_protobuf(hello_pb_decoded).unwrap();
         assert_eq!(hello_decoded, hello);
+    }
+
+    #[test]
+    fn protobuf_roundtrips_for_daemon_frames() {
+        let repo_scope = RepoScope::new(WorkspaceId::new(), RepoId::new());
+
+        let batch = TelemetryEventBatch {
+            scope: repo_scope,
+            events: vec![TelemetryEvent::Git(GitEvent {
+                event_type: "git.commit".to_string(),
+                json_payload: br#"{"sha":"deadbeef"}"#.to_vec(),
+            })],
+        };
+
+        let frame = DaemonFrame::new(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            DaemonMessage::TelemetryEventBatch(batch),
+        );
+
+        let bytes = frame.to_protobuf().encode_to_vec();
+        let pb = pbv1::DaemonFrame::decode(bytes.as_slice()).unwrap();
+        let decoded = DaemonFrame::try_from_protobuf(pb).unwrap();
+        assert_eq!(decoded, frame);
+
+        let update = CommandUpdate {
+            command_id: CommandId::new(),
+            state: CommandState::Running,
+            message: Some("working".to_string()),
+            progress: Some(CommandProgress { percent: 42 }),
+            detail: None,
+            error: None,
+        };
+
+        let frame = DaemonFrame::new(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            DaemonMessage::CommandUpdate(update),
+        );
+
+        let bytes = frame.to_protobuf().encode_to_vec();
+        let pb = pbv1::DaemonFrame::decode(bytes.as_slice()).unwrap();
+        let decoded = DaemonFrame::try_from_protobuf(pb).unwrap();
+        assert_eq!(decoded, frame);
     }
 
     #[test]

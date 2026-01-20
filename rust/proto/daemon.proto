@@ -9,10 +9,48 @@ import "envelope.proto";
 // This file intentionally starts small: it establishes schema ownership and the
 // codegen pipeline. Message sets and semantics are defined in T-11.
 //
+// Wire conventions (T-9):
+// - All daemon frames carry a `ProtocolEnvelope` (`msg_id` is the dedupe key).
+// - Repo-scoped messages must use `envelope.scope = RepoScope` for routing.
+//
+// Delivery semantics (v1):
+// - Frames are delivered at-least-once; receivers dedupe best-effort by
+//   `envelope.msg_id`.
+// - Loss recovery uses explicit resync: control plane sends `ResyncRequest`,
+//   daemon responds with `TelemetrySnapshot` and/or replay batches.
+//
 // Compatibility policy for unknown kinds:
 // - When transporting typed unions (events/session events), always include an
 //   explicit `Unknown*` variant with `type` and `json_payload` so older clients
 //   can still display something meaningful (see T-11/T-14).
+
+// A single daemon ↔ control plane protocol frame.
+message DaemonFrame {
+  ProtocolEnvelope envelope = 1;
+
+  oneof message {
+    // Handshake
+    DaemonHello daemon_hello = 2;
+    ControlPlaneHelloAck control_plane_hello_ack = 3;
+
+    // Repo attachment / presence
+    RepoAttach repo_attach = 10;
+    RepoDetach repo_detach = 11;
+    DaemonHeartbeat daemon_heartbeat = 12;
+
+    // Telemetry + resync
+    TelemetryEventBatch telemetry_event_batch = 20;
+    TelemetrySnapshot telemetry_snapshot = 21;
+    ResyncRequest resync_request = 22;
+
+    // Command dispatch + lifecycle
+    CommandDispatch command_dispatch = 30;
+    CommandUpdate command_update = 31;
+
+    // Protocol-level error (structured; T-9).
+    ErrorEnvelope error = 100;
+  }
+}
 
 // Initial handshake message: daemon → control plane.
 message DaemonHello {
@@ -34,6 +72,141 @@ message ControlPlaneHelloAck {
   repeated string capabilities = 2;
 }
 
+// Daemon → control plane: attach a repo scope to this connection.
+//
+// Notes:
+// - Control plane must not require `repo_root_hint`; it is local-only and
+//   provided strictly for diagnostics.
+// - Control plane requests attachments by stable repo identity (RepoScope),
+//   never by filesystem path.
+message RepoAttach {
+  RepoScope repo_scope = 1;
+  // Best-effort local filesystem hint; may be omitted/empty.
+  string repo_root_hint = 2;
+}
+
+// Control plane ↔ daemon: detach a repo scope from this connection.
+message RepoDetach {
+  RepoScope repo_scope = 1;
+  // Best-effort human-readable reason (optional).
+  string reason = 2;
+}
+
+message TelemetryFreshness {
+  RepoScope scope = 1;
+  // MsgId (ULID bytes, length = 16) of the last `TelemetryEventBatch` sent for this scope.
+  bytes last_event_batch_msg_id = 2;
+  // MsgId (ULID bytes, length = 16) of the last `TelemetrySnapshot` sent for this scope.
+  bytes last_snapshot_msg_id = 3;
+}
+
+// Daemon → control plane: periodic liveness + routing state.
+message DaemonHeartbeat {
+  // Current attached repo scopes on this connection.
+  repeated RepoScope attached_repo_scopes = 1;
+  // Optional per-scope telemetry freshness markers.
+  repeated TelemetryFreshness telemetry_freshness = 2;
+}
+
+// A typed telemetry event union (additive; v1 starts minimal).
+message TelemetryEvent {
+  oneof kind {
+    GitEvent git = 1;
+    WorktreeEvent worktree = 2;
+    AgentEvent agent = 3;
+    MergeRunEvent merge_run = 4;
+    UnknownEvent unknown = 100;
+  }
+}
+
+// Known telemetry category: git.
+//
+// v1 starts as `event_type + json_payload`; later revisions add typed payloads.
+message GitEvent {
+  string event_type = 1;
+  bytes json_payload = 2;
+}
+
+// Known telemetry category: worktrees.
+message WorktreeEvent {
+  string event_type = 1;
+  bytes json_payload = 2;
+}
+
+// Known telemetry category: agents.
+message AgentEvent {
+  string event_type = 1;
+  bytes json_payload = 2;
+}
+
+// Known telemetry category: merge runs.
+message MergeRunEvent {
+  string event_type = 1;
+  bytes json_payload = 2;
+}
+
+// Daemon → control plane: batch of telemetry events for a repo scope.
+message TelemetryEventBatch {
+  RepoScope scope = 1;
+  repeated TelemetryEvent events = 2;
+}
+
+// Daemon → control plane: snapshot for a scope (minimal schema in v1).
+message TelemetrySnapshot {
+  RepoScope scope = 1;
+  bytes json_payload = 2;
+}
+
+// Control plane → daemon: request a resync for a scope.
+message ResyncRequest {
+  RepoScope scope = 1;
+  // Best-effort human-readable reason ("reconnect", "gap_detected", ...).
+  string reason = 2;
+}
+
+// Control plane → daemon: dispatch a command to a daemon.
+message CommandDispatch {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  RepoScope scope = 2;
+  // Stable command kind identifier (additive; forward compatible).
+  string command_kind = 3;
+  // Command-specific JSON payload (minimal in v1; will become typed over time).
+  bytes json_payload = 4;
+}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  COMMAND_STATE_ACCEPTED = 1;
+  COMMAND_STATE_RUNNING = 2;
+  COMMAND_STATE_SUCCEEDED = 3;
+  COMMAND_STATE_FAILED = 4;
+  COMMAND_STATE_CANCELED = 5;
+  COMMAND_STATE_REJECTED = 6;
+}
+
+message CommandProgress {
+  // Percent complete (0..=100).
+  uint32 percent = 1;
+}
+
+// Daemon → control plane: command lifecycle update.
+message CommandUpdate {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  CommandState state = 2;
+
+  // Optional human-readable status (UI/CLI safe).
+  string message = 3;
+  // Optional progress hint.
+  CommandProgress progress = 4;
+  // Optional structured detail (avoid large payloads).
+  map<string, string> detail = 5;
+
+  // Optional structured error (set on rejected/failed as appropriate).
+  ErrorEnvelope error = 100;
+}
+
 // Forward-compatible placeholder for event union fallbacks (T-11).
 message UnknownEvent {
   // Stable event type identifier (e.g. "git.commit", "agent.turn_completed").
@@ -41,4 +214,3 @@ message UnknownEvent {
   // Best-effort JSON payload for diagnostics/legacy rendering.
   bytes json_payload = 2;
 }
-

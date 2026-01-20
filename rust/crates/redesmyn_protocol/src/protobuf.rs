@@ -1,12 +1,18 @@
 use std::collections::{BTreeMap, HashMap};
 
 use redesmyn_ids::{
-    ArtifactId, EventId, HostId, HostInstanceId, MsgId, RepoId, RequestId, SessionEventId,
-    SessionId, SubscriptionId, TaskId, WorkspaceId,
+    ArtifactId, CommandId, EventId, HostId, HostInstanceId, MsgId, RepoId, RequestId,
+    SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
+use crate::daemon::{
+    AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate, ControlPlaneHelloAck,
+    DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent, RepoAttach, RepoDetach,
+    ResyncRequest, TelemetryEvent, TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot,
+    UnknownEvent, WorktreeEvent,
+};
 use crate::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
     SessionEventKind, SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
@@ -65,6 +71,10 @@ where
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
     value.and_then(|value| if value.is_empty() { None } else { Some(value) })
+}
+
+fn normalize_nonempty_string(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn encode_timestamp(value: Timestamp) -> prost_types::Timestamp {
@@ -299,6 +309,522 @@ impl DaemonHello {
                     .ok_or_else(|| missing_required("supported_protocol"))?,
             )?,
         })
+    }
+}
+
+impl ControlPlaneHelloAck {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ControlPlaneHelloAck {
+        pbv1::ControlPlaneHelloAck {
+            accepted_protocol: Some(self.accepted_protocol.to_protobuf()),
+            capabilities: self.capabilities.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ControlPlaneHelloAck) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            accepted_protocol: ProtocolVersion::try_from_protobuf(
+                proto
+                    .accepted_protocol
+                    .ok_or_else(|| missing_required("accepted_protocol"))?,
+            )?,
+            capabilities: proto.capabilities,
+        })
+    }
+}
+
+impl RepoAttach {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RepoAttach {
+        pbv1::RepoAttach {
+            repo_scope: Some(self.repo_scope.to_protobuf()),
+            repo_root_hint: self.repo_root_hint.clone().unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::RepoAttach) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            repo_scope: RepoScope::try_from_protobuf(
+                proto
+                    .repo_scope
+                    .ok_or_else(|| missing_required("repo_scope"))?,
+            )?,
+            repo_root_hint: normalize_nonempty_string(proto.repo_root_hint),
+        })
+    }
+}
+
+impl RepoDetach {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RepoDetach {
+        pbv1::RepoDetach {
+            repo_scope: Some(self.repo_scope.to_protobuf()),
+            reason: self.reason.clone().unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::RepoDetach) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            repo_scope: RepoScope::try_from_protobuf(
+                proto
+                    .repo_scope
+                    .ok_or_else(|| missing_required("repo_scope"))?,
+            )?,
+            reason: normalize_nonempty_string(proto.reason),
+        })
+    }
+}
+
+impl TelemetryFreshness {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TelemetryFreshness {
+        pbv1::TelemetryFreshness {
+            scope: Some(self.scope.to_protobuf()),
+            last_event_batch_msg_id: self
+                .last_event_batch_msg_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            last_snapshot_msg_id: self
+                .last_snapshot_msg_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TelemetryFreshness) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            scope: RepoScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            last_event_batch_msg_id: decode_optional_ulid::<MsgId>(
+                "last_event_batch_msg_id",
+                &proto.last_event_batch_msg_id,
+            )?,
+            last_snapshot_msg_id: decode_optional_ulid::<MsgId>(
+                "last_snapshot_msg_id",
+                &proto.last_snapshot_msg_id,
+            )?,
+        })
+    }
+}
+
+impl DaemonHeartbeat {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::DaemonHeartbeat {
+        pbv1::DaemonHeartbeat {
+            attached_repo_scopes: self
+                .attached_repo_scopes
+                .iter()
+                .map(|scope| scope.to_protobuf())
+                .collect(),
+            telemetry_freshness: self
+                .telemetry_freshness
+                .iter()
+                .map(|freshness| freshness.to_protobuf())
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::DaemonHeartbeat) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            attached_repo_scopes: proto
+                .attached_repo_scopes
+                .into_iter()
+                .map(RepoScope::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            telemetry_freshness: proto
+                .telemetry_freshness
+                .into_iter()
+                .map(TelemetryFreshness::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl GitEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GitEvent {
+        pbv1::GitEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::GitEvent) -> Self {
+        Self {
+            event_type: proto.event_type,
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl WorktreeEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WorktreeEvent {
+        pbv1::WorktreeEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::WorktreeEvent) -> Self {
+        Self {
+            event_type: proto.event_type,
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl AgentEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AgentEvent {
+        pbv1::AgentEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::AgentEvent) -> Self {
+        Self {
+            event_type: proto.event_type,
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl MergeRunEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::MergeRunEvent {
+        pbv1::MergeRunEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::MergeRunEvent) -> Self {
+        Self {
+            event_type: proto.event_type,
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl UnknownEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnknownEvent {
+        pbv1::UnknownEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UnknownEvent) -> Self {
+        Self {
+            event_type: proto.event_type,
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl TelemetryEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TelemetryEvent {
+        pbv1::TelemetryEvent {
+            kind: Some(match self {
+                Self::Git(event) => pbv1::telemetry_event::Kind::Git(event.to_protobuf()),
+                Self::Worktree(event) => {
+                    pbv1::telemetry_event::Kind::Worktree(event.to_protobuf())
+                }
+                Self::Agent(event) => pbv1::telemetry_event::Kind::Agent(event.to_protobuf()),
+                Self::MergeRun(event) => {
+                    pbv1::telemetry_event::Kind::MergeRun(event.to_protobuf())
+                }
+                Self::Unknown(event) => pbv1::telemetry_event::Kind::Unknown(event.to_protobuf()),
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TelemetryEvent) -> Result<Self, ErrorEnvelope> {
+        match proto.kind {
+            // Forward compatibility: older binaries may decode a new event kind into an "empty"
+            // message (unknown fields are discarded by default).
+            None => Ok(Self::Unknown(UnknownEvent {
+                event_type: "<unknown>".to_string(),
+                json_payload: Vec::new(),
+            })),
+            Some(pbv1::telemetry_event::Kind::Git(event)) => {
+                Ok(Self::Git(GitEvent::from_protobuf(event)))
+            }
+            Some(pbv1::telemetry_event::Kind::Worktree(event)) => {
+                Ok(Self::Worktree(WorktreeEvent::from_protobuf(event)))
+            }
+            Some(pbv1::telemetry_event::Kind::Agent(event)) => {
+                Ok(Self::Agent(AgentEvent::from_protobuf(event)))
+            }
+            Some(pbv1::telemetry_event::Kind::MergeRun(event)) => {
+                Ok(Self::MergeRun(MergeRunEvent::from_protobuf(event)))
+            }
+            Some(pbv1::telemetry_event::Kind::Unknown(event)) => {
+                Ok(Self::Unknown(UnknownEvent::from_protobuf(event)))
+            }
+        }
+    }
+}
+
+impl TelemetryEventBatch {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TelemetryEventBatch {
+        pbv1::TelemetryEventBatch {
+            scope: Some(self.scope.to_protobuf()),
+            events: self.events.iter().map(|event| event.to_protobuf()).collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TelemetryEventBatch) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            scope: RepoScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            events: proto
+                .events
+                .into_iter()
+                .map(TelemetryEvent::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl TelemetrySnapshot {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TelemetrySnapshot {
+        pbv1::TelemetrySnapshot {
+            scope: Some(self.scope.to_protobuf()),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TelemetrySnapshot) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            scope: RepoScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            json_payload: proto.json_payload,
+        })
+    }
+}
+
+impl ResyncRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ResyncRequest {
+        pbv1::ResyncRequest {
+            scope: Some(self.scope.to_protobuf()),
+            reason: self.reason.clone().unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ResyncRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            scope: RepoScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            reason: normalize_nonempty_string(proto.reason),
+        })
+    }
+}
+
+impl CommandDispatch {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CommandDispatch {
+        pbv1::CommandDispatch {
+            command_id: self.command_id.to_bytes().to_vec(),
+            scope: Some(self.scope.to_protobuf()),
+            command_kind: self.command_kind.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CommandDispatch) -> Result<Self, ErrorEnvelope> {
+        if proto.command_kind.is_empty() {
+            return Err(missing_required("command_kind"));
+        }
+
+        Ok(Self {
+            command_id: decode_required_ulid::<CommandId>("command_id", &proto.command_id)?,
+            scope: RepoScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            command_kind: proto.command_kind,
+            json_payload: proto.json_payload,
+        })
+    }
+}
+
+fn encode_command_state(value: CommandState) -> i32 {
+    match value {
+        CommandState::Accepted => pbv1::CommandState::Accepted as i32,
+        CommandState::Running => pbv1::CommandState::Running as i32,
+        CommandState::Succeeded => pbv1::CommandState::Succeeded as i32,
+        CommandState::Failed => pbv1::CommandState::Failed as i32,
+        CommandState::Canceled => pbv1::CommandState::Canceled as i32,
+        CommandState::Rejected => pbv1::CommandState::Rejected as i32,
+    }
+}
+
+fn decode_command_state(value: i32) -> Result<CommandState, ErrorEnvelope> {
+    match pbv1::CommandState::try_from(value) {
+        Ok(pbv1::CommandState::Accepted) => Ok(CommandState::Accepted),
+        Ok(pbv1::CommandState::Running) => Ok(CommandState::Running),
+        Ok(pbv1::CommandState::Succeeded) => Ok(CommandState::Succeeded),
+        Ok(pbv1::CommandState::Failed) => Ok(CommandState::Failed),
+        Ok(pbv1::CommandState::Canceled) => Ok(CommandState::Canceled),
+        Ok(pbv1::CommandState::Rejected) => Ok(CommandState::Rejected),
+        Ok(pbv1::CommandState::Unspecified) | Err(_) => Err(invalid_field(
+            "state",
+            format!("unknown enum value for CommandState: {value}"),
+        )),
+    }
+}
+
+impl CommandProgress {
+    #[must_use]
+    pub fn to_protobuf(self) -> pbv1::CommandProgress {
+        pbv1::CommandProgress {
+            percent: self.percent,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CommandProgress) -> Result<Self, ErrorEnvelope> {
+        if proto.percent > 100 {
+            return Err(invalid_field(
+                "progress.percent",
+                format!("out of range: {}", proto.percent),
+            ));
+        }
+
+        Ok(Self {
+            percent: proto.percent,
+        })
+    }
+}
+
+impl CommandUpdate {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CommandUpdate {
+        pbv1::CommandUpdate {
+            command_id: self.command_id.to_bytes().to_vec(),
+            state: encode_command_state(self.state),
+            message: self.message.clone().unwrap_or_default(),
+            progress: self.progress.map(|progress| progress.to_protobuf()),
+            detail: encode_error_detail(&self.detail),
+            error: self.error.as_ref().map(|err| err.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CommandUpdate) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command_id: decode_required_ulid::<CommandId>("command_id", &proto.command_id)?,
+            state: decode_command_state(proto.state)?,
+            message: normalize_nonempty_string(proto.message),
+            progress: proto
+                .progress
+                .map(CommandProgress::try_from_protobuf)
+                .transpose()?,
+            detail: decode_error_detail(proto.detail),
+            error: proto.error.map(ErrorEnvelope::from_protobuf),
+        })
+    }
+}
+
+impl DaemonFrame {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::DaemonFrame {
+        pbv1::DaemonFrame {
+            envelope: Some(self.envelope.to_protobuf()),
+            message: Some(match &self.message {
+                DaemonMessage::DaemonHello(hello) => {
+                    pbv1::daemon_frame::Message::DaemonHello(hello.to_protobuf())
+                }
+                DaemonMessage::ControlPlaneHelloAck(ack) => {
+                    pbv1::daemon_frame::Message::ControlPlaneHelloAck(ack.to_protobuf())
+                }
+                DaemonMessage::RepoAttach(attach) => {
+                    pbv1::daemon_frame::Message::RepoAttach(attach.to_protobuf())
+                }
+                DaemonMessage::RepoDetach(detach) => {
+                    pbv1::daemon_frame::Message::RepoDetach(detach.to_protobuf())
+                }
+                DaemonMessage::DaemonHeartbeat(heartbeat) => {
+                    pbv1::daemon_frame::Message::DaemonHeartbeat(heartbeat.to_protobuf())
+                }
+                DaemonMessage::TelemetryEventBatch(batch) => {
+                    pbv1::daemon_frame::Message::TelemetryEventBatch(batch.to_protobuf())
+                }
+                DaemonMessage::TelemetrySnapshot(snapshot) => {
+                    pbv1::daemon_frame::Message::TelemetrySnapshot(snapshot.to_protobuf())
+                }
+                DaemonMessage::ResyncRequest(req) => {
+                    pbv1::daemon_frame::Message::ResyncRequest(req.to_protobuf())
+                }
+                DaemonMessage::CommandDispatch(dispatch) => {
+                    pbv1::daemon_frame::Message::CommandDispatch(dispatch.to_protobuf())
+                }
+                DaemonMessage::CommandUpdate(update) => {
+                    pbv1::daemon_frame::Message::CommandUpdate(update.to_protobuf())
+                }
+                DaemonMessage::Error(error) => {
+                    pbv1::daemon_frame::Message::Error(error.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::DaemonFrame) -> Result<Self, ErrorEnvelope> {
+        let envelope = ProtocolEnvelope::try_from_protobuf(
+            proto.envelope.ok_or_else(|| missing_required("envelope"))?,
+        )?;
+
+        let message = match proto.message.ok_or_else(|| missing_required("message"))? {
+            pbv1::daemon_frame::Message::DaemonHello(hello) => {
+                DaemonMessage::DaemonHello(DaemonHello::try_from_protobuf(hello)?)
+            }
+            pbv1::daemon_frame::Message::ControlPlaneHelloAck(ack) => {
+                DaemonMessage::ControlPlaneHelloAck(ControlPlaneHelloAck::try_from_protobuf(ack)?)
+            }
+            pbv1::daemon_frame::Message::RepoAttach(attach) => {
+                DaemonMessage::RepoAttach(RepoAttach::try_from_protobuf(attach)?)
+            }
+            pbv1::daemon_frame::Message::RepoDetach(detach) => {
+                DaemonMessage::RepoDetach(RepoDetach::try_from_protobuf(detach)?)
+            }
+            pbv1::daemon_frame::Message::DaemonHeartbeat(heartbeat) => {
+                DaemonMessage::DaemonHeartbeat(DaemonHeartbeat::try_from_protobuf(heartbeat)?)
+            }
+            pbv1::daemon_frame::Message::TelemetryEventBatch(batch) => {
+                DaemonMessage::TelemetryEventBatch(TelemetryEventBatch::try_from_protobuf(batch)?)
+            }
+            pbv1::daemon_frame::Message::TelemetrySnapshot(snapshot) => {
+                DaemonMessage::TelemetrySnapshot(TelemetrySnapshot::try_from_protobuf(snapshot)?)
+            }
+            pbv1::daemon_frame::Message::ResyncRequest(req) => {
+                DaemonMessage::ResyncRequest(ResyncRequest::try_from_protobuf(req)?)
+            }
+            pbv1::daemon_frame::Message::CommandDispatch(dispatch) => {
+                DaemonMessage::CommandDispatch(CommandDispatch::try_from_protobuf(dispatch)?)
+            }
+            pbv1::daemon_frame::Message::CommandUpdate(update) => {
+                DaemonMessage::CommandUpdate(CommandUpdate::try_from_protobuf(update)?)
+            }
+            pbv1::daemon_frame::Message::Error(error) => {
+                DaemonMessage::Error(ErrorEnvelope::from_protobuf(error))
+            }
+        };
+
+        Ok(Self { envelope, message })
     }
 }
 

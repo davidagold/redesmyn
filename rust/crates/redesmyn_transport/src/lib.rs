@@ -10,7 +10,8 @@
 use std::{future::Future, pin::Pin};
 
 use redesmyn_logging::tracing::{self, field};
-use redesmyn_protocol::daemon::{DaemonFrame, MessageEnvelope};
+use redesmyn_protocol::daemon::DaemonFrame;
+use redesmyn_protocol::{ProtocolEnvelope, Scope};
 
 pub mod client;
 pub mod codec;
@@ -42,25 +43,34 @@ pub trait DaemonConnection: Send {
     fn recv(&mut self) -> BoxFuture<'_, Result<DaemonFrame, TransportError>>;
 }
 
-pub(crate) fn span_for_envelope(name: &'static str, envelope: &MessageEnvelope) -> tracing::Span {
+pub(crate) fn span_for_envelope(name: &'static str, envelope: &ProtocolEnvelope) -> tracing::Span {
     let span = tracing::debug_span!(
         "daemon.transport",
         op = name,
-        protocol_version = envelope.protocol_version,
+        protocol_major = envelope.protocol_major,
+        protocol_minor = envelope.protocol_minor,
         msg_id = %envelope.msg_id,
-        in_reply_to = field::Empty,
-        command_id = field::Empty,
-        run_id = field::Empty,
+        correlation_id = field::Empty,
+        trace_id = field::Empty,
+        workspace_id = field::Empty,
+        repo_id = field::Empty,
     );
 
-    if let Some(id) = envelope.in_reply_to {
-        span.record("in_reply_to", field::display(id));
+    if let Some(id) = envelope.correlation_id {
+        span.record("correlation_id", field::display(id));
     }
-    if let Some(id) = envelope.command_id {
-        span.record("command_id", field::display(id));
+    if let Some(id) = envelope.trace_id {
+        span.record("trace_id", field::display(id));
     }
-    if let Some(id) = envelope.run_id {
-        span.record("run_id", field::display(id));
+    if let Some(scope) = envelope.scope {
+        match scope {
+            Scope::Repo { repo } => {
+                span.record("workspace_id", field::display(repo.workspace_id));
+                span.record("repo_id", field::display(repo.repo_id));
+            }
+            Scope::Unknown => {}
+            _ => {}
+        }
     }
 
     span
