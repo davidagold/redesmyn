@@ -24,7 +24,7 @@ pub(crate) fn state_dir(base_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn default_db_path(base_dir: &Path) -> PathBuf {
-    state_dir(base_dir).join("redesmyn.sqlite3")
+    state_dir(base_dir).join("redesmyn_rust.sqlite3")
 }
 
 pub(crate) fn default_repo_registry_dir(base_dir: &Path) -> PathBuf {
