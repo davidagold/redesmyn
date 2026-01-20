@@ -1,10 +1,17 @@
 use std::collections::{BTreeMap, HashMap};
 
 use redesmyn_ids::{
-    EventId, HostId, HostInstanceId, MsgId, RepoId, RequestId, SubscriptionId, WorkspaceId,
+    ArtifactId, EventId, HostId, HostInstanceId, MsgId, RepoId, RequestId, SessionEventId,
+    SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
 use crate::pb::redesmyn::protocol::v1 as pbv1;
+use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
+use crate::session::{
+    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
+    SessionEventKind, SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
+    TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+};
 use crate::{
     DaemonHello, ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion,
     RepoScope, Scope, Timestamp, TraceId,
@@ -54,6 +61,10 @@ where
     Ok(Some(
         T::try_from(bytes).map_err(|err| invalid_field(field, err.to_string()))?,
     ))
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| if value.is_empty() { None } else { Some(value) })
 }
 
 fn encode_timestamp(value: Timestamp) -> prost_types::Timestamp {
@@ -287,6 +298,541 @@ impl DaemonHello {
                     .supported_protocol
                     .ok_or_else(|| missing_required("supported_protocol"))?,
             )?,
+        })
+    }
+}
+
+fn encode_artifact_kind(value: ArtifactKind) -> i32 {
+    match value {
+        ArtifactKind::Log => pbv1::ArtifactKind::Log as i32,
+        ArtifactKind::Diff => pbv1::ArtifactKind::Diff as i32,
+        ArtifactKind::Patch => pbv1::ArtifactKind::Patch as i32,
+        ArtifactKind::FileSnapshot => pbv1::ArtifactKind::FileSnapshot as i32,
+        ArtifactKind::Trace => pbv1::ArtifactKind::Trace as i32,
+        ArtifactKind::Unknown => pbv1::ArtifactKind::Unspecified as i32,
+    }
+}
+
+fn decode_artifact_kind(value: i32) -> ArtifactKind {
+    match pbv1::ArtifactKind::try_from(value) {
+        Ok(pbv1::ArtifactKind::Log) => ArtifactKind::Log,
+        Ok(pbv1::ArtifactKind::Diff) => ArtifactKind::Diff,
+        Ok(pbv1::ArtifactKind::Patch) => ArtifactKind::Patch,
+        Ok(pbv1::ArtifactKind::FileSnapshot) => ArtifactKind::FileSnapshot,
+        Ok(pbv1::ArtifactKind::Trace) => ArtifactKind::Trace,
+        Ok(pbv1::ArtifactKind::Unspecified) | Err(_) => ArtifactKind::Unknown,
+    }
+}
+
+impl Hash {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::Hash {
+        pbv1::Hash {
+            algorithm: self.algorithm.clone(),
+            digest: self.digest.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::Hash) -> Result<Self, ErrorEnvelope> {
+        if proto.algorithm.is_empty() {
+            return Err(invalid_field("hash.algorithm", "empty"));
+        }
+        if proto.digest.is_empty() {
+            return Err(invalid_field("hash.digest", "empty"));
+        }
+
+        Ok(Self {
+            algorithm: proto.algorithm,
+            digest: proto.digest,
+        })
+    }
+}
+
+impl StorageHint {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StorageHint {
+        pbv1::StorageHint {
+            hint: match self {
+                Self::LocalPath { local_path } => Some(pbv1::storage_hint::Hint::LocalPath(
+                    local_path.clone(),
+                )),
+                Self::BlobKey { blob_key } => {
+                    Some(pbv1::storage_hint::Hint::BlobKey(blob_key.clone()))
+                }
+                Self::Unknown => None,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::StorageHint) -> Self {
+        match proto.hint {
+            Some(pbv1::storage_hint::Hint::LocalPath(local_path)) => Self::LocalPath { local_path },
+            Some(pbv1::storage_hint::Hint::BlobKey(blob_key)) => Self::BlobKey { blob_key },
+            None => Self::Unknown,
+        }
+    }
+}
+
+impl ArtifactRef {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ArtifactRef {
+        pbv1::ArtifactRef {
+            artifact_id: self.artifact_id.to_bytes().to_vec(),
+            kind: encode_artifact_kind(self.kind),
+            content_hash: self.content_hash.as_ref().map(Hash::to_protobuf),
+            byte_len: self.byte_len,
+            mime: self.mime.clone(),
+            storage_hint: self.storage_hint.as_ref().map(StorageHint::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ArtifactRef) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            artifact_id: decode_required_ulid::<ArtifactId>("artifact_id", &proto.artifact_id)?,
+            kind: decode_artifact_kind(proto.kind),
+            content_hash: proto
+                .content_hash
+                .map(Hash::try_from_protobuf)
+                .transpose()?,
+            byte_len: proto.byte_len,
+            mime: normalize_optional_string(proto.mime),
+            storage_hint: proto.storage_hint.map(StorageHint::from_protobuf),
+        })
+    }
+}
+
+impl SessionScope {
+    #[must_use]
+    pub fn to_protobuf(self) -> pbv1::SessionScope {
+        match self {
+            Self::Unknown => pbv1::SessionScope { kind: None },
+            Self::Task { task_id } => pbv1::SessionScope {
+                kind: Some(pbv1::session_scope::Kind::Task(pbv1::TaskScope {
+                    task_id: task_id.to_bytes().to_vec(),
+                })),
+            },
+            Self::Chat => pbv1::SessionScope {
+                kind: Some(pbv1::session_scope::Kind::Chat(pbv1::ChatScope {})),
+            },
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionScope) -> Result<Self, ErrorEnvelope> {
+        match proto.kind {
+            // Forward compatibility: prost decodes a new scope kind into an "empty" message
+            // (unknown fields are discarded by default).
+            None => Ok(Self::Unknown),
+            Some(pbv1::session_scope::Kind::Task(task)) => Ok(Self::Task {
+                task_id: decode_required_ulid::<TaskId>("session_scope.task_id", &task.task_id)?,
+            }),
+            Some(pbv1::session_scope::Kind::Chat(_)) => Ok(Self::Chat),
+        }
+    }
+}
+
+fn encode_interface_mode(value: InterfaceMode) -> i32 {
+    match value {
+        InterfaceMode::Interactive => pbv1::InterfaceMode::Interactive as i32,
+        InterfaceMode::Structured => pbv1::InterfaceMode::Structured as i32,
+        InterfaceMode::Unknown => pbv1::InterfaceMode::Unspecified as i32,
+    }
+}
+
+fn decode_interface_mode(value: i32) -> InterfaceMode {
+    match pbv1::InterfaceMode::try_from(value) {
+        Ok(pbv1::InterfaceMode::Interactive) => InterfaceMode::Interactive,
+        Ok(pbv1::InterfaceMode::Structured) => InterfaceMode::Structured,
+        Ok(pbv1::InterfaceMode::Unspecified) | Err(_) => InterfaceMode::Unknown,
+    }
+}
+
+impl ExternalSessionRef {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ExternalSessionRef {
+        pbv1::ExternalSessionRef {
+            r#ref: Some(match self {
+                Self::None => pbv1::external_session_ref::Ref::None(pbv1::ExternalSessionNone {}),
+                Self::CodexThread { thread_id, turn_id } => {
+                    pbv1::external_session_ref::Ref::CodexThread(pbv1::CodexThreadRef {
+                        thread_id: thread_id.clone(),
+                        turn_id: normalize_optional_string(turn_id.clone()),
+                    })
+                }
+                Self::ClaudeSession { session_id } => {
+                    pbv1::external_session_ref::Ref::ClaudeSession(pbv1::ClaudeSessionRef {
+                        session_id: session_id.clone(),
+                    })
+                }
+                Self::Unknown {
+                    unknown_type,
+                    json_payload,
+                } => pbv1::external_session_ref::Ref::Unknown(pbv1::UnknownExternalSessionRef {
+                    r#type: unknown_type.clone(),
+                    json_payload: json_payload.clone(),
+                }),
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ExternalSessionRef) -> Result<Self, ErrorEnvelope> {
+        match proto.r#ref {
+            // Forward compatibility: prost decodes a new ref kind into an "empty" message.
+            None => Ok(Self::None),
+            Some(pbv1::external_session_ref::Ref::None(_)) => Ok(Self::None),
+            Some(pbv1::external_session_ref::Ref::CodexThread(codex)) => {
+                if codex.thread_id.is_empty() {
+                    return Err(invalid_field("codex_thread.thread_id", "empty"));
+                }
+                Ok(Self::CodexThread {
+                    thread_id: codex.thread_id,
+                    turn_id: normalize_optional_string(codex.turn_id),
+                })
+            }
+            Some(pbv1::external_session_ref::Ref::ClaudeSession(claude)) => {
+                if claude.session_id.is_empty() {
+                    return Err(invalid_field("claude_session.session_id", "empty"));
+                }
+                Ok(Self::ClaudeSession {
+                    session_id: claude.session_id,
+                })
+            }
+            Some(pbv1::external_session_ref::Ref::Unknown(unknown)) => Ok(Self::Unknown {
+                unknown_type: if unknown.r#type.is_empty() {
+                    "<unknown>".to_owned()
+                } else {
+                    unknown.r#type
+                },
+                json_payload: unknown.json_payload,
+            }),
+        }
+    }
+}
+
+fn encode_turn_state(value: TurnState) -> i32 {
+    match value {
+        TurnState::Running => pbv1::TurnState::Running as i32,
+        TurnState::Blocked => pbv1::TurnState::Blocked as i32,
+        TurnState::Completed => pbv1::TurnState::Completed as i32,
+        TurnState::Unknown => pbv1::TurnState::Unspecified as i32,
+    }
+}
+
+fn decode_turn_state(value: i32) -> TurnState {
+    match pbv1::TurnState::try_from(value) {
+        Ok(pbv1::TurnState::Running) => TurnState::Running,
+        Ok(pbv1::TurnState::Blocked) => TurnState::Blocked,
+        Ok(pbv1::TurnState::Completed) => TurnState::Completed,
+        Ok(pbv1::TurnState::Unspecified) | Err(_) => TurnState::Unknown,
+    }
+}
+
+impl TurnStarted {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TurnStarted {
+        pbv1::TurnStarted {
+            interface_mode: encode_interface_mode(self.interface_mode),
+            external_session_ref: self.external_session_ref.as_ref().map(ExternalSessionRef::to_protobuf),
+            idempotency_key: normalize_optional_string(self.idempotency_key.clone()),
+            log_offset_bytes: self.log_offset_bytes,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TurnStarted) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            interface_mode: decode_interface_mode(proto.interface_mode),
+            external_session_ref: proto
+                .external_session_ref
+                .map(ExternalSessionRef::try_from_protobuf)
+                .transpose()?,
+            idempotency_key: normalize_optional_string(proto.idempotency_key),
+            log_offset_bytes: proto.log_offset_bytes,
+        })
+    }
+}
+
+impl TurnCompleted {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TurnCompleted {
+        pbv1::TurnCompleted {
+            interface_mode: encode_interface_mode(self.interface_mode),
+            external_session_ref: self.external_session_ref.as_ref().map(ExternalSessionRef::to_protobuf),
+            exit_code: self.exit_code,
+            error: self.error.as_ref().map(ErrorEnvelope::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TurnCompleted) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            interface_mode: decode_interface_mode(proto.interface_mode),
+            external_session_ref: proto
+                .external_session_ref
+                .map(ExternalSessionRef::try_from_protobuf)
+                .transpose()?,
+            exit_code: proto.exit_code,
+            error: proto.error.map(ErrorEnvelope::from_protobuf),
+        })
+    }
+}
+
+impl UserMessage {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UserMessage {
+        pbv1::UserMessage {
+            text: self.text.clone(),
+            preview: self.preview.clone(),
+            full_text_artifact: self.full_text_artifact.as_ref().map(ArtifactRef::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UserMessage) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            text: proto.text,
+            preview: proto.preview,
+            full_text_artifact: proto
+                .full_text_artifact
+                .map(ArtifactRef::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl AssistantMessage {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantMessage {
+        pbv1::AssistantMessage {
+            text: self.text.clone(),
+            preview: self.preview.clone(),
+            full_text_artifact: self.full_text_artifact.as_ref().map(ArtifactRef::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::AssistantMessage) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            text: proto.text,
+            preview: proto.preview,
+            full_text_artifact: proto
+                .full_text_artifact
+                .map(ArtifactRef::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl ToolInvocation {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToolInvocation {
+        pbv1::ToolInvocation {
+            tool_name: self.tool_name.clone(),
+            tool_call_id: normalize_optional_string(self.tool_call_id.clone()),
+            input_preview: self.input_preview.clone(),
+            input_artifact: self.input_artifact.as_ref().map(ArtifactRef::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ToolInvocation) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            tool_name: proto.tool_name,
+            tool_call_id: normalize_optional_string(proto.tool_call_id),
+            input_preview: proto.input_preview,
+            input_artifact: proto
+                .input_artifact
+                .map(ArtifactRef::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl ToolResult {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToolResult {
+        pbv1::ToolResult {
+            tool_name: self.tool_name.clone(),
+            tool_call_id: normalize_optional_string(self.tool_call_id.clone()),
+            output_preview: self.output_preview.clone(),
+            output_artifact: self.output_artifact.as_ref().map(ArtifactRef::to_protobuf),
+            error: self.error.as_ref().map(ErrorEnvelope::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ToolResult) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            tool_name: proto.tool_name,
+            tool_call_id: normalize_optional_string(proto.tool_call_id),
+            output_preview: proto.output_preview,
+            output_artifact: proto
+                .output_artifact
+                .map(ArtifactRef::try_from_protobuf)
+                .transpose()?,
+            error: proto.error.map(ErrorEnvelope::from_protobuf),
+        })
+    }
+}
+
+impl StatusUpdate {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StatusUpdate {
+        pbv1::StatusUpdate {
+            turn_state: encode_turn_state(self.turn_state),
+            blocking: self.blocking,
+            progress_percent: self.progress_percent,
+            message: normalize_optional_string(self.message.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::StatusUpdate) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            turn_state: decode_turn_state(proto.turn_state),
+            blocking: proto.blocking,
+            progress_percent: proto.progress_percent,
+            message: normalize_optional_string(proto.message),
+        })
+    }
+}
+
+impl ArtifactEmitted {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ArtifactEmitted {
+        pbv1::ArtifactEmitted {
+            artifact: Some(self.artifact.to_protobuf()),
+            label: normalize_optional_string(self.label.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ArtifactEmitted) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            artifact: ArtifactRef::try_from_protobuf(
+                proto
+                    .artifact
+                    .ok_or_else(|| missing_required("artifact_emitted.artifact"))?,
+            )?,
+            label: normalize_optional_string(proto.label),
+        })
+    }
+}
+
+impl UnknownSessionEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnknownSessionEvent {
+        pbv1::UnknownSessionEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UnknownSessionEvent) -> Self {
+        Self {
+            event_type: if proto.event_type.is_empty() {
+                "<unknown>".to_owned()
+            } else {
+                proto.event_type
+            },
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl SessionEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionEvent {
+        pbv1::SessionEvent {
+            session_event_id: self.session_event_id.to_bytes().to_vec(),
+            created_at: Some(encode_timestamp(self.created_at)),
+            scope: Some(self.scope.to_protobuf()),
+            session_id: self.session_id.to_bytes().to_vec(),
+            turn_id: normalize_optional_string(self.turn_id.clone()),
+            kind: Some(match &self.kind {
+                SessionEventKind::SessionStarted(_) => {
+                    pbv1::session_event::Kind::SessionStarted(pbv1::SessionStarted {})
+                }
+                SessionEventKind::SessionEnded(_) => {
+                    pbv1::session_event::Kind::SessionEnded(pbv1::SessionEnded {})
+                }
+                SessionEventKind::TurnStarted(ev) => {
+                    pbv1::session_event::Kind::TurnStarted(ev.to_protobuf())
+                }
+                SessionEventKind::TurnCompleted(ev) => {
+                    pbv1::session_event::Kind::TurnCompleted(ev.to_protobuf())
+                }
+                SessionEventKind::UserMessage(ev) => {
+                    pbv1::session_event::Kind::UserMessage(ev.to_protobuf())
+                }
+                SessionEventKind::AssistantMessage(ev) => {
+                    pbv1::session_event::Kind::AssistantMessage(ev.to_protobuf())
+                }
+                SessionEventKind::ToolInvocation(ev) => {
+                    pbv1::session_event::Kind::ToolInvocation(ev.to_protobuf())
+                }
+                SessionEventKind::ToolResult(ev) => {
+                    pbv1::session_event::Kind::ToolResult(ev.to_protobuf())
+                }
+                SessionEventKind::StatusUpdate(ev) => {
+                    pbv1::session_event::Kind::StatusUpdate(ev.to_protobuf())
+                }
+                SessionEventKind::ArtifactEmitted(ev) => {
+                    pbv1::session_event::Kind::ArtifactEmitted(ev.to_protobuf())
+                }
+                SessionEventKind::Unknown(ev) => {
+                    pbv1::session_event::Kind::Unknown(ev.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionEvent) -> Result<Self, ErrorEnvelope> {
+        let kind = match proto.kind {
+            Some(pbv1::session_event::Kind::SessionStarted(_)) => {
+                SessionEventKind::SessionStarted(crate::session::SessionStarted {})
+            }
+            Some(pbv1::session_event::Kind::SessionEnded(_)) => {
+                SessionEventKind::SessionEnded(crate::session::SessionEnded {})
+            }
+            Some(pbv1::session_event::Kind::TurnStarted(ev)) => {
+                SessionEventKind::TurnStarted(TurnStarted::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::TurnCompleted(ev)) => {
+                SessionEventKind::TurnCompleted(TurnCompleted::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::UserMessage(ev)) => {
+                SessionEventKind::UserMessage(UserMessage::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::AssistantMessage(ev)) => {
+                SessionEventKind::AssistantMessage(AssistantMessage::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::ToolInvocation(ev)) => {
+                SessionEventKind::ToolInvocation(ToolInvocation::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::ToolResult(ev)) => {
+                SessionEventKind::ToolResult(ToolResult::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::StatusUpdate(ev)) => {
+                SessionEventKind::StatusUpdate(StatusUpdate::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::ArtifactEmitted(ev)) => {
+                SessionEventKind::ArtifactEmitted(ArtifactEmitted::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::Unknown(ev)) => {
+                SessionEventKind::Unknown(UnknownSessionEvent::from_protobuf(ev))
+            }
+            None => SessionEventKind::Unknown(UnknownSessionEvent {
+                event_type: "<unknown>".to_owned(),
+                json_payload: Vec::new(),
+            }),
+        };
+
+        Ok(Self {
+            session_event_id: decode_required_ulid::<SessionEventId>(
+                "session_event_id",
+                &proto.session_event_id,
+            )?,
+            created_at: decode_required_timestamp("created_at", proto.created_at)?,
+            scope: SessionScope::try_from_protobuf(
+                proto.scope.ok_or_else(|| missing_required("scope"))?,
+            )?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            turn_id: normalize_optional_string(proto.turn_id),
+            kind,
         })
     }
 }

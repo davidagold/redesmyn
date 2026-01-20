@@ -18,8 +18,17 @@ pub mod pb {
 
 pub use redesmyn_errors::ErrorCategory;
 
+pub mod artifacts;
 pub mod client;
 pub mod daemon;
+pub mod session;
+
+pub use artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
+pub use session::{
+    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
+    SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
+    ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+};
 
 /// Optional structured detail for debugging/UX (no stack traces).
 ///
@@ -558,6 +567,15 @@ mod tests {
     }
 
     #[test]
+    fn session_scope_deserializes_unknown_variant() {
+        let scope: crate::SessionScope = serde_json::from_str(
+            r#"{"type":"epic","epic_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","extra":{"nested":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(scope, crate::SessionScope::Unknown);
+    }
+
+    #[test]
     fn daemon_hello_json_roundtrips() {
         let hello = DaemonHello {
             host_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
@@ -758,6 +776,181 @@ mod tests {
             let decoded_pb = pbv1::ClientFrame::decode(bytes.as_slice()).unwrap();
             let decoded = ClientFrame::try_from_protobuf(decoded_pb).unwrap();
             assert_eq!(decoded, frame);
+        }
+    }
+
+    #[test]
+    fn protobuf_and_json_roundtrip_for_artifacts_and_session_events() {
+        use crate::{
+            ArtifactEmitted, ArtifactKind, ArtifactRef, ExternalSessionRef, Hash, InterfaceMode,
+            SessionEnded, SessionEvent, SessionEventKind, SessionScope, SessionStarted,
+            StatusUpdate, StorageHint, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
+            TurnState, UnknownSessionEvent, UserMessage,
+        };
+
+        let artifact_ref = ArtifactRef {
+            artifact_id: redesmyn_ids::ArtifactId::new(),
+            kind: ArtifactKind::Log,
+            content_hash: Some(Hash {
+                algorithm: "sha256".to_string(),
+                digest: vec![1, 2, 3],
+            }),
+            byte_len: Some(123),
+            mime: Some("text/plain".to_string()),
+            storage_hint: Some(StorageHint::LocalPath {
+                local_path: "/tmp/demo.log".to_string(),
+            }),
+        };
+
+        let json = serde_json::to_string(&artifact_ref).unwrap();
+        let decoded_json: ArtifactRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded_json, artifact_ref);
+
+        let pb = artifact_ref.to_protobuf();
+        let bytes = pb.encode_to_vec();
+        let decoded_pb = pbv1::ArtifactRef::decode(bytes.as_slice()).unwrap();
+        let decoded = ArtifactRef::try_from_protobuf(decoded_pb).unwrap();
+        assert_eq!(decoded, artifact_ref);
+
+        let created_at: Timestamp = serde_json::from_str(r#""2026-01-19T00:00:00Z""#).unwrap();
+
+        let events = vec![
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Task {
+                    task_id: redesmyn_ids::TaskId::new(),
+                },
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::SessionStarted(SessionStarted {}),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::TurnStarted(TurnStarted {
+                    interface_mode: InterfaceMode::Structured,
+                    external_session_ref: Some(ExternalSessionRef::CodexThread {
+                        thread_id: "thread-1".to_string(),
+                        turn_id: Some("ext-turn-1".to_string()),
+                    }),
+                    idempotency_key: Some("idem-1".to_string()),
+                    log_offset_bytes: Some(42),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::UserMessage(UserMessage {
+                    text: "hello".to_string(),
+                    preview: "hello".to_string(),
+                    full_text_artifact: Some(artifact_ref.clone()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ToolInvocation(ToolInvocation {
+                    tool_name: "read_file".to_string(),
+                    tool_call_id: Some("call-1".to_string()),
+                    input_preview: "{\"path\":\"README.md\"}".to_string(),
+                    input_artifact: Some(artifact_ref.clone()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ToolResult(ToolResult {
+                    tool_name: "read_file".to_string(),
+                    tool_call_id: Some("call-1".to_string()),
+                    output_preview: "ok".to_string(),
+                    output_artifact: Some(artifact_ref.clone()),
+                    error: None,
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::StatusUpdate(StatusUpdate {
+                    turn_state: TurnState::Running,
+                    blocking: Some(false),
+                    progress_percent: Some(25),
+                    message: Some("working".to_string()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ArtifactEmitted(ArtifactEmitted {
+                    artifact: artifact_ref.clone(),
+                    label: Some("turn log".to_string()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::TurnCompleted(TurnCompleted {
+                    interface_mode: InterfaceMode::Structured,
+                    external_session_ref: Some(ExternalSessionRef::CodexThread {
+                        thread_id: "thread-1".to_string(),
+                        turn_id: Some("ext-turn-1".to_string()),
+                    }),
+                    exit_code: Some(0),
+                    error: None,
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::SessionEnded(SessionEnded {}),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::Unknown(UnknownSessionEvent {
+                    event_type: "demo.unknown".to_string(),
+                    json_payload: vec![9, 8, 7],
+                }),
+            },
+        ];
+
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            let decoded_json: SessionEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded_json, event);
+
+            let pb = event.to_protobuf();
+            let bytes = pb.encode_to_vec();
+            let decoded_pb = pbv1::SessionEvent::decode(bytes.as_slice()).unwrap();
+            let decoded = SessionEvent::try_from_protobuf(decoded_pb).unwrap();
+            assert_eq!(decoded, event);
         }
     }
 }
