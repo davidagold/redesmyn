@@ -7,8 +7,17 @@ version.workspace = true
 publish = false
 
 [dependencies]
+gpui.workspace = true
 redesmyn_config.workspace = true
 redesmyn_control_plane.workspace = true
 redesmyn_daemon.workspace = true
+redesmyn_ids.workspace = true
 redesmyn_logging.workspace = true
+redesmyn_protocol.workspace = true
 redesmyn_transport.workspace = true
+redesmyn_ui.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui = { workspace = true, features = ["wayland", "x11"] }
