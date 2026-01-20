@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import cast
+from urllib.parse import quote
 
 import httpx
 
 from redesmyn.integrations.github_status import GITHUB_API_BASE_URL
-from urllib.parse import quote
 
 
 class GitHubPullRequestError(RuntimeError):
