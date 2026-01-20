@@ -44,13 +44,17 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
     let socket_path = tmp.path().join("control_plane.sock");
 
     let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let server_socket_path = socket_path.clone();
     let server_control_plane = control_plane.clone();
+    let server_shutdown_tx = shutdown_tx.clone();
     let server = tokio::spawn(async move {
+        let mut shutdown = server_shutdown_tx.subscribe();
         redesmyn_control_plane::client_api::serve_client_api_uds(
             server_control_plane,
             server_socket_path,
             ClientApiCodec::Protobuf,
+            &mut shutdown,
         )
         .await
     });
@@ -169,8 +173,12 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
         }
     }
 
-    server.abort();
-    let _ = server.await;
+    let _ = shutdown_tx.send(());
+    server.await.expect("server task").expect("server exit");
+    assert!(
+        !socket_path.exists(),
+        "socket file should be removed on shutdown"
+    );
 }
 
 #[tokio::test]
@@ -179,6 +187,7 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
     let socket_path = tmp.path().join("control_plane.sock");
 
     let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
     let after_event_id = control_plane
         .event_log()
@@ -194,11 +203,14 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
 
     let server_socket_path = socket_path.clone();
     let server_control_plane = control_plane.clone();
+    let server_shutdown_tx = shutdown_tx.clone();
     let server = tokio::spawn(async move {
+        let mut shutdown = server_shutdown_tx.subscribe();
         redesmyn_control_plane::client_api::serve_client_api_uds(
             server_control_plane,
             server_socket_path,
             ClientApiCodec::Protobuf,
+            &mut shutdown,
         )
         .await
     });
@@ -258,6 +270,6 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
         }
     }
 
-    server.abort();
-    let _ = server.await;
+    let _ = shutdown_tx.send(());
+    server.await.expect("server task").expect("server exit");
 }

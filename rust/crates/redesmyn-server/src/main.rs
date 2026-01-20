@@ -8,7 +8,13 @@ use std::path::PathBuf;
 use clap::ValueEnum;
 
 #[cfg(unix)]
-use redesmyn_control_plane::client_api::{ClientApiCodec, ClientApiServeError};
+use redesmyn_control_plane::ControlPlaneDb;
+#[cfg(unix)]
+use redesmyn_control_plane::ControlPlaneStartOptions;
+#[cfg(unix)]
+use redesmyn_control_plane::client_api::ClientApiCodec;
+#[cfg(unix)]
+use redesmyn_control_plane::ControlPlane;
 
 #[derive(Debug, Parser)]
 #[command(name = "redesmyn-server")]
@@ -26,16 +32,20 @@ enum Command {
         task_id: Option<String>,
     },
 
-    /// Serves the client API over a Unix domain socket (T-12).
+    /// Runs the headless control plane service (T-16).
     #[cfg(unix)]
-    ServeClientApi {
-        /// Codec to use for the API (Protobuf by default; JSON for debug/diagnostics).
+    Serve {
+        /// Codec to use for the client API (Protobuf by default; JSON for debug/diagnostics).
         #[arg(long, value_enum, default_value_t = ClientApiCodecArg::Protobuf)]
         codec: ClientApiCodecArg,
 
         /// Override the configured socket path.
         #[arg(long)]
         socket_path: Option<PathBuf>,
+
+        /// Override the configured DB path.
+        #[arg(long)]
+        db_path: Option<PathBuf>,
     },
 }
 
@@ -60,7 +70,11 @@ fn main() {
     match cli.command {
         Command::DemoError { task_id } => run_demo_error(task_id),
         #[cfg(unix)]
-        Command::ServeClientApi { codec, socket_path } => run_serve_client_api(codec, socket_path),
+        Command::Serve {
+            codec,
+            socket_path,
+            db_path,
+        } => run_serve(codec, socket_path, db_path),
     };
 }
 
@@ -79,7 +93,7 @@ fn run_demo_error(task_id: Option<String>) {
 }
 
 #[cfg(unix)]
-fn run_serve_client_api(codec: ClientApiCodecArg, socket_path: Option<PathBuf>) {
+fn run_serve(codec: ClientApiCodecArg, socket_path: Option<PathBuf>, db_path: Option<PathBuf>) {
     let config = match redesmyn_config::load_rust_config(Default::default()) {
         Ok(config) => config,
         Err(err) => {
@@ -89,6 +103,7 @@ fn run_serve_client_api(codec: ClientApiCodecArg, socket_path: Option<PathBuf>) 
     };
 
     let socket_path = socket_path.unwrap_or_else(|| config.control_plane.api.client_socket_path);
+    let db_path = db_path.unwrap_or_else(|| config.control_plane.db.path);
     let codec = match codec {
         ClientApiCodecArg::Json => ClientApiCodec::Json,
         ClientApiCodecArg::Protobuf => ClientApiCodec::Protobuf,
@@ -99,22 +114,33 @@ fn run_serve_client_api(codec: ClientApiCodecArg, socket_path: Option<PathBuf>) 
         .build()
         .expect("tokio runtime");
 
-    let control_plane =
-        match runtime.block_on(redesmyn_control_plane::ControlPlane::open(&config.control_plane.db.path))
-        {
-            Ok(control_plane) => control_plane,
-            Err(err) => {
-                redesmyn_logging::tracing::error!(error = %err, "failed to open control plane");
-                std::process::exit(2);
-            }
-        };
+    let result: Result<(), redesmyn_control_plane::ControlPlaneStartError> = runtime.block_on(async move {
+        let handle = ControlPlane::start(ControlPlaneStartOptions {
+            db: ControlPlaneDb::Path(db_path),
+            client_api_socket_path: Some(socket_path),
+            client_api_codec: codec,
+        })
+        .await?;
 
-    let result: Result<(), ClientApiServeError> = runtime.block_on(
-        redesmyn_control_plane::client_api::serve_client_api_uds(control_plane, socket_path, codec),
-    );
+        wait_for_shutdown_signal().await;
+        handle.shutdown().await;
+        Ok(())
+    });
 
     if let Err(err) = result {
-        redesmyn_logging::tracing::error!(error = %err, "client API server exited");
+        redesmyn_logging::tracing::error!(error = %err, "control plane service exited");
         std::process::exit(1);
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
     }
 }

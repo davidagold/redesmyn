@@ -1,14 +1,52 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use redesmyn_logging::tracing::{Instrument as _, info};
+use redesmyn_logging::tracing::{self, Instrument as _, info};
 use sqlx::SqlitePool;
 
+use crate::client_api::{ClientApiCodec, ClientApiServeError};
+use crate::command::{CommandRegistry, CommandState};
 use crate::event_log::{EventLog, EventLogConfig};
+use crate::task_manager::TaskManager;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneInitError {
     #[error(transparent)]
     Storage(#[from] redesmyn_storage::StorageError),
+}
+
+#[derive(Debug, Clone)]
+pub enum ControlPlaneDb {
+    Path(PathBuf),
+    InMemory,
+    Pool(SqlitePool),
+}
+
+#[derive(Debug, Clone)]
+pub struct ControlPlaneStartOptions {
+    pub db: ControlPlaneDb,
+    pub client_api_socket_path: Option<PathBuf>,
+    pub client_api_codec: ClientApiCodec,
+}
+
+impl ControlPlaneStartOptions {
+    #[must_use]
+    pub fn from_config(config: &redesmyn_config::ControlPlaneConfig) -> Self {
+        Self {
+            db: ControlPlaneDb::Path(config.db.path.clone()),
+            client_api_socket_path: Some(config.api.client_socket_path.clone()),
+            client_api_codec: ClientApiCodec::Protobuf,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ControlPlaneStartError {
+    #[error(transparent)]
+    Storage(#[from] redesmyn_storage::StorageError),
+    #[error(transparent)]
+    ClientApiBind(#[from] ClientApiServeError),
+    #[error("client API UDS is not supported on this platform")]
+    ClientApiUnsupported,
 }
 
 #[derive(Clone)]
@@ -60,5 +98,97 @@ impl ControlPlane {
     #[must_use]
     pub fn event_log(&self) -> &EventLog {
         &self.event_log
+    }
+
+    pub async fn start(
+        options: ControlPlaneStartOptions,
+    ) -> Result<ControlPlaneHandle, ControlPlaneStartError> {
+        let span = tracing::info_span!("control_plane.start");
+        let _enter = span.enter();
+
+        let db_pool = open_db(options.db).await?;
+        let control_plane = Self::new(db_pool);
+
+        let commands = CommandRegistry::new(control_plane.event_log().clone());
+        commands
+            .set_state(
+                commands
+                    .create(Some("control_plane.startup".to_string()))
+                    .await,
+                CommandState::Succeeded,
+                None,
+            )
+            .await;
+
+        let state = std::sync::Arc::new(ControlPlaneState {
+            control_plane: control_plane.clone(),
+            commands,
+        });
+
+        let mut tasks = TaskManager::new();
+
+        #[cfg(unix)]
+        if let Some(socket_path) = options.client_api_socket_path.clone() {
+            let listener = crate::client_api::bind_client_socket(&socket_path)?;
+            let mut server_shutdown = tasks.subscribe_shutdown();
+            let codec = options.client_api_codec;
+            let server_control_plane = control_plane.clone();
+
+            tasks.spawn("client_api_uds", async move {
+                if let Err(err) = crate::client_api::serve_client_api_listener(
+                    listener,
+                    server_control_plane,
+                    socket_path,
+                    codec,
+                    &mut server_shutdown,
+                )
+                .await
+                {
+                    tracing::error!(error = %err, "client API server task exited");
+                }
+            });
+        }
+
+        #[cfg(not(unix))]
+        if options.client_api_socket_path.is_some() {
+            return Err(ControlPlaneStartError::ClientApiUnsupported);
+        }
+
+        tracing::info!("control plane started");
+
+        Ok(ControlPlaneHandle { state, tasks })
+    }
+}
+
+struct ControlPlaneState {
+    #[allow(dead_code)]
+    control_plane: ControlPlane,
+    #[allow(dead_code)]
+    commands: CommandRegistry,
+}
+
+pub struct ControlPlaneHandle {
+    #[allow(dead_code)]
+    state: std::sync::Arc<ControlPlaneState>,
+    tasks: TaskManager,
+}
+
+impl ControlPlaneHandle {
+    pub async fn shutdown(self) {
+        let span = tracing::info_span!("control_plane.shutdown");
+        let _enter = span.enter();
+
+        self.tasks.trigger_shutdown();
+        self.tasks.join_all().await;
+
+        tracing::info!("control plane shut down");
+    }
+}
+
+async fn open_db(db: ControlPlaneDb) -> Result<SqlitePool, ControlPlaneStartError> {
+    match db {
+        ControlPlaneDb::Path(path) => Ok(redesmyn_storage::open_sqlite_pool(path).await?),
+        ControlPlaneDb::InMemory => Ok(redesmyn_storage::open_test_sqlite_pool().await?),
+        ControlPlaneDb::Pool(pool) => Ok(pool),
     }
 }

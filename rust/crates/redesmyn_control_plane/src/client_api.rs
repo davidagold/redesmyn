@@ -61,41 +61,76 @@ pub async fn serve_client_api_uds(
     control_plane: ControlPlane,
     socket_path: PathBuf,
     codec: ClientApiCodec,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError> {
     let listener = bind_client_socket(&socket_path)?;
 
+    serve_client_api_listener(listener, control_plane, socket_path, codec, shutdown).await
+}
+
+#[cfg(unix)]
+pub async fn serve_client_api_listener(
+    listener: tokio::net::UnixListener,
+    control_plane: ControlPlane,
+    socket_path: PathBuf,
+    codec: ClientApiCodec,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError> {
     tracing::info!(
         socket_path = %socket_path.display(),
         codec = ?codec,
         "client API UDS server listening"
     );
 
+    let mut connections = tokio::task::JoinSet::new();
+
     loop {
-        let (stream, _addr) = listener.accept().await?;
-        let task_codec = codec;
-        let task_control_plane = control_plane.clone();
+        tokio::select! {
+            _ = shutdown.recv() => break,
+            accept = listener.accept() => {
+                let (stream, _addr) = accept?;
+                let task_codec = codec;
+                let task_control_plane = control_plane.clone();
+                let mut task_shutdown = shutdown.resubscribe();
 
-        tokio::spawn(async move {
-            let result = match task_codec {
-                ClientApiCodec::Json => {
-                    handle_connection(stream, JsonCodec::new(), task_control_plane).await
-                }
-                ClientApiCodec::Protobuf => {
-                    handle_connection(stream, ProtobufCodec::new(), task_control_plane).await
-                }
-            };
+                connections.spawn(async move {
+                    let result = match task_codec {
+                        ClientApiCodec::Json => handle_connection(stream, JsonCodec::new(), task_control_plane, &mut task_shutdown).await,
+                        ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new(), task_control_plane, &mut task_shutdown).await,
+                    };
 
-            if let Err(err) = result {
-                tracing::warn!(error = %err, "client API connection terminated with error");
+                    if let Err(err) = result {
+                        tracing::warn!(error = %err, "client API connection terminated with error");
+                    }
+                });
             }
-        });
+            Some(join_result) = connections.join_next() => {
+                if let Err(err) = join_result {
+                    tracing::error!(error = %err, "client API connection task panicked");
+                }
+            }
+        }
     }
+
+    while let Some(join_result) = connections.join_next().await {
+        if let Err(err) = join_result {
+            tracing::error!(error = %err, "client API connection task panicked");
+        }
+    }
+
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    tracing::info!("client API UDS server shut down");
+    Ok(())
 }
 
 async fn handle_connection<C>(
     stream: tokio::net::UnixStream,
     codec: C,
     control_plane: ControlPlane,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError>
 where
     C: Codec + 'static,
@@ -112,14 +147,26 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    run_session(&mut conn, control_plane).await?;
+    run_session(&mut conn, control_plane, shutdown).await?;
     Ok(())
 }
 
-async fn run_session<C>(conn: &mut C, control_plane: ControlPlane) -> Result<(), ClientApiServeError>
+async fn run_session<C>(
+    conn: &mut C,
+    control_plane: ControlPlane,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError>
 where
     C: ClientConnection + Send + 'static,
 {
+    fn abort_subscriptions(
+        subscriptions: &mut HashMap<redesmyn_ids::SubscriptionId, tokio::task::JoinHandle<()>>,
+    ) {
+        for (_subscription_id, handle) in subscriptions.drain() {
+            handle.abort();
+        }
+    }
+
     let mut accepted_protocol: Option<ProtocolVersion> = None;
     let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, tokio::task::JoinHandle<()>> =
         HashMap::new();
@@ -127,11 +174,21 @@ where
 
     loop {
         tokio::select! {
+            _ = shutdown.recv() => {
+                abort_subscriptions(&mut subscriptions);
+                return Ok(());
+            }
             frame = conn.recv() => {
                 let frame = match frame {
                     Ok(frame) => frame,
-                    Err(ClientTransportError::ChannelClosed) => return Ok(()),
-                    Err(err) => return Err(err.into()),
+                    Err(ClientTransportError::ChannelClosed) => {
+                        abort_subscriptions(&mut subscriptions);
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        abort_subscriptions(&mut subscriptions);
+                        return Err(err.into());
+                    }
                 };
 
                 let peer_version = frame.envelope.protocol_version();
@@ -156,6 +213,7 @@ where
 
                                 let _ = conn.send(response_frame).await;
                             }
+                            abort_subscriptions(&mut subscriptions);
                             return Ok(());
                         }
                     },
