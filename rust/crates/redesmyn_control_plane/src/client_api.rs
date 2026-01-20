@@ -3,8 +3,10 @@ use std::path::{Path, PathBuf};
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, Event, EventLogEvent, GetEpicGraphResponse, HealthResponse,
-    ListEpicsResponse, Response, ResponseResult, StatusResponse, Subscribed, SubscriptionEvent,
+    ClientFrame, ClientMessage, CommandState, CommandSummary, CommandUpdateSummary,
+    DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent, GetEpicGraphResponse,
+    HealthResponse, ListEpicsResponse, MergeReadiness, Response, ResponseResult, SessionSummary,
+    StatusResponse, Subscribed, SubscriptionEvent, TaskState,
 };
 use redesmyn_protocol::{
     ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, Timestamp,
@@ -237,7 +239,8 @@ where
 
                 match frame.message {
                     ClientMessage::Request(req) => {
-                        let response = handle_request(req, accepted).await;
+                        let response =
+                            handle_request(req, accepted, &frame.envelope, &control_plane).await;
                         let response_frame = ClientFrame::new(
                             response_envelope(&frame.envelope, accepted),
                             ClientMessage::Response(response),
@@ -385,6 +388,8 @@ where
 async fn handle_request(
     req: redesmyn_protocol::client::Request,
     accepted: ProtocolVersion,
+    envelope: &ProtocolEnvelope,
+    control_plane: &ControlPlane,
 ) -> Response {
     let request_id = req.request_id;
     let span = tracing::debug_span!(
@@ -394,32 +399,69 @@ async fn handle_request(
     );
     let _enter = span.enter();
 
-    let result = match req.payload {
-        redesmyn_protocol::client::RequestPayload::Health(_) => {
-            ResponseResult::Health(HealthResponse { ok: true })
-        }
-        redesmyn_protocol::client::RequestPayload::Status(_) => {
-            ResponseResult::Status(StatusResponse {
-                accepted_protocol: accepted,
-                server_name: "redesmyn-control-plane".to_string(),
-                server_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            })
-        }
-        redesmyn_protocol::client::RequestPayload::ListEpics(_) => {
-            ResponseResult::ListEpics(ListEpicsResponse { epics: Vec::new() })
-        }
-        redesmyn_protocol::client::RequestPayload::GetEpicGraph(get) => {
-            ResponseResult::GetEpicGraph(GetEpicGraphResponse {
-                graph: redesmyn_protocol::client::EpicGraph {
-                    epic_slug: get.epic_slug,
-                    nodes: Vec::new(),
-                    edges: Vec::new(),
-                },
-            })
-        }
+    let result = match handle_request_result(req.payload, accepted, envelope, control_plane).await {
+        Ok(result) => result,
+        Err(err) => ResponseResult::Error(err.into()),
     };
 
     Response { request_id, result }
+}
+
+async fn handle_request_result(
+    payload: redesmyn_protocol::client::RequestPayload,
+    accepted: ProtocolVersion,
+    envelope: &ProtocolEnvelope,
+    control_plane: &ControlPlane,
+) -> Result<ResponseResult, ControlPlaneError> {
+    match payload {
+        redesmyn_protocol::client::RequestPayload::Health(_) => {
+            Ok(ResponseResult::Health(HealthResponse { ok: true }))
+        }
+        redesmyn_protocol::client::RequestPayload::Status(_) => {
+            Ok(ResponseResult::Status(StatusResponse {
+                accepted_protocol: accepted,
+                server_name: "redesmyn-control-plane".to_string(),
+                server_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            }))
+        }
+        redesmyn_protocol::client::RequestPayload::ListEpics(_) => {
+            let scope = repo_scope_from_envelope(envelope);
+            let epics = redesmyn_storage::epic_graph::list_epics(control_plane.pool(), scope).await?;
+            Ok(ResponseResult::ListEpics(ListEpicsResponse {
+                epics: epics
+                    .into_iter()
+                    .map(|epic| EpicSummary {
+                        slug: epic.slug,
+                        name: epic.title,
+                    })
+                    .collect(),
+            }))
+        }
+        redesmyn_protocol::client::RequestPayload::GetEpicGraph(get) => {
+            let epic_slug = get.epic_slug;
+            if epic_slug.trim().is_empty() {
+                return Err(ControlPlaneError::InvalidEpicSlug { epic_slug });
+            }
+
+            let scope = repo_scope_from_envelope(envelope);
+            let load_span = tracing::debug_span!("client.api.load_epic_graph", epic_slug = %epic_slug);
+            let Some(graph) = ({
+                let _enter = load_span.enter();
+                redesmyn_storage::epic_graph::load_epic_graph(control_plane.pool(), &epic_slug, scope).await?
+            }) else {
+                return Err(ControlPlaneError::EpicNotFound { epic_slug });
+            };
+
+            let build_span =
+                tracing::debug_span!("client.api.build_epic_graph", epic_slug = %epic_slug);
+            let graph = {
+                let _enter = build_span.enter();
+                build_epic_graph(graph)?
+            };
+
+            Ok(ResponseResult::GetEpicGraph(GetEpicGraphResponse { graph }))
+        }
+    }
 }
 
 fn response_envelope(
@@ -492,4 +534,194 @@ fn timestamp_from_ms(ms: i64) -> Timestamp {
     let datetime = time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
         .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
     Timestamp::from_offset_date_time(datetime)
+}
+
+fn repo_scope_from_envelope(
+    envelope: &ProtocolEnvelope,
+) -> Option<redesmyn_storage::epic_graph::RepoScope> {
+    let scope = envelope.scope?;
+    let redesmyn_protocol::Scope::Repo { repo } = scope else {
+        return None;
+    };
+
+    Some(redesmyn_storage::epic_graph::RepoScope {
+        workspace_id: repo.workspace_id,
+        repo_id: repo.repo_id,
+    })
+}
+
+fn timestamp_from_unix_ms(unix_ms: i64) -> Result<Timestamp, ControlPlaneError> {
+    let nanos = i128::from(unix_ms)
+        .checked_mul(1_000_000)
+        .ok_or(ControlPlaneError::InvalidTimestamp { unix_ms })?;
+
+    let dt = time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|_| ControlPlaneError::InvalidTimestamp { unix_ms })?;
+    Ok(Timestamp::from_offset_date_time(dt))
+}
+
+fn build_epic_graph(
+    graph: redesmyn_storage::epic_graph::EpicGraphData,
+) -> Result<EpicGraph, ControlPlaneError> {
+    let task_slug_by_id: HashMap<redesmyn_ids::TaskId, String> = graph
+        .tasks
+        .iter()
+        .map(|task| {
+            (
+                task.task_id,
+                task.local_ref
+                    .clone()
+                    .unwrap_or_else(|| task.task_id.to_string()),
+            )
+        })
+        .collect();
+
+    let nodes = graph
+        .tasks
+        .iter()
+        .map(|task| {
+            let task_slug = task_slug_by_id
+                .get(&task.task_id)
+                .cloned()
+                .unwrap_or_else(|| task.task_id.to_string());
+
+            redesmyn_protocol::client::EpicTaskNode {
+                task_slug,
+                title: task.title.clone(),
+                task_id: Some(task.task_id),
+                parent_task_id: task.parent_task_id,
+                state: match task.state {
+                    redesmyn_storage::schema::TaskState::Todo => TaskState::Todo,
+                    redesmyn_storage::schema::TaskState::InProgress => TaskState::InProgress,
+                    redesmyn_storage::schema::TaskState::Blocked => TaskState::Blocked,
+                    redesmyn_storage::schema::TaskState::Done => TaskState::Done,
+                },
+                branch_name: task.branch_name.clone(),
+                merge_readiness: match task.merge_readiness {
+                    redesmyn_storage::schema::MergeReadiness::Unknown => MergeReadiness::Unknown,
+                    redesmyn_storage::schema::MergeReadiness::Ready => MergeReadiness::Ready,
+                    redesmyn_storage::schema::MergeReadiness::Blocked => MergeReadiness::Blocked,
+                },
+            }
+        })
+        .collect();
+
+    let mut edges: Vec<redesmyn_protocol::client::EpicTaskEdge> = Vec::new();
+    for task in &graph.tasks {
+        let Some(parent_task_id) = task.parent_task_id else {
+            continue;
+        };
+        let from_task_slug = task_slug_by_id
+            .get(&parent_task_id)
+            .cloned()
+            .unwrap_or_else(|| parent_task_id.to_string());
+        let to_task_slug = task_slug_by_id
+            .get(&task.task_id)
+            .cloned()
+            .unwrap_or_else(|| task.task_id.to_string());
+
+        edges.push(redesmyn_protocol::client::EpicTaskEdge {
+            from_task_slug,
+            to_task_slug,
+            from_task_id: Some(parent_task_id),
+            to_task_id: Some(task.task_id),
+        });
+    }
+    edges.sort_by(|a, b| a.to_task_slug.cmp(&b.to_task_slug));
+
+    let command_summaries = graph
+        .commands
+        .iter()
+        .map(|command| {
+            let last_update = graph.command_last_updates.get(&command.command_id).map(
+                |update| -> Result<CommandUpdateSummary, ControlPlaneError> {
+                    let progress_current = update
+                        .progress_current
+                        .and_then(|value| u64::try_from(value).ok());
+                    let progress_total = update
+                        .progress_total
+                        .and_then(|value| u64::try_from(value).ok());
+
+                    Ok(CommandUpdateSummary {
+                        update_id: update.update_id,
+                        created_at: timestamp_from_unix_ms(update.created_at_ms)?,
+                        state: map_command_state(update.state),
+                        message: update.message.clone(),
+                        progress_current,
+                        progress_total,
+                    })
+                },
+            );
+
+            Ok(CommandSummary {
+                command_id: command.command_id,
+                created_at: timestamp_from_unix_ms(command.created_at_ms)?,
+                updated_at: timestamp_from_unix_ms(command.updated_at_ms)?,
+                kind: command.kind.clone(),
+                state: map_command_state(command.state),
+                target_task_id: command.target_task_id,
+                last_update: last_update.transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>, ControlPlaneError>>()?;
+
+    let daemon_presences = graph
+        .daemon_presences
+        .iter()
+        .map(|presence| {
+            Ok(DaemonPresenceSummary {
+                host_instance_id: presence.host_instance_id,
+                host_id: presence.host_id,
+                hostname: presence.hostname.clone(),
+                connected_at: timestamp_from_unix_ms(presence.connected_at_ms)?,
+                last_heartbeat_at: timestamp_from_unix_ms(presence.last_heartbeat_at_ms)?,
+                disconnected_at: presence
+                    .disconnected_at_ms
+                    .map(timestamp_from_unix_ms)
+                    .transpose()?,
+            })
+        })
+        .collect::<Result<Vec<_>, ControlPlaneError>>()?;
+
+    let session_summaries = graph
+        .session_summaries
+        .iter()
+        .map(|session| {
+            Ok(SessionSummary {
+                session_id: session.session_id,
+                session_event_id: session.session_event_id,
+                task_id: session.task_id,
+                last_event_at: timestamp_from_unix_ms(session.created_at_ms)?,
+                kind: session.kind.clone(),
+                turn_id: session.turn_id.clone(),
+                message_preview: session.message_preview.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, ControlPlaneError>>()?;
+
+    Ok(EpicGraph {
+        epic_slug: graph.epic.slug,
+        nodes,
+        edges,
+        epic_id: Some(graph.epic.epic_id),
+        epic_title: Some(graph.epic.title),
+        workspace_id: Some(graph.epic.scope.workspace_id),
+        repo_id: Some(graph.epic.scope.repo_id),
+        command_summaries,
+        daemon_presences,
+        session_summaries,
+        as_of_event_id: graph.as_of_event_id,
+    })
+}
+
+fn map_command_state(state: redesmyn_storage::schema::CommandState) -> CommandState {
+    match state {
+        redesmyn_storage::schema::CommandState::Accepted => CommandState::Accepted,
+        redesmyn_storage::schema::CommandState::Running => CommandState::Running,
+        redesmyn_storage::schema::CommandState::Blocked => CommandState::Blocked,
+        redesmyn_storage::schema::CommandState::Resumable => CommandState::Resumable,
+        redesmyn_storage::schema::CommandState::Succeeded => CommandState::Succeeded,
+        redesmyn_storage::schema::CommandState::Failed => CommandState::Failed,
+        redesmyn_storage::schema::CommandState::Canceled => CommandState::Canceled,
+    }
 }
