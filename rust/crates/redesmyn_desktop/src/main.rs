@@ -1,5 +1,4 @@
 mod app;
-mod daemon_link;
 mod root_view;
 
 use gpui::AppContext as _;
