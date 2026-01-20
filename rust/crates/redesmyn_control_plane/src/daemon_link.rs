@@ -3,13 +3,17 @@ use tokio::task::JoinHandle;
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::daemon::{
-    CommandAck, DaemonCommand, DaemonFrame, DaemonMessage, DispatchCommand, HelloRequest, HelloResponse,
-    MessageEnvelope,
+    CommandAck, DaemonCommand, DaemonFrame, DaemonMessage, DispatchCommand, HelloRequest,
+    HelloResponse, MessageEnvelope,
 };
-use redesmyn_transport::DaemonConnection;
 use redesmyn_transport::in_proc::InProcEndpoint;
-use redesmyn_transport::TransportError;
+use redesmyn_transport::{DaemonConnection, TransportError};
 
+/// A minimal control-plane↔daemon adapter for embedded daemon mode.
+///
+/// For now this keeps the in-proc daemon connection drained so heartbeats don't
+/// backpressure the daemon, and performs a basic hello/noop handshake to prove
+/// the wiring works. Higher-level routing belongs in the control-plane domain.
 #[derive(Debug)]
 pub struct DaemonLinkHandle {
     shutdown_tx: watch::Sender<bool>,
@@ -17,6 +21,7 @@ pub struct DaemonLinkHandle {
 }
 
 impl DaemonLinkHandle {
+    #[must_use]
     pub fn start(runtime: &tokio::runtime::Runtime, conn: InProcEndpoint) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let task = runtime.spawn(run_daemon_link(conn, shutdown_rx));
@@ -32,8 +37,8 @@ impl DaemonLinkHandle {
     }
 }
 
-pub async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Receiver<bool>) {
-    let span = tracing::info_span!("desktop.daemon_link");
+async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Receiver<bool>) {
+    let span = tracing::info_span!("control_plane.daemon_link");
     let _enter = span.enter();
 
     let hello = DaemonFrame::new(

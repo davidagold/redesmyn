@@ -10,7 +10,7 @@ pub struct DesktopHandle {
     runtime: tokio::runtime::Runtime,
     control_plane: Option<redesmyn_control_plane::ControlPlaneHandle>,
     daemon: Option<redesmyn_daemon::service::DaemonHandle>,
-    daemon_link: Option<crate::daemon_link::DaemonLinkHandle>,
+    daemon_link: Option<redesmyn_control_plane::DaemonLinkHandle>,
     daemon_host_id: Option<redesmyn_ids::HostId>,
 }
 
@@ -51,7 +51,10 @@ impl DesktopApp {
 
             let daemon_host_id = Some(daemon.host_id());
 
-            let daemon_link = Some(crate::daemon_link::DaemonLinkHandle::start(&runtime, control_plane_conn));
+            let daemon_link = Some(redesmyn_control_plane::DaemonLinkHandle::start(
+                &runtime,
+                control_plane_conn,
+            ));
             (Some(daemon), daemon_link, daemon_host_id)
         } else {
             (None, None, None)
