@@ -4705,9 +4705,14 @@ dependencies = [
 name = "redesmyn_exec"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "redesmyn_domain",
  "redesmyn_ids",
+ "redesmyn_logging",
  "redesmyn_protocol",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

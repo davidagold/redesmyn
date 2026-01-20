@@ -11,7 +11,7 @@ use crate::daemon::{
     AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate, ControlPlaneHelloAck,
     DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent, RepoAttach, RepoDetach,
     ResyncRequest, TelemetryEvent, TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot,
-    UnknownEvent, WorktreeEvent,
+    SessionEventBatch, UnknownEvent, WorktreeEvent,
 };
 use crate::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
@@ -740,6 +740,30 @@ impl CommandUpdate {
     }
 }
 
+impl SessionEventBatch {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionEventBatch {
+        pbv1::SessionEventBatch {
+            events: self.events.iter().map(SessionEvent::to_protobuf).collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionEventBatch) -> Result<Self, ErrorEnvelope> {
+        let mut events = Vec::with_capacity(proto.events.len());
+        for (idx, ev) in proto.events.into_iter().enumerate() {
+            let decoded = SessionEvent::try_from_protobuf(ev).map_err(|err| {
+                invalid_field(
+                    "session_event_batch.events",
+                    format!("{idx}: {}: {}", err.category, err.message),
+                )
+            })?;
+            events.push(decoded);
+        }
+
+        Ok(Self { events })
+    }
+}
+
 impl DaemonFrame {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::DaemonFrame {
@@ -775,6 +799,9 @@ impl DaemonFrame {
                 }
                 DaemonMessage::CommandUpdate(update) => {
                     pbv1::daemon_frame::Message::CommandUpdate(update.to_protobuf())
+                }
+                DaemonMessage::SessionEventBatch(batch) => {
+                    pbv1::daemon_frame::Message::SessionEventBatch(batch.to_protobuf())
                 }
                 DaemonMessage::Error(error) => {
                     pbv1::daemon_frame::Message::Error(error.to_protobuf())
@@ -819,6 +846,9 @@ impl DaemonFrame {
             pbv1::daemon_frame::Message::CommandUpdate(update) => {
                 DaemonMessage::CommandUpdate(CommandUpdate::try_from_protobuf(update)?)
             }
+            pbv1::daemon_frame::Message::SessionEventBatch(batch) => DaemonMessage::SessionEventBatch(
+                SessionEventBatch::try_from_protobuf(batch)?,
+            ),
             pbv1::daemon_frame::Message::Error(error) => {
                 DaemonMessage::Error(ErrorEnvelope::from_protobuf(error))
             }

@@ -3,6 +3,7 @@ syntax = "proto3";
 package redesmyn.protocol.v1;
 
 import "envelope.proto";
+import "artifacts.proto";
 
 // Daemon ↔ control plane stream messages (T-11).
 //
@@ -42,6 +43,9 @@ message DaemonFrame {
     TelemetryEventBatch telemetry_event_batch = 20;
     TelemetrySnapshot telemetry_snapshot = 21;
     ResyncRequest resync_request = 22;
+
+    // Session events
+    SessionEventBatch session_event_batch = 40;
 
     // Command dispatch + lifecycle
     CommandDispatch command_dispatch = 30;
@@ -162,6 +166,11 @@ message ResyncRequest {
   RepoScope scope = 1;
   // Best-effort human-readable reason ("reconnect", "gap_detected", ...).
   string reason = 2;
+}
+
+// Daemon → control plane: batch of session events (T-35/T-14).
+message SessionEventBatch {
+  repeated SessionEvent events = 1;
 }
 
 // Control plane → daemon: dispatch a command to a daemon.
