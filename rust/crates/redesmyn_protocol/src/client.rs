@@ -41,6 +41,12 @@ pub enum ClientMethod {
     WaitForCommand,
     WaitForEvent,
     WaitForIdle,
+    ListTaskSessions,
+    CreateChatSession,
+    CloseChatSession,
+    ListChatSessions,
+    PinChatSessionToEpic,
+    UnpinChatSessionFromEpic,
 }
 
 /// A request issued by a client.
@@ -72,6 +78,12 @@ pub enum RequestPayload {
     WaitForCommand(WaitForCommandRequest),
     WaitForEvent(WaitForEventRequest),
     WaitForIdle(WaitForIdleRequest),
+    ListTaskSessions(ListTaskSessionsRequest),
+    CreateChatSession(CreateChatSessionRequest),
+    CloseChatSession(CloseChatSessionRequest),
+    ListChatSessions(ListChatSessionsRequest),
+    PinChatSessionToEpic(PinChatSessionToEpicRequest),
+    UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest),
 }
 
 impl RequestPayload {
@@ -90,6 +102,12 @@ impl RequestPayload {
             Self::WaitForCommand(_) => ClientMethod::WaitForCommand,
             Self::WaitForEvent(_) => ClientMethod::WaitForEvent,
             Self::WaitForIdle(_) => ClientMethod::WaitForIdle,
+            Self::ListTaskSessions(_) => ClientMethod::ListTaskSessions,
+            Self::CreateChatSession(_) => ClientMethod::CreateChatSession,
+            Self::CloseChatSession(_) => ClientMethod::CloseChatSession,
+            Self::ListChatSessions(_) => ClientMethod::ListChatSessions,
+            Self::PinChatSessionToEpic(_) => ClientMethod::PinChatSessionToEpic,
+            Self::UnpinChatSessionFromEpic(_) => ClientMethod::UnpinChatSessionFromEpic,
         }
     }
 }
@@ -133,6 +151,12 @@ pub enum ResponseResult {
     WaitForCommand(WaitForCommandResponse),
     WaitForEvent(WaitForEventResponse),
     WaitForIdle(WaitForIdleResponse),
+    ListTaskSessions(ListTaskSessionsResponse),
+    CreateChatSession(CreateChatSessionResponse),
+    CloseChatSession(CloseChatSessionResponse),
+    ListChatSessions(ListChatSessionsResponse),
+    PinChatSessionToEpic(PinChatSessionToEpicResponse),
+    UnpinChatSessionFromEpic(UnpinChatSessionFromEpicResponse),
     Error(ErrorEnvelope),
 }
 
@@ -468,6 +492,124 @@ pub struct WaitForIdleRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WaitForIdleResponse {}
+
+// Session/query surfaces (T-40).
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    Codex,
+    ClaudeCode,
+    Shell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInterfaceMode {
+    ShellTmux,
+    StructuredExec,
+    AppServer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionScopeKind {
+    Task,
+    Chat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionStatus {
+    Running,
+    Blocked,
+    Stopped,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AgentSessionSummary {
+    pub session_id: SessionId,
+    pub scope_kind: AgentSessionScopeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    pub agent_kind: AgentKind,
+    pub interface_mode: AgentInterfaceMode,
+    pub status: AgentSessionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListTaskSessionsRequest {
+    pub task_id: TaskId,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListTaskSessionsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<AgentSessionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_session_id: Option<SessionId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateChatSessionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateChatSessionResponse {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CloseChatSessionRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CloseChatSessionResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListChatSessionsRequest {
+    #[serde(default)]
+    pub include_closed: bool,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListChatSessionsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<AgentSessionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinChatSessionToEpicRequest {
+    pub epic_id: EpicId,
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinChatSessionToEpicResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnpinChatSessionFromEpicRequest {
+    pub epic_id: EpicId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnpinChatSessionFromEpicResponse {}
 
 /// Subscription topics for server-pushed streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

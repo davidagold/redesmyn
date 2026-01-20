@@ -45,6 +45,12 @@ enum ClientMethod {
   CLIENT_METHOD_WAIT_FOR_COMMAND = 10;
   CLIENT_METHOD_WAIT_FOR_EVENT = 11;
   CLIENT_METHOD_WAIT_FOR_IDLE = 12;
+  CLIENT_METHOD_LIST_TASK_SESSIONS = 13;
+  CLIENT_METHOD_CREATE_CHAT_SESSION = 14;
+  CLIENT_METHOD_CLOSE_CHAT_SESSION = 15;
+  CLIENT_METHOD_LIST_CHAT_SESSIONS = 16;
+  CLIENT_METHOD_PIN_CHAT_SESSION_TO_EPIC = 17;
+  CLIENT_METHOD_UNPIN_CHAT_SESSION_FROM_EPIC = 18;
 }
 
 // Request for a control-plane method.
@@ -66,6 +72,12 @@ message Request {
     WaitForCommandRequest wait_for_command = 19;
     WaitForEventRequest wait_for_event = 20;
     WaitForIdleRequest wait_for_idle = 21;
+    ListTaskSessionsRequest list_task_sessions = 30;
+    CreateChatSessionRequest create_chat_session = 31;
+    CloseChatSessionRequest close_chat_session = 32;
+    ListChatSessionsRequest list_chat_sessions = 33;
+    PinChatSessionToEpicRequest pin_chat_session_to_epic = 34;
+    UnpinChatSessionFromEpicRequest unpin_chat_session_from_epic = 35;
   }
 }
 
@@ -94,6 +106,12 @@ message Response {
     WaitForCommandResponse wait_for_command = 19;
     WaitForEventResponse wait_for_event = 20;
     WaitForIdleResponse wait_for_idle = 21;
+    ListTaskSessionsResponse list_task_sessions = 30;
+    CreateChatSessionResponse create_chat_session = 31;
+    CloseChatSessionResponse close_chat_session = 32;
+    ListChatSessionsResponse list_chat_sessions = 33;
+    PinChatSessionToEpicResponse pin_chat_session_to_epic = 34;
+    UnpinChatSessionFromEpicResponse unpin_chat_session_from_epic = 35;
     ErrorEnvelope error = 100;
   }
 }
@@ -368,6 +386,112 @@ message WaitForIdleRequest {
 }
 
 message WaitForIdleResponse {}
+
+// Session/query surfaces (T-40).
+
+enum AgentKind {
+  AGENT_KIND_UNSPECIFIED = 0;
+  AGENT_KIND_CODEX = 1;
+  AGENT_KIND_CLAUDE_CODE = 2;
+  AGENT_KIND_SHELL = 3;
+}
+
+enum AgentInterfaceMode {
+  AGENT_INTERFACE_MODE_UNSPECIFIED = 0;
+  AGENT_INTERFACE_MODE_SHELL_TMUX = 1;
+  AGENT_INTERFACE_MODE_STRUCTURED_EXEC = 2;
+  AGENT_INTERFACE_MODE_APP_SERVER = 3;
+}
+
+enum AgentSessionScopeKind {
+  AGENT_SESSION_SCOPE_KIND_UNSPECIFIED = 0;
+  AGENT_SESSION_SCOPE_KIND_TASK = 1;
+  AGENT_SESSION_SCOPE_KIND_CHAT = 2;
+}
+
+enum AgentSessionStatus {
+  AGENT_SESSION_STATUS_UNSPECIFIED = 0;
+  AGENT_SESSION_STATUS_RUNNING = 1;
+  AGENT_SESSION_STATUS_BLOCKED = 2;
+  AGENT_SESSION_STATUS_STOPPED = 3;
+  AGENT_SESSION_STATUS_ERROR = 4;
+}
+
+message AgentSessionSummary {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  AgentSessionScopeKind scope_kind = 2;
+
+  // TaskId (ULID bytes, length = 16). Empty for chat sessions.
+  bytes task_id = 3;
+
+  AgentKind agent_kind = 4;
+  AgentInterfaceMode interface_mode = 5;
+  AgentSessionStatus status = 6;
+
+  // Optional, chat-focused metadata (T-47).
+  string title = 10;
+  google.protobuf.Timestamp closed_at = 11;
+
+  // General timestamps (informational).
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  google.protobuf.Timestamp ended_at = 22;
+}
+
+message ListTaskSessionsRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  uint32 limit = 2;
+}
+
+message ListTaskSessionsResponse {
+  repeated AgentSessionSummary sessions = 1;
+  // SessionId (ULID bytes, length = 16). Empty when no active session exists.
+  bytes active_session_id = 2;
+}
+
+message CreateChatSessionRequest {
+  // Optional title (empty string = none).
+  string title = 1;
+}
+
+message CreateChatSessionResponse {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionResponse {}
+
+message ListChatSessionsRequest {
+  bool include_closed = 1;
+  uint32 limit = 2;
+}
+
+message ListChatSessionsResponse {
+  repeated AgentSessionSummary sessions = 1;
+}
+
+message PinChatSessionToEpicRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message PinChatSessionToEpicResponse {}
+
+message UnpinChatSessionFromEpicRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+}
+
+message UnpinChatSessionFromEpicResponse {}
 
 // Subscription topic for server-pushed streams.
 enum SubscriptionTopic {

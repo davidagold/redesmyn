@@ -1414,6 +1414,18 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::Status => pbv1::ClientMethod::Status as i32,
         crate::client::ClientMethod::ListEpics => pbv1::ClientMethod::ListEpics as i32,
         crate::client::ClientMethod::GetEpicGraph => pbv1::ClientMethod::GetEpicGraph as i32,
+        crate::client::ClientMethod::ListTaskSessions => pbv1::ClientMethod::ListTaskSessions as i32,
+        crate::client::ClientMethod::CreateChatSession => {
+            pbv1::ClientMethod::CreateChatSession as i32
+        }
+        crate::client::ClientMethod::CloseChatSession => pbv1::ClientMethod::CloseChatSession as i32,
+        crate::client::ClientMethod::ListChatSessions => pbv1::ClientMethod::ListChatSessions as i32,
+        crate::client::ClientMethod::PinChatSessionToEpic => {
+            pbv1::ClientMethod::PinChatSessionToEpic as i32
+        }
+        crate::client::ClientMethod::UnpinChatSessionFromEpic => {
+            pbv1::ClientMethod::UnpinChatSessionFromEpic as i32
+        }
         crate::client::ClientMethod::GetSessionEvents => {
             pbv1::ClientMethod::GetSessionEvents as i32
         }
@@ -1437,6 +1449,12 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::Status) => Ok(crate::client::ClientMethod::Status),
         Ok(pbv1::ClientMethod::ListEpics) => Ok(crate::client::ClientMethod::ListEpics),
         Ok(pbv1::ClientMethod::GetEpicGraph) => Ok(crate::client::ClientMethod::GetEpicGraph),
+        Ok(pbv1::ClientMethod::ListTaskSessions) => Ok(crate::client::ClientMethod::ListTaskSessions),
+        Ok(pbv1::ClientMethod::CreateChatSession) => Ok(crate::client::ClientMethod::CreateChatSession),
+        Ok(pbv1::ClientMethod::CloseChatSession) => Ok(crate::client::ClientMethod::CloseChatSession),
+        Ok(pbv1::ClientMethod::ListChatSessions) => Ok(crate::client::ClientMethod::ListChatSessions),
+        Ok(pbv1::ClientMethod::PinChatSessionToEpic) => Ok(crate::client::ClientMethod::PinChatSessionToEpic),
+        Ok(pbv1::ClientMethod::UnpinChatSessionFromEpic) => Ok(crate::client::ClientMethod::UnpinChatSessionFromEpic),
         Ok(pbv1::ClientMethod::GetSessionEvents) => {
             Ok(crate::client::ClientMethod::GetSessionEvents)
         }
@@ -1566,6 +1584,92 @@ fn decode_client_command_state(value: i32) -> crate::client::CommandState {
     }
 }
 
+fn encode_agent_kind(value: crate::client::AgentKind) -> i32 {
+    match value {
+        crate::client::AgentKind::Codex => pbv1::AgentKind::Codex as i32,
+        crate::client::AgentKind::ClaudeCode => pbv1::AgentKind::ClaudeCode as i32,
+        crate::client::AgentKind::Shell => pbv1::AgentKind::Shell as i32,
+    }
+}
+
+fn decode_agent_kind(value: i32) -> Result<crate::client::AgentKind, ErrorEnvelope> {
+    match pbv1::AgentKind::try_from(value) {
+        Ok(pbv1::AgentKind::Codex) => Ok(crate::client::AgentKind::Codex),
+        Ok(pbv1::AgentKind::ClaudeCode) => Ok(crate::client::AgentKind::ClaudeCode),
+        Ok(pbv1::AgentKind::Shell) => Ok(crate::client::AgentKind::Shell),
+        Ok(pbv1::AgentKind::Unspecified) | Err(_) => Err(invalid_field(
+            "agent_kind",
+            format!("unknown enum value for AgentKind: {value}"),
+        )),
+    }
+}
+
+fn encode_agent_interface_mode(value: crate::client::AgentInterfaceMode) -> i32 {
+    match value {
+        crate::client::AgentInterfaceMode::ShellTmux => pbv1::AgentInterfaceMode::ShellTmux as i32,
+        crate::client::AgentInterfaceMode::StructuredExec => {
+            pbv1::AgentInterfaceMode::StructuredExec as i32
+        }
+        crate::client::AgentInterfaceMode::AppServer => pbv1::AgentInterfaceMode::AppServer as i32,
+    }
+}
+
+fn decode_agent_interface_mode(value: i32) -> Result<crate::client::AgentInterfaceMode, ErrorEnvelope> {
+    match pbv1::AgentInterfaceMode::try_from(value) {
+        Ok(pbv1::AgentInterfaceMode::ShellTmux) => Ok(crate::client::AgentInterfaceMode::ShellTmux),
+        Ok(pbv1::AgentInterfaceMode::StructuredExec) => {
+            Ok(crate::client::AgentInterfaceMode::StructuredExec)
+        }
+        Ok(pbv1::AgentInterfaceMode::AppServer) => Ok(crate::client::AgentInterfaceMode::AppServer),
+        Ok(pbv1::AgentInterfaceMode::Unspecified) | Err(_) => Err(invalid_field(
+            "interface_mode",
+            format!("unknown enum value for AgentInterfaceMode: {value}"),
+        )),
+    }
+}
+
+fn encode_agent_session_scope_kind(value: crate::client::AgentSessionScopeKind) -> i32 {
+    match value {
+        crate::client::AgentSessionScopeKind::Task => pbv1::AgentSessionScopeKind::Task as i32,
+        crate::client::AgentSessionScopeKind::Chat => pbv1::AgentSessionScopeKind::Chat as i32,
+    }
+}
+
+fn decode_agent_session_scope_kind(
+    value: i32,
+) -> Result<crate::client::AgentSessionScopeKind, ErrorEnvelope> {
+    match pbv1::AgentSessionScopeKind::try_from(value) {
+        Ok(pbv1::AgentSessionScopeKind::Task) => Ok(crate::client::AgentSessionScopeKind::Task),
+        Ok(pbv1::AgentSessionScopeKind::Chat) => Ok(crate::client::AgentSessionScopeKind::Chat),
+        Ok(pbv1::AgentSessionScopeKind::Unspecified) | Err(_) => Err(invalid_field(
+            "scope_kind",
+            format!("unknown enum value for AgentSessionScopeKind: {value}"),
+        )),
+    }
+}
+
+fn encode_agent_session_status(value: crate::client::AgentSessionStatus) -> i32 {
+    match value {
+        crate::client::AgentSessionStatus::Running => pbv1::AgentSessionStatus::Running as i32,
+        crate::client::AgentSessionStatus::Blocked => pbv1::AgentSessionStatus::Blocked as i32,
+        crate::client::AgentSessionStatus::Stopped => pbv1::AgentSessionStatus::Stopped as i32,
+        crate::client::AgentSessionStatus::Error => pbv1::AgentSessionStatus::Error as i32,
+    }
+}
+
+fn decode_agent_session_status(value: i32) -> Result<crate::client::AgentSessionStatus, ErrorEnvelope> {
+    match pbv1::AgentSessionStatus::try_from(value) {
+        Ok(pbv1::AgentSessionStatus::Running) => Ok(crate::client::AgentSessionStatus::Running),
+        Ok(pbv1::AgentSessionStatus::Blocked) => Ok(crate::client::AgentSessionStatus::Blocked),
+        Ok(pbv1::AgentSessionStatus::Stopped) => Ok(crate::client::AgentSessionStatus::Stopped),
+        Ok(pbv1::AgentSessionStatus::Error) => Ok(crate::client::AgentSessionStatus::Error),
+        Ok(pbv1::AgentSessionStatus::Unspecified) | Err(_) => Err(invalid_field(
+            "status",
+            format!("unknown enum value for AgentSessionStatus: {value}"),
+        )),
+    }
+}
+
 impl crate::client::ClientFrame {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ClientFrame {
@@ -1648,6 +1752,24 @@ impl crate::client::Request {
                 crate::client::RequestPayload::GetEpicPinnedChatSession(req) => {
                     pbv1::request::Payload::GetEpicPinnedChatSession(req.to_protobuf())
                 }
+                crate::client::RequestPayload::ListTaskSessions(req) => {
+                    pbv1::request::Payload::ListTaskSessions(req.to_protobuf())
+                }
+                crate::client::RequestPayload::CreateChatSession(req) => {
+                    pbv1::request::Payload::CreateChatSession(req.to_protobuf())
+                }
+                crate::client::RequestPayload::CloseChatSession(req) => {
+                    pbv1::request::Payload::CloseChatSession(req.to_protobuf())
+                }
+                crate::client::RequestPayload::ListChatSessions(req) => {
+                    pbv1::request::Payload::ListChatSessions(req.to_protobuf())
+                }
+                crate::client::RequestPayload::PinChatSessionToEpic(req) => {
+                    pbv1::request::Payload::PinChatSessionToEpic(req.to_protobuf())
+                }
+                crate::client::RequestPayload::UnpinChatSessionFromEpic(req) => {
+                    pbv1::request::Payload::UnpinChatSessionFromEpic(req.to_protobuf())
+                }
                 crate::client::RequestPayload::CreateCommand(req) => {
                     pbv1::request::Payload::CreateCommand(req.to_protobuf())
                 }
@@ -1701,6 +1823,24 @@ impl crate::client::Request {
                     crate::client::GetEpicPinnedChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
+            pbv1::request::Payload::ListTaskSessions(req) => crate::client::RequestPayload::ListTaskSessions(
+                crate::client::ListTaskSessionsRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::CreateChatSession(req) => crate::client::RequestPayload::CreateChatSession(
+                crate::client::CreateChatSessionRequest::from_protobuf(req),
+            ),
+            pbv1::request::Payload::CloseChatSession(req) => crate::client::RequestPayload::CloseChatSession(
+                crate::client::CloseChatSessionRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::ListChatSessions(req) => crate::client::RequestPayload::ListChatSessions(
+                crate::client::ListChatSessionsRequest::from_protobuf(req),
+            ),
+            pbv1::request::Payload::PinChatSessionToEpic(req) => crate::client::RequestPayload::PinChatSessionToEpic(
+                crate::client::PinChatSessionToEpicRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::UnpinChatSessionFromEpic(req) => crate::client::RequestPayload::UnpinChatSessionFromEpic(
+                crate::client::UnpinChatSessionFromEpicRequest::try_from_protobuf(req)?,
+            ),
             pbv1::request::Payload::CreateCommand(req) => {
                 crate::client::RequestPayload::CreateCommand(
                     crate::client::CreateCommandRequest::try_from_protobuf(req)?,
@@ -2196,6 +2336,24 @@ impl crate::client::Response {
                 crate::client::ResponseResult::GetEpicPinnedChatSession(resp) => {
                     pbv1::response::Result::GetEpicPinnedChatSession(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::ListTaskSessions(resp) => {
+                    pbv1::response::Result::ListTaskSessions(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::CreateChatSession(resp) => {
+                    pbv1::response::Result::CreateChatSession(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::CloseChatSession(resp) => {
+                    pbv1::response::Result::CloseChatSession(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::ListChatSessions(resp) => {
+                    pbv1::response::Result::ListChatSessions(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::PinChatSessionToEpic(resp) => {
+                    pbv1::response::Result::PinChatSessionToEpic(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::UnpinChatSessionFromEpic(resp) => {
+                    pbv1::response::Result::UnpinChatSessionFromEpic(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::CreateCommand(resp) => {
                     pbv1::response::Result::CreateCommand(resp.to_protobuf())
                 }
@@ -2252,6 +2410,24 @@ impl crate::client::Response {
                     crate::client::GetEpicPinnedChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
+            pbv1::response::Result::ListTaskSessions(resp) => crate::client::ResponseResult::ListTaskSessions(
+                crate::client::ListTaskSessionsResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::CreateChatSession(resp) => crate::client::ResponseResult::CreateChatSession(
+                crate::client::CreateChatSessionResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::CloseChatSession(resp) => crate::client::ResponseResult::CloseChatSession(
+                crate::client::CloseChatSessionResponse::from_protobuf(resp),
+            ),
+            pbv1::response::Result::ListChatSessions(resp) => crate::client::ResponseResult::ListChatSessions(
+                crate::client::ListChatSessionsResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::PinChatSessionToEpic(resp) => crate::client::ResponseResult::PinChatSessionToEpic(
+                crate::client::PinChatSessionToEpicResponse::from_protobuf(resp),
+            ),
+            pbv1::response::Result::UnpinChatSessionFromEpic(resp) => crate::client::ResponseResult::UnpinChatSessionFromEpic(
+                crate::client::UnpinChatSessionFromEpicResponse::from_protobuf(resp),
+            ),
             pbv1::response::Result::CreateCommand(resp) => {
                 crate::client::ResponseResult::CreateCommand(
                     crate::client::CreateCommandResponse::try_from_protobuf(resp)?,
@@ -2759,6 +2935,269 @@ impl crate::client::GetEpicPinnedChatSessionResponse {
         Ok(Self {
             session_id: decode_optional_ulid::<SessionId>("session_id", &proto.session_id)?,
         })
+    }
+}
+
+impl crate::client::AgentSessionSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AgentSessionSummary {
+        pbv1::AgentSessionSummary {
+            session_id: self.session_id.to_bytes().to_vec(),
+            scope_kind: encode_agent_session_scope_kind(self.scope_kind),
+            task_id: self
+                .task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            agent_kind: encode_agent_kind(self.agent_kind),
+            interface_mode: encode_agent_interface_mode(self.interface_mode),
+            status: encode_agent_session_status(self.status),
+            title: self.title.clone().unwrap_or_default(),
+            closed_at: self.closed_at.map(encode_timestamp),
+            created_at: self.created_at.map(encode_timestamp),
+            updated_at: self.updated_at.map(encode_timestamp),
+            ended_at: self.ended_at.map(encode_timestamp),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::AgentSessionSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            scope_kind: decode_agent_session_scope_kind(proto.scope_kind)?,
+            task_id: decode_optional_ulid::<TaskId>("task_id", &proto.task_id)?,
+            agent_kind: decode_agent_kind(proto.agent_kind)?,
+            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
+            status: decode_agent_session_status(proto.status)?,
+            title: normalize_optional_string(proto.title),
+            closed_at: proto
+                .closed_at
+                .map(|ts| decode_timestamp("closed_at", ts))
+                .transpose()?,
+            created_at: proto
+                .created_at
+                .map(|ts| decode_timestamp("created_at", ts))
+                .transpose()?,
+            updated_at: proto
+                .updated_at
+                .map(|ts| decode_timestamp("updated_at", ts))
+                .transpose()?,
+            ended_at: proto
+                .ended_at
+                .map(|ts| decode_timestamp("ended_at", ts))
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::ListTaskSessionsRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListTaskSessionsRequest {
+        pbv1::ListTaskSessionsRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+            limit: self.limit,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ListTaskSessionsRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+            limit: proto.limit,
+        })
+    }
+}
+
+impl crate::client::ListTaskSessionsResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListTaskSessionsResponse {
+        pbv1::ListTaskSessionsResponse {
+            sessions: self
+                .sessions
+                .iter()
+                .map(crate::client::AgentSessionSummary::to_protobuf)
+                .collect(),
+            active_session_id: self
+                .active_session_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListTaskSessionsResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            sessions: proto
+                .sessions
+                .into_iter()
+                .map(crate::client::AgentSessionSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            active_session_id: decode_optional_ulid::<SessionId>(
+                "active_session_id",
+                &proto.active_session_id,
+            )?,
+        })
+    }
+}
+
+impl crate::client::CreateChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionRequest {
+        pbv1::CreateChatSessionRequest {
+            title: self.title.clone().unwrap_or_default(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Self {
+        Self {
+            title: normalize_optional_string(proto.title),
+        }
+    }
+}
+
+impl crate::client::CreateChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionResponse {
+        pbv1::CreateChatSessionResponse {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CreateChatSessionResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::CloseChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionRequest {
+        pbv1::CloseChatSessionRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CloseChatSessionRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::CloseChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionResponse {
+        pbv1::CloseChatSessionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::CloseChatSessionResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::client::ListChatSessionsRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListChatSessionsRequest {
+        pbv1::ListChatSessionsRequest {
+            include_closed: self.include_closed,
+            limit: self.limit,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::ListChatSessionsRequest) -> Self {
+        Self {
+            include_closed: proto.include_closed,
+            limit: proto.limit,
+        }
+    }
+}
+
+impl crate::client::ListChatSessionsResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListChatSessionsResponse {
+        pbv1::ListChatSessionsResponse {
+            sessions: self
+                .sessions
+                .iter()
+                .map(crate::client::AgentSessionSummary::to_protobuf)
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListChatSessionsResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            sessions: proto
+                .sessions
+                .into_iter()
+                .map(crate::client::AgentSessionSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl crate::client::PinChatSessionToEpicRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PinChatSessionToEpicRequest {
+        pbv1::PinChatSessionToEpicRequest {
+            epic_id: self.epic_id.to_bytes().to_vec(),
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::PinChatSessionToEpicRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            epic_id: decode_required_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::PinChatSessionToEpicResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PinChatSessionToEpicResponse {
+        pbv1::PinChatSessionToEpicResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::PinChatSessionToEpicResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::client::UnpinChatSessionFromEpicRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnpinChatSessionFromEpicRequest {
+        pbv1::UnpinChatSessionFromEpicRequest {
+            epic_id: self.epic_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::UnpinChatSessionFromEpicRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            epic_id: decode_required_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+        })
+    }
+}
+
+impl crate::client::UnpinChatSessionFromEpicResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnpinChatSessionFromEpicResponse {
+        pbv1::UnpinChatSessionFromEpicResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::UnpinChatSessionFromEpicResponse) -> Self {
+        Self {}
     }
 }
 
