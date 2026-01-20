@@ -10,6 +10,46 @@ use redesmyn_storage::{
 };
 use sqlx::SqliteConnection;
 
+async fn insert_task_agent_session(
+    conn: &mut SqliteConnection,
+    session_id: SessionId,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+    now_ms: i64,
+) -> Result<(), StorageError> {
+    sqlx::query(
+        r#"
+        INSERT INTO agent_sessions (
+            session_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_workspace_id,
+            scope_repo_id,
+            scope_kind,
+            task_id,
+            agent_kind,
+            interface_mode,
+            status
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(session_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind("task")
+    .bind(task_id)
+    .bind("shell")
+    .bind("shell_tmux")
+    .bind("stopped")
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 async fn insert_workspace(
     conn: &mut SqliteConnection,
     workspace_id: WorkspaceId,
@@ -278,6 +318,16 @@ async fn insert_task_scoped_session_event(
     artifact_id: Option<ArtifactId>,
     now_ms: i64,
 ) -> Result<(), StorageError> {
+    insert_task_agent_session(
+        &mut *conn,
+        session_id,
+        workspace_id,
+        repo_id,
+        task_id,
+        now_ms,
+    )
+    .await?;
+
     sqlx::query(
         r#"
         INSERT INTO session_events (
@@ -715,6 +765,38 @@ async fn can_insert_and_query_core_schema() {
     assert_eq!(child_still_exists, 1);
 
     // Session scope chains must be consistent: repo -> epic, epic -> task.
+    let session_id = SessionId::new();
+    sqlx::query(
+        r#"
+        INSERT INTO agent_sessions (
+            session_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_workspace_id,
+            scope_repo_id,
+            scope_kind,
+            task_id,
+            agent_kind,
+            interface_mode,
+            status
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(session_id)
+    .bind(t0_ms)
+    .bind(t0_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind("chat")
+    .bind(None::<TaskId>)
+    .bind("shell")
+    .bind("shell_tmux")
+    .bind("stopped")
+    .execute(&pool)
+    .await
+    .unwrap();
+
     let result = sqlx::query(
         r#"
         INSERT INTO session_events (
@@ -736,7 +818,7 @@ async fn can_insert_and_query_core_schema() {
         "#,
     )
     .bind(SessionEventId::new())
-    .bind(SessionId::new())
+    .bind(session_id)
     .bind(t0_ms)
     .bind(SessionScopeKind::Epic.as_str())
     .bind(workspace_id)
@@ -776,7 +858,7 @@ async fn can_insert_and_query_core_schema() {
         "#,
     )
     .bind(SessionEventId::new())
-    .bind(SessionId::new())
+    .bind(session_id)
     .bind(t0_ms)
     .bind(SessionScopeKind::Task.as_str())
     .bind(workspace_id)

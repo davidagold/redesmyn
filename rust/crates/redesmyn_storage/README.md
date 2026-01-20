@@ -8,7 +8,7 @@ Core tables:
 
 - Graph: `workspaces`, `repositories`, `epics`, `tasks`, `task_relations`
 - Orchestration: `commands`, `command_updates`, `events`
-- Sessions: `session_events`, `artifacts`
+- Sessions: `agent_sessions`, `session_events`, `session_pins`, `artifacts`
 - Presence: `hosts`, `daemon_presence`
 
 Notes:
@@ -22,9 +22,9 @@ Notes:
   detaches children (`parent_task_id` becomes `NULL`); it does not delete subtrees implicitly.
 - **Session scope chains**: `session_events` enforce repo → epic and epic → task consistency using
   composite foreign keys; task-scoped rows must include `epic_id`.
-- **Sessions**: v0 does not create a dedicated `sessions` table. `session_id` is recorded on
-  `session_events`; session listing/metadata can be derived via grouping/aggregation. We can add a
-  `sessions` table later once we need durable session metadata (titles, last_event_at, etc.).
+- **Sessions**: `agent_sessions` stores durable session/conversation metadata (task-scoped and
+  chat-scoped). `session_events` store structured, queryable emissions. `session_pins` stores the
+  pinned chat session per epic.
 - **Enum typing**: schema-constrained `TEXT` values have Rust enums in `redesmyn_storage::schema` to
   prevent app-level typos (e.g. command states, scope kinds, merge readiness).
 

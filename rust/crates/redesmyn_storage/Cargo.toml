@@ -13,4 +13,6 @@ sqlx = { workspace = true, features = ["macros", "migrate", "sqlite", "runtime-t
 thiserror.workspace = true
 
 [dev-dependencies]
+prost.workspace = true
+redesmyn_protocol.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

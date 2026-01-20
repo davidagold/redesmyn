@@ -158,3 +158,103 @@ impl fmt::Display for SessionScopeKind {
         f.write_str(self.as_str())
     }
 }
+
+/// Scope kind for `agent_sessions` (conversation identity).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSessionScopeKind {
+    Task,
+    Chat,
+}
+
+impl AgentSessionScopeKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Chat => "chat",
+        }
+    }
+}
+
+impl fmt::Display for AgentSessionScopeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Status for rows in `agent_sessions`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentSessionStatus {
+    Running,
+    Blocked,
+    Stopped,
+    Error,
+}
+
+impl AgentSessionStatus {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Blocked => "blocked",
+            Self::Stopped => "stopped",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl fmt::Display for AgentSessionStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Agent provider persisted on `agent_sessions.agent_kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentKind {
+    Codex,
+    ClaudeCode,
+    Shell,
+}
+
+impl AgentKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude_code",
+            Self::Shell => "shell",
+        }
+    }
+}
+
+impl fmt::Display for AgentKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Agent runtime kind persisted on `agent_sessions.interface_mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentInterfaceMode {
+    ShellTmux,
+    StructuredExec,
+    AppServer,
+}
+
+impl AgentInterfaceMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ShellTmux => "shell_tmux",
+            Self::StructuredExec => "structured_exec",
+            Self::AppServer => "app_server",
+        }
+    }
+}
+
+impl fmt::Display for AgentInterfaceMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

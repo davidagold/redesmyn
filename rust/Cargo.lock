@@ -4782,8 +4782,10 @@ dependencies = [
 name = "redesmyn_storage"
 version = "0.1.0"
 dependencies = [
+ "prost",
  "redesmyn_ids",
  "redesmyn_logging",
+ "redesmyn_protocol",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
