@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use redesmyn_ids::{
-    ArtifactId, CommandId, EventId, HostId, HostInstanceId, MsgId, RepoId, RequestId,
-    SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
+    ArtifactId, CommandId, CommandUpdateId, EpicId, EventId, HostId, HostInstanceId, MsgId, RepoId,
+    RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
 use crate::pb::redesmyn::protocol::v1 as pbv1;
@@ -1421,6 +1421,70 @@ fn decode_subscription_topic(
     }
 }
 
+fn encode_task_state(value: crate::client::TaskState) -> i32 {
+    match value {
+        crate::client::TaskState::Unknown => pbv1::TaskState::Unspecified as i32,
+        crate::client::TaskState::Todo => pbv1::TaskState::Todo as i32,
+        crate::client::TaskState::InProgress => pbv1::TaskState::InProgress as i32,
+        crate::client::TaskState::Blocked => pbv1::TaskState::Blocked as i32,
+        crate::client::TaskState::Done => pbv1::TaskState::Done as i32,
+    }
+}
+
+fn decode_task_state(value: i32) -> crate::client::TaskState {
+    match pbv1::TaskState::try_from(value) {
+        Ok(pbv1::TaskState::Todo) => crate::client::TaskState::Todo,
+        Ok(pbv1::TaskState::InProgress) => crate::client::TaskState::InProgress,
+        Ok(pbv1::TaskState::Blocked) => crate::client::TaskState::Blocked,
+        Ok(pbv1::TaskState::Done) => crate::client::TaskState::Done,
+        Ok(pbv1::TaskState::Unspecified) | Err(_) => crate::client::TaskState::Unknown,
+    }
+}
+
+fn encode_merge_readiness(value: crate::client::MergeReadiness) -> i32 {
+    match value {
+        crate::client::MergeReadiness::Unknown => pbv1::MergeReadiness::Unknown as i32,
+        crate::client::MergeReadiness::Ready => pbv1::MergeReadiness::Ready as i32,
+        crate::client::MergeReadiness::Blocked => pbv1::MergeReadiness::Blocked as i32,
+    }
+}
+
+fn decode_merge_readiness(value: i32) -> crate::client::MergeReadiness {
+    match pbv1::MergeReadiness::try_from(value) {
+        Ok(pbv1::MergeReadiness::Ready) => crate::client::MergeReadiness::Ready,
+        Ok(pbv1::MergeReadiness::Blocked) => crate::client::MergeReadiness::Blocked,
+        Ok(pbv1::MergeReadiness::Unspecified)
+        | Ok(pbv1::MergeReadiness::Unknown)
+        | Err(_) => crate::client::MergeReadiness::Unknown,
+    }
+}
+
+fn encode_command_state(value: crate::client::CommandState) -> i32 {
+    match value {
+        crate::client::CommandState::Unknown => pbv1::CommandState::Unspecified as i32,
+        crate::client::CommandState::Accepted => pbv1::CommandState::Accepted as i32,
+        crate::client::CommandState::Running => pbv1::CommandState::Running as i32,
+        crate::client::CommandState::Blocked => pbv1::CommandState::Blocked as i32,
+        crate::client::CommandState::Resumable => pbv1::CommandState::Resumable as i32,
+        crate::client::CommandState::Succeeded => pbv1::CommandState::Succeeded as i32,
+        crate::client::CommandState::Failed => pbv1::CommandState::Failed as i32,
+        crate::client::CommandState::Canceled => pbv1::CommandState::Canceled as i32,
+    }
+}
+
+fn decode_command_state(value: i32) -> crate::client::CommandState {
+    match pbv1::CommandState::try_from(value) {
+        Ok(pbv1::CommandState::Accepted) => crate::client::CommandState::Accepted,
+        Ok(pbv1::CommandState::Running) => crate::client::CommandState::Running,
+        Ok(pbv1::CommandState::Blocked) => crate::client::CommandState::Blocked,
+        Ok(pbv1::CommandState::Resumable) => crate::client::CommandState::Resumable,
+        Ok(pbv1::CommandState::Succeeded) => crate::client::CommandState::Succeeded,
+        Ok(pbv1::CommandState::Failed) => crate::client::CommandState::Failed,
+        Ok(pbv1::CommandState::Canceled) => crate::client::CommandState::Canceled,
+        Ok(pbv1::CommandState::Unspecified) | Err(_) => crate::client::CommandState::Unknown,
+    }
+}
+
 impl crate::client::ClientFrame {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ClientFrame {
@@ -1739,15 +1803,34 @@ impl crate::client::EpicTaskNode {
         pbv1::EpicTaskNode {
             task_slug: self.task_slug.clone(),
             title: self.title.clone(),
+            task_id: self
+                .task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            parent_task_id: self
+                .parent_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            state: encode_task_state(self.state),
+            branch_name: self.branch_name.clone().unwrap_or_default(),
+            merge_readiness: encode_merge_readiness(self.merge_readiness),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::EpicTaskNode) -> Self {
-        Self {
+    pub fn from_protobuf(proto: pbv1::EpicTaskNode) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             task_slug: proto.task_slug,
             title: proto.title,
-        }
+            task_id: decode_optional_ulid::<TaskId>("task_id", &proto.task_id)?,
+            parent_task_id: decode_optional_ulid::<TaskId>("parent_task_id", &proto.parent_task_id)?,
+            state: decode_task_state(proto.state),
+            branch_name: if proto.branch_name.is_empty() {
+                None
+            } else {
+                Some(proto.branch_name)
+            },
+            merge_readiness: decode_merge_readiness(proto.merge_readiness),
+        })
     }
 }
 
@@ -1757,15 +1840,162 @@ impl crate::client::EpicTaskEdge {
         pbv1::EpicTaskEdge {
             from_task_slug: self.from_task_slug.clone(),
             to_task_slug: self.to_task_slug.clone(),
+            from_task_id: self
+                .from_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            to_task_id: self
+                .to_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::EpicTaskEdge) -> Self {
-        Self {
+    pub fn from_protobuf(proto: pbv1::EpicTaskEdge) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             from_task_slug: proto.from_task_slug,
             to_task_slug: proto.to_task_slug,
+            from_task_id: decode_optional_ulid::<TaskId>("from_task_id", &proto.from_task_id)?,
+            to_task_id: decode_optional_ulid::<TaskId>("to_task_id", &proto.to_task_id)?,
+        })
+    }
+}
+
+impl crate::client::CommandUpdateSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CommandUpdateSummary {
+        pbv1::CommandUpdateSummary {
+            update_id: self.update_id.to_bytes().to_vec(),
+            created_at: Some(encode_timestamp(self.created_at)),
+            state: encode_command_state(self.state),
+            message: self.message.clone().unwrap_or_default(),
+            progress_current: self.progress_current,
+            progress_total: self.progress_total,
         }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CommandUpdateSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            update_id: decode_required_ulid::<CommandUpdateId>("update_id", &proto.update_id)?,
+            created_at: decode_required_timestamp("created_at", proto.created_at)?,
+            state: decode_command_state(proto.state),
+            message: if proto.message.is_empty() {
+                None
+            } else {
+                Some(proto.message)
+            },
+            progress_current: proto.progress_current,
+            progress_total: proto.progress_total,
+        })
+    }
+}
+
+impl crate::client::CommandSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CommandSummary {
+        pbv1::CommandSummary {
+            command_id: self.command_id.to_bytes().to_vec(),
+            created_at: Some(encode_timestamp(self.created_at)),
+            updated_at: Some(encode_timestamp(self.updated_at)),
+            kind: self.kind.clone(),
+            state: encode_command_state(self.state),
+            target_task_id: self
+                .target_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            last_update: self.last_update.as_ref().map(|update| update.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CommandSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command_id: decode_required_ulid::<CommandId>("command_id", &proto.command_id)?,
+            created_at: decode_required_timestamp("created_at", proto.created_at)?,
+            updated_at: decode_required_timestamp("updated_at", proto.updated_at)?,
+            kind: proto.kind,
+            state: decode_command_state(proto.state),
+            target_task_id: decode_optional_ulid::<TaskId>("target_task_id", &proto.target_task_id)?,
+            last_update: proto
+                .last_update
+                .map(crate::client::CommandUpdateSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::DaemonPresenceSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::DaemonPresenceSummary {
+        pbv1::DaemonPresenceSummary {
+            host_instance_id: self.host_instance_id.to_bytes().to_vec(),
+            host_id: self.host_id.to_bytes().to_vec(),
+            hostname: self.hostname.clone().unwrap_or_default(),
+            connected_at: Some(encode_timestamp(self.connected_at)),
+            last_heartbeat_at: Some(encode_timestamp(self.last_heartbeat_at)),
+            disconnected_at: self.disconnected_at.map(encode_timestamp),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::DaemonPresenceSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            host_instance_id: decode_required_ulid::<HostInstanceId>(
+                "host_instance_id",
+                &proto.host_instance_id,
+            )?,
+            host_id: decode_required_ulid::<HostId>("host_id", &proto.host_id)?,
+            hostname: if proto.hostname.is_empty() {
+                None
+            } else {
+                Some(proto.hostname)
+            },
+            connected_at: decode_required_timestamp("connected_at", proto.connected_at)?,
+            last_heartbeat_at: decode_required_timestamp(
+                "last_heartbeat_at",
+                proto.last_heartbeat_at,
+            )?,
+            disconnected_at: proto
+                .disconnected_at
+                .map(|ts| decode_timestamp("disconnected_at", ts))
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::SessionSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionSummary {
+        pbv1::SessionSummary {
+            session_id: self.session_id.to_bytes().to_vec(),
+            session_event_id: self.session_event_id.to_bytes().to_vec(),
+            task_id: self.task_id.to_bytes().to_vec(),
+            last_event_at: Some(encode_timestamp(self.last_event_at)),
+            kind: self.kind.clone(),
+            turn_id: self.turn_id.clone().unwrap_or_default(),
+            message_preview: self.message_preview.clone().unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            session_event_id: decode_required_ulid::<SessionEventId>(
+                "session_event_id",
+                &proto.session_event_id,
+            )?,
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+            last_event_at: decode_required_timestamp("last_event_at", proto.last_event_at)?,
+            kind: proto.kind,
+            turn_id: if proto.turn_id.is_empty() {
+                None
+            } else {
+                Some(proto.turn_id)
+            },
+            message_preview: if proto.message_preview.is_empty() {
+                None
+            } else {
+                Some(proto.message_preview)
+            },
+        })
     }
 }
 
@@ -1784,24 +2014,79 @@ impl crate::client::EpicGraph {
                 .iter()
                 .map(crate::client::EpicTaskEdge::to_protobuf)
                 .collect(),
+            epic_id: self
+                .epic_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            epic_title: self.epic_title.clone().unwrap_or_default(),
+            workspace_id: self
+                .workspace_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            repo_id: self
+                .repo_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            command_summaries: self
+                .command_summaries
+                .iter()
+                .map(crate::client::CommandSummary::to_protobuf)
+                .collect(),
+            daemon_presences: self
+                .daemon_presences
+                .iter()
+                .map(crate::client::DaemonPresenceSummary::to_protobuf)
+                .collect(),
+            session_summaries: self
+                .session_summaries
+                .iter()
+                .map(crate::client::SessionSummary::to_protobuf)
+                .collect(),
+            as_of_event_id: self
+                .as_of_event_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::EpicGraph) -> Self {
-        Self {
+    pub fn try_from_protobuf(proto: pbv1::EpicGraph) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             epic_slug: proto.epic_slug,
             nodes: proto
                 .nodes
                 .into_iter()
                 .map(crate::client::EpicTaskNode::from_protobuf)
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()?,
             edges: proto
                 .edges
                 .into_iter()
                 .map(crate::client::EpicTaskEdge::from_protobuf)
-                .collect(),
-        }
+                .collect::<Result<Vec<_>, _>>()?,
+            epic_id: decode_optional_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+            epic_title: if proto.epic_title.is_empty() {
+                None
+            } else {
+                Some(proto.epic_title)
+            },
+            workspace_id: decode_optional_ulid::<WorkspaceId>("workspace_id", &proto.workspace_id)?,
+            repo_id: decode_optional_ulid::<RepoId>("repo_id", &proto.repo_id)?,
+            command_summaries: proto
+                .command_summaries
+                .into_iter()
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            daemon_presences: proto
+                .daemon_presences
+                .into_iter()
+                .map(crate::client::DaemonPresenceSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            session_summaries: proto
+                .session_summaries
+                .into_iter()
+                .map(crate::client::SessionSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            as_of_event_id: decode_optional_ulid::<EventId>("as_of_event_id", &proto.as_of_event_id)?,
+        })
     }
 }
 
@@ -1815,9 +2100,9 @@ impl crate::client::GetEpicGraphResponse {
 
     pub fn try_from_protobuf(proto: pbv1::GetEpicGraphResponse) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
-            graph: crate::client::EpicGraph::from_protobuf(
+            graph: crate::client::EpicGraph::try_from_protobuf(
                 proto.graph.ok_or_else(|| missing_required("graph"))?,
-            ),
+            )?,
         })
     }
 }
