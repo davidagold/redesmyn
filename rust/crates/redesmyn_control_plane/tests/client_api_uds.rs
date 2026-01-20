@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::ControlPlane;
-use redesmyn_ids::{RequestId, SubscriptionId};
-use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_ids::{RepoId, RequestId, SubscriptionId, WorkspaceId};
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope, TraceId};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, EventLogFilter, HealthRequest, Request, RequestPayload,
     ResponseResult, StatusRequest, Subscribe, SubscriptionEvent, SubscriptionFilter,
@@ -118,8 +118,21 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
     assert!(saw_health && saw_status);
 
     let subscription_id = SubscriptionId::new();
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let repo_scope = RepoScope::new(workspace_id, repo_id);
+    let storage_scope = EventScope::Repo {
+        workspace_id,
+        repo_id,
+    };
+    let trace_id = TraceId::from_bytes([0x11; TraceId::BYTE_LEN]);
+    let subscribe_envelope = ProtocolEnvelope::new()
+        .with_scope(repo_scope.into())
+        .with_trace_id(trace_id);
+    let subscribe_msg_id = subscribe_envelope.msg_id;
+
     conn.send(ClientFrame::new(
-        ProtocolEnvelope::new(),
+        subscribe_envelope,
         ClientMessage::Subscribe(Subscribe {
             subscription_id,
             filter: SubscriptionFilter::EventLog(EventLogFilter {
@@ -139,7 +152,12 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
             continue;
         }
         match event.event {
-            SubscriptionEvent::Subscribed(_) => break,
+            SubscriptionEvent::Subscribed(_) => {
+                assert_eq!(frame.envelope.scope, Some(repo_scope.into()));
+                assert_eq!(frame.envelope.trace_id, Some(trace_id));
+                assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
+                break;
+            }
             SubscriptionEvent::EventLog(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
@@ -148,7 +166,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
     let expected_payload = br#"{"hello":"world"}"#.to_vec();
     let expected_event_id = control_plane
         .event_log()
-        .append_event(EventScope::None, "test.event", expected_payload.clone())
+        .append_event(storage_scope, "test.event", expected_payload.clone())
         .await
         .expect("append event");
 
@@ -166,6 +184,9 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
                 assert_eq!(ev.event_id, expected_event_id);
                 assert_eq!(ev.event_type, "test.event");
                 assert_eq!(ev.json_payload, expected_payload);
+                assert_eq!(frame.envelope.scope, Some(repo_scope.into()));
+                assert_eq!(frame.envelope.trace_id, Some(trace_id));
+                assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
                 break;
             }
             SubscriptionEvent::Subscribed(_) => continue,
@@ -189,15 +210,24 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
     let control_plane = ControlPlane::open_test().await.expect("control plane");
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let repo_scope = RepoScope::new(workspace_id, repo_id);
+    let storage_scope = EventScope::Repo {
+        workspace_id,
+        repo_id,
+    };
+    let trace_id = TraceId::from_bytes([0x22; TraceId::BYTE_LEN]);
+
     let after_event_id = control_plane
         .event_log()
-        .append_event(EventScope::None, "test.first", br#"{"n":1}"#.to_vec())
+        .append_event(storage_scope, "test.first", br#"{"n":1}"#.to_vec())
         .await
         .expect("append first event");
     let expected_payload = br#"{"n":2}"#.to_vec();
     let expected_event_id = control_plane
         .event_log()
-        .append_event(EventScope::None, "test.second", expected_payload.clone())
+        .append_event(storage_scope, "test.second", expected_payload.clone())
         .await
         .expect("append second event");
 
@@ -237,8 +267,12 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
     }
 
     let subscription_id = SubscriptionId::new();
+    let subscribe_envelope = ProtocolEnvelope::new()
+        .with_scope(repo_scope.into())
+        .with_trace_id(trace_id);
+    let subscribe_msg_id = subscribe_envelope.msg_id;
     conn.send(ClientFrame::new(
-        ProtocolEnvelope::new(),
+        subscribe_envelope,
         ClientMessage::Subscribe(Subscribe {
             subscription_id,
             filter: SubscriptionFilter::EventLog(EventLogFilter {
@@ -264,6 +298,9 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
                 assert_eq!(ev.event_id, expected_event_id);
                 assert_eq!(ev.event_type, "test.second");
                 assert_eq!(ev.json_payload, expected_payload);
+                assert_eq!(frame.envelope.scope, Some(repo_scope.into()));
+                assert_eq!(frame.envelope.trace_id, Some(trace_id));
+                assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
                 break;
             }
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
