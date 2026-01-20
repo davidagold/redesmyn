@@ -33,12 +33,13 @@ fn main() {
     let daemon_host_id = desktop.daemon_host_id();
 
     gpui::Application::new().run(move |cx| {
-        let _subscription = cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 redesmyn_logging::tracing::info!("last window closed; quitting");
                 cx.quit();
             }
-        });
+        })
+        .detach();
 
         let window_size = gpui::Size::new(
             gpui::px(ui_config.desktop.window.width as f32),
