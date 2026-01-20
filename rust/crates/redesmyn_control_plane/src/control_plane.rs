@@ -174,6 +174,38 @@ pub struct ControlPlaneHandle {
 }
 
 impl ControlPlaneHandle {
+    /// Connect a client to the control plane using an in-proc transport.
+    ///
+    /// This returns the client side of an in-memory channel pair and spawns a
+    /// server task that is shut down along with the control plane.
+    pub fn connect_in_proc_client(
+        &mut self,
+        buffer: usize,
+    ) -> redesmyn_transport::client::in_proc::InProcEndpoint {
+        let (client, mut server) =
+            redesmyn_transport::client::in_proc::InProcEndpoint::pair(buffer);
+
+        let server_control_plane = self.state.control_plane.clone();
+        let mut shutdown = self.tasks.subscribe_shutdown();
+
+        self.tasks.spawn("client_api_in_proc", async move {
+            let span = tracing::info_span!("client.api.connection", peer = "<in_proc>");
+            let _enter = span.enter();
+
+            if let Err(err) =
+                crate::client_api::serve_connection(&mut server, server_control_plane, &mut shutdown)
+                    .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    "in-proc client API connection terminated with error"
+                );
+            }
+        });
+
+        client
+    }
+
     pub async fn shutdown(self) {
         let span = tracing::info_span!("control_plane.shutdown");
         let _enter = span.enter();

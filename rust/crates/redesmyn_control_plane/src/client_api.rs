@@ -147,8 +147,24 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    run_session(&mut conn, control_plane, shutdown).await?;
+    serve_connection(&mut conn, control_plane, shutdown).await?;
     Ok(())
+}
+
+/// Serve a single client ↔ control plane connection (T-12).
+///
+/// This is the shared per-connection implementation used by:
+/// - the UDS server (`serve_client_api_*`), and
+/// - embedded/in-proc callers (`ControlPlaneHandle::connect_in_proc_client`).
+pub async fn serve_connection<C>(
+    conn: &mut C,
+    control_plane: ControlPlane,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError>
+where
+    C: ClientConnection + Send + 'static,
+{
+    run_session(conn, control_plane, shutdown).await
 }
 
 async fn run_session<C>(
