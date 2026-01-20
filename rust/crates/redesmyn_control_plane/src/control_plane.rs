@@ -56,7 +56,9 @@ struct ControlPlaneState {
 pub struct ControlPlane;
 
 impl ControlPlane {
-    pub async fn start(options: ControlPlaneStartOptions) -> Result<ControlPlaneHandle, ControlPlaneStartError> {
+    pub async fn start(
+        options: ControlPlaneStartOptions,
+    ) -> Result<ControlPlaneHandle, ControlPlaneStartError> {
         let span = tracing::info_span!("control_plane.start");
         let _enter = span.enter();
 
@@ -86,7 +88,10 @@ impl ControlPlane {
         state
             .commands
             .set_state(
-                state.commands.create(Some("control_plane.startup".to_string())).await,
+                state
+                    .commands
+                    .create(Some("control_plane.startup".to_string()))
+                    .await,
                 CommandState::Succeeded,
                 None,
             )
@@ -133,6 +138,36 @@ pub struct ControlPlaneHandle {
 }
 
 impl ControlPlaneHandle {
+    /// Connect a client to the control plane using an in-proc transport.
+    ///
+    /// This returns the client side of an in-memory channel pair and spawns a
+    /// server task that is shut down along with the control plane.
+    pub fn connect_in_proc_client(
+        &mut self,
+        buffer: usize,
+    ) -> redesmyn_transport::client::in_proc::InProcEndpoint {
+        let (client, mut server) =
+            redesmyn_transport::client::in_proc::InProcEndpoint::pair(buffer);
+
+        let ctx = ClientApiContext {
+            event_log: self.state.event_log.clone(),
+        };
+        let mut shutdown = self.tasks.subscribe_shutdown();
+
+        self.tasks.spawn("client_api_in_proc", async move {
+            let span = tracing::info_span!("client.api.connection", peer = "<in_proc>");
+            let _enter = span.enter();
+
+            if let Err(err) =
+                crate::client_api::serve_connection(&mut server, &ctx, &mut shutdown).await
+            {
+                tracing::warn!(error = %err, "in-proc client API connection terminated with error");
+            }
+        });
+
+        client
+    }
+
     pub async fn shutdown(self) {
         let span = tracing::info_span!("control_plane.shutdown");
         let _enter = span.enter();
@@ -151,4 +186,3 @@ async fn open_db(db: ControlPlaneDb) -> Result<SqlitePool, ControlPlaneStartErro
         ControlPlaneDb::Pool(pool) => Ok(pool),
     }
 }
-

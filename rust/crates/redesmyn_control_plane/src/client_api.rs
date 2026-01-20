@@ -12,8 +12,8 @@ use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
-use crate::event_log::EventLog as ServerEventLog;
 use crate::error::ControlPlaneError;
+use crate::event_log::EventLog as ServerEventLog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
@@ -151,8 +151,24 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    run_session(&mut conn, &ctx, shutdown).await?;
+    serve_connection(&mut conn, &ctx, shutdown).await?;
     Ok(())
+}
+
+/// Serve a single client ↔ control plane connection (T-12).
+///
+/// This is the shared per-connection implementation used by:
+/// - the UDS server (`serve_client_api_*`), and
+/// - embedded/in-proc callers (`ControlPlaneHandle::connect_in_proc_client`).
+pub async fn serve_connection<C>(
+    conn: &mut C,
+    ctx: &ClientApiContext,
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), ClientApiServeError>
+where
+    C: ClientConnection + Send + 'static,
+{
+    run_session(conn, ctx, shutdown).await
 }
 
 async fn run_session<C>(
@@ -164,7 +180,8 @@ where
     C: ClientConnection + Send + 'static,
 {
     let mut accepted_protocol: Option<ProtocolVersion> = None;
-    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, SubscriptionTopic> = HashMap::new();
+    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, SubscriptionTopic> =
+        HashMap::new();
     let mut event_log_rx = ctx.event_log.subscribe();
 
     loop {
