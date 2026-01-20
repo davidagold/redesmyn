@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use clap::{Args, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, Subcommand, ValueEnum};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{ClientFrame, ClientMessage};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
@@ -47,7 +47,13 @@ pub(crate) struct ProtocolDecodeArgs {
     input: Option<PathBuf>,
 
     /// Input is a framed stream (u32 length prefix + payload bytes).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     framed: bool,
 
     /// Include full decoded payloads (otherwise prints concise summaries).
@@ -55,7 +61,13 @@ pub(crate) struct ProtocolDecodeArgs {
     verbose: bool,
 
     /// Pretty-print JSON output (only applies to `--verbose` + `--output human`).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     pretty: bool,
 
     /// Max number of bytes to print for `json_payload` fields (truncates and annotates).
@@ -78,7 +90,13 @@ pub(crate) struct ProtocolEncodeArgs {
     out: Option<PathBuf>,
 
     /// Write a framed stream (u32 length prefix + payload bytes).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     framed: bool,
 }
 
@@ -99,7 +117,13 @@ pub(crate) struct ProtocolTapArgs {
     verbose: bool,
 
     /// Pretty-print JSON output (only applies to `--verbose` + `--output human`).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     pretty: bool,
 
     /// Max number of bytes to print for `json_payload` fields (truncates and annotates).
@@ -107,11 +131,23 @@ pub(crate) struct ProtocolTapArgs {
     max_json_payload_bytes: usize,
 
     /// Send a `status` request on connect (recommended; exercises request/response).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     status: bool,
 
     /// Subscribe to the `event_log` stream on connect (recommended; exercises streaming).
-    #[arg(long, default_value_t = true)]
+    #[arg(
+        long,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_value_t = true,
+        default_missing_value = "true"
+    )]
     subscribe_event_log: bool,
 }
 
@@ -1026,6 +1062,7 @@ fn print_tapped_client_frame(
 mod tests {
     use super::*;
 
+    use clap::Parser;
     use std::io::Cursor;
 
     #[test]
@@ -1076,5 +1113,29 @@ mod tests {
                 .unwrap(),
             true
         );
+    }
+
+    #[test]
+    fn cli_defaults_match_intended_protocol_tooling_behavior() {
+        let cli = crate::Cli::try_parse_from(["rn-rs", "protocol", "decode"]).unwrap();
+        match cli.command {
+            crate::Commands::Protocol(ProtocolCommands::Decode(args)) => {
+                assert!(args.framed);
+                assert!(args.pretty);
+                assert!(!args.verbose);
+            }
+            _ => panic!("expected `rn-rs protocol decode`"),
+        }
+
+        let cli = crate::Cli::try_parse_from(["rn-rs", "protocol", "tap"]).unwrap();
+        match cli.command {
+            crate::Commands::Protocol(ProtocolCommands::Tap(args)) => {
+                assert!(args.pretty);
+                assert!(args.status);
+                assert!(args.subscribe_event_log);
+                assert!(!args.verbose);
+            }
+            _ => panic!("expected `rn-rs protocol tap`"),
+        }
     }
 }

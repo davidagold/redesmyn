@@ -27,6 +27,12 @@ Examples:
 - `cd rust && cargo run -p rn -- protocol encode --input frame.json --codec protobuf --out frames.bin`
 - `cd rust && cargo run -p rn -- protocol tap --output json` (connects to configured client API UDS)
 
+Protocol tooling defaults:
+
+- `protocol decode` / `protocol encode`: `--framed` defaults to `true` (disable with `--framed=false` for raw payloads).
+- `protocol tap`: `--status` and `--subscribe-event-log` default to `true` (disable with `--status=false` / `--subscribe-event-log=false`).
+- `--pretty` defaults to `true` (only applies to `--verbose` + `--output human`).
+
 Conventions:
 
 - Structured output: `--output human|json` (default: `human`).
