@@ -112,6 +112,7 @@ pub async fn run_control_plane_connection_manager(
                     Ok(conn) => conn,
                     Err(err) => {
                         tracing::warn!(error = %err, "failed to connect to control plane");
+                        let _ = state_tx.send(ConnectionState::Disconnected);
                         wait_backoff_delay(&mut backoff, &mut shutdown_rx).await;
                         continue;
                     }
