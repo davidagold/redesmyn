@@ -14,6 +14,8 @@ pub const EPIC_ID: &str = "epic_id";
 pub const TASK_ID: &str = "task_id";
 /// Stable span key: `host_id`
 pub const HOST_ID: &str = "host_id";
+/// Stable span key: `host_instance_id`
+pub const HOST_INSTANCE_ID: &str = "host_instance_id";
 /// Stable span key: `run_id`
 pub const RUN_ID: &str = "run_id";
 /// Stable span key: `command_id`
@@ -32,6 +34,7 @@ macro_rules! redesmyn_info_span {
             epic_id = $crate::tracing::field::Empty,
             task_id = $crate::tracing::field::Empty,
             host_id = $crate::tracing::field::Empty,
+            host_instance_id = $crate::tracing::field::Empty,
             run_id = $crate::tracing::field::Empty,
             command_id = $crate::tracing::field::Empty,
         )
@@ -44,6 +47,7 @@ macro_rules! redesmyn_info_span {
             epic_id = $crate::tracing::field::Empty,
             task_id = $crate::tracing::field::Empty,
             host_id = $crate::tracing::field::Empty,
+            host_instance_id = $crate::tracing::field::Empty,
             run_id = $crate::tracing::field::Empty,
             command_id = $crate::tracing::field::Empty,
             $($field)*
@@ -67,6 +71,7 @@ macro_rules! redesmyn_command_span {
             epic_id = $crate::tracing::field::Empty,
             task_id = $crate::tracing::field::Empty,
             host_id = $crate::tracing::field::Empty,
+            host_instance_id = $crate::tracing::field::Empty,
             run_id = $crate::tracing::field::Empty,
             command_id = %$command_id,
         )
@@ -79,6 +84,7 @@ macro_rules! redesmyn_command_span {
             epic_id = $crate::tracing::field::Empty,
             task_id = $crate::tracing::field::Empty,
             host_id = $crate::tracing::field::Empty,
+            host_instance_id = $crate::tracing::field::Empty,
             run_id = $crate::tracing::field::Empty,
             command_id = %$command_id,
             $($field)*
@@ -104,6 +110,10 @@ pub fn record_task_id(span: &Span, task_id: impl fmt::Display) {
 
 pub fn record_host_id(span: &Span, host_id: impl fmt::Display) {
     span.record(HOST_ID, tracing::field::display(host_id));
+}
+
+pub fn record_host_instance_id(span: &Span, host_instance_id: impl fmt::Display) {
+    span.record(HOST_INSTANCE_ID, tracing::field::display(host_instance_id));
 }
 
 pub fn record_run_id(span: &Span, run_id: impl fmt::Display) {
