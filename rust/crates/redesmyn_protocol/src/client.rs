@@ -9,7 +9,7 @@ use redesmyn_ids::{
     SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
-use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, SessionEvent, Timestamp};
+use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, Timestamp};
 
 /// A single client ↔ control plane protocol frame.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -36,6 +36,11 @@ pub enum ClientMethod {
     GetSessionEvents,
     GetLatestTaskSession,
     GetEpicPinnedChatSession,
+    CreateCommand,
+    GetCommand,
+    WaitForCommand,
+    WaitForEvent,
+    WaitForIdle,
 }
 
 /// A request issued by a client.
@@ -62,6 +67,11 @@ pub enum RequestPayload {
     GetSessionEvents(GetSessionEventsRequest),
     GetLatestTaskSession(GetLatestTaskSessionRequest),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
+    CreateCommand(CreateCommandRequest),
+    GetCommand(GetCommandRequest),
+    WaitForCommand(WaitForCommandRequest),
+    WaitForEvent(WaitForEventRequest),
+    WaitForIdle(WaitForIdleRequest),
 }
 
 impl RequestPayload {
@@ -75,6 +85,11 @@ impl RequestPayload {
             Self::GetSessionEvents(_) => ClientMethod::GetSessionEvents,
             Self::GetLatestTaskSession(_) => ClientMethod::GetLatestTaskSession,
             Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
+            Self::CreateCommand(_) => ClientMethod::CreateCommand,
+            Self::GetCommand(_) => ClientMethod::GetCommand,
+            Self::WaitForCommand(_) => ClientMethod::WaitForCommand,
+            Self::WaitForEvent(_) => ClientMethod::WaitForEvent,
+            Self::WaitForIdle(_) => ClientMethod::WaitForIdle,
         }
     }
 }
@@ -113,6 +128,11 @@ pub enum ResponseResult {
     GetSessionEvents(GetSessionEventsResponse),
     GetLatestTaskSession(GetLatestTaskSessionResponse),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
+    CreateCommand(CreateCommandResponse),
+    GetCommand(GetCommandResponse),
+    WaitForCommand(WaitForCommandResponse),
+    WaitForEvent(WaitForEventResponse),
+    WaitForIdle(WaitForIdleResponse),
     Error(ErrorEnvelope),
 }
 
@@ -379,6 +399,75 @@ pub struct GetEpicPinnedChatSessionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateCommandRequest {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_task_id: Option<TaskId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateCommandResponse {
+    pub command: CommandSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetCommandRequest {
+    pub command_id: CommandId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetCommandResponse {
+    pub command: CommandSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForCommandRequest {
+    pub command_id: CommandId,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terminal_states: Vec<CommandState>,
+    #[serde(default)]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForCommandResponse {
+    pub command: CommandSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EventWaitFilter {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub event_type_prefix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_event_id: Option<EventId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForEventRequest {
+    pub filter: EventWaitFilter,
+    #[serde(default)]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForEventResponse {
+    pub event_log: EventLogEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForIdleRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Scope>,
+    #[serde(default)]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub quiescence_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForIdleResponse {}
 
 /// Subscription topics for server-pushed streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

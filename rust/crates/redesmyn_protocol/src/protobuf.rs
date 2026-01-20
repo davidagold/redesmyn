@@ -1414,15 +1414,18 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::Status => pbv1::ClientMethod::Status as i32,
         crate::client::ClientMethod::ListEpics => pbv1::ClientMethod::ListEpics as i32,
         crate::client::ClientMethod::GetEpicGraph => pbv1::ClientMethod::GetEpicGraph as i32,
-        crate::client::ClientMethod::GetSessionEvents => {
-            pbv1::ClientMethod::GetSessionEvents as i32
-        }
+        crate::client::ClientMethod::GetSessionEvents => pbv1::ClientMethod::GetSessionEvents as i32,
         crate::client::ClientMethod::GetLatestTaskSession => {
             pbv1::ClientMethod::GetLatestTaskSession as i32
         }
         crate::client::ClientMethod::GetEpicPinnedChatSession => {
             pbv1::ClientMethod::GetEpicPinnedChatSession as i32
         }
+        crate::client::ClientMethod::CreateCommand => pbv1::ClientMethod::CreateCommand as i32,
+        crate::client::ClientMethod::GetCommand => pbv1::ClientMethod::GetCommand as i32,
+        crate::client::ClientMethod::WaitForCommand => pbv1::ClientMethod::WaitForCommand as i32,
+        crate::client::ClientMethod::WaitForEvent => pbv1::ClientMethod::WaitForEvent as i32,
+        crate::client::ClientMethod::WaitForIdle => pbv1::ClientMethod::WaitForIdle as i32,
     }
 }
 
@@ -1432,15 +1435,18 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::Status) => Ok(crate::client::ClientMethod::Status),
         Ok(pbv1::ClientMethod::ListEpics) => Ok(crate::client::ClientMethod::ListEpics),
         Ok(pbv1::ClientMethod::GetEpicGraph) => Ok(crate::client::ClientMethod::GetEpicGraph),
-        Ok(pbv1::ClientMethod::GetSessionEvents) => {
-            Ok(crate::client::ClientMethod::GetSessionEvents)
-        }
+        Ok(pbv1::ClientMethod::GetSessionEvents) => Ok(crate::client::ClientMethod::GetSessionEvents),
         Ok(pbv1::ClientMethod::GetLatestTaskSession) => {
             Ok(crate::client::ClientMethod::GetLatestTaskSession)
         }
         Ok(pbv1::ClientMethod::GetEpicPinnedChatSession) => {
             Ok(crate::client::ClientMethod::GetEpicPinnedChatSession)
         }
+        Ok(pbv1::ClientMethod::CreateCommand) => Ok(crate::client::ClientMethod::CreateCommand),
+        Ok(pbv1::ClientMethod::GetCommand) => Ok(crate::client::ClientMethod::GetCommand),
+        Ok(pbv1::ClientMethod::WaitForCommand) => Ok(crate::client::ClientMethod::WaitForCommand),
+        Ok(pbv1::ClientMethod::WaitForEvent) => Ok(crate::client::ClientMethod::WaitForEvent),
+        Ok(pbv1::ClientMethod::WaitForIdle) => Ok(crate::client::ClientMethod::WaitForIdle),
         Ok(pbv1::ClientMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
             format!("unknown enum value for ClientMethod: {value}"),
@@ -1638,6 +1644,21 @@ impl crate::client::Request {
                 crate::client::RequestPayload::GetEpicPinnedChatSession(req) => {
                     pbv1::request::Payload::GetEpicPinnedChatSession(req.to_protobuf())
                 }
+                crate::client::RequestPayload::CreateCommand(req) => {
+                    pbv1::request::Payload::CreateCommand(req.to_protobuf())
+                }
+                crate::client::RequestPayload::GetCommand(req) => {
+                    pbv1::request::Payload::GetCommand(req.to_protobuf())
+                }
+                crate::client::RequestPayload::WaitForCommand(req) => {
+                    pbv1::request::Payload::WaitForCommand(req.to_protobuf())
+                }
+                crate::client::RequestPayload::WaitForEvent(req) => {
+                    pbv1::request::Payload::WaitForEvent(req.to_protobuf())
+                }
+                crate::client::RequestPayload::WaitForIdle(req) => {
+                    pbv1::request::Payload::WaitForIdle(req.to_protobuf())
+                }
             }),
         }
     }
@@ -1676,6 +1697,21 @@ impl crate::client::Request {
                     crate::client::GetEpicPinnedChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
+            pbv1::request::Payload::CreateCommand(req) => crate::client::RequestPayload::CreateCommand(
+                crate::client::CreateCommandRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::GetCommand(req) => crate::client::RequestPayload::GetCommand(
+                crate::client::GetCommandRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::WaitForCommand(req) => crate::client::RequestPayload::WaitForCommand(
+                crate::client::WaitForCommandRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::WaitForEvent(req) => crate::client::RequestPayload::WaitForEvent(
+                crate::client::WaitForEventRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::WaitForIdle(req) => crate::client::RequestPayload::WaitForIdle(
+                crate::client::WaitForIdleRequest::try_from_protobuf(req)?,
+            ),
         };
 
         let derived_method = payload.method();
@@ -1876,6 +1912,109 @@ impl crate::client::GetSessionEventsRequest {
     }
 }
 
+impl crate::client::CreateCommandRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateCommandRequest {
+        pbv1::CreateCommandRequest {
+            kind: self.kind.clone(),
+            target_task_id: self
+                .target_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CreateCommandRequest) -> Result<Self, ErrorEnvelope> {
+        if proto.kind.is_empty() {
+            return Err(missing_required("kind"));
+        }
+
+        Ok(Self {
+            kind: proto.kind,
+            target_task_id: decode_optional_ulid::<TaskId>("target_task_id", &proto.target_task_id)?,
+        })
+    }
+}
+
+impl crate::client::CreateCommandResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateCommandResponse {
+        pbv1::CreateCommandResponse {
+            command: Some(self.command.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CreateCommandResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::client::GetCommandRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetCommandRequest {
+        pbv1::GetCommandRequest {
+            command_id: self.command_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::GetCommandRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command_id: decode_required_ulid("command_id", &proto.command_id)?,
+        })
+    }
+}
+
+impl crate::client::GetCommandResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetCommandResponse {
+        pbv1::GetCommandResponse {
+            command: Some(self.command.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::GetCommandResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::client::WaitForCommandRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForCommandRequest {
+        pbv1::WaitForCommandRequest {
+            command_id: self.command_id.to_bytes().to_vec(),
+            terminal_states: self
+                .terminal_states
+                .iter()
+                .copied()
+                .map(encode_client_command_state)
+                .collect(),
+            timeout_ms: self.timeout_ms,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::WaitForCommandRequest) -> Result<Self, ErrorEnvelope> {
+        let terminal_states = proto
+            .terminal_states
+            .into_iter()
+            .map(decode_client_command_state)
+            .collect();
+
+        Ok(Self {
+            command_id: decode_required_ulid("command_id", &proto.command_id)?,
+            terminal_states,
+            timeout_ms: proto.timeout_ms,
+        })
+    }
+}
+
 impl crate::client::GetLatestTaskSessionRequest {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::GetLatestTaskSessionRequest {
@@ -1889,6 +2028,23 @@ impl crate::client::GetLatestTaskSessionRequest {
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::client::WaitForCommandResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForCommandResponse {
+        pbv1::WaitForCommandResponse {
+            command: Some(self.command.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::WaitForCommandResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
         })
     }
 }
@@ -1907,6 +2063,93 @@ impl crate::client::GetEpicPinnedChatSessionRequest {
         Ok(Self {
             epic_id: decode_required_ulid::<EpicId>("epic_id", &proto.epic_id)?,
         })
+    }
+}
+
+impl crate::client::EventWaitFilter {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::EventWaitFilter {
+        pbv1::EventWaitFilter {
+            event_type_prefix: self.event_type_prefix.clone(),
+            after_event_id: self
+                .after_event_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::EventWaitFilter) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            event_type_prefix: proto.event_type_prefix,
+            after_event_id: decode_optional_ulid("after_event_id", &proto.after_event_id)?,
+        })
+    }
+}
+
+impl crate::client::WaitForEventRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForEventRequest {
+        pbv1::WaitForEventRequest {
+            filter: Some(self.filter.to_protobuf()),
+            timeout_ms: self.timeout_ms,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::WaitForEventRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            filter: crate::client::EventWaitFilter::try_from_protobuf(
+                proto.filter.ok_or_else(|| missing_required("filter"))?,
+            )?,
+            timeout_ms: proto.timeout_ms,
+        })
+    }
+}
+
+impl crate::client::WaitForEventResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForEventResponse {
+        pbv1::WaitForEventResponse {
+            event_log: Some(self.event_log.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::WaitForEventResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            event_log: crate::client::EventLogEvent::try_from_protobuf(
+                proto.event_log.ok_or_else(|| missing_required("event_log"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::client::WaitForIdleRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForIdleRequest {
+        pbv1::WaitForIdleRequest {
+            scope: self.scope.map(|scope| scope.to_protobuf()),
+            timeout_ms: self.timeout_ms,
+            quiescence_ms: self.quiescence_ms,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::WaitForIdleRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            scope: proto.scope.map(Scope::try_from_protobuf).transpose()?,
+            timeout_ms: proto.timeout_ms,
+            quiescence_ms: proto.quiescence_ms,
+        })
+    }
+}
+
+impl crate::client::WaitForIdleResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForIdleResponse {
+        pbv1::WaitForIdleResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::WaitForIdleResponse) -> Self {
+        Self {}
     }
 }
 
@@ -1937,6 +2180,21 @@ impl crate::client::Response {
                 }
                 crate::client::ResponseResult::GetEpicPinnedChatSession(resp) => {
                     pbv1::response::Result::GetEpicPinnedChatSession(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::CreateCommand(resp) => {
+                    pbv1::response::Result::CreateCommand(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::GetCommand(resp) => {
+                    pbv1::response::Result::GetCommand(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::WaitForCommand(resp) => {
+                    pbv1::response::Result::WaitForCommand(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::WaitForEvent(resp) => {
+                    pbv1::response::Result::WaitForEvent(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::WaitForIdle(resp) => {
+                    pbv1::response::Result::WaitForIdle(resp.to_protobuf())
                 }
                 crate::client::ResponseResult::Error(err) => {
                     pbv1::response::Result::Error(err.to_protobuf())
@@ -1979,6 +2237,21 @@ impl crate::client::Response {
                     crate::client::GetEpicPinnedChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
+            pbv1::response::Result::CreateCommand(resp) => crate::client::ResponseResult::CreateCommand(
+                crate::client::CreateCommandResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::GetCommand(resp) => crate::client::ResponseResult::GetCommand(
+                crate::client::GetCommandResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::WaitForCommand(resp) => crate::client::ResponseResult::WaitForCommand(
+                crate::client::WaitForCommandResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::WaitForEvent(resp) => crate::client::ResponseResult::WaitForEvent(
+                crate::client::WaitForEventResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::WaitForIdle(resp) => crate::client::ResponseResult::WaitForIdle(
+                crate::client::WaitForIdleResponse::from_protobuf(resp),
+            ),
             pbv1::response::Result::Error(err) => {
                 crate::client::ResponseResult::Error(ErrorEnvelope::from_protobuf(err))
             }
@@ -2647,6 +2920,638 @@ impl crate::client::Event {
         Ok(Self {
             subscription_id,
             event,
+        })
+    }
+}
+
+fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
+    match value {
+        crate::ui_driver::UiDriverMethod::GetSnapshot => pbv1::UiDriverMethod::GetSnapshot as i32,
+        crate::ui_driver::UiDriverMethod::OpenEpic => pbv1::UiDriverMethod::OpenEpic as i32,
+        crate::ui_driver::UiDriverMethod::SelectTask => pbv1::UiDriverMethod::SelectTask as i32,
+        crate::ui_driver::UiDriverMethod::TriggerMerge => pbv1::UiDriverMethod::TriggerMerge as i32,
+        crate::ui_driver::UiDriverMethod::OpenSessionView => {
+            pbv1::UiDriverMethod::OpenSessionView as i32
+        }
+        crate::ui_driver::UiDriverMethod::OpenDiffView => pbv1::UiDriverMethod::OpenDiffView as i32,
+        crate::ui_driver::UiDriverMethod::CaptureScreenshot => {
+            pbv1::UiDriverMethod::CaptureScreenshot as i32
+        }
+    }
+}
+
+fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMethod, ErrorEnvelope> {
+    match pbv1::UiDriverMethod::try_from(value) {
+        Ok(pbv1::UiDriverMethod::GetSnapshot) => Ok(crate::ui_driver::UiDriverMethod::GetSnapshot),
+        Ok(pbv1::UiDriverMethod::OpenEpic) => Ok(crate::ui_driver::UiDriverMethod::OpenEpic),
+        Ok(pbv1::UiDriverMethod::SelectTask) => Ok(crate::ui_driver::UiDriverMethod::SelectTask),
+        Ok(pbv1::UiDriverMethod::TriggerMerge) => Ok(crate::ui_driver::UiDriverMethod::TriggerMerge),
+        Ok(pbv1::UiDriverMethod::OpenSessionView) => {
+            Ok(crate::ui_driver::UiDriverMethod::OpenSessionView)
+        }
+        Ok(pbv1::UiDriverMethod::OpenDiffView) => Ok(crate::ui_driver::UiDriverMethod::OpenDiffView),
+        Ok(pbv1::UiDriverMethod::CaptureScreenshot) => {
+            Ok(crate::ui_driver::UiDriverMethod::CaptureScreenshot)
+        }
+        Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
+            "method",
+            format!("unknown enum value for UiDriverMethod: {value}"),
+        )),
+    }
+}
+
+fn encode_ui_driver_response_status(value: crate::ui_driver::UiDriverResponseStatus) -> i32 {
+    match value {
+        crate::ui_driver::UiDriverResponseStatus::Ok => pbv1::UiDriverResponseStatus::Ok as i32,
+        crate::ui_driver::UiDriverResponseStatus::Error => {
+            pbv1::UiDriverResponseStatus::Error as i32
+        }
+    }
+}
+
+fn decode_ui_driver_response_status(
+    value: i32,
+) -> Result<crate::ui_driver::UiDriverResponseStatus, ErrorEnvelope> {
+    match pbv1::UiDriverResponseStatus::try_from(value) {
+        Ok(pbv1::UiDriverResponseStatus::Ok) => Ok(crate::ui_driver::UiDriverResponseStatus::Ok),
+        Ok(pbv1::UiDriverResponseStatus::Error) => {
+            Ok(crate::ui_driver::UiDriverResponseStatus::Error)
+        }
+        Ok(pbv1::UiDriverResponseStatus::Unspecified) | Err(_) => Err(invalid_field(
+            "status",
+            format!("unknown enum value for UiDriverResponseStatus: {value}"),
+        )),
+    }
+}
+
+fn encode_ui_primary_view(value: crate::ui_driver::UiPrimaryView) -> i32 {
+    match value {
+        crate::ui_driver::UiPrimaryView::EpicSelector => pbv1::UiPrimaryView::EpicSelector as i32,
+        crate::ui_driver::UiPrimaryView::EpicWorkspace => pbv1::UiPrimaryView::EpicWorkspace as i32,
+    }
+}
+
+fn decode_ui_primary_view(value: i32) -> Result<crate::ui_driver::UiPrimaryView, ErrorEnvelope> {
+    match pbv1::UiPrimaryView::try_from(value) {
+        Ok(pbv1::UiPrimaryView::EpicSelector) => Ok(crate::ui_driver::UiPrimaryView::EpicSelector),
+        Ok(pbv1::UiPrimaryView::EpicWorkspace) => Ok(crate::ui_driver::UiPrimaryView::EpicWorkspace),
+        Ok(pbv1::UiPrimaryView::Unspecified) | Err(_) => Err(invalid_field(
+            "primary_view",
+            format!("unknown enum value for UiPrimaryView: {value}"),
+        )),
+    }
+}
+
+impl crate::ui_driver::UiDriverFrame {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiDriverFrame {
+        pbv1::UiDriverFrame {
+            envelope: Some(self.envelope.to_protobuf()),
+            message: Some(match &self.message {
+                crate::ui_driver::UiDriverMessage::Request(req) => {
+                    pbv1::ui_driver_frame::Message::Request(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverMessage::Response(resp) => {
+                    pbv1::ui_driver_frame::Message::Response(resp.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiDriverFrame) -> Result<Self, ErrorEnvelope> {
+        let envelope = ProtocolEnvelope::try_from_protobuf(
+            proto.envelope.ok_or_else(|| missing_required("envelope"))?,
+        )?;
+
+        let message = match proto.message.ok_or_else(|| missing_required("message"))? {
+            pbv1::ui_driver_frame::Message::Request(req) => {
+                crate::ui_driver::UiDriverMessage::Request(
+                    crate::ui_driver::UiDriverRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_frame::Message::Response(resp) => {
+                crate::ui_driver::UiDriverMessage::Response(
+                    crate::ui_driver::UiDriverResponse::try_from_protobuf(resp)?,
+                )
+            }
+        };
+
+        Ok(Self { envelope, message })
+    }
+}
+
+impl crate::ui_driver::UiDriverRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiDriverRequest {
+        pbv1::UiDriverRequest {
+            request_id: self.request_id.to_bytes().to_vec(),
+            method: encode_ui_driver_method(self.payload.method()),
+            payload: Some(match &self.payload {
+                crate::ui_driver::UiDriverRequestPayload::GetSnapshot(req) => {
+                    pbv1::ui_driver_request::Payload::GetSnapshot(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::OpenEpic(req) => {
+                    pbv1::ui_driver_request::Payload::OpenEpic(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::SelectTask(req) => {
+                    pbv1::ui_driver_request::Payload::SelectTask(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::TriggerMerge(req) => {
+                    pbv1::ui_driver_request::Payload::TriggerMerge(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::OpenSessionView(req) => {
+                    pbv1::ui_driver_request::Payload::OpenSessionView(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::OpenDiffView(req) => {
+                    pbv1::ui_driver_request::Payload::OpenDiffView(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::CaptureScreenshot(req) => {
+                    pbv1::ui_driver_request::Payload::CaptureScreenshot(req.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiDriverRequest) -> Result<Self, ErrorEnvelope> {
+        let request_id = decode_required_ulid::<RequestId>("request_id", &proto.request_id)?;
+        let method = decode_ui_driver_method(proto.method)?;
+
+        let payload = match proto.payload.ok_or_else(|| missing_required("payload"))? {
+            pbv1::ui_driver_request::Payload::GetSnapshot(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GetSnapshot(
+                    crate::ui_driver::GetUiSnapshotRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::OpenEpic(req) => {
+                crate::ui_driver::UiDriverRequestPayload::OpenEpic(
+                    crate::ui_driver::OpenEpicRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::SelectTask(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SelectTask(
+                    crate::ui_driver::SelectTaskRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::TriggerMerge(req) => {
+                crate::ui_driver::UiDriverRequestPayload::TriggerMerge(
+                    crate::ui_driver::TriggerMergeRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::OpenSessionView(req) => {
+                crate::ui_driver::UiDriverRequestPayload::OpenSessionView(
+                    crate::ui_driver::OpenSessionViewRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::OpenDiffView(req) => {
+                crate::ui_driver::UiDriverRequestPayload::OpenDiffView(
+                    crate::ui_driver::OpenDiffViewRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::CaptureScreenshot(req) => {
+                crate::ui_driver::UiDriverRequestPayload::CaptureScreenshot(
+                    crate::ui_driver::CaptureScreenshotRequest::from_protobuf(req),
+                )
+            }
+        };
+
+        let derived_method = payload.method();
+        if method != derived_method {
+            return Err(invalid_field(
+                "method",
+                format!("method does not match payload: {method:?} vs {derived_method:?}"),
+            ));
+        }
+
+        Ok(Self { request_id, payload })
+    }
+}
+
+impl crate::ui_driver::UiDriverResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiDriverResponse {
+        pbv1::UiDriverResponse {
+            request_id: self.request_id.to_bytes().to_vec(),
+            status: encode_ui_driver_response_status(self.status()),
+            result: Some(match &self.result {
+                crate::ui_driver::UiDriverResponseResult::GetSnapshot(resp) => {
+                    pbv1::ui_driver_response::Result::GetSnapshot(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::OpenEpic(resp) => {
+                    pbv1::ui_driver_response::Result::OpenEpic(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::SelectTask(resp) => {
+                    pbv1::ui_driver_response::Result::SelectTask(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::TriggerMerge(resp) => {
+                    pbv1::ui_driver_response::Result::TriggerMerge(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::OpenSessionView(resp) => {
+                    pbv1::ui_driver_response::Result::OpenSessionView(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::OpenDiffView(resp) => {
+                    pbv1::ui_driver_response::Result::OpenDiffView(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::CaptureScreenshot(resp) => {
+                    pbv1::ui_driver_response::Result::CaptureScreenshot(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::Error(err) => {
+                    pbv1::ui_driver_response::Result::Error(err.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiDriverResponse) -> Result<Self, ErrorEnvelope> {
+        let request_id = decode_required_ulid::<RequestId>("request_id", &proto.request_id)?;
+        let status = decode_ui_driver_response_status(proto.status)?;
+
+        let result = match proto.result.ok_or_else(|| missing_required("result"))? {
+            pbv1::ui_driver_response::Result::GetSnapshot(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GetSnapshot(
+                    crate::ui_driver::GetUiSnapshotResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::ui_driver_response::Result::OpenEpic(resp) => {
+                crate::ui_driver::UiDriverResponseResult::OpenEpic(
+                    crate::ui_driver::OpenEpicResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SelectTask(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SelectTask(
+                    crate::ui_driver::SelectTaskResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::TriggerMerge(resp) => {
+                crate::ui_driver::UiDriverResponseResult::TriggerMerge(
+                    crate::ui_driver::TriggerMergeResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::ui_driver_response::Result::OpenSessionView(resp) => {
+                crate::ui_driver::UiDriverResponseResult::OpenSessionView(
+                    crate::ui_driver::OpenSessionViewResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::OpenDiffView(resp) => {
+                crate::ui_driver::UiDriverResponseResult::OpenDiffView(
+                    crate::ui_driver::OpenDiffViewResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::CaptureScreenshot(resp) => {
+                crate::ui_driver::UiDriverResponseResult::CaptureScreenshot(
+                    crate::ui_driver::CaptureScreenshotResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::Error(err) => {
+                crate::ui_driver::UiDriverResponseResult::Error(ErrorEnvelope::from_protobuf(err))
+            }
+        };
+
+        let derived_status = match &result {
+            crate::ui_driver::UiDriverResponseResult::Error(_) => {
+                crate::ui_driver::UiDriverResponseStatus::Error
+            }
+            _ => crate::ui_driver::UiDriverResponseStatus::Ok,
+        };
+
+        if status != derived_status {
+            return Err(invalid_field(
+                "status",
+                format!("status does not match result: {status:?} vs {derived_status:?}"),
+            ));
+        }
+
+        Ok(Self { request_id, result })
+    }
+}
+
+impl crate::ui_driver::GetUiSnapshotRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetUiSnapshotRequest {
+        pbv1::GetUiSnapshotRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::GetUiSnapshotRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::GetUiSnapshotResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetUiSnapshotResponse {
+        pbv1::GetUiSnapshotResponse {
+            snapshot: Some(self.snapshot.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::GetUiSnapshotResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            snapshot: crate::ui_driver::UiSnapshot::try_from_protobuf(
+                proto.snapshot.ok_or_else(|| missing_required("snapshot"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::ui_driver::OpenEpicRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenEpicRequest {
+        pbv1::OpenEpicRequest {
+            epic_slug: self.epic_slug.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::OpenEpicRequest) -> Self {
+        Self {
+            epic_slug: proto.epic_slug,
+        }
+    }
+}
+
+impl crate::ui_driver::OpenEpicResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenEpicResponse {
+        pbv1::OpenEpicResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::OpenEpicResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SelectTaskRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SelectTaskRequest {
+        pbv1::SelectTaskRequest {
+            task_slug: self.task_slug.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SelectTaskRequest) -> Self {
+        Self {
+            task_slug: proto.task_slug,
+        }
+    }
+}
+
+impl crate::ui_driver::SelectTaskResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SelectTaskResponse {
+        pbv1::SelectTaskResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SelectTaskResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::TriggerMergeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TriggerMergeRequest {
+        pbv1::TriggerMergeRequest {
+            task_slug: self.task_slug.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::TriggerMergeRequest) -> Self {
+        Self {
+            task_slug: proto.task_slug,
+        }
+    }
+}
+
+impl crate::ui_driver::TriggerMergeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TriggerMergeResponse {
+        pbv1::TriggerMergeResponse {
+            command_id: self
+                .command_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TriggerMergeResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command_id: decode_optional_ulid("command_id", &proto.command_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::OpenSessionViewRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenSessionViewRequest {
+        pbv1::OpenSessionViewRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::OpenSessionViewRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::OpenSessionViewResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenSessionViewResponse {
+        pbv1::OpenSessionViewResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::OpenSessionViewResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::OpenDiffViewRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenDiffViewRequest {
+        pbv1::OpenDiffViewRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::OpenDiffViewRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::OpenDiffViewResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::OpenDiffViewResponse {
+        pbv1::OpenDiffViewResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::OpenDiffViewResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::CaptureScreenshotRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CaptureScreenshotRequest {
+        pbv1::CaptureScreenshotRequest {
+            name_hint: self.name_hint.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::CaptureScreenshotRequest) -> Self {
+        Self {
+            name_hint: proto.name_hint,
+        }
+    }
+}
+
+impl crate::ui_driver::CaptureScreenshotResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CaptureScreenshotResponse {
+        pbv1::CaptureScreenshotResponse {
+            png_data: self.png_data.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::CaptureScreenshotResponse) -> Self {
+        Self {
+            png_data: proto.png_data,
+        }
+    }
+}
+
+impl crate::ui_driver::UiLeftPaneState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiLeftPaneState {
+        pbv1::UiLeftPaneState {
+            visible: self.visible,
+            collapsed: self.collapsed,
+            width: self.width,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UiLeftPaneState) -> Self {
+        Self {
+            visible: proto.visible,
+            collapsed: proto.collapsed,
+            width: proto.width,
+        }
+    }
+}
+
+impl crate::ui_driver::UiSelectionState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiSelectionState {
+        pbv1::UiSelectionState {
+            epic_id: self
+                .epic_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            epic_slug: self.epic_slug.clone(),
+            task_id: self
+                .task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            task_slug: self.task_slug.clone(),
+            edge_id: self
+                .edge_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiSelectionState) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            epic_id: decode_optional_ulid("epic_id", &proto.epic_id)?,
+            epic_slug: proto.epic_slug,
+            task_id: decode_optional_ulid("task_id", &proto.task_id)?,
+            task_slug: proto.task_slug,
+            edge_id: decode_optional_ulid("edge_id", &proto.edge_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::UiInFlightAction {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiInFlightAction {
+        pbv1::UiInFlightAction {
+            label: self.label.clone(),
+            command_id: self
+                .command_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiInFlightAction) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            label: proto.label,
+            command_id: decode_optional_ulid("command_id", &proto.command_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::UiErrorCallout {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiErrorCallout {
+        pbv1::UiErrorCallout {
+            message: self.message.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UiErrorCallout) -> Self {
+        Self {
+            message: proto.message,
+        }
+    }
+}
+
+impl crate::ui_driver::UiSnapshot {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiSnapshot {
+        pbv1::UiSnapshot {
+            captured_at: Some(encode_timestamp(self.captured_at)),
+            primary_view: encode_ui_primary_view(self.primary_view),
+            left_pane: Some(self.left_pane.to_protobuf()),
+            selection: Some(self.selection.to_protobuf()),
+            in_flight: self
+                .in_flight
+                .iter()
+                .map(crate::ui_driver::UiInFlightAction::to_protobuf)
+                .collect(),
+            errors: self
+                .errors
+                .iter()
+                .map(crate::ui_driver::UiErrorCallout::to_protobuf)
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiSnapshot) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            captured_at: decode_required_timestamp("captured_at", proto.captured_at)?,
+            primary_view: decode_ui_primary_view(proto.primary_view)?,
+            left_pane: crate::ui_driver::UiLeftPaneState::from_protobuf(
+                proto.left_pane.ok_or_else(|| missing_required("left_pane"))?,
+            ),
+            selection: crate::ui_driver::UiSelectionState::try_from_protobuf(
+                proto.selection.ok_or_else(|| missing_required("selection"))?,
+            )?,
+            in_flight: proto
+                .in_flight
+                .into_iter()
+                .map(crate::ui_driver::UiInFlightAction::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            errors: proto
+                .errors
+                .into_iter()
+                .map(crate::ui_driver::UiErrorCallout::from_protobuf)
+                .collect(),
         })
     }
 }

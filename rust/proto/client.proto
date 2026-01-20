@@ -40,6 +40,11 @@ enum ClientMethod {
   CLIENT_METHOD_GET_SESSION_EVENTS = 5;
   CLIENT_METHOD_GET_LATEST_TASK_SESSION = 6;
   CLIENT_METHOD_GET_EPIC_PINNED_CHAT_SESSION = 7;
+  CLIENT_METHOD_CREATE_COMMAND = 8;
+  CLIENT_METHOD_GET_COMMAND = 9;
+  CLIENT_METHOD_WAIT_FOR_COMMAND = 10;
+  CLIENT_METHOD_WAIT_FOR_EVENT = 11;
+  CLIENT_METHOD_WAIT_FOR_IDLE = 12;
 }
 
 // Request for a control-plane method.
@@ -56,6 +61,11 @@ message Request {
     GetSessionEventsRequest get_session_events = 14;
     GetLatestTaskSessionRequest get_latest_task_session = 15;
     GetEpicPinnedChatSessionRequest get_epic_pinned_chat_session = 16;
+    CreateCommandRequest create_command = 17;
+    GetCommandRequest get_command = 18;
+    WaitForCommandRequest wait_for_command = 19;
+    WaitForEventRequest wait_for_event = 20;
+    WaitForIdleRequest wait_for_idle = 21;
   }
 }
 
@@ -79,6 +89,11 @@ message Response {
     GetSessionEventsResponse get_session_events = 14;
     GetLatestTaskSessionResponse get_latest_task_session = 15;
     GetEpicPinnedChatSessionResponse get_epic_pinned_chat_session = 16;
+    CreateCommandResponse create_command = 17;
+    GetCommandResponse get_command = 18;
+    WaitForCommandResponse wait_for_command = 19;
+    WaitForEventResponse wait_for_event = 20;
+    WaitForIdleResponse wait_for_idle = 21;
     ErrorEnvelope error = 100;
   }
 }
@@ -289,6 +304,70 @@ message GetEpicPinnedChatSessionResponse {
   // SessionId (ULID bytes, length = 16). Empty => none.
   bytes session_id = 1;
 }
+
+// Command lifecycle requests for deterministic automation (T-15).
+message CreateCommandRequest {
+  string kind = 1;
+  // TaskId (ULID bytes, length = 16).
+  bytes target_task_id = 2;
+}
+
+message CreateCommandResponse {
+  CommandSummary command = 1;
+}
+
+message GetCommandRequest {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+}
+
+message GetCommandResponse {
+  CommandSummary command = 1;
+}
+
+// Wait until a command reaches one of the requested terminal states.
+message WaitForCommandRequest {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  // If empty, defaults to all terminal states (succeeded/failed/canceled).
+  repeated CommandState terminal_states = 2;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 3;
+}
+
+message WaitForCommandResponse {
+  CommandSummary command = 1;
+}
+
+// Wait until an event matching the filter is observed.
+message WaitForEventRequest {
+  EventWaitFilter filter = 1;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 2;
+}
+
+message EventWaitFilter {
+  // If set, only match events whose `event_type` starts with this prefix.
+  string event_type_prefix = 1;
+  // EventId (ULID bytes, length = 16). If set, only match events after this id (exclusive).
+  bytes after_event_id = 2;
+}
+
+message WaitForEventResponse {
+  EventLogEvent event_log = 1;
+}
+
+// Wait until the server is "idle" for a quiescence window.
+message WaitForIdleRequest {
+  // Optional scope. If unset/empty, wait for global idleness.
+  Scope scope = 1;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 2;
+  // Quiescence window in milliseconds; if 0, a server default is used.
+  uint64 quiescence_ms = 3;
+}
+
+message WaitForIdleResponse {}
 
 // Subscription topic for server-pushed streams.
 enum SubscriptionTopic {

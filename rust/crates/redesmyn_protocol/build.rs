@@ -14,6 +14,7 @@ fn main() {
         "daemon.proto",
         "client.proto",
         "artifacts.proto",
+        "ui_driver.proto",
     ];
 
     for proto in proto_files {

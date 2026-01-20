@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "envelope.proto";
+import "google/protobuf/timestamp.proto";
+
+// Desktop UI automation driver + semantic UI snapshot contract (T-15).
+//
+// This is intentionally local-only and is designed for deterministic AI/CI testing.
+//
+// Design goals:
+// - High-level actions (no coordinate clicks).
+// - Stable semantic UI snapshot for assertions.
+// - Structured errors and versioned framing.
+
+// A single UI driver protocol frame.
+message UiDriverFrame {
+  ProtocolEnvelope envelope = 1;
+
+  oneof message {
+    UiDriverRequest request = 2;
+    UiDriverResponse response = 3;
+  }
+}
+
+// Canonical UI driver methods (initial minimal set; additive).
+enum UiDriverMethod {
+  UI_DRIVER_METHOD_UNSPECIFIED = 0;
+  UI_DRIVER_METHOD_GET_SNAPSHOT = 1;
+  UI_DRIVER_METHOD_OPEN_EPIC = 2;
+  UI_DRIVER_METHOD_SELECT_TASK = 3;
+  UI_DRIVER_METHOD_TRIGGER_MERGE = 4;
+  UI_DRIVER_METHOD_OPEN_SESSION_VIEW = 5;
+  UI_DRIVER_METHOD_OPEN_DIFF_VIEW = 6;
+  // Secondary/debugging surface.
+  UI_DRIVER_METHOD_CAPTURE_SCREENSHOT = 7;
+}
+
+message UiDriverRequest {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  UiDriverMethod method = 2;
+
+  oneof payload {
+    GetUiSnapshotRequest get_snapshot = 10;
+    OpenEpicRequest open_epic = 11;
+    SelectTaskRequest select_task = 12;
+    TriggerMergeRequest trigger_merge = 13;
+    OpenSessionViewRequest open_session_view = 14;
+    OpenDiffViewRequest open_diff_view = 15;
+    CaptureScreenshotRequest capture_screenshot = 16;
+  }
+}
+
+enum UiDriverResponseStatus {
+  UI_DRIVER_RESPONSE_STATUS_UNSPECIFIED = 0;
+  UI_DRIVER_RESPONSE_STATUS_OK = 1;
+  UI_DRIVER_RESPONSE_STATUS_ERROR = 2;
+}
+
+message UiDriverResponse {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  UiDriverResponseStatus status = 2;
+
+  oneof result {
+    GetUiSnapshotResponse get_snapshot = 10;
+    OpenEpicResponse open_epic = 11;
+    SelectTaskResponse select_task = 12;
+    TriggerMergeResponse trigger_merge = 13;
+    OpenSessionViewResponse open_session_view = 14;
+    OpenDiffViewResponse open_diff_view = 15;
+    CaptureScreenshotResponse capture_screenshot = 16;
+    ErrorEnvelope error = 100;
+  }
+}
+
+message GetUiSnapshotRequest {}
+
+message GetUiSnapshotResponse {
+  UiSnapshot snapshot = 1;
+}
+
+message OpenEpicRequest {
+  // Prefer stable ids where available; for early integration, epic identity can be a repo slug.
+  string epic_slug = 1;
+}
+
+message OpenEpicResponse {}
+
+message SelectTaskRequest {
+  // For early integration, tasks are identified by a stable slug.
+  string task_slug = 1;
+}
+
+message SelectTaskResponse {}
+
+message TriggerMergeRequest {
+  // Optional; if empty, merge is inferred from current selection.
+  string task_slug = 1;
+}
+
+message TriggerMergeResponse {
+  // Optional: the command id issued by the UI (if any).
+  bytes command_id = 1;
+}
+
+message OpenSessionViewRequest {}
+
+message OpenSessionViewResponse {}
+
+message OpenDiffViewRequest {}
+
+message OpenDiffViewResponse {}
+
+message CaptureScreenshotRequest {
+  // Best-effort label used for artifact naming.
+  string name_hint = 1;
+}
+
+message CaptureScreenshotResponse {
+  // PNG bytes (may be empty if unsupported in the current fixture mode).
+  bytes png_data = 1;
+}
+
+enum UiPrimaryView {
+  UI_PRIMARY_VIEW_UNSPECIFIED = 0;
+  UI_PRIMARY_VIEW_EPIC_SELECTOR = 1;
+  UI_PRIMARY_VIEW_EPIC_WORKSPACE = 2;
+}
+
+message UiLeftPaneState {
+  bool visible = 1;
+  bool collapsed = 2;
+  uint32 width = 3;
+}
+
+message UiSelectionState {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+  string epic_slug = 2;
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 3;
+  string task_slug = 4;
+  // TaskRelationId (ULID bytes, length = 16).
+  bytes edge_id = 5;
+}
+
+message UiInFlightAction {
+  string label = 1;
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 2;
+}
+
+message UiErrorCallout {
+  // Short, actionable message.
+  string message = 1;
+}
+
+// Stable, machine-readable representation of what the UI is showing.
+message UiSnapshot {
+  google.protobuf.Timestamp captured_at = 1;
+  UiPrimaryView primary_view = 2;
+  UiLeftPaneState left_pane = 3;
+  UiSelectionState selection = 4;
+  repeated UiInFlightAction in_flight = 5;
+  repeated UiErrorCallout errors = 6;
+}
+

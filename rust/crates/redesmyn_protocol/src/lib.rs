@@ -22,6 +22,7 @@ pub mod artifacts;
 pub mod client;
 pub mod daemon;
 pub mod session;
+pub mod ui_driver;
 
 pub use artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 pub use session::{
