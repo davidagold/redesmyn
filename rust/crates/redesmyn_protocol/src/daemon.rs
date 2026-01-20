@@ -35,6 +35,7 @@ pub enum DaemonMessage {
     ResyncRequest(ResyncRequest),
     CommandDispatch(CommandDispatch),
     CommandUpdate(CommandUpdate),
+    SessionEventBatch(SessionEventBatch),
     Error(ErrorEnvelope),
 }
 
@@ -190,6 +191,13 @@ pub struct CommandUpdate {
     pub detail: Option<ErrorDetail>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorEnvelope>,
+}
+
+/// Batch of session events emitted by the daemon (T-35/T-14).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionEventBatch {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<crate::session::SessionEvent>,
 }
 
 /// Typed daemon capabilities advertised during handshake.
