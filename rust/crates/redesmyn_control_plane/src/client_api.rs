@@ -179,8 +179,14 @@ async fn run_session<C>(
 where
     C: ClientConnection + Send + 'static,
 {
+    #[derive(Debug, Clone)]
+    struct SubscriptionState {
+        topic: SubscriptionTopic,
+        origin_envelope: ProtocolEnvelope,
+    }
+
     let mut accepted_protocol: Option<ProtocolVersion> = None;
-    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, SubscriptionTopic> =
+    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, SubscriptionState> =
         HashMap::new();
     let mut event_log_rx = ctx.event_log.subscribe();
 
@@ -232,18 +238,25 @@ where
                     }
                     ClientMessage::Subscribe(sub) => {
                         let subscription_id = sub.subscription_id;
-                        subscriptions.insert(subscription_id, sub.topic());
+                        let topic = sub.topic();
+                        subscriptions.insert(
+                            subscription_id,
+                            SubscriptionState {
+                                topic,
+                                origin_envelope: frame.envelope.clone(),
+                            },
+                        );
 
                         let ack = ClientFrame::new(
                             response_envelope(&frame.envelope, accepted),
                             ClientMessage::Event(Event {
                                 subscription_id,
-                                event: SubscriptionEvent::Subscribed(Subscribed { topic: sub.topic() }),
+                                event: SubscriptionEvent::Subscribed(Subscribed { topic }),
                             }),
                         );
                         conn.send(ack).await?;
 
-                        if sub.topic() == SubscriptionTopic::EventLog {
+                        if topic == SubscriptionTopic::EventLog {
                             let event = ClientFrame::new(
                                 response_envelope(&frame.envelope, accepted),
                                 ClientMessage::Event(Event {
@@ -272,7 +285,7 @@ where
                     }
                 }
             }
-            event = event_log_rx.recv(), if subscriptions.values().any(|topic| *topic == SubscriptionTopic::EventLog) => {
+            event = event_log_rx.recv(), if subscriptions.values().any(|sub| sub.topic == SubscriptionTopic::EventLog) => {
                 let event = match event {
                     Ok(event) => event,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
@@ -284,14 +297,12 @@ where
 
                 let accepted = accepted_protocol.unwrap_or(ProtocolVersion::CURRENT);
 
-                for (subscription_id, topic) in &subscriptions {
-                    if *topic != SubscriptionTopic::EventLog {
+                for (subscription_id, subscription) in &subscriptions {
+                    if subscription.topic != SubscriptionTopic::EventLog {
                         continue;
                     }
 
-                    let mut envelope = ProtocolEnvelope::new();
-                    envelope.protocol_major = accepted.major;
-                    envelope.protocol_minor = accepted.minor;
+                    let envelope = response_envelope(&subscription.origin_envelope, accepted);
 
                     conn.send(ClientFrame::new(
                         envelope,

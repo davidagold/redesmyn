@@ -7,12 +7,12 @@ use redesmyn_control_plane::ControlPlane;
 use redesmyn_control_plane::ControlPlaneDb;
 use redesmyn_control_plane::ControlPlaneStartOptions;
 use redesmyn_control_plane::client_api::ClientApiCodec;
-use redesmyn_ids::{RequestId, SubscriptionId};
-use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_ids::{RepoId, RequestId, SubscriptionId, WorkspaceId};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, EventLogFilter, HealthRequest, Request, RequestPayload,
     ResponseResult, StatusRequest, Subscribe, SubscriptionEvent, SubscriptionFilter,
 };
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope, TraceId};
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
@@ -97,8 +97,16 @@ async fn uds_server_binds_securely_and_supports_requests_and_subscriptions() {
     assert!(saw_health && saw_status);
 
     let subscription_id = SubscriptionId::new();
+    let trace_id = TraceId::from_bytes([0x11; TraceId::BYTE_LEN]);
+    let scope = RepoScope::new(WorkspaceId::new(), RepoId::new());
+
+    let subscribe_envelope = ProtocolEnvelope::new()
+        .with_scope(scope.into())
+        .with_trace_id(trace_id);
+    let subscribe_msg_id = subscribe_envelope.msg_id;
+
     conn.send(ClientFrame::new(
-        ProtocolEnvelope::new(),
+        subscribe_envelope,
         ClientMessage::Subscribe(Subscribe {
             subscription_id,
             filter: SubscriptionFilter::EventLog(EventLogFilter {
@@ -110,10 +118,11 @@ async fn uds_server_binds_securely_and_supports_requests_and_subscriptions() {
     .expect("send subscribe");
 
     let mut got_subscribed = false;
-    let mut got_event_log = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut got_tick = false;
+    let expected_scope = Some(scope.into());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
 
-    while tokio::time::Instant::now() < deadline && !(got_subscribed && got_event_log) {
+    while tokio::time::Instant::now() < deadline && !(got_subscribed && got_tick) {
         let frame = match tokio::time::timeout(Duration::from_millis(200), conn.recv()).await {
             Ok(Ok(frame)) => frame,
             Ok(Err(err)) => panic!("recv error: {err}"),
@@ -128,15 +137,31 @@ async fn uds_server_binds_securely_and_supports_requests_and_subscriptions() {
         }
 
         match event.event {
-            SubscriptionEvent::Subscribed(_) => got_subscribed = true,
-            SubscriptionEvent::EventLog(_) => got_event_log = true,
+            SubscriptionEvent::Subscribed(_) => {
+                assert_eq!(frame.envelope.scope, expected_scope);
+                assert_eq!(frame.envelope.trace_id, Some(trace_id));
+                assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
+                got_subscribed = true;
+            }
+            SubscriptionEvent::EventLog(event_log) => {
+                if event_log.event_type != "event_log.tick" {
+                    continue;
+                }
+                assert_eq!(frame.envelope.scope, expected_scope);
+                assert_eq!(frame.envelope.trace_id, Some(trace_id));
+                assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
+                got_tick = true;
+            }
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
 
     assert!(got_subscribed, "did not receive Subscribed event");
-    assert!(got_event_log, "did not receive EventLog event");
+    assert!(got_tick, "did not receive tick EventLog event");
 
     server.shutdown().await;
-    assert!(!socket_path.exists(), "socket file should be removed on shutdown");
+    assert!(
+        !socket_path.exists(),
+        "socket file should be removed on shutdown"
+    );
 }
