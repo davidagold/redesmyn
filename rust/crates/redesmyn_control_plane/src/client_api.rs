@@ -3,15 +3,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use redesmyn_ids::{CommandId, EventId};
+use redesmyn_ids::{CommandId, EventId, RepoId, WorkspaceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CommandState, CommandSummary, CommandUpdateSummary,
-    CreateCommandResponse, DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent,
-    EventWaitFilter, GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
-    GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse, ListEpicsResponse,
-    MergeReadiness, Response, ResponseResult, SessionSummary, StatusResponse, Subscribed,
-    SubscriptionEvent, TaskState, WaitForCommandResponse, WaitForEventResponse,
+    AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus, AgentSessionSummary,
+    ClientFrame, ClientMessage, CloseChatSessionResponse, CommandState, CommandSummary,
+    CommandUpdateSummary, CreateChatSessionResponse, CreateCommandResponse, DaemonPresenceSummary,
+    EpicGraph, EpicSummary, Event, EventLogEvent, EventWaitFilter, GetCommandResponse,
+    GetEpicGraphResponse, GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse,
+    GetSessionEventsResponse, HealthResponse, ListChatSessionsResponse, ListEpicsResponse,
+    ListTaskSessionsResponse, MergeReadiness, PinChatSessionToEpicResponse, Response, ResponseResult,
+    SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
+    UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
     WaitForIdleResponse,
 };
 use redesmyn_protocol::{
@@ -27,6 +30,13 @@ use crate::error::ControlPlaneError;
 use crate::session_events::{
     SessionEventsResync, SessionEventsResyncReason, SessionEventsSubscriptionItem,
 };
+
+use redesmyn_storage::schema::{
+    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
+    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentSessionStatus as StorageAgentSessionStatus,
+};
+use redesmyn_storage::sessions::AgentSessionRecord;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
@@ -953,22 +963,35 @@ async fn handle_request_result(
             }
         },
         redesmyn_protocol::client::RequestPayload::GetEpicPinnedChatSession(get) => {
-            match control_plane
-                .session_events()
-                .get_epic_pinned_chat_session(get.epic_id)
-                .await
-            {
-                Ok(session_id) => Ok(ResponseResult::GetEpicPinnedChatSession(
-                    GetEpicPinnedChatSessionResponse { session_id },
-                )),
-                Err(err) => {
-                    tracing::warn!(error = %err, "GetEpicPinnedChatSession failed");
-                    Ok(ResponseResult::Error(ErrorEnvelope::new(
-                        ErrorCategory::Internal,
-                        "Failed to query epic pinned chat session.",
-                    )))
-                }
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let exists = redesmyn_storage::sessions::epic_exists_in_repo(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                get.epic_id,
+            )
+            .await?;
+            if !exists {
+                let detail = ErrorDetail::from([("epic_id".to_string(), get.epic_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Epic not found.")
+                        .with_detail(detail),
+                ));
             }
+
+            let session_id = redesmyn_storage::sessions::get_pinned_chat_session_for_epic(
+                control_plane.pool(),
+                get.epic_id,
+            )
+            .await?;
+
+            Ok(ResponseResult::GetEpicPinnedChatSession(
+                GetEpicPinnedChatSessionResponse { session_id },
+            ))
         }
         redesmyn_protocol::client::RequestPayload::CreateCommand(req) => {
             let command = state.create_command(req.kind, req.target_task_id).await;
@@ -1051,6 +1074,329 @@ async fn handle_request_result(
                 Err(err) => Ok(ResponseResult::Error(err)),
             }
         }
+        redesmyn_protocol::client::RequestPayload::ListTaskSessions(get) => {
+            const MAX_LIMIT: u32 = 512;
+            if get.limit == 0 {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "ListTaskSessions.limit must be > 0.",
+                )));
+            }
+            if get.limit > MAX_LIMIT {
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "ListTaskSessions.limit is too large.",
+                    )
+                    .with_detail(ErrorDetail::from([(
+                        "max_limit".to_string(),
+                        MAX_LIMIT.to_string(),
+                    )])),
+                ));
+            }
+
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let exists = redesmyn_storage::sessions::task_exists_in_repo(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                get.task_id,
+            )
+            .await?;
+            if !exists {
+                let detail = ErrorDetail::from([("task_id".to_string(), get.task_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Task not found.")
+                        .with_detail(detail),
+                ));
+            }
+
+            let sessions = redesmyn_storage::sessions::list_task_sessions(
+                control_plane.pool(),
+                get.task_id,
+                get.limit,
+            )
+            .await?;
+
+            let active_session_id = sessions
+                .iter()
+                .find(|session| session.ended_at_ms.is_none())
+                .map(|session| session.session_id);
+
+            let sessions = sessions
+                .into_iter()
+                .map(agent_session_summary_from_record)
+                .collect();
+
+            Ok(ResponseResult::ListTaskSessions(ListTaskSessionsResponse {
+                sessions,
+                active_session_id,
+            }))
+        }
+        redesmyn_protocol::client::RequestPayload::CreateChatSession(create) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            // TODO: Plumb agent kind / interface mode from the request (or client identity).
+            // For now we default to Codex + structured-exec because those are the only supported
+            // interactive chat semantics.
+            let session_id = redesmyn_storage::sessions::create_chat_session(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                StorageAgentKind::Codex,
+                StorageAgentInterfaceMode::StructuredExec,
+                create.title.as_deref(),
+            )
+            .await?;
+
+            Ok(ResponseResult::CreateChatSession(CreateChatSessionResponse {
+                session_id,
+            }))
+        }
+        redesmyn_protocol::client::RequestPayload::CloseChatSession(close) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let session = redesmyn_storage::sessions::get_agent_session(
+                control_plane.pool(),
+                close.session_id,
+            )
+            .await?;
+            let Some(session) = session else {
+                let detail = ErrorDetail::from([(
+                    "session_id".to_string(),
+                    close.session_id.to_string(),
+                )]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            if session.scope_workspace_id != workspace_id || session.scope_repo_id != repo_id {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "Session not found in repo scope.",
+                )));
+            }
+            if session.scope_kind != StorageAgentSessionScopeKind::Chat {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Session is not a chat session.",
+                )));
+            }
+
+            redesmyn_storage::sessions::close_chat_session(control_plane.pool(), close.session_id)
+                .await?;
+
+            Ok(ResponseResult::CloseChatSession(CloseChatSessionResponse {}))
+        }
+        redesmyn_protocol::client::RequestPayload::ListChatSessions(list) => {
+            const MAX_LIMIT: u32 = 512;
+            if list.limit == 0 {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "ListChatSessions.limit must be > 0.",
+                )));
+            }
+            if list.limit > MAX_LIMIT {
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "ListChatSessions.limit is too large.",
+                    )
+                    .with_detail(ErrorDetail::from([(
+                        "max_limit".to_string(),
+                        MAX_LIMIT.to_string(),
+                    )])),
+                ));
+            }
+
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let sessions = redesmyn_storage::sessions::list_chat_sessions(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                list.include_closed,
+                list.limit,
+            )
+            .await?;
+
+            let sessions = sessions
+                .into_iter()
+                .map(agent_session_summary_from_record)
+                .collect();
+
+            Ok(ResponseResult::ListChatSessions(ListChatSessionsResponse {
+                sessions,
+            }))
+        }
+        redesmyn_protocol::client::RequestPayload::PinChatSessionToEpic(pin) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let epic_exists = redesmyn_storage::sessions::epic_exists_in_repo(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                pin.epic_id,
+            )
+            .await?;
+            if !epic_exists {
+                let detail = ErrorDetail::from([("epic_id".to_string(), pin.epic_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Epic not found.")
+                        .with_detail(detail),
+                ));
+            }
+
+            let session = redesmyn_storage::sessions::get_agent_session(
+                control_plane.pool(),
+                pin.session_id,
+            )
+            .await?;
+            let Some(session) = session else {
+                let detail = ErrorDetail::from([(
+                    "session_id".to_string(),
+                    pin.session_id.to_string(),
+                )]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            if session.scope_workspace_id != workspace_id || session.scope_repo_id != repo_id {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "Session not found in repo scope.",
+                )));
+            }
+            if session.scope_kind != StorageAgentSessionScopeKind::Chat {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Only chat sessions can be pinned.",
+                )));
+            }
+
+            redesmyn_storage::sessions::pin_chat_session_to_epic(
+                control_plane.pool(),
+                pin.epic_id,
+                pin.session_id,
+            )
+            .await?;
+
+            Ok(ResponseResult::PinChatSessionToEpic(
+                PinChatSessionToEpicResponse {},
+            ))
+        }
+        redesmyn_protocol::client::RequestPayload::UnpinChatSessionFromEpic(unpin) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let epic_exists = redesmyn_storage::sessions::epic_exists_in_repo(
+                control_plane.pool(),
+                workspace_id,
+                repo_id,
+                unpin.epic_id,
+            )
+            .await?;
+            if !epic_exists {
+                let detail =
+                    ErrorDetail::from([("epic_id".to_string(), unpin.epic_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Epic not found.")
+                        .with_detail(detail),
+                ));
+            }
+
+            redesmyn_storage::sessions::unpin_chat_session_from_epic(
+                control_plane.pool(),
+                unpin.epic_id,
+            )
+            .await?;
+
+            Ok(ResponseResult::UnpinChatSessionFromEpic(
+                UnpinChatSessionFromEpicResponse {},
+            ))
+        }
+    }
+}
+
+fn require_repo_scope_ids(
+    envelope: &ProtocolEnvelope,
+) -> Result<(WorkspaceId, RepoId), ErrorEnvelope> {
+    match envelope.scope {
+        Some(Scope::Repo { repo }) => Ok((repo.workspace_id, repo.repo_id)),
+        Some(Scope::Unknown) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unknown scope kind.",
+        )),
+        Some(_) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unsupported scope kind.",
+        )),
+        None => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Repo scope is required.",
+        )),
+    }
+}
+
+fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSessionSummary {
+    let scope_kind = match record.scope_kind {
+        StorageAgentSessionScopeKind::Task => AgentSessionScopeKind::Task,
+        StorageAgentSessionScopeKind::Chat => AgentSessionScopeKind::Chat,
+    };
+
+    let agent_kind = match record.agent_kind {
+        StorageAgentKind::Codex => AgentKind::Codex,
+        StorageAgentKind::ClaudeCode => AgentKind::ClaudeCode,
+        StorageAgentKind::Shell => AgentKind::Shell,
+    };
+
+    let interface_mode = match record.interface_mode {
+        StorageAgentInterfaceMode::ShellTmux => AgentInterfaceMode::ShellTmux,
+        StorageAgentInterfaceMode::StructuredExec => AgentInterfaceMode::StructuredExec,
+        StorageAgentInterfaceMode::AppServer => AgentInterfaceMode::AppServer,
+    };
+
+    let status = match record.status {
+        StorageAgentSessionStatus::Running => AgentSessionStatus::Running,
+        StorageAgentSessionStatus::Blocked => AgentSessionStatus::Blocked,
+        StorageAgentSessionStatus::Stopped => AgentSessionStatus::Stopped,
+        StorageAgentSessionStatus::Error => AgentSessionStatus::Error,
+    };
+
+    AgentSessionSummary {
+        session_id: record.session_id,
+        scope_kind,
+        task_id: record.task_id,
+        agent_kind,
+        interface_mode,
+        status,
+        title: record.title,
+        closed_at: record.closed_at_ms.map(timestamp_from_ms),
+        created_at: Some(timestamp_from_ms(record.created_at_ms)),
+        updated_at: Some(timestamp_from_ms(record.updated_at_ms)),
+        ended_at: record.ended_at_ms.map(timestamp_from_ms),
     }
 }
 

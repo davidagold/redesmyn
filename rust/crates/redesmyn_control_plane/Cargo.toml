@@ -23,4 +23,5 @@ time.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 
 [dev-dependencies]
+sqlx.workspace = true
 tempfile.workspace = true
