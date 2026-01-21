@@ -214,11 +214,15 @@ async fn get_epic_graph_returns_typed_projection() {
 
     let server_socket_path = socket_path.clone();
     let server_control_plane = ControlPlane::new(db.clone());
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let server_shutdown_tx = shutdown_tx.clone();
     let server = tokio::spawn(async move {
+        let mut shutdown_rx = server_shutdown_tx.subscribe();
         redesmyn_control_plane::client_api::serve_client_api_uds(
             server_control_plane,
             server_socket_path,
             ClientApiCodec::Protobuf,
+            &mut shutdown_rx,
         )
         .await
     });
