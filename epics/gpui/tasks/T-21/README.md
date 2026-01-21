@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-21-epic-graph-query
+  suggested: rn/gpui/T-21-epic-graph-query-model
 rn:
   parent: T-17
 ---
