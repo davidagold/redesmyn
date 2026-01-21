@@ -1,7 +1,10 @@
 mod app;
+mod foundations_demo;
 mod root_view;
 
 use gpui::AppContext as _;
+
+use crate::foundations_demo::FoundationsDemo;
 
 fn main() {
     redesmyn_logging::init();
@@ -11,6 +14,12 @@ fn main() {
 
     let _guard = span.enter();
     redesmyn_logging::tracing::info!("starting");
+
+    if std::env::var_os("REDESMYN_UI_FOUNDATIONS_DEMO").is_some() {
+        redesmyn_logging::tracing::info!("starting ui foundations demo");
+        run_foundations_demo();
+        return;
+    }
 
     let config = match redesmyn_config::load_rust_config(Default::default()) {
         Ok(config) => config,
@@ -66,4 +75,43 @@ fn main() {
     });
 
     desktop.shutdown();
+}
+
+fn run_foundations_demo() {
+    gpui::Application::new().run(|cx| {
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                redesmyn_logging::tracing::info!("last window closed; quitting");
+                cx.quit();
+            }
+        })
+        .detach();
+
+        if let Err(error) = redesmyn_ui::UiContext::init(cx) {
+            redesmyn_logging::tracing::error!(error = %error, "failed to init ui context");
+        }
+        redesmyn_ui::components::bind_text_input_keys(cx);
+
+        let bounds = gpui::Bounds::centered(
+            None,
+            gpui::size(gpui::px(1120.0), gpui::px(760.0)),
+            cx,
+        );
+        let window = cx
+            .open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(FoundationsDemo::new),
+            )
+            .expect("open_window failed");
+
+        window
+            .update(cx, |view: &mut FoundationsDemo, window, cx| {
+                window.focus(&view.text_input_focus_handle(cx));
+                cx.activate(true);
+            })
+            .ok();
+    });
 }

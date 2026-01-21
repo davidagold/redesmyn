@@ -295,6 +295,7 @@ Layout direction:
 - A graph-first right pane.
 - “Overseer” is developer shorthand only; the UI does not introduce a new user-facing construct.
 - Zed is the primary reference implementation for GPUI ergonomics/perf; implement patterns from scratch (see T-44).
+- GPUI engineering notes/gotchas: `epics/gpui/GPUI_ENGINEERING_NOTES.md`.
 
 Tasks:
 
