@@ -3,16 +3,20 @@ use std::time::Duration;
 
 use redesmyn_config::DaemonConfig;
 use redesmyn_logging::tracing;
-use redesmyn_protocol::RepoScope;
 use redesmyn_protocol::ProtocolVersion;
+use redesmyn_protocol::RepoScope;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
+use crate::DaemonCapabilities;
 use crate::backoff::Backoff;
-use crate::capabilities::DaemonCapabilities;
-use crate::control_plane::{ConnectionState, ControlPlaneConnector, run_control_plane_connection_manager};
+use crate::control_plane::{
+    ConnectionState, ControlPlaneConnector, run_control_plane_connection_manager,
+};
 use crate::host_identity::{HostIdentity, load_or_create_host_id};
-use crate::repo::{RepoAttachError, RepoAttachmentManager, RepoDetachError, RepoRegistry, UnconfiguredRepoRegistry};
+use crate::repo::{
+    RepoAttachError, RepoAttachmentManager, RepoDetachError, RepoRegistry, UnconfiguredRepoRegistry,
+};
 
 #[derive(Debug, Clone)]
 pub struct BackoffConfig {
@@ -83,7 +87,8 @@ impl Daemon {
         connector: Arc<dyn ControlPlaneConnector>,
     ) -> DaemonHandle {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let (connection_state_tx, connection_state_rx) = watch::channel(ConnectionState::Disconnected);
+        let (connection_state_tx, connection_state_rx) =
+            watch::channel(ConnectionState::Disconnected);
 
         let host_identity = config.host_identity.unwrap_or_else(|| {
             let state_dir = config
@@ -105,7 +110,11 @@ impl Daemon {
             host_identity,
             config.capabilities,
             config.supported_protocol,
-            Backoff::new(config.backoff.initial, config.backoff.max, config.backoff.factor),
+            Backoff::new(
+                config.backoff.initial,
+                config.backoff.max,
+                config.backoff.factor,
+            ),
             shutdown_tx.clone(),
             shutdown_rx.clone(),
             connection_state_tx,

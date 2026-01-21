@@ -443,16 +443,16 @@ mod tests {
 
     use prost::Message;
 
-    use crate::daemon::{
-        CommandProgress, CommandState, CommandUpdate, DaemonFrame, DaemonMessage, GitEvent,
-        TelemetryEvent, TelemetryEventBatch,
-    };
     use crate::client::{
         ClientFrame, ClientMessage, EpicGraph, EpicSummary, EpicTaskEdge, EpicTaskNode, Event,
         EventLogEvent, EventLogFilter, GetEpicGraphRequest, GetEpicGraphResponse, HealthRequest,
         HealthResponse, ListEpicsRequest, ListEpicsResponse, Request, RequestPayload, Response,
         ResponseResult, Subscribe, Subscribed, SubscriptionEvent, SubscriptionFilter,
         SubscriptionTopic, Unsubscribe,
+    };
+    use crate::daemon::{
+        CommandProgress, CommandState, CommandUpdate, DaemonCapabilities, DaemonFrame,
+        DaemonMessage, GitEvent, TelemetryEvent, TelemetryEventBatch,
     };
     use crate::pb::redesmyn::protocol::v1 as pbv1;
 
@@ -522,6 +522,42 @@ mod tests {
             json,
             r#"{"protocol_major":1,"protocol_minor":0,"msg_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","sent_at":"2026-01-19T00:00:00Z"}"#
         );
+    }
+
+    #[test]
+    fn daemon_capabilities_accepts_legacy_and_canonical_wire_strings() {
+        let daemon_emitted = DaemonCapabilities::from_wire_strings([
+            "repo_execution",
+            "worktrees",
+            "git_observation",
+            "session_exec",
+            "session_attach_tmux",
+            "artifacts",
+        ]);
+
+        assert!(daemon_emitted.supports_repo_execution);
+        assert!(daemon_emitted.supports_worktrees);
+        assert!(daemon_emitted.supports_git_observation);
+        assert!(daemon_emitted.supports_session_exec);
+        assert!(daemon_emitted.supports_session_attach_tmux);
+        assert!(daemon_emitted.supports_artifacts);
+
+        let wire = daemon_emitted.to_wire_strings();
+        assert!(wire.contains(&"repo_execution".to_string()));
+        assert!(!wire.contains(&"supports_repo_execution".to_string()));
+
+        let round_tripped = DaemonCapabilities::from_wire_strings(wire.iter().map(String::as_str));
+        assert_eq!(round_tripped, daemon_emitted);
+
+        let legacy = DaemonCapabilities::from_wire_strings([
+            "supports_repo_execution",
+            "supports_worktrees",
+            "supports_git_observation",
+            "supports_session_exec",
+            "supports_session_attach_tmux",
+            "supports_artifacts",
+        ]);
+        assert_eq!(legacy, daemon_emitted);
     }
 
     #[test]

@@ -5,14 +5,13 @@
 #![forbid(unsafe_code)]
 
 mod backoff;
-mod capabilities;
 mod control_plane;
 mod host_identity;
 mod repo;
 mod runtime;
 
-pub use crate::capabilities::DaemonCapabilities;
 pub use crate::control_plane::{ConnectionState, ControlPlaneConnector};
 pub use crate::host_identity::HostIdentity;
 pub use crate::repo::{RepoAttachError, RepoDetachError, RepoRegistry, RepoRegistryError};
 pub use crate::runtime::{Daemon, DaemonHandle, DaemonRuntimeConfig};
+pub use redesmyn_protocol::daemon::DaemonCapabilities;
