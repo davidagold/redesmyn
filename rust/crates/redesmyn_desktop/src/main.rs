@@ -1,4 +1,5 @@
 mod app;
+mod command_palette;
 mod foundations_demo;
 mod root_view;
 
@@ -54,6 +55,7 @@ fn main() {
             redesmyn_logging::tracing::error!(error = %error, "failed to init ui context");
         }
         redesmyn_ui::components::bind_text_input_keys(cx);
+        crate::command_palette::bind_command_palette_keys(cx);
 
         let window_size = gpui::Size::new(
             gpui::px(ui_config.desktop.window.width as f32),
@@ -97,11 +99,8 @@ fn run_foundations_demo() {
         }
         redesmyn_ui::components::bind_text_input_keys(cx);
 
-        let bounds = gpui::Bounds::centered(
-            None,
-            gpui::size(gpui::px(1120.0), gpui::px(760.0)),
-            cx,
-        );
+        let bounds =
+            gpui::Bounds::centered(None, gpui::size(gpui::px(1120.0), gpui::px(760.0)), cx);
         let window = cx
             .open_window(
                 gpui::WindowOptions {
