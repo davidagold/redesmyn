@@ -96,11 +96,11 @@ def _parse_pr_payload(
     base_sha: str | None = None
     base = payload.get("base")
     if isinstance(base, dict):
-        base_dict = cast(dict[str, object], base)
-        ref = base_dict.get("ref")
+        base_obj = cast(dict[str, object], base)
+        ref = base_obj.get("ref")
         if isinstance(ref, str) and ref:
             base_branch = ref
-        sha = base_dict.get("sha")
+        sha = base_obj.get("sha")
         if isinstance(sha, str) and sha:
             base_sha = sha
 
@@ -108,11 +108,11 @@ def _parse_pr_payload(
     head_sha: str | None = None
     head = payload.get("head")
     if isinstance(head, dict):
-        head_dict = cast(dict[str, object], head)
-        ref = head_dict.get("ref")
+        head_obj = cast(dict[str, object], head)
+        ref = head_obj.get("ref")
         if isinstance(ref, str) and ref:
             head_branch = ref
-        sha = head_dict.get("sha")
+        sha = head_obj.get("sha")
         if isinstance(sha, str) and sha:
             head_sha = sha
 
