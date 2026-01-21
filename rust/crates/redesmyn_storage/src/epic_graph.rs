@@ -288,7 +288,7 @@ async fn load_commands<'e, E>(executor: E, scope: RepoScope) -> Result<Vec<Comma
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
-    const INFIGHT_LIMIT: i64 = 50;
+    const INFLIGHT_LIMIT: i64 = 50;
     const RECENT_LIMIT: i64 = 25;
 
     let inflight_rows: Vec<(CommandId, i64, i64, String, String, Option<TaskId>)> =
@@ -313,7 +313,7 @@ where
         )
         .bind(scope.workspace_id)
         .bind(scope.repo_id)
-        .bind(INFIGHT_LIMIT)
+        .bind(INFLIGHT_LIMIT)
         .fetch_all(executor)
         .await?;
 

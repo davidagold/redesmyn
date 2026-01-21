@@ -322,69 +322,33 @@ async fn epic_graph_query_returns_compact_projection() {
     let session_id = SessionId::new();
     let session_event_id_old = SessionEventId::new();
     let session_event_id_new = SessionEventId::new();
-    sqlx::query(
-        r#"
-        INSERT INTO session_events (
-            id,
-            session_id,
-            created_at_ms,
-            scope_kind,
-            scope_workspace_id,
-            scope_repo_id,
-            epic_id,
-            task_id,
-            kind,
-            turn_id,
-            message_preview,
-            artifact_id,
-            payload
-        )
-        VALUES (?1, ?2, ?3, 'task', ?4, ?5, ?6, ?7, ?8, NULL, ?9, NULL, X'')
-        "#,
+    insert_session_event(
+        &pool,
+        session_event_id_old,
+        session_id,
+        now_ms + 1,
+        workspace_id,
+        repo_id,
+        epic_id,
+        child_task_id,
+        "turn.started",
+        Some("starting"),
     )
-    .bind(session_event_id_old)
-    .bind(session_id)
-    .bind(now_ms + 1)
-    .bind(workspace_id)
-    .bind(repo_id)
-    .bind(epic_id)
-    .bind(child_task_id)
-    .bind("turn.started")
-    .bind(Some("starting"))
-    .execute(&pool)
     .await
     .expect("insert old session event");
 
-    sqlx::query(
-        r#"
-        INSERT INTO session_events (
-            id,
-            session_id,
-            created_at_ms,
-            scope_kind,
-            scope_workspace_id,
-            scope_repo_id,
-            epic_id,
-            task_id,
-            kind,
-            turn_id,
-            message_preview,
-            artifact_id,
-            payload
-        )
-        VALUES (?1, ?2, ?3, 'task', ?4, ?5, ?6, ?7, ?8, NULL, ?9, NULL, X'')
-        "#,
+    insert_session_event(
+        &pool,
+        session_event_id_new,
+        session_id,
+        now_ms + 4,
+        workspace_id,
+        repo_id,
+        epic_id,
+        child_task_id,
+        "turn.completed",
+        Some("done"),
     )
-    .bind(session_event_id_new)
-    .bind(session_id)
-    .bind(now_ms + 4)
-    .bind(workspace_id)
-    .bind(repo_id)
-    .bind(epic_id)
-    .bind(child_task_id)
-    .bind("turn.completed")
-    .bind(Some("done"))
-    .execute(&pool)
     .await
     .expect("insert new session event");
 
@@ -441,3 +405,49 @@ async fn epic_graph_query_returns_compact_projection() {
     assert_eq!(graph.as_of_event_id, Some(event_id));
 }
 
+async fn insert_session_event(
+    pool: &sqlx::SqlitePool,
+    session_event_id: SessionEventId,
+    session_id: SessionId,
+    created_at_ms: i64,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    epic_id: EpicId,
+    task_id: TaskId,
+    kind: &str,
+    message_preview: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO session_events (
+            id,
+            session_id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            epic_id,
+            task_id,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        )
+        VALUES (?1, ?2, ?3, 'task', ?4, ?5, ?6, ?7, ?8, NULL, ?9, NULL, X'')
+        "#,
+    )
+    .bind(session_event_id)
+    .bind(session_id)
+    .bind(created_at_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(epic_id)
+    .bind(task_id)
+    .bind(kind)
+    .bind(message_preview)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
