@@ -99,8 +99,18 @@ fn run_serve_client_api(codec: ClientApiCodecArg, socket_path: Option<PathBuf>) 
         .build()
         .expect("tokio runtime");
 
+    let control_plane =
+        match runtime.block_on(redesmyn_control_plane::ControlPlane::open(&config.control_plane.db.path))
+        {
+            Ok(control_plane) => control_plane,
+            Err(err) => {
+                redesmyn_logging::tracing::error!(error = %err, "failed to open control plane");
+                std::process::exit(2);
+            }
+        };
+
     let result: Result<(), ClientApiServeError> = runtime.block_on(
-        redesmyn_control_plane::client_api::serve_client_api_uds(socket_path, codec),
+        redesmyn_control_plane::client_api::serve_client_api_uds(control_plane, socket_path, codec),
     );
 
     if let Err(err) = result {

@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, Event, EventLogEvent, GetEpicGraphResponse, HealthResponse,
     ListEpicsResponse, Response, ResponseResult, StatusResponse, Subscribed, SubscriptionEvent,
 };
-use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Timestamp};
+use redesmyn_protocol::{
+    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, Timestamp,
+};
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
+use crate::ControlPlane;
 use crate::error::ControlPlaneError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,7 @@ pub fn bind_client_socket(path: &Path) -> Result<tokio::net::UnixListener, Clien
 
 #[cfg(unix)]
 pub async fn serve_client_api_uds(
+    control_plane: ControlPlane,
     socket_path: PathBuf,
     codec: ClientApiCodec,
 ) -> Result<(), ClientApiServeError> {
@@ -70,11 +73,16 @@ pub async fn serve_client_api_uds(
     loop {
         let (stream, _addr) = listener.accept().await?;
         let task_codec = codec;
+        let task_control_plane = control_plane.clone();
 
         tokio::spawn(async move {
             let result = match task_codec {
-                ClientApiCodec::Json => handle_connection(stream, JsonCodec::new()).await,
-                ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new()).await,
+                ClientApiCodec::Json => {
+                    handle_connection(stream, JsonCodec::new(), task_control_plane).await
+                }
+                ClientApiCodec::Protobuf => {
+                    handle_connection(stream, ProtobufCodec::new(), task_control_plane).await
+                }
             };
 
             if let Err(err) = result {
@@ -87,6 +95,7 @@ pub async fn serve_client_api_uds(
 async fn handle_connection<C>(
     stream: tokio::net::UnixStream,
     codec: C,
+    control_plane: ControlPlane,
 ) -> Result<(), ClientApiServeError>
 where
     C: Codec + 'static,
@@ -103,17 +112,18 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    run_session(&mut conn).await?;
+    run_session(&mut conn, control_plane).await?;
     Ok(())
 }
 
-async fn run_session<C>(conn: &mut C) -> Result<(), ClientApiServeError>
+async fn run_session<C>(conn: &mut C, control_plane: ControlPlane) -> Result<(), ClientApiServeError>
 where
     C: ClientConnection + Send + 'static,
 {
     let mut accepted_protocol: Option<ProtocolVersion> = None;
-    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, ()> = HashMap::new();
-    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, tokio::task::JoinHandle<()>> =
+        HashMap::new();
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<ClientFrame>(128);
 
     loop {
         tokio::select! {
@@ -162,35 +172,121 @@ where
                     }
                     ClientMessage::Subscribe(sub) => {
                         let subscription_id = sub.subscription_id;
-                        subscriptions.insert(subscription_id, ());
+                        if let Some(prev) = subscriptions.remove(&subscription_id) {
+                            prev.abort();
+                        }
+
+                        let topic = sub.topic();
+                        let mut subscribe_error: Option<ErrorEnvelope> = None;
+                        let mut subscription_start: Option<tokio::sync::oneshot::Sender<()>> = None;
+
+                        let handle = match sub.filter {
+                            redesmyn_protocol::client::SubscriptionFilter::EventLog(filter) => {
+                                let scope = match storage_scope_from_envelope(&frame.envelope) {
+                                    Ok(scope) => Some(scope),
+                                    Err(err) => {
+                                        subscribe_error = Some(err);
+                                        None
+                                    }
+                                };
+
+                                scope.map(|scope| {
+                                    let mut feed = control_plane
+                                        .event_log()
+                                        .subscribe(scope, filter.after_event_id);
+                                    let tx = events_tx.clone();
+                                    let request_envelope = frame.envelope.clone();
+                                    let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+
+                                    let handle = tokio::spawn(async move {
+                                        if start_rx.await.is_err() {
+                                            return;
+                                        }
+                                        while let Some(item) = feed.recv().await {
+                                            let (event, terminal) = match item {
+                                                crate::event_log::EventLogSubscriptionItem::Event(
+                                                    record,
+                                                ) => {
+                                                    (
+                                                        SubscriptionEvent::EventLog(EventLogEvent {
+                                                            event_id: record.id,
+                                                            occurred_at: timestamp_from_ms(
+                                                                record.created_at_ms,
+                                                            ),
+                                                            event_type: record.kind,
+                                                            json_payload: record.payload,
+                                                        }),
+                                                        false,
+                                                    )
+                                                }
+                                                crate::event_log::EventLogSubscriptionItem::ResyncRequired(
+                                                    resync,
+                                                ) => {
+                                                    (
+                                                        SubscriptionEvent::Error(
+                                                            resync_error_envelope(resync),
+                                                        ),
+                                                        true,
+                                                    )
+                                                }
+                                            };
+
+                                            let frame = ClientFrame::new(
+                                                response_envelope(&request_envelope, accepted),
+                                                ClientMessage::Event(Event {
+                                                    subscription_id,
+                                                    event,
+                                                }),
+                                            );
+
+                                            if tx.send(frame).await.is_err() {
+                                                return;
+                                            }
+
+                                            if terminal {
+                                                return;
+                                            }
+                                        }
+                                    });
+
+                                    (handle, start_tx)
+                                })
+                            }
+                        };
+
+                        if let Some((handle, start_tx)) = handle {
+                            subscriptions.insert(subscription_id, handle);
+                            subscription_start = Some(start_tx);
+                        }
 
                         let ack = ClientFrame::new(
                             response_envelope(&frame.envelope, accepted),
                             ClientMessage::Event(Event {
                                 subscription_id,
-                                event: SubscriptionEvent::Subscribed(Subscribed { topic: sub.topic() }),
+                                event: SubscriptionEvent::Subscribed(Subscribed { topic }),
                             }),
                         );
                         conn.send(ack).await?;
 
-                        if sub.topic() == redesmyn_protocol::client::SubscriptionTopic::EventLog {
+                        if let Some(start_tx) = subscription_start {
+                            let _ = start_tx.send(());
+                        }
+
+                        if let Some(err) = subscribe_error {
                             let event = ClientFrame::new(
                                 response_envelope(&frame.envelope, accepted),
                                 ClientMessage::Event(Event {
                                     subscription_id,
-                                    event: SubscriptionEvent::EventLog(EventLogEvent {
-                                        event_id: redesmyn_ids::EventId::new(),
-                                        occurred_at: Timestamp::now_utc(),
-                                        event_type: "event_log.appended".to_string(),
-                                        json_payload: Vec::new(),
-                                    }),
+                                    event: SubscriptionEvent::Error(err),
                                 }),
                             );
                             conn.send(event).await?;
                         }
                     }
                     ClientMessage::Unsubscribe(unsub) => {
-                        subscriptions.remove(&unsub.subscription_id);
+                        if let Some(handle) = subscriptions.remove(&unsub.subscription_id) {
+                            handle.abort();
+                        }
                     }
                     ClientMessage::Response(_) | ClientMessage::Event(_) => {
                         let err: ErrorEnvelope = ControlPlaneError::InvalidTaskId {
@@ -202,29 +298,11 @@ where
                     }
                 }
             }
-            _ = tick.tick(), if !subscriptions.is_empty() => {
-                let accepted = accepted_protocol.unwrap_or(ProtocolVersion::CURRENT);
-                let ids: Vec<_> = subscriptions.keys().copied().collect();
-
-                for subscription_id in ids {
-                    let mut envelope = ProtocolEnvelope::new();
-                    envelope.protocol_major = accepted.major;
-                    envelope.protocol_minor = accepted.minor;
-
-                    conn.send(ClientFrame::new(
-                        envelope,
-                        ClientMessage::Event(Event {
-                            subscription_id,
-                            event: SubscriptionEvent::EventLog(EventLogEvent {
-                                event_id: redesmyn_ids::EventId::new(),
-                                occurred_at: Timestamp::now_utc(),
-                                event_type: "event_log.tick".to_string(),
-                                json_payload: Vec::new(),
-                            }),
-                        }),
-                    ))
-                    .await?;
-                }
+            maybe_event = events_rx.recv() => {
+                let Some(event) = maybe_event else {
+                    continue;
+                };
+                conn.send(event).await?;
             }
         }
     }
@@ -289,4 +367,55 @@ fn error_response_envelope(request_envelope: &ProtocolEnvelope) -> ProtocolEnvel
     envelope.trace_id = request_envelope.trace_id;
     envelope.correlation_id = Some(request_envelope.msg_id);
     envelope
+}
+
+fn storage_scope_from_envelope(
+    envelope: &ProtocolEnvelope,
+) -> Result<redesmyn_storage::events::EventScope, ErrorEnvelope> {
+    match envelope.scope {
+        None => Ok(redesmyn_storage::events::EventScope::None),
+        Some(Scope::Repo { repo }) => Ok(redesmyn_storage::events::EventScope::Repo {
+            workspace_id: repo.workspace_id,
+            repo_id: repo.repo_id,
+        }),
+        Some(Scope::Unknown) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unknown scope kind.",
+        )),
+        Some(_) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unsupported scope kind.",
+        )),
+    }
+}
+
+fn resync_error_envelope(resync: crate::event_log::EventLogResync) -> ErrorEnvelope {
+    let reason = match resync.reason {
+        crate::event_log::EventLogResyncReason::Lagged => "lagged",
+        crate::event_log::EventLogResyncReason::CursorNotFound => "cursor_not_found",
+        crate::event_log::EventLogResyncReason::CursorScopeMismatch => "cursor_scope_mismatch",
+        crate::event_log::EventLogResyncReason::DbError => "db_error",
+    };
+
+    let mut detail: ErrorDetail = ErrorDetail::new();
+    detail.insert("reason".to_string(), reason.to_string());
+    if let Some(event_id) = resync.resume_after_event_id {
+        detail.insert("resume_after_event_id".to_string(), event_id.to_string());
+    }
+    if let Some(skipped) = resync.dropped_events {
+        detail.insert("dropped_events".to_string(), skipped.to_string());
+    }
+
+    ErrorEnvelope::new(
+        ErrorCategory::Unavailable,
+        "Event subscription requires resync.",
+    )
+    .with_detail(detail)
+}
+
+fn timestamp_from_ms(ms: i64) -> Timestamp {
+    let nanos = i128::from(ms).saturating_mul(1_000_000);
+    let datetime = time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    Timestamp::from_offset_date_time(datetime)
 }
