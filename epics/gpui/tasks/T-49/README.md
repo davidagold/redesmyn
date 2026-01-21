@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-49-command-palette
+  suggested: rn/gpui/T-49-command-palette-skeleton
 rn:
   parent: T-44
 ---
@@ -65,4 +65,3 @@ Include:
 ## Dependencies / sequencing
 
 - Depends on UI foundations (T-44).
-
