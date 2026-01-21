@@ -208,6 +208,11 @@ impl Render for GraphView {
         let theme = theme_for_window(window, cx);
         let label = self.selection_label();
         let zoom = self.camera.zoom();
+        let controls_hint = if cfg!(target_os = "macos") {
+            "Pan: two-finger scroll/drag · Zoom: ⌘ + scroll"
+        } else {
+            "Pan: scroll/drag · Zoom: Ctrl + scroll"
+        };
 
         let graph = cx.entity();
         let graph_for_prepaint = graph.clone();
@@ -231,8 +236,13 @@ impl Render for GraphView {
             )
             .child(
                 div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.md)
                     .text_sm()
                     .text_color(theme.colors.foreground_muted)
+                    .child(controls_hint)
                     .child(format!("Zoom: {:.2}", zoom)),
             );
 
@@ -258,6 +268,7 @@ impl Render for GraphView {
             .child(
                 div()
                     .flex_1()
+                    .overflow_hidden()
                     .cursor(if self.pan_drag.is_some() {
                         CursorStyle::ClosedHand
                     } else {
