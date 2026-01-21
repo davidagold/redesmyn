@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Render, Window, div, px, prelude::*,
+    ClickEvent, Context, CursorStyle, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Render, Window, div, px, prelude::*,
 };
 
 use crate::utils::theme_for_window;
@@ -11,6 +11,11 @@ use crate::utils::theme_for_window;
 pub enum SplitPaneAxis {
     Horizontal,
     Vertical,
+}
+
+#[derive(Clone, Debug)]
+pub enum SplitPaneEvent {
+    StateChanged(SplitPaneState),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -44,6 +49,8 @@ struct DragState {
     start_primary_px: f32,
 }
 
+impl EventEmitter<SplitPaneEvent> for SplitPane {}
+
 impl SplitPane {
     pub fn new(axis: SplitPaneAxis, state: SplitPaneState, primary: gpui::AnyView, secondary: gpui::AnyView) -> Self {
         Self {
@@ -65,6 +72,12 @@ impl SplitPane {
         self.state
     }
 
+    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.state.collapsed = !self.state.collapsed;
+        cx.emit(SplitPaneEvent::StateChanged(self.state));
+        cx.notify();
+    }
+
     fn on_divider_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -82,7 +95,11 @@ impl SplitPane {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.dragging.take().is_some() {
+        let dragging = self.dragging.take();
+        if let Some(dragging) = dragging {
+            if dragging.start_primary_px != self.state.primary_size_px {
+                cx.emit(SplitPaneEvent::StateChanged(self.state));
+            }
             cx.notify();
         }
     }
@@ -111,8 +128,7 @@ impl SplitPane {
 
     fn on_divider_click(&mut self, event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if event.click_count() >= 2 {
-            self.state.collapsed = !self.state.collapsed;
-            cx.notify();
+            self.toggle_collapsed(cx);
         }
     }
 }
@@ -133,6 +149,11 @@ impl Render for SplitPane {
             .when(axis == SplitPaneAxis::Vertical, |this| this.h(handle_h))
             .bg(theme.colors.border.opacity(0.35))
             .cursor(resize_cursor)
+            .focusable()
+            .focus(|mut style| {
+                style.border_color = Some(theme.colors.ring);
+                style
+            })
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_divider_mouse_down))
             .on_click(cx.listener(Self::on_divider_click));
 
@@ -153,6 +174,7 @@ impl Render for SplitPane {
         div()
             .id(("split_pane_root", cx.entity_id()))
             .flex()
+            .size_full()
             .when(axis == SplitPaneAxis::Horizontal, |this| this.flex_row())
             .when(axis == SplitPaneAxis::Vertical, |this| this.flex_col())
             .on_mouse_move(cx.listener(Self::on_mouse_move))

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::components::SplitPaneState;
 use crate::settings::ThemePreference;
 
 const UI_SETTINGS_FILE_NAME: &str = "ui_settings.json";
@@ -25,6 +26,7 @@ pub enum UiSettingsError {
 pub struct UiSettings {
     pub version: u32,
     pub theme: ThemePreference,
+    pub main_split_pane: SplitPaneState,
 }
 
 impl Default for UiSettings {
@@ -32,6 +34,7 @@ impl Default for UiSettings {
         Self {
             version: 1,
             theme: ThemePreference::default(),
+            main_split_pane: SplitPaneState::default(),
         }
     }
 }

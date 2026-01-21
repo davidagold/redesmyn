@@ -1,5 +1,6 @@
 use gpui::{App, Global, Window};
 
+use crate::components::SplitPaneState;
 use crate::settings::{ThemePreference, UiSettingsError, UiSettingsStore};
 use crate::styles::{UiDensity, UiScale, UiTheme};
 
@@ -32,6 +33,15 @@ impl UiContext {
         self.settings.save()
     }
 
+    pub fn main_split_pane_state(&self) -> SplitPaneState {
+        self.settings.settings().main_split_pane
+    }
+
+    pub fn set_main_split_pane_state(&mut self, state: SplitPaneState) -> Result<(), UiSettingsError> {
+        self.settings.settings_mut().main_split_pane = state;
+        self.settings.save()
+    }
+
     pub fn theme_for_window(&self, window: &Window) -> UiTheme {
         UiTheme::for_window(
             self.settings.settings().theme,
@@ -41,4 +51,3 @@ impl UiContext {
         )
     }
 }
-
