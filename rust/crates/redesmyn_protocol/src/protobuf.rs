@@ -683,7 +683,10 @@ fn decode_command_state(value: i32) -> Result<CommandState, ErrorEnvelope> {
         Ok(pbv1::CommandState::Failed) => Ok(CommandState::Failed),
         Ok(pbv1::CommandState::Canceled) => Ok(CommandState::Canceled),
         Ok(pbv1::CommandState::Rejected) => Ok(CommandState::Rejected),
-        Ok(pbv1::CommandState::Unspecified) | Err(_) => Err(invalid_field(
+        Ok(pbv1::CommandState::Blocked)
+        | Ok(pbv1::CommandState::Resumable)
+        | Ok(pbv1::CommandState::Unspecified)
+        | Err(_) => Err(invalid_field(
             "state",
             format!("unknown enum value for CommandState: {value}"),
         )),
@@ -1459,7 +1462,7 @@ fn decode_merge_readiness(value: i32) -> crate::client::MergeReadiness {
     }
 }
 
-fn encode_command_state(value: crate::client::CommandState) -> i32 {
+fn encode_client_command_state(value: crate::client::CommandState) -> i32 {
     match value {
         crate::client::CommandState::Unknown => pbv1::CommandState::Unspecified as i32,
         crate::client::CommandState::Accepted => pbv1::CommandState::Accepted as i32,
@@ -1472,7 +1475,7 @@ fn encode_command_state(value: crate::client::CommandState) -> i32 {
     }
 }
 
-fn decode_command_state(value: i32) -> crate::client::CommandState {
+fn decode_client_command_state(value: i32) -> crate::client::CommandState {
     match pbv1::CommandState::try_from(value) {
         Ok(pbv1::CommandState::Accepted) => crate::client::CommandState::Accepted,
         Ok(pbv1::CommandState::Running) => crate::client::CommandState::Running,
@@ -1481,7 +1484,9 @@ fn decode_command_state(value: i32) -> crate::client::CommandState {
         Ok(pbv1::CommandState::Succeeded) => crate::client::CommandState::Succeeded,
         Ok(pbv1::CommandState::Failed) => crate::client::CommandState::Failed,
         Ok(pbv1::CommandState::Canceled) => crate::client::CommandState::Canceled,
-        Ok(pbv1::CommandState::Unspecified) | Err(_) => crate::client::CommandState::Unknown,
+        Ok(pbv1::CommandState::Rejected)
+        | Ok(pbv1::CommandState::Unspecified)
+        | Err(_) => crate::client::CommandState::Unknown,
     }
 }
 
@@ -1867,7 +1872,7 @@ impl crate::client::CommandUpdateSummary {
         pbv1::CommandUpdateSummary {
             update_id: self.update_id.to_bytes().to_vec(),
             created_at: Some(encode_timestamp(self.created_at)),
-            state: encode_command_state(self.state),
+            state: encode_client_command_state(self.state),
             message: self.message.clone().unwrap_or_default(),
             progress_current: self.progress_current,
             progress_total: self.progress_total,
@@ -1878,7 +1883,7 @@ impl crate::client::CommandUpdateSummary {
         Ok(Self {
             update_id: decode_required_ulid::<CommandUpdateId>("update_id", &proto.update_id)?,
             created_at: decode_required_timestamp("created_at", proto.created_at)?,
-            state: decode_command_state(proto.state),
+            state: decode_client_command_state(proto.state),
             message: if proto.message.is_empty() {
                 None
             } else {
@@ -1898,7 +1903,7 @@ impl crate::client::CommandSummary {
             created_at: Some(encode_timestamp(self.created_at)),
             updated_at: Some(encode_timestamp(self.updated_at)),
             kind: self.kind.clone(),
-            state: encode_command_state(self.state),
+            state: encode_client_command_state(self.state),
             target_task_id: self
                 .target_task_id
                 .map(|id| id.to_bytes().to_vec())
@@ -1913,7 +1918,7 @@ impl crate::client::CommandSummary {
             created_at: decode_required_timestamp("created_at", proto.created_at)?,
             updated_at: decode_required_timestamp("updated_at", proto.updated_at)?,
             kind: proto.kind,
-            state: decode_command_state(proto.state),
+            state: decode_client_command_state(proto.state),
             target_task_id: decode_optional_ulid::<TaskId>("target_task_id", &proto.target_task_id)?,
             last_update: proto
                 .last_update

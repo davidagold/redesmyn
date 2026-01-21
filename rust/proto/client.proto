@@ -3,6 +3,7 @@ syntax = "proto3";
 package redesmyn.protocol.v1;
 
 import "envelope.proto";
+import "daemon.proto";
 import "google/protobuf/timestamp.proto";
 
 // Client ↔ control plane API messages (T-12).
@@ -143,18 +144,6 @@ message EpicTaskEdge {
   // Stable identifiers (ULID bytes, length = 16).
   bytes from_task_id = 10;
   bytes to_task_id = 11;
-}
-
-// Persisted command lifecycle state (T-19). Additive changes are allowed.
-enum CommandState {
-  COMMAND_STATE_UNSPECIFIED = 0;
-  COMMAND_STATE_ACCEPTED = 1;
-  COMMAND_STATE_RUNNING = 2;
-  COMMAND_STATE_BLOCKED = 3;
-  COMMAND_STATE_RESUMABLE = 4;
-  COMMAND_STATE_SUCCEEDED = 5;
-  COMMAND_STATE_FAILED = 6;
-  COMMAND_STATE_CANCELED = 7;
 }
 
 message CommandUpdateSummary {
