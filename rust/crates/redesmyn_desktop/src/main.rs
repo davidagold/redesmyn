@@ -50,6 +50,11 @@ fn main() {
         })
         .detach();
 
+        if let Err(error) = redesmyn_ui::UiContext::init(cx) {
+            redesmyn_logging::tracing::error!(error = %error, "failed to init ui context");
+        }
+        redesmyn_ui::components::bind_text_input_keys(cx);
+
         let window_size = gpui::Size::new(
             gpui::px(ui_config.desktop.window.width as f32),
             gpui::px(ui_config.desktop.window.height as f32),
@@ -69,7 +74,7 @@ fn main() {
                         control_plane_client,
                     )
                 });
-                cx.new(|_| crate::root_view::RootView::new(model))
+                cx.new(|cx| crate::root_view::RootView::new(model, cx))
             })
             .expect("window open should succeed");
     });
