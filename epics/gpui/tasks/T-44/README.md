@@ -250,6 +250,8 @@ Implement a shared pattern for UI-triggered actions:
 
 ## Inventory (as of T-44)
 
+See also: `epics/gpui/GPUI_ENGINEERING_NOTES.md`.
+
 ### GPUI core primitives we rely on
 
 - **Element tree + layout**: `div()` + style chaining (flex/gap/padding/borders/rounded/shadows), plus units like `px(...)`, `relative(...)`, `Pixels`, `AbsoluteLength`.
