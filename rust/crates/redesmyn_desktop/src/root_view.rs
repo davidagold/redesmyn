@@ -5,6 +5,7 @@ use gpui::{
     Render, SharedString, Subscription, Window,
 };
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
+use redesmyn_ui_session::SessionView;
 
 use redesmyn_ui::components::{
     Callout, CalloutKind, IconButton, SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState,
@@ -33,6 +34,10 @@ impl DesktopModel {
             control_plane_client,
         }
     }
+
+    pub fn take_control_plane_client(&mut self) -> Option<ClientInProcEndpoint> {
+        self.control_plane_client.take()
+    }
 }
 
 pub struct RootView {
@@ -49,7 +54,7 @@ impl RootView {
             .map(|ui| ui.main_split_pane_state())
             .unwrap_or_else(SplitPaneState::default);
 
-        let session_pane = cx.new(EpicSessionPaneHost::new);
+        let session_pane = cx.new(|cx| EpicSessionPaneHost::new(model.clone(), cx));
         let workspace_pane =
             cx.new(|cx| WorkspacePaneHost::new(model.clone(), initial_split_state.collapsed, cx));
 
@@ -130,11 +135,15 @@ impl Render for RootView {
     }
 }
 
-struct EpicSessionPaneHost;
+struct EpicSessionPaneHost {
+    session_view: Entity<SessionView>,
+}
 
 impl EpicSessionPaneHost {
-    fn new(_: &mut Context<Self>) -> Self {
-        Self
+    fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+        let client = model.update(cx, |model, _cx| model.take_control_plane_client());
+        let session_view = cx.new(|cx| SessionView::new(client, cx));
+        Self { session_view }
     }
 }
 
@@ -164,15 +173,10 @@ impl Render for EpicSessionPaneHost {
             .child(
                 div()
                     .flex_1()
+                    .min_h(px(0.0))
                     .px(theme.spacing.md)
                     .py(theme.spacing.md)
-                    .flex()
-                    .flex_col()
-                    .gap(theme.spacing.sm)
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child("EpicSessionPaneHost (placeholder)")
-                    .child("Drag the divider to resize; double-click to collapse/expand."),
+                    .child(self.session_view.clone()),
             )
     }
 }
@@ -300,7 +304,7 @@ impl Render for WorkspacePaneHost {
                 .daemon_host_id
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "<none>".to_string()),
-            if model.control_plane_client.is_some() {
+            if model.config.desktop.embed_control_plane {
                 "in-proc"
             } else {
                 "uds"

@@ -17,6 +17,7 @@ redesmyn_protocol.workspace = true
 redesmyn_transport.workspace = true
 redesmyn_ui.workspace = true
 redesmyn_ui_graph.workspace = true
+redesmyn_ui_session.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 

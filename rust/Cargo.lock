@@ -1126,6 +1126,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "core-graphics"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "064badf302c3194842cf2c5d61f56cc88e54a759313879cdf03abdd27d0c3b97"
+dependencies = [
+ "bitflags 2.10.0",
+ "core-foundation 0.10.0",
+ "core-graphics-types 0.2.0",
+ "foreign-types",
+ "libc",
+]
+
+[[package]]
 name = "core-graphics-helmer-fork"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1175,14 +1188,13 @@ dependencies = [
 
 [[package]]
 name = "core-text"
-version = "21.0.0"
+version = "21.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
+checksum = "fce32d657e17d6e4a8e70fe2ae6875218015f320620a78e5949d228bc76622bd"
 dependencies = [
  "core-foundation 0.10.0",
- "core-graphics 0.24.0",
+ "core-graphics 0.25.0",
  "foreign-types",
- "libc",
 ]
 
 [[package]]
@@ -3788,9 +3800,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-probe"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f50d9b3dabb09ecd771ad0aa242ca6894994c130308ca3d7684634df8037391"
+checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "option-ext"
@@ -4169,9 +4181,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.105"
+version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
+checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -4635,6 +4647,7 @@ dependencies = [
 name = "redesmyn_control_plane"
 version = "0.1.0"
 dependencies = [
+ "prost",
  "redesmyn_config",
  "redesmyn_domain",
  "redesmyn_ids",
@@ -4679,6 +4692,7 @@ dependencies = [
  "redesmyn_transport",
  "redesmyn_ui",
  "redesmyn_ui_graph",
+ "redesmyn_ui_session",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -4767,6 +4781,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redesmyn_session_view_model"
+version = "0.1.0"
+dependencies = [
+ "redesmyn_ids",
+ "redesmyn_protocol",
+ "serde",
+ "time",
+]
+
+[[package]]
 name = "redesmyn_storage"
 version = "0.1.0"
 dependencies = [
@@ -4812,6 +4836,19 @@ dependencies = [
  "redesmyn_logging",
  "redesmyn_protocol",
  "redesmyn_ui",
+]
+
+[[package]]
+name = "redesmyn_ui_session"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "redesmyn_ids",
+ "redesmyn_protocol",
+ "redesmyn_session_view_model",
+ "redesmyn_transport",
+ "redesmyn_ui",
+ "tokio",
 ]
 
 [[package]]
