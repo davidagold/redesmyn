@@ -3,7 +3,8 @@ use std::time::Duration;
 use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_exec::parser::{OutputStream, SessionOutputParser};
 use redesmyn_exec::supervisor::{
-    ExecSessionSpec, ExecSessionSupervisor, ExecSessionSupervisorConfig, StartSessionError,
+    ExecSessionSpec, ExecSessionSupervisor, ExecSessionSupervisorConfig, SessionControlError,
+    StartSessionError,
 };
 use redesmyn_ids::TaskId;
 use redesmyn_protocol::artifacts::StorageHint;
@@ -314,6 +315,148 @@ async fn emits_log_artifacts_for_large_output() {
             .iter()
             .all(|artifact| matches!(&artifact.storage_hint, Some(StorageHint::BlobKey { .. })))
     );
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_sessions_do_not_clear_active_task_marker() {
+    let (frames_tx, mut frames_rx) = mpsc::channel(256);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
+
+    let config = ExecSessionSupervisorConfig {
+        emit_log_artifact_threshold_bytes: 1024 * 1024,
+        ..ExecSessionSupervisorConfig::default()
+    };
+
+    let supervisor = ExecSessionSupervisor::new(config, artifact_store, frames_tx)
+        .await
+        .expect("supervisor");
+
+    let task_id = TaskId::new();
+    let scope = SessionScope::Task { task_id };
+
+    let script = r#"
+set -euo pipefail
+trap 'exit 0' INT TERM
+while true; do sleep 0.1; done
+"#;
+
+    let session_1 = supervisor
+        .start_session(
+            task_id,
+            ExecSessionSpec {
+                scope,
+                interface_mode: InterfaceMode::Structured,
+                argv: vec!["bash".to_owned(), "-c".to_owned(), script.to_owned()],
+                env: Vec::new(),
+                cwd: tmp.path().to_path_buf(),
+                parser: None,
+                allow_concurrent_for_task: true,
+            },
+        )
+        .await
+        .expect("start_session 1");
+
+    let session_2 = supervisor
+        .start_session(
+            task_id,
+            ExecSessionSpec {
+                scope,
+                interface_mode: InterfaceMode::Structured,
+                argv: vec!["bash".to_owned(), "-c".to_owned(), script.to_owned()],
+                env: Vec::new(),
+                cwd: tmp.path().to_path_buf(),
+                parser: None,
+                allow_concurrent_for_task: true,
+            },
+        )
+        .await
+        .expect("start_session 2");
+
+    supervisor
+        .stop_session(session_1)
+        .await
+        .expect("stop_session 1");
+
+    let _records =
+        collect_until_session_ended(&mut frames_rx, session_1, Duration::from_secs(5)).await;
+
+    // Wait for the supervisor cleanup loop to drop session_1 so we cover the bookkeeping path.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match supervisor.stop_session(session_1).await {
+                Err(SessionControlError::UnknownSession { .. }) => break,
+                Err(SessionControlError::SessionClosed { .. }) | Ok(()) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    })
+    .await
+    .expect("timeout waiting for supervisor cleanup");
+
+    let err = supervisor
+        .start_session(
+            task_id,
+            ExecSessionSpec {
+                scope,
+                interface_mode: InterfaceMode::Structured,
+                argv: vec!["bash".to_owned(), "-c".to_owned(), "exit 0".to_owned()],
+                env: Vec::new(),
+                cwd: tmp.path().to_path_buf(),
+                parser: None,
+                allow_concurrent_for_task: false,
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, StartSessionError::TaskHasActiveSession { .. }),
+        "unexpected error: {err:?}"
+    );
+
+    supervisor
+        .stop_session(session_2)
+        .await
+        .expect("stop_session 2");
+
+    let _records =
+        collect_until_session_ended(&mut frames_rx, session_2, Duration::from_secs(5)).await;
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match supervisor.stop_session(session_2).await {
+                Err(SessionControlError::UnknownSession { .. }) => break,
+                Err(SessionControlError::SessionClosed { .. }) | Ok(()) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    })
+    .await
+    .expect("timeout waiting for supervisor cleanup");
+
+    let session_3 = supervisor
+        .start_session(
+            task_id,
+            ExecSessionSpec {
+                scope,
+                interface_mode: InterfaceMode::Structured,
+                argv: vec!["bash".to_owned(), "-c".to_owned(), "exit 0".to_owned()],
+                env: Vec::new(),
+                cwd: tmp.path().to_path_buf(),
+                parser: None,
+                allow_concurrent_for_task: false,
+            },
+        )
+        .await
+        .expect("start_session 3");
+
+    let _records =
+        collect_until_session_ended(&mut frames_rx, session_3, Duration::from_secs(5)).await;
 
     supervisor.shutdown().await;
 }
