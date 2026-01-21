@@ -1422,8 +1422,10 @@ dependencies = [
  "redesmyn_protocol",
  "redesmyn_storage",
  "redesmyn_transport",
+ "sqlx",
  "tempfile",
  "thiserror",
+ "time",
  "tokio",
 ]
 
