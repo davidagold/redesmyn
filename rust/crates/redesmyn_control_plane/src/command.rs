@@ -25,7 +25,6 @@ struct CommandUpdatePayload {
     message: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct CommandRegistry {
     state: RwLock<HashMap<CommandId, CommandState>>,
     event_log: EventLog,

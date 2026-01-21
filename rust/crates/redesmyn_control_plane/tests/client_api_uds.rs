@@ -16,6 +16,44 @@ use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
 
+async fn insert_workspace_and_repo(
+    control_plane: &ControlPlane,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+) {
+    let now_ms = 0_i64;
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?, ?, ?, ?)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-workspace")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert workspace");
+
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-repo")
+    .bind("Test Repo")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert repository");
+}
+
 async fn connect_with_retry(path: &std::path::Path) -> tokio::net::UnixStream {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
@@ -125,6 +163,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
         workspace_id,
         repo_id,
     };
+    insert_workspace_and_repo(&control_plane, workspace_id, repo_id).await;
     let trace_id = TraceId::from_bytes([0x11; TraceId::BYTE_LEN]);
     let subscribe_envelope = ProtocolEnvelope::new()
         .with_scope(repo_scope.into())
@@ -217,6 +256,7 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
         workspace_id,
         repo_id,
     };
+    insert_workspace_and_repo(&control_plane, workspace_id, repo_id).await;
     let trace_id = TraceId::from_bytes([0x22; TraceId::BYTE_LEN]);
 
     let after_event_id = control_plane
