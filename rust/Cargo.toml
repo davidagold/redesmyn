@@ -24,6 +24,7 @@ redesmyn_protocol = { path = "crates/redesmyn_protocol" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
 redesmyn_transport = { path = "crates/redesmyn_transport" }
 redesmyn_ui = { path = "crates/redesmyn_ui" }
+redesmyn_ui_graph = { path = "crates/redesmyn_ui_graph" }
 
 # External dependencies (pinned versions; member crates should use `workspace = true`).
 clap = { version = "4.5.54", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }

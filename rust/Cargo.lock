@@ -4678,6 +4678,7 @@ dependencies = [
  "redesmyn_protocol",
  "redesmyn_transport",
  "redesmyn_ui",
+ "redesmyn_ui_graph",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -4794,6 +4795,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "redesmyn_ui_graph"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "redesmyn_graph_layout",
+ "redesmyn_ids",
+ "redesmyn_logging",
+ "redesmyn_protocol",
+ "redesmyn_ui",
 ]
 
 [[package]]

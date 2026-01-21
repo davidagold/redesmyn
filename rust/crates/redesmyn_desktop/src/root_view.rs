@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString,
-    ScrollHandle, Subscription, Window, div, prelude::*, px,
+    div, prelude::*, px, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Render, SharedString, Subscription, Window,
 };
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
-use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    Callout, CalloutKind, IconButton, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
-    SplitPaneState,
+    Callout, CalloutKind, IconButton, SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState,
 };
 use redesmyn_ui::utils::theme_for_window;
+use redesmyn_ui::UiContext;
+use redesmyn_ui_graph::GraphView;
 
 #[derive(Debug)]
 pub struct DesktopModel {
@@ -72,14 +72,16 @@ impl RootView {
 
         subscriptions.push(cx.subscribe(&workspace_pane, |this, _, event, cx| {
             if matches!(event, WorkspacePaneHostEvent::ToggleSessionsPane) {
-                this.split_pane.update(cx, |pane, cx| pane.toggle_collapsed(cx));
+                this.split_pane
+                    .update(cx, |pane, cx| pane.toggle_collapsed(cx));
             }
         }));
 
         subscriptions.push(cx.subscribe(&split_pane, |this, _, event, cx| match event {
             SplitPaneEvent::StateChanged(state) => {
-                this.workspace_pane
-                    .update(cx, |pane, cx| pane.set_sessions_collapsed(state.collapsed, cx));
+                this.workspace_pane.update(cx, |pane, cx| {
+                    pane.set_sessions_collapsed(state.collapsed, cx)
+                });
                 this.persist_split_pane_state(*state, cx);
             }
         }));
@@ -96,7 +98,9 @@ impl RootView {
             return;
         }
 
-        let result = cx.global_mut::<UiContext>().set_main_split_pane_state(state);
+        let result = cx
+            .global_mut::<UiContext>()
+            .set_main_split_pane_state(state);
         match result {
             Ok(()) => self
                 .workspace_pane
@@ -150,7 +154,12 @@ impl Render for EpicSessionPaneHost {
                     .flex()
                     .items_center()
                     .bg(theme.colors.surface_elevated)
-                    .child(div().text_sm().text_color(theme.colors.foreground).child("Sessions")),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .child("Sessions"),
+                    ),
             )
             .child(
                 div()
@@ -175,8 +184,8 @@ enum WorkspacePaneHostEvent {
 
 struct WorkspacePaneHost {
     focus_handle: FocusHandle,
-    scroll_handle: ScrollHandle,
     model: Entity<DesktopModel>,
+    graph_view: Entity<GraphView>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
 }
@@ -193,8 +202,8 @@ impl WorkspacePaneHost {
     fn new(model: Entity<DesktopModel>, sessions_collapsed: bool, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            scroll_handle: ScrollHandle::new(),
             model,
+            graph_view: cx.new(GraphView::new_demo),
             sessions_collapsed,
             ui_settings_error: None,
         }
@@ -227,7 +236,11 @@ impl Render for WorkspacePaneHost {
         let model = self.model.read(cx);
 
         let workspace = cx.entity();
-        let toggle_icon = if self.sessions_collapsed { "⟩" } else { "⟨" };
+        let toggle_icon = if self.sessions_collapsed {
+            "⟩"
+        } else {
+            "⟨"
+        };
         let toggle_tooltip = if self.sessions_collapsed {
             "Show sessions pane"
         } else {
@@ -249,112 +262,59 @@ impl Render for WorkspacePaneHost {
                 )
                 .tooltip(toggle_tooltip)
                 .on_click(move |event, window, cx| {
-                    workspace
-                        .update(cx, |this, cx| this.emit_toggle(event, window, cx))
+                    workspace.update(cx, |this, cx| this.emit_toggle(event, window, cx))
                 }),
             )
-            .child(div().text_sm().text_color(theme.colors.foreground).child("Workspace"));
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.colors.foreground)
+                    .child("Workspace"),
+            );
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.sm);
+        let mut body = div().flex().flex_col().size_full();
 
         if let Some(error) = self.ui_settings_error.clone() {
-            content = content.child(
-                Callout::new(error)
-                    .kind(CalloutKind::Warning)
-                    .title("Unable to save UI settings"),
+            body = body.child(
+                div().px(theme.spacing.md).pt(theme.spacing.md).child(
+                    Callout::new(error)
+                        .kind(CalloutKind::Warning)
+                        .title("Unable to save UI settings"),
+                ),
             );
         }
 
-        content = content.child(
-            div()
-                .text_sm()
-                .text_color(theme.colors.foreground_muted)
-                .child("WorkspacePaneHost (placeholder)"),
-        );
-
-        content = content.child(
-            div()
-                .text_sm()
-                .text_color(theme.colors.foreground_muted)
-                .child("Graph + details will live here (Domain 6)."),
-        );
-
-        content = content.child(
-            div()
-                .pt(theme.spacing.md)
-                .text_sm()
-                .text_color(theme.colors.foreground)
-                .child("Desktop bootstrap (debug)"),
-        );
-
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Control plane: {}",
+        let bootstrap_status = format!(
+            "Bootstrap: control plane {} · daemon {} · host {} · client {}",
             if model.config.desktop.embed_control_plane {
                 "embedded"
             } else {
                 "external"
-            }
-        )));
-
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Daemon: {}",
+            },
             if model.config.desktop.embed_daemon {
                 "embedded"
             } else {
                 "external"
-            }
-        )));
-
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Daemon host id: {}",
+            },
             model
                 .daemon_host_id
                 .map(|id| id.to_string())
-                .unwrap_or_else(|| "<none>".to_string())
-        )));
-
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Client transport: {}",
+                .unwrap_or_else(|| "<none>".to_string()),
             if model.control_plane_client.is_some() {
                 "in-proc"
             } else {
                 "uds"
             }
-        )));
+        );
 
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Control plane DB: {}",
-            model.config.control_plane.db.path.display()
-        )));
-
-        content = content.child(div().text_sm().text_color(theme.colors.foreground_muted).child(format!(
-            "Client socket: {}",
-            if model.control_plane_client.is_some() {
-                "<disabled (in-proc)>".to_string()
-            } else {
-                model
-                    .config
-                    .control_plane
-                    .api
-                    .client_socket_path
-                    .display()
-                    .to_string()
-            }
-        )));
-
-        let body = ScrollArea::new(("workspace_scroll", cx.entity_id()), self.scroll_handle.clone())
-            .scrollbar_width(px(10.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .px(theme.spacing.md)
-                    .py(theme.spacing.md)
-                    .child(content),
-            );
+        body = body.child(
+            div()
+                .px(theme.spacing.md)
+                .py(theme.spacing.sm)
+                .text_sm()
+                .text_color(theme.colors.foreground_muted)
+                .child(bootstrap_status),
+        );
 
         div()
             .flex()
@@ -362,7 +322,7 @@ impl Render for WorkspacePaneHost {
             .size_full()
             .bg(theme.colors.background)
             .child(header)
-            .child(div().flex_1().child(body))
+            .child(div().flex_1().child(body.child(self.graph_view.clone())))
             .track_focus(&self.focus_handle(cx))
     }
 }
