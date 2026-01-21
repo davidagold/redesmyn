@@ -186,38 +186,8 @@ async fn get_epic_graph_returns_typed_projection() {
     .await
     .expect("insert daemon presence");
 
-    let session_id = SessionId::new();
-    let session_event_id = SessionEventId::new();
-    sqlx::query(
-        r#"
-        INSERT INTO session_events (
-            id,
-            session_id,
-            created_at_ms,
-            scope_kind,
-            scope_workspace_id,
-            scope_repo_id,
-            epic_id,
-            task_id,
-            kind,
-            turn_id,
-            message_preview,
-            artifact_id,
-            payload
-        )
-        VALUES (?1, ?2, ?3, 'task', ?4, ?5, ?6, ?7, 'turn.started', 't1', 'preview', NULL, X'')
-        "#,
-    )
-    .bind(session_event_id)
-    .bind(session_id)
-    .bind(now_ms + 3)
-    .bind(workspace_id)
-    .bind(repo_id)
-    .bind(epic_id)
-    .bind(task_id)
-    .execute(&db)
-    .await
-    .expect("insert session event");
+    let (_session_id, session_event_id) =
+        seed_session_event(&db, now_ms + 3, workspace_id, repo_id, epic_id, task_id).await;
 
     let event_id = EventId::new();
     sqlx::query(
@@ -325,4 +295,49 @@ async fn get_epic_graph_returns_typed_projection() {
 
     server.abort();
     let _ = server.await;
+}
+
+async fn seed_session_event(
+    db: &sqlx::SqlitePool,
+    created_at_ms: i64,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    epic_id: EpicId,
+    task_id: TaskId,
+) -> (SessionId, SessionEventId) {
+    let session_id = SessionId::new();
+    let session_event_id = SessionEventId::new();
+
+    sqlx::query(
+        r#"
+        INSERT INTO session_events (
+            id,
+            session_id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            epic_id,
+            task_id,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        )
+        VALUES (?1, ?2, ?3, 'task', ?4, ?5, ?6, ?7, 'turn.started', 't1', 'preview', NULL, X'')
+        "#,
+    )
+    .bind(session_event_id)
+    .bind(session_id)
+    .bind(created_at_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(epic_id)
+    .bind(task_id)
+    .execute(db)
+    .await
+    .expect("insert session event");
+
+    (session_id, session_event_id)
 }
