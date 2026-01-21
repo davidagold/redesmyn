@@ -1,10 +1,13 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use redesmyn_domain::agent::AppServerTurnIntent;
 use redesmyn_exec::app_server::{
     AppServerClient, AppServerConnection, AppServerEvent, AppServerProcess, AppServerProcessError,
     AppServerRequest, AppServerRequestError, AppServerResponse, AppServerSessionSpec,
-    AppServerSupervisor, AppServerSupervisorConfig, BoxFuture,
+    AppServerSupervisor, AppServerSupervisorConfig, BoxFuture, SessionControlError,
+    StartSessionError,
 };
 use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_ids::TaskId;
@@ -66,6 +69,64 @@ impl AppServerClient for FakeAppServerClient {
     }
 }
 
+#[derive(Default)]
+struct FlakyConnectProcess {
+    connect_calls: AtomicUsize,
+}
+
+impl AppServerProcess for FlakyConnectProcess {
+    fn start(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn connect(&self) -> BoxFuture<'_, Result<AppServerConnection, AppServerProcessError>> {
+        let connect_call = self.connect_calls.fetch_add(1, Ordering::Relaxed);
+        Box::pin(async move {
+            if connect_call > 0 {
+                return Err(AppServerProcessError::ConnectFailed {
+                    reason: "forced reconnect failure".to_owned(),
+                });
+            }
+
+            let (events_tx, events_rx) = mpsc::channel::<AppServerEvent>(16);
+            Ok(AppServerConnection {
+                client: Arc::new(FakeAppServerClient { events_tx }),
+                events: events_rx,
+            })
+        })
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct FailingConnectProcess {
+    shutdown_calls: Arc<AtomicUsize>,
+}
+
+impl AppServerProcess for FailingConnectProcess {
+    fn start(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn connect(&self) -> BoxFuture<'_, Result<AppServerConnection, AppServerProcessError>> {
+        Box::pin(async {
+            Err(AppServerProcessError::ConnectFailed {
+                reason: "forced connect failure".to_owned(),
+            })
+        })
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        let shutdown_calls = Arc::clone(&self.shutdown_calls);
+        Box::pin(async move {
+            shutdown_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        })
+    }
+}
+
 async fn collect_session_records(
     rx: &mut mpsc::Receiver<redesmyn_protocol::daemon::DaemonFrame>,
     session_id: redesmyn_ids::SessionId,
@@ -84,6 +145,39 @@ async fn collect_session_records(
             .collect(),
         _ => Vec::new(),
     }
+}
+
+async fn collect_until_session_ended(
+    rx: &mut mpsc::Receiver<redesmyn_protocol::daemon::DaemonFrame>,
+    session_id: redesmyn_ids::SessionId,
+    timeout: Duration,
+) -> Vec<SessionEvent> {
+    let mut out = Vec::new();
+    loop {
+        let records = collect_session_records(rx, session_id, timeout).await;
+        let ended = records
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::SessionEnded(_)));
+        out.extend(records);
+        if ended {
+            return out;
+        }
+    }
+}
+
+async fn wait_for_session_cleanup(supervisor: &AppServerSupervisor, session_id: redesmyn_ids::SessionId) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match supervisor.stop_session(session_id).await {
+                Err(SessionControlError::UnknownSession { .. }) => break,
+                Err(SessionControlError::SessionClosed { .. }) | Ok(()) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    })
+    .await
+    .expect("timeout waiting for supervisor cleanup");
 }
 
 #[tokio::test]
@@ -146,5 +240,189 @@ async fn send_message_round_trips_and_emits_structured_event() {
         .stop_session(session_id)
         .await
         .expect("stop_session");
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn concurrent_sessions_do_not_clear_active_task_marker() {
+    let (frames_tx, mut frames_rx) = mpsc::channel(256);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
+
+    let supervisor = AppServerSupervisor::new(
+        AppServerSupervisorConfig::default(),
+        artifact_store,
+        frames_tx,
+    )
+    .await
+    .expect("supervisor");
+
+    let task_id = TaskId::new();
+    let scope = SessionScope::Task { task_id };
+
+    let session_1 = supervisor
+        .start_session(
+            task_id,
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: true,
+                process: Arc::new(FakeAppServerProcess),
+            },
+        )
+        .await
+        .expect("start_session 1");
+
+    let session_2 = supervisor
+        .start_session(
+            task_id,
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: true,
+                process: Arc::new(FakeAppServerProcess),
+            },
+        )
+        .await
+        .expect("start_session 2");
+
+    supervisor
+        .stop_session(session_1)
+        .await
+        .expect("stop_session 1");
+
+    let _records =
+        collect_until_session_ended(&mut frames_rx, session_1, Duration::from_secs(5)).await;
+    wait_for_session_cleanup(&supervisor, session_1).await;
+
+    let err = supervisor
+        .start_session(
+            task_id,
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: false,
+                process: Arc::new(FakeAppServerProcess),
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, StartSessionError::TaskHasActiveSession { .. }),
+        "unexpected error: {err:?}"
+    );
+
+    supervisor
+        .stop_session(session_2)
+        .await
+        .expect("stop_session 2");
+    let _records =
+        collect_until_session_ended(&mut frames_rx, session_2, Duration::from_secs(5)).await;
+    wait_for_session_cleanup(&supervisor, session_2).await;
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn reconnect_failure_does_not_kill_event_forwarding() {
+    let (frames_tx, mut frames_rx) = mpsc::channel(256);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
+
+    let supervisor = AppServerSupervisor::new(
+        AppServerSupervisorConfig::default(),
+        artifact_store,
+        frames_tx,
+    )
+    .await
+    .expect("supervisor");
+
+    let task_id = TaskId::new();
+    let scope = SessionScope::Task { task_id };
+
+    let session_id = supervisor
+        .start_session(
+            task_id,
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: false,
+                process: Arc::new(FlakyConnectProcess::default()),
+            },
+        )
+        .await
+        .expect("start_session");
+
+    assert!(supervisor.reconnect_session(session_id).await.is_err());
+
+    let response = supervisor
+        .send_message(
+            session_id,
+            AppServerTurnIntent::StartNew {
+                prompt: "hi".to_owned(),
+            },
+        )
+        .await
+        .expect("send_message");
+    assert_eq!(response, AppServerResponse::MessageAccepted);
+
+    let mut saw_assistant_message = false;
+    for _ in 0..10 {
+        let records =
+            collect_session_records(&mut frames_rx, session_id, Duration::from_secs(2)).await;
+        for event in records {
+            if matches!(event.kind, SessionEventKind::AssistantMessage(_)) {
+                saw_assistant_message = true;
+                break;
+            }
+        }
+        if saw_assistant_message {
+            break;
+        }
+    }
+    assert!(saw_assistant_message, "expected an assistant message event");
+
+    supervisor
+        .stop_session(session_id)
+        .await
+        .expect("stop_session");
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn connect_failure_triggers_shutdown() {
+    let (frames_tx, _frames_rx) = mpsc::channel(256);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
+
+    let supervisor = AppServerSupervisor::new(
+        AppServerSupervisorConfig::default(),
+        artifact_store,
+        frames_tx,
+    )
+    .await
+    .expect("supervisor");
+
+    let task_id = TaskId::new();
+    let scope = SessionScope::Task { task_id };
+
+    let shutdown_calls = Arc::new(AtomicUsize::new(0));
+    let err = supervisor
+        .start_session(
+            task_id,
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: false,
+                process: Arc::new(FailingConnectProcess {
+                    shutdown_calls: Arc::clone(&shutdown_calls),
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, StartSessionError::Process(AppServerProcessError::ConnectFailed { .. })),
+        "unexpected error: {err:?}"
+    );
+    assert_eq!(shutdown_calls.load(Ordering::Relaxed), 1);
+
     supervisor.shutdown().await;
 }

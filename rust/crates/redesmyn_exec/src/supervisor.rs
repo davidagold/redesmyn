@@ -17,6 +17,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::artifact_store::{ArtifactStoreError, LocalArtifactStore};
 use crate::parser::{OutputStream, SessionOutputParser};
+use crate::text_limits::{normalize_preview, truncate_chars};
 
 #[derive(Debug, Clone)]
 pub struct ExecSessionSupervisorConfig {
@@ -766,24 +767,4 @@ async fn limit_message_event(
     *full_text_artifact = Some(artifact);
     *text = truncate_chars(text, config.max_message_chars);
     Ok(())
-}
-
-fn normalize_preview(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
 }
