@@ -9,8 +9,8 @@ use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Protocol
 use redesmyn_transport::{DaemonConnection, TransportError};
 use tokio::sync::watch;
 
+use crate::DaemonCapabilities;
 use crate::backoff::Backoff;
-use crate::capabilities::DaemonCapabilities;
 use crate::host_identity::HostIdentity;
 
 pub type ControlPlaneConnectFuture =
@@ -57,9 +57,10 @@ enum HandshakeError {
 impl HandshakeError {
     fn into_envelope(&self) -> ErrorEnvelope {
         match self {
-            Self::Transport(_) => {
-                ErrorEnvelope::new(ErrorCategory::Unavailable, "Transport error during handshake.")
-            }
+            Self::Transport(_) => ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Transport error during handshake.",
+            ),
             Self::Rejected(err) => err.clone(),
             Self::UnexpectedMessage(_) => ErrorEnvelope::new(
                 ErrorCategory::InvalidRequest,
@@ -125,7 +126,15 @@ pub async fn run_control_plane_connection_manager(
         };
 
         let _ = state_tx.send(ConnectionState::Handshaking);
-        match perform_handshake(&mut *conn, identity, capabilities, supported_protocol, &mut shutdown_rx).await {
+        match perform_handshake(
+            &mut *conn,
+            identity,
+            capabilities,
+            supported_protocol,
+            &mut shutdown_rx,
+        )
+        .await
+        {
             Ok(accepted_protocol) => {
                 backoff.reset();
                 if !minor_mismatch_logged && accepted_protocol.minor != supported_protocol.minor {
@@ -218,8 +227,7 @@ async fn perform_handshake(
     };
     match frame.message {
         DaemonMessage::ControlPlaneHelloAck(ControlPlaneHelloAck {
-            accepted_protocol,
-            ..
+            accepted_protocol, ..
         }) => {
             if accepted_protocol.major != supported_protocol.major
                 || accepted_protocol.minor > supported_protocol.minor
@@ -230,7 +238,11 @@ async fn perform_handshake(
                 });
             }
 
-            if frame.envelope.correlation_id.is_some_and(|id| id != correlation_id) {
+            if frame
+                .envelope
+                .correlation_id
+                .is_some_and(|id| id != correlation_id)
+            {
                 tracing::debug!(
                     expected = %correlation_id,
                     actual = ?frame.envelope.correlation_id,
