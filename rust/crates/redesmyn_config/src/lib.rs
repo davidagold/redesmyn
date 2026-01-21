@@ -55,5 +55,8 @@ pub use crate::model::{
     ControlPlaneDbConfig, DaemonConfig, DesktopConfig, DesktopFixtureMode, ExecutorConfig,
     RustConfig, SandboxConfig, SandboxNetworkMode, SandboxType, WindowConfig,
 };
-pub use crate::paths::{discover_repo_root_from, global_config_path, repo_config_path};
+pub use crate::paths::{
+    discover_repo_root_from, global_config_path, legacy_db_path, repo_config_path, repo_state_dir,
+    rust_db_path,
+};
 pub use crate::secret::SecretString;

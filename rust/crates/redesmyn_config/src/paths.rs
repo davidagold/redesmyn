@@ -19,12 +19,30 @@ pub fn repo_config_path(repo_root: &Path) -> PathBuf {
     state_dir(repo_root).join("config.toml")
 }
 
+/// `<repo>/.redesmyn/`.
+///
+/// This is the repo-scoped state directory shared by the legacy Python app and
+/// the Rust port during the split-codebase period.
+pub fn repo_state_dir(repo_root: &Path) -> PathBuf {
+    state_dir(repo_root)
+}
+
+/// Legacy Python DB (Alembic): `<repo>/.redesmyn/redesmyn.sqlite3`.
+pub fn legacy_db_path(repo_root: &Path) -> PathBuf {
+    state_dir(repo_root).join("redesmyn.sqlite3")
+}
+
+/// Rust control plane DB (sqlx): `<repo>/.redesmyn/redesmyn_rust.sqlite3`.
+pub fn rust_db_path(repo_root: &Path) -> PathBuf {
+    state_dir(repo_root).join("redesmyn_rust.sqlite3")
+}
+
 pub(crate) fn state_dir(base_dir: &Path) -> PathBuf {
     base_dir.join(DEFAULT_STATE_DIR_NAME)
 }
 
 pub(crate) fn default_db_path(base_dir: &Path) -> PathBuf {
-    state_dir(base_dir).join("redesmyn_rust.sqlite3")
+    rust_db_path(base_dir)
 }
 
 pub(crate) fn default_repo_registry_dir(base_dir: &Path) -> PathBuf {
