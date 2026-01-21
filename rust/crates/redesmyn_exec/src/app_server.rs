@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,6 +16,7 @@ use redesmyn_protocol::session::{
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use crate::active_sessions::ActiveSessionsByTask;
 use crate::artifact_store::{ArtifactStoreError, LocalArtifactStore};
 use crate::text_limits::{normalize_preview, truncate_chars};
 
@@ -182,7 +183,7 @@ pub struct AppServerSupervisor {
 struct SupervisorState {
     is_shutting_down: bool,
     sessions: HashMap<SessionId, SessionEntry>,
-    active_by_task: HashMap<(TaskId, InterfaceMode), HashSet<SessionId>>,
+    active_by_task: ActiveSessionsByTask,
 }
 
 #[derive(Debug)]
@@ -223,13 +224,8 @@ impl AppServerSupervisor {
             while let Some(session_id) = cleanup_rx.recv().await {
                 let mut st = state_for_cleanup.lock().await;
                 if let Some(entry) = st.sessions.remove(&session_id) {
-                    let key = (entry.task_id, entry.interface_mode);
-                    if let Some(active) = st.active_by_task.get_mut(&key) {
-                        active.remove(&session_id);
-                        if active.is_empty() {
-                            st.active_by_task.remove(&key);
-                        }
-                    }
+                    st.active_by_task
+                        .remove(entry.task_id, entry.interface_mode, session_id);
                 }
             }
         });
@@ -269,13 +265,9 @@ impl AppServerSupervisor {
             }
 
             if !spec.allow_concurrent_for_task {
-                if let Some(existing) = st
-                    .active_by_task
-                    .get(&(task_id, interface_mode))
-                    .and_then(|active| active.iter().next())
-                {
+                if let Some(existing) = st.active_by_task.any_session(task_id, interface_mode) {
                     return Err(StartSessionError::TaskHasActiveSession {
-                        session_id: *existing,
+                        session_id: existing,
                         interface_mode,
                     });
                 }
@@ -318,9 +310,7 @@ impl AppServerSupervisor {
                 },
             );
             st.active_by_task
-                .entry((task_id, interface_mode))
-                .or_default()
-                .insert(session_id);
+                .insert(task_id, interface_mode, session_id);
         }
 
         match ready_rx.await {
@@ -403,13 +393,8 @@ impl AppServerSupervisor {
     async fn cleanup_local(&self, session_id: SessionId) {
         let mut st = self.state.lock().await;
         if let Some(entry) = st.sessions.remove(&session_id) {
-            let key = (entry.task_id, entry.interface_mode);
-            if let Some(active) = st.active_by_task.get_mut(&key) {
-                active.remove(&session_id);
-                if active.is_empty() {
-                    st.active_by_task.remove(&key);
-                }
-            }
+            st.active_by_task
+                .remove(entry.task_id, entry.interface_mode, session_id);
         }
     }
 

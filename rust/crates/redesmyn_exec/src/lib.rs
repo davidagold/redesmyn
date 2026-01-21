@@ -5,4 +5,5 @@ pub mod artifact_store;
 pub mod parser;
 pub mod supervisor;
 
+mod active_sessions;
 mod text_limits;
