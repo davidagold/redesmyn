@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, EventEmitter, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Render, Window, div, px, prelude::*,
+    ClickEvent, Context, CursorStyle, DragMoveEvent, EventEmitter, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Window, div, px, prelude::*,
 };
 
 use crate::utils::theme_for_window;
@@ -47,6 +47,23 @@ pub struct SplitPane {
 struct DragState {
     origin: Point<Pixels>,
     start_primary_px: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SplitPaneResizeDrag;
+
+struct SplitPaneResizeDragGhost;
+
+impl SplitPaneResizeDragGhost {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+}
+
+impl Render for SplitPaneResizeDragGhost {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size(px(0.0)).opacity(0.0)
+    }
 }
 
 impl EventEmitter<SplitPaneEvent> for SplitPane {}
@@ -110,19 +127,43 @@ impl SplitPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.update_primary_size(event.position, window, cx);
+    }
+
+    fn on_drag_move(
+        &mut self,
+        event: &DragMoveEvent<SplitPaneResizeDrag>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_primary_size(event.event.position, window, cx);
+    }
+
+    fn update_primary_size(
+        &mut self,
+        cursor_position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(dragging) = self.dragging else {
             return;
         };
 
         let max_primary_px = max_primary_px_for(self.axis, window);
         let delta = match self.axis {
-            SplitPaneAxis::Horizontal => f32::from(event.position.x - dragging.origin.x),
-            SplitPaneAxis::Vertical => f32::from(event.position.y - dragging.origin.y),
+            SplitPaneAxis::Horizontal => f32::from(cursor_position.x - dragging.origin.x),
+            SplitPaneAxis::Vertical => f32::from(cursor_position.y - dragging.origin.y),
         };
 
-        self.state.primary_size_px = (dragging.start_primary_px + delta)
+        let primary_size_px = (dragging.start_primary_px + delta)
             .clamp(self.min_primary_px, max_primary_px)
             .max(0.0);
+
+        if (primary_size_px - self.state.primary_size_px).abs() <= f32::EPSILON {
+            return;
+        }
+
+        self.state.primary_size_px = primary_size_px;
         cx.notify();
     }
 
@@ -148,13 +189,20 @@ impl Render for SplitPane {
             .when(axis == SplitPaneAxis::Horizontal, |this| this.w(handle_w))
             .when(axis == SplitPaneAxis::Vertical, |this| this.h(handle_h))
             .bg(theme.colors.border.opacity(0.35))
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.0))
             .cursor(resize_cursor)
             .focusable()
             .focus(|mut style| {
                 style.border_color = Some(theme.colors.ring);
                 style
             })
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_divider_mouse_down))
+            .when(!self.state.collapsed, |this| {
+                this.on_mouse_down(MouseButton::Left, cx.listener(Self::on_divider_mouse_down))
+                    .on_drag(SplitPaneResizeDrag, |_, _, _, cx| {
+                        cx.new(SplitPaneResizeDragGhost::new)
+                    })
+            })
             .on_click(cx.listener(Self::on_divider_click));
 
         let primary_size = if self.state.collapsed {
@@ -177,6 +225,7 @@ impl Render for SplitPane {
             .size_full()
             .when(axis == SplitPaneAxis::Horizontal, |this| this.flex_row())
             .when(axis == SplitPaneAxis::Vertical, |this| this.flex_col())
+            .on_drag_move(cx.listener(Self::on_drag_move))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
