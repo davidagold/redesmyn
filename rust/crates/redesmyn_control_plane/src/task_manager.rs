@@ -1,5 +1,6 @@
 use std::future::Future;
 
+use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 
@@ -9,15 +10,17 @@ use redesmyn_logging::tracing;
 pub struct TaskManager {
     shutdown_tx: broadcast::Sender<()>,
     tasks: JoinSet<()>,
+    runtime: Handle,
 }
 
 impl TaskManager {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(runtime: Handle) -> Self {
         let (shutdown_tx, _shutdown_rx) = broadcast::channel(1);
         Self {
             shutdown_tx,
             tasks: JoinSet::new(),
+            runtime,
         }
     }
 
@@ -26,11 +29,14 @@ impl TaskManager {
         task_name: &'static str,
         f: impl Future<Output = ()> + Send + 'static,
     ) {
-        self.tasks.spawn(async move {
-            let span = tracing::info_span!("control_plane.task", task = task_name);
-            let _enter = span.enter();
-            f.await;
-        });
+        self.tasks.spawn_on(
+            async move {
+                let span = tracing::info_span!("control_plane.task", task = task_name);
+                let _enter = span.enter();
+                f.await;
+            },
+            &self.runtime,
+        );
     }
 
     #[must_use]
@@ -50,4 +56,3 @@ impl TaskManager {
         }
     }
 }
-

@@ -4647,6 +4647,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
 ]
 
@@ -4660,7 +4661,7 @@ dependencies = [
  "redesmyn_protocol",
  "redesmyn_transport",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
 ]
 

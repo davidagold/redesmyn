@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use redesmyn_logging::tracing::{self, Instrument as _, info};
 use sqlx::SqlitePool;
+use tokio::runtime::Handle;
 
 use crate::client_api::{ClientApiCodec, ClientApiServeError};
 use crate::command::{CommandRegistry, CommandState};
@@ -125,7 +126,7 @@ impl ControlPlane {
             commands,
         });
 
-        let mut tasks = TaskManager::new();
+        let mut tasks = TaskManager::new(Handle::current());
 
         #[cfg(unix)]
         if let Some(socket_path) = options.client_api_socket_path.clone() {
