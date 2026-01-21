@@ -1,0 +1,15 @@
+[package]
+name = "redesmyn_session_view_model"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_ids.workspace = true
+redesmyn_protocol.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+time.workspace = true

@@ -21,10 +21,12 @@ redesmyn_ids = { path = "crates/redesmyn_ids" }
 redesmyn_graph_layout = { path = "crates/redesmyn_graph_layout" }
 redesmyn_logging = { path = "crates/redesmyn_logging" }
 redesmyn_protocol = { path = "crates/redesmyn_protocol" }
+redesmyn_session_view_model = { path = "crates/redesmyn_session_view_model" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
 redesmyn_transport = { path = "crates/redesmyn_transport" }
 redesmyn_ui = { path = "crates/redesmyn_ui" }
 redesmyn_ui_graph = { path = "crates/redesmyn_ui_graph" }
+redesmyn_ui_session = { path = "crates/redesmyn_ui_session" }
 
 # External dependencies (pinned versions; member crates should use `workspace = true`).
 clap = { version = "4.5.54", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }

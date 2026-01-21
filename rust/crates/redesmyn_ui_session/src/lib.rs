@@ -1,0 +1,764 @@
+//! Session viewer scaffolding for GPUI (Domain 7).
+
+#![forbid(unsafe_code)]
+
+use std::collections::HashMap;
+use std::str::FromStr as _;
+use std::time::Duration;
+
+use gpui::{
+    App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
+    SharedString, Subscription, Task, WeakEntity, Window, div, px,
+};
+use tokio::sync::{mpsc, oneshot};
+
+use gpui::prelude::*;
+
+use redesmyn_ids::{RequestId, SessionEventId, SessionId, SubscriptionId};
+use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_protocol::client::{
+    ClientFrame, ClientMessage, GetSessionEventsRequest, GetSessionEventsResponse, Request,
+    RequestPayload, ResponseResult, SessionEventCursor, SessionEventsFilter, Subscribe,
+    SubscriptionEvent, SubscriptionFilter,
+};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
+use redesmyn_transport::client::ClientConnection;
+use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
+
+use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
+use redesmyn_ui::components::{
+    Callout, CalloutKind, ScrollArea, TextButton, TextInput, TextInputEvent,
+};
+use redesmyn_ui::utils::theme_for_window;
+
+fn session_event_id_key(id: SessionEventId) -> u64 {
+    let bytes = id.to_bytes();
+    u64::from_be_bytes(bytes[0..8].try_into().expect("slice length"))
+}
+
+#[derive(Clone)]
+struct ClientApi {
+    tx: mpsc::Sender<ClientCommand>,
+}
+
+enum ClientCommand {
+    Request {
+        request: Request,
+        respond_to: oneshot::Sender<ResponseResult>,
+    },
+    SubscribeSessionEvents {
+        subscription_id: SubscriptionId,
+        filter: SessionEventsFilter,
+        events_tx: mpsc::Sender<SubscriptionEvent>,
+        ack: oneshot::Sender<Result<(), ErrorEnvelope>>,
+    },
+}
+
+impl ClientApi {
+    fn start(conn: ClientInProcEndpoint, cx: &mut Context<SessionView>) -> (Self, Task<()>) {
+        let (tx, rx) = mpsc::channel(64);
+        let api = Self { tx };
+
+        let task = cx.spawn(
+            move |_: WeakEntity<SessionView>, _cx: &mut AsyncApp| async move {
+                run_client_loop(conn, rx).await;
+            },
+        );
+
+        (api, task)
+    }
+
+    async fn request(&self, payload: RequestPayload) -> Result<ResponseResult, ErrorEnvelope> {
+        let request_id = RequestId::new();
+        let request = Request {
+            request_id,
+            payload,
+        };
+        let (tx, rx) = oneshot::channel();
+
+        self.tx
+            .send(ClientCommand::Request {
+                request,
+                respond_to: tx,
+            })
+            .await
+            .map_err(|_| {
+                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
+            })?;
+
+        rx.await.map_err(|_| {
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Client API response channel closed.",
+            )
+        })
+    }
+
+    async fn get_session_events(
+        &self,
+        session_id: SessionId,
+        before: Option<SessionEventCursor>,
+        limit: u32,
+    ) -> Result<GetSessionEventsResponse, ErrorEnvelope> {
+        let response = self
+            .request(RequestPayload::GetSessionEvents(GetSessionEventsRequest {
+                session_id,
+                before,
+                limit,
+                kinds: Vec::new(),
+            }))
+            .await?;
+
+        match response {
+            ResponseResult::GetSessionEvents(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(err),
+            other => Err(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("Unexpected response: {other:?}"),
+            )),
+        }
+    }
+
+    async fn subscribe_session_events(
+        &self,
+        session_id: SessionId,
+        after: Option<SessionEventCursor>,
+    ) -> Result<(SubscriptionId, mpsc::Receiver<SubscriptionEvent>), ErrorEnvelope> {
+        let subscription_id = SubscriptionId::new();
+        let (events_tx, events_rx) = mpsc::channel(256);
+        let (ack_tx, ack_rx) = oneshot::channel();
+
+        self.tx
+            .send(ClientCommand::SubscribeSessionEvents {
+                subscription_id,
+                filter: SessionEventsFilter { session_id, after },
+                events_tx,
+                ack: ack_tx,
+            })
+            .await
+            .map_err(|_| {
+                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
+            })?;
+
+        ack_rx.await.map_err(|_| {
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Client API subscription closed.",
+            )
+        })??;
+
+        Ok((subscription_id, events_rx))
+    }
+}
+
+async fn run_client_loop(mut conn: ClientInProcEndpoint, mut rx: mpsc::Receiver<ClientCommand>) {
+    let mut pending_requests: HashMap<RequestId, oneshot::Sender<ResponseResult>> = HashMap::new();
+    let mut subscriptions: HashMap<SubscriptionId, mpsc::Sender<SubscriptionEvent>> =
+        HashMap::new();
+    let mut subscribe_acks: HashMap<SubscriptionId, oneshot::Sender<Result<(), ErrorEnvelope>>> =
+        HashMap::new();
+
+    loop {
+        tokio::select! {
+            Some(cmd) = rx.recv() => match cmd {
+                ClientCommand::Request { request, respond_to } => {
+                    pending_requests.insert(request.request_id, respond_to);
+                    let frame = ClientFrame::new(ProtocolEnvelope::new(), ClientMessage::Request(request));
+                    if conn.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+                ClientCommand::SubscribeSessionEvents { subscription_id, filter, events_tx, ack } => {
+                    subscriptions.insert(subscription_id, events_tx);
+                    subscribe_acks.insert(subscription_id, ack);
+                    let frame = ClientFrame::new(
+                        ProtocolEnvelope::new(),
+                        ClientMessage::Subscribe(Subscribe { subscription_id, filter: SubscriptionFilter::SessionEvents(filter) }),
+                    );
+                    if conn.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+            },
+            frame = conn.recv() => {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(_) => break,
+                };
+
+                match frame.message {
+                    ClientMessage::Response(response) => {
+                        if let Some(tx) = pending_requests.remove(&response.request_id) {
+                            let _ = tx.send(response.result);
+                        }
+                    }
+                    ClientMessage::Event(event) => {
+                        if let Some(tx) = subscriptions.get(&event.subscription_id) {
+                            if let SubscriptionEvent::Subscribed(_) = &event.event {
+                                if let Some(ack) = subscribe_acks.remove(&event.subscription_id) {
+                                    let _ = ack.send(Ok(()));
+                                }
+                            }
+
+                            if let SubscriptionEvent::Error(err) = &event.event {
+                                if let Some(ack) = subscribe_acks.remove(&event.subscription_id) {
+                                    let _ = ack.send(Err(err.clone()));
+                                }
+                            }
+
+                            let _ = tx.send(event.event).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    for (_, tx) in pending_requests.drain() {
+        let _ = tx.send(ResponseResult::Error(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Client API connection closed.",
+        )));
+    }
+
+    for (_, tx) in subscribe_acks.drain() {
+        let _ = tx.send(Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Client API connection closed.",
+        )));
+    }
+}
+
+fn update_scroll_state(feed: &mut SessionFeedState, scroll_handle: &ScrollHandle) {
+    let offset_y = scroll_handle.offset().y;
+    let max_y = scroll_handle.max_offset().height;
+    let threshold = px(24.0);
+    let effective = if max_y > threshold {
+        max_y - threshold
+    } else {
+        px(0.0)
+    };
+    let at_bottom = max_y == px(0.0) || offset_y <= -effective;
+    feed.set_at_bottom(at_bottom);
+}
+
+fn apply_scroll_intents(feed: &mut SessionFeedState, scroll_handle: &ScrollHandle) {
+    if feed.scroll.pending_scroll_to_bottom {
+        scroll_handle.scroll_to_bottom();
+        feed.clear_scroll_intents();
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ScrollRestore {
+    top_index: usize,
+    top_offset: gpui::Pixels,
+    top_event_id: Option<SessionEventId>,
+}
+
+pub struct SessionView {
+    focus_handle: FocusHandle,
+    scroll_handle: ScrollHandle,
+    session_id_input: Entity<TextInput>,
+    feed: Option<SessionFeedState>,
+    client: Option<ClientApi>,
+    _client_task: Option<Task<()>>,
+    subscription_task: Option<Task<()>>,
+    subscription_id: Option<SubscriptionId>,
+    load_task: Option<Task<()>>,
+    load_older_task: Option<Task<()>>,
+    pending_scroll_restore: Option<ScrollRestore>,
+    error: Option<SharedString>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl Focusable for SessionView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl SessionView {
+    pub fn new(control_plane_client: Option<ClientInProcEndpoint>, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let scroll_handle = ScrollHandle::new();
+        let session_id_input = cx.new(|cx| TextInput::new(cx).placeholder("Session id…"));
+
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.subscribe(&session_id_input, |this, _, event, cx| {
+            if let TextInputEvent::Submitted(text) = event {
+                this.load_session_id(text.as_ref(), cx);
+            }
+        }));
+
+        let (client, client_task) = match control_plane_client {
+            Some(conn) => {
+                let (client, task) = ClientApi::start(conn, cx);
+                (Some(client), Some(task))
+            }
+            None => (None, None),
+        };
+
+        let initial_id = std::env::var("REDESMYN_SESSION_VIEWER_SESSION_ID").ok();
+        if let Some(id) = initial_id {
+            session_id_input.update(cx, move |input, cx| input.set_text(id, cx));
+        }
+
+        let mut this = Self {
+            focus_handle,
+            scroll_handle,
+            session_id_input,
+            feed: None,
+            client,
+            _client_task: client_task,
+            subscription_task: None,
+            subscription_id: None,
+            load_task: None,
+            load_older_task: None,
+            pending_scroll_restore: None,
+            error: None,
+            _subscriptions: subscriptions,
+        };
+
+        let initial = this.session_id_input.read(cx).text().clone();
+        if !initial.as_ref().trim().is_empty() {
+            this.load_session_id(initial.as_ref(), cx);
+        }
+
+        this
+    }
+
+    fn load_session_id(&mut self, raw: &str, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            self.error = Some("Control plane client is unavailable.".into());
+            cx.notify();
+            return;
+        };
+
+        let raw = raw.trim();
+        let session_id = match SessionId::from_str(raw) {
+            Ok(id) => id,
+            Err(_) => {
+                self.error = Some("Invalid session id.".into());
+                cx.notify();
+                return;
+            }
+        };
+
+        self.error = None;
+        self.feed = Some(SessionFeedState::new(session_id));
+        self.scroll_handle.scroll_to_bottom();
+        cx.notify();
+
+        let view = cx.entity();
+        self.load_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let response = client.get_session_events(session_id, None, 50).await;
+                let _ = cx
+                    .update(|cx| view.update(cx, |this, cx| this.on_history_loaded(response, cx)));
+            }
+        }));
+    }
+
+    fn on_history_loaded(
+        &mut self,
+        response: Result<GetSessionEventsResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        match response {
+            Ok(resp) => {
+                let after = resp.events.last().map(|event| SessionEventCursor {
+                    created_at: event.created_at,
+                    session_event_id: event.session_event_id,
+                });
+                feed.apply_history_page(resp.events, resp.next_cursor);
+                feed.set_at_bottom(true);
+                self.scroll_handle.scroll_to_bottom();
+                feed.clear_scroll_intents();
+                self.start_subscription(after, cx);
+            }
+            Err(err) => {
+                self.error = Some(err.message.into());
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn start_subscription(&mut self, after: Option<SessionEventCursor>, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        let session_id = feed.session_id;
+        let scroll_handle = self.scroll_handle.clone();
+        let view = cx.entity();
+
+        self.subscription_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let subscribed = client.subscribe_session_events(session_id, after).await;
+                let (subscription_id, mut events_rx) = match subscribed {
+                    Ok((id, rx)) => (id, rx),
+                    Err(err) => {
+                        let _ = cx.update(|cx| {
+                            view.update(cx, |this, cx| {
+                                if let Some(feed) = this.feed.as_mut() {
+                                    feed.apply_live_error(err.message);
+                                }
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.subscription_id = Some(subscription_id);
+                        if let Some(feed) = this.feed.as_mut() {
+                            feed.set_live_syncing(true);
+                        }
+                        cx.notify();
+                    })
+                });
+
+                while let Some(event) = events_rx.recv().await {
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_subscription_event(event, &scroll_handle, cx);
+                        })
+                    });
+                }
+            }
+        }));
+    }
+
+    fn on_subscription_event(
+        &mut self,
+        event: SubscriptionEvent,
+        scroll_handle: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        update_scroll_state(feed, scroll_handle);
+
+        match event {
+            SubscriptionEvent::SessionEvent(ev) => {
+                feed.apply_live_event(ev);
+                apply_scroll_intents(feed, scroll_handle);
+            }
+            SubscriptionEvent::Error(err) => {
+                feed.apply_live_error(err.message);
+            }
+            SubscriptionEvent::Subscribed(_) | SubscriptionEvent::EventLog(_) => {}
+        }
+
+        cx.notify();
+    }
+
+    fn capture_scroll_restore(&mut self) {
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        let (ix, offset) = self.scroll_handle.logical_scroll_top();
+        let items = feed.timeline_items();
+        let top_event_id = items.get(ix).and_then(|item| match item {
+            SessionTimelineItem::Event(ev) => Some(ev.session_event_id),
+            _ => None,
+        });
+
+        self.pending_scroll_restore = Some(ScrollRestore {
+            top_index: ix,
+            top_offset: offset,
+            top_event_id,
+        });
+    }
+
+    fn restore_scroll_after_prepend(&mut self, restore: ScrollRestore, cx: &mut Context<Self>) {
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        let items = feed.timeline_items();
+        let target_index = restore
+            .top_event_id
+            .and_then(|id| {
+                items.iter().position(|item| match item {
+                    SessionTimelineItem::Event(ev) => ev.session_event_id == id,
+                    _ => false,
+                })
+            })
+            .unwrap_or(restore.top_index)
+            .min(items.len().saturating_sub(1));
+
+        self.scroll_handle.scroll_to_top_of_item(target_index);
+
+        let scroll_handle = self.scroll_handle.clone();
+        let offset = restore.top_offset;
+        cx.spawn(move |_: WeakEntity<Self>, _cx: &mut AsyncApp| async move {
+            gpui::Timer::after(Duration::from_millis(0)).await;
+            let current = scroll_handle.offset();
+            scroll_handle.set_offset(gpui::point(current.x, current.y + offset));
+        })
+        .detach();
+    }
+
+    fn load_older(&mut self, _event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+
+        if self
+            .feed
+            .as_ref()
+            .is_some_and(|feed| feed.history.loading_older)
+        {
+            return;
+        }
+
+        let Some(before) = self.feed.as_ref().and_then(|feed| feed.history.next_cursor) else {
+            return;
+        };
+
+        self.capture_scroll_restore();
+        if let Some(feed) = self.feed.as_mut() {
+            feed.start_loading_older();
+        }
+        cx.notify();
+
+        let Some(session_id) = self.feed.as_ref().map(|feed| feed.session_id) else {
+            return;
+        };
+        let view = cx.entity();
+        self.load_older_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let response = client
+                    .get_session_events(session_id, Some(before), 50)
+                    .await;
+                let _ =
+                    cx.update(|cx| view.update(cx, |this, cx| this.on_older_loaded(response, cx)));
+            }
+        }));
+    }
+
+    fn on_older_loaded(
+        &mut self,
+        response: Result<GetSessionEventsResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        match response {
+            Ok(resp) => {
+                feed.apply_history_page(resp.events, resp.next_cursor);
+                if let Some(restore) = self.pending_scroll_restore.take() {
+                    self.restore_scroll_after_prepend(restore, cx);
+                }
+            }
+            Err(err) => {
+                feed.apply_history_error(err.message);
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn jump_to_bottom(
+        &mut self,
+        _event: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        feed.set_at_bottom(true);
+        feed.clear_scroll_intents();
+        self.scroll_handle.scroll_to_bottom();
+        cx.notify();
+    }
+}
+
+impl Render for SessionView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let theme = theme_for_window(window, cx);
+        let view = cx.entity();
+        let load_view = view.clone();
+
+        let mut content = div().flex().flex_col().gap(theme.spacing.sm);
+
+        if let Some(error) = self.error.clone() {
+            content = content.child(
+                Callout::new(error)
+                    .kind(CalloutKind::Warning)
+                    .title("Session viewer"),
+            );
+        }
+
+        if self.client.is_none() {
+            content = content.child(
+                Callout::new("Control plane client is unavailable in this mode.")
+                    .kind(CalloutKind::Info)
+                    .title("Session viewer"),
+            );
+        }
+
+        let controls = div()
+            .flex()
+            .flex_row()
+            .gap(theme.spacing.sm)
+            .items_center()
+            .child(self.session_id_input.clone())
+            .child(
+                TextButton::new(("session_load", cx.entity_id()), "Load").on_click(
+                    move |_, _, cx| {
+                        let id = load_view.read(cx).session_id_input.read(cx).text().clone();
+                        load_view.update(cx, |this, cx| this.load_session_id(id.as_ref(), cx));
+                    },
+                ),
+            );
+
+        content = content.child(controls);
+
+        let items = self
+            .feed
+            .as_ref()
+            .map(SessionFeedState::timeline_items)
+            .unwrap_or_default();
+
+        let feed_list = items.into_iter().enumerate().fold(
+            div().flex().flex_col().gap(theme.spacing.sm),
+            |list, (ix, item)| match item {
+                SessionTimelineItem::LoadOlder(row) => {
+                    let button = if row.in_flight {
+                        TextButton::new(("session_load_older", cx.entity_id()), "Loading older…")
+                            .disabled(true)
+                    } else {
+                        TextButton::new(("session_load_older", cx.entity_id()), "Load older")
+                            .disabled(!row.enabled)
+                    };
+
+                    list.child(div().id(("session_item_load_older", ix)).w_full().child(
+                        button.on_click({
+                            let view = view.clone();
+                            move |event, window, cx| {
+                                view.update(cx, |this, cx| this.load_older(event, window, cx))
+                            }
+                        }),
+                    ))
+                }
+                SessionTimelineItem::NewMessages(row) => list.child(
+                    div().id(("session_item_new_messages", ix)).w_full().child(
+                        TextButton::new(
+                            ("session_jump_bottom", cx.entity_id()),
+                            format!("New messages ({}) — Jump to bottom", row.count),
+                        )
+                        .on_click({
+                            let view = view.clone();
+                            move |event, window, cx| {
+                                view.update(cx, |this, cx| this.jump_to_bottom(event, window, cx))
+                            }
+                        }),
+                    ),
+                ),
+                SessionTimelineItem::EphemeralText(item) => list.child(
+                    div()
+                        .id(("session_item_ephemeral", ix))
+                        .px(theme.spacing.sm)
+                        .py(theme.spacing.sm)
+                        .rounded_sm()
+                        .bg(theme.colors.surface_elevated.opacity(0.6))
+                        .text_sm()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(format!(
+                            "[{}] {}",
+                            match item.role {
+                                redesmyn_session_view_model::SessionMessageRole::User => "user",
+                                redesmyn_session_view_model::SessionMessageRole::Assistant =>
+                                    "assistant",
+                            },
+                            item.text
+                        )),
+                ),
+                SessionTimelineItem::Event(item) => {
+                    let label = match item.content {
+                        redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg) => {
+                            format!("user: {}", msg.preview)
+                        }
+                        redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
+                            msg,
+                        ) => {
+                            format!("assistant: {}", msg.preview)
+                        }
+                        _ => format!("{:?}", item.kind),
+                    };
+
+                    list.child(
+                        div()
+                            .id(("session_event", session_event_id_key(item.session_event_id)))
+                            .px(theme.spacing.sm)
+                            .py(theme.spacing.sm)
+                            .rounded_sm()
+                            .bg(theme.colors.surface_elevated.opacity(0.4))
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .child(label),
+                    )
+                }
+            },
+        );
+
+        let body = ScrollArea::new(
+            ("session_scroll", cx.entity_id()),
+            self.scroll_handle.clone(),
+        )
+        .scrollbar_width(px(10.0))
+        .child(
+            feed_list.on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
+                if let Some(feed) = this.feed.as_mut() {
+                    update_scroll_state(feed, &this.scroll_handle);
+                    cx.notify();
+                }
+            })),
+        );
+
+        content = content.child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .border_1()
+                .border_color(theme.colors.border.opacity(0.4))
+                .rounded_md()
+                .child(body),
+        );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.sm)
+            .size_full()
+            .child(content)
+            .track_focus(&self.focus_handle(cx))
+    }
+}
