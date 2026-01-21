@@ -1,26 +1,26 @@
+mod command_palette_overlay;
+
 use std::sync::Arc;
-use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, App, AsyncApp, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Render, ScrollHandle, SharedString, Subscription, Task, Window,
+    div, prelude::*, px, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    Render, SharedString, Subscription, Window,
 };
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
-    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState, TextButton, TextInput, TextInputEvent,
+    Callout, CalloutKind, IconButton, SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState,
 };
-use redesmyn_ui::settings::ThemePreference;
-use redesmyn_ui::utils::{UserActionState, theme_for_window};
+use redesmyn_ui::utils::theme_for_window;
 use redesmyn_ui_graph::GraphView;
 
 use crate::command_palette::{
-    CloseCommandPalette, CommandGroup, CommandId, CommandRegistry, SelectNextCommand,
-    SelectPreviousCommand, ToggleCommandPalette,
+    CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
+
+use self::command_palette_overlay::CommandPaletteOverlay;
 
 #[derive(Debug)]
 pub struct DesktopModel {
@@ -52,24 +52,8 @@ pub struct RootView {
     split_pane: Entity<SplitPane>,
     workspace_pane: Entity<WorkspacePaneHost>,
     focus_handle: FocusHandle,
-    command_registry: CommandRegistry,
-    palette_open: bool,
-    palette_mode: PaletteMode,
-    palette_input: Entity<TextInput>,
-    palette_scroll: ScrollHandle,
-    palette_selected_index: usize,
-    command_action: UserActionState,
-    running_command: Option<CommandId>,
-    running_command_task: Option<Task<()>>,
-    selected_epic_slug: Option<SharedString>,
-    graph_refresh_count: u64,
+    command_palette: CommandPaletteOverlay,
     _subscriptions: Vec<Subscription>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PaletteMode {
-    Commands,
-    OpenEpic,
 }
 
 impl RootView {
@@ -98,8 +82,15 @@ impl RootView {
             .min_primary_px(280.0)
         });
 
-        let palette_input = cx.new(|cx| TextInput::new(cx).placeholder("Type a command…"));
-        let palette_scroll = ScrollHandle::new();
+        let focus_handle = cx.focus_handle();
+        let command_palette = CommandPaletteOverlay::new(
+            focus_handle.clone(),
+            split_pane.clone(),
+            workspace_pane.clone(),
+            cx,
+        );
+
+        let palette_input = command_palette.input_entity();
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|_, cx| cx.notify()));
@@ -120,34 +111,16 @@ impl RootView {
             }
         }));
 
-        subscriptions.push(
-            cx.subscribe(&palette_input, |this, _, event, cx| match event {
-                TextInputEvent::Changed(_) => {
-                    this.palette_selected_index = 0;
-                    this.command_action.clear_error();
-                    cx.notify();
-                }
-                TextInputEvent::Submitted(text) => {
-                    this.on_palette_submit(text.clone(), cx);
-                }
-            }),
-        );
+        subscriptions.push(cx.subscribe(&palette_input, |this, _, event, cx| {
+            this.command_palette
+                .handle_text_input_event(event.clone(), cx);
+        }));
 
         Self {
             split_pane,
             workspace_pane,
-            focus_handle: cx.focus_handle(),
-            command_registry: CommandRegistry::default(),
-            palette_open: false,
-            palette_mode: PaletteMode::Commands,
-            palette_input,
-            palette_scroll,
-            palette_selected_index: 0,
-            command_action: UserActionState::default(),
-            running_command: None,
-            running_command_task: None,
-            selected_epic_slug: None,
-            graph_refresh_count: 0,
+            focus_handle,
+            command_palette,
             _subscriptions: subscriptions,
         }
     }
@@ -182,11 +155,7 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.palette_open {
-            self.close_palette(window, cx);
-        } else {
-            self.open_palette(window, cx);
-        }
+        self.command_palette.toggle(window, cx);
     }
 
     fn close_command_palette(
@@ -195,17 +164,7 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.palette_open {
-            return;
-        }
-
-        if self.palette_mode == PaletteMode::OpenEpic {
-            self.exit_open_epic_mode(cx);
-            window.focus(&self.palette_input.focus_handle(cx));
-            return;
-        }
-
-        self.close_palette(window, cx);
+        self.command_palette.handle_close_action(window, cx);
     }
 
     fn select_previous_command(
@@ -214,22 +173,7 @@ impl RootView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.palette_open || self.palette_mode != PaletteMode::Commands {
-            return;
-        }
-
-        let visible = self.filtered_commands(cx);
-        if visible.is_empty() {
-            return;
-        }
-
-        if self.palette_selected_index == 0 {
-            self.palette_selected_index = visible.len() - 1;
-        } else {
-            self.palette_selected_index = self.palette_selected_index.saturating_sub(1);
-        }
-
-        cx.notify();
+        self.command_palette.select_previous(cx);
     }
 
     fn select_next_command(
@@ -238,509 +182,7 @@ impl RootView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.palette_open || self.palette_mode != PaletteMode::Commands {
-            return;
-        }
-
-        let visible = self.filtered_commands(cx);
-        if visible.is_empty() {
-            return;
-        }
-
-        let next = self.palette_selected_index.saturating_add(1);
-        self.palette_selected_index = if next >= visible.len() { 0 } else { next };
-        cx.notify();
-    }
-
-    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let span = redesmyn_logging::redesmyn_info_span!("command_palette.open");
-        let _guard = span.enter();
-
-        self.palette_open = true;
-        self.palette_mode = PaletteMode::Commands;
-        self.palette_selected_index = 0;
-        self.command_action.clear_error();
-        self.running_command = None;
-
-        self.palette_input
-            .update(cx, |input, cx| input.set_text("", cx));
-
-        window.focus(&self.palette_input.focus_handle(cx));
-        cx.notify();
-    }
-
-    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let span = redesmyn_logging::redesmyn_info_span!("command_palette.close");
-        let _guard = span.enter();
-
-        self.palette_open = false;
-        self.palette_mode = PaletteMode::Commands;
-        self.command_action.clear_error();
-        self.running_command = None;
-
-        self.palette_input
-            .update(cx, |input, cx| input.set_text("", cx));
-
-        window.focus(&self.focus_handle);
-        cx.notify();
-    }
-
-    fn on_palette_submit(&mut self, submitted: SharedString, cx: &mut Context<Self>) {
-        if !self.palette_open {
-            return;
-        }
-
-        if self.command_action.in_flight {
-            return;
-        }
-
-        match self.palette_mode {
-            PaletteMode::Commands => {
-                let visible = self.filtered_commands(cx);
-                let Some(command) = visible.get(self.palette_selected_index).copied() else {
-                    self.command_action.fail("No matching commands.");
-                    cx.notify();
-                    return;
-                };
-                self.execute_command(command, cx);
-            }
-            PaletteMode::OpenEpic => {
-                let slug = submitted.trim();
-                if slug.is_empty() {
-                    self.command_action.fail("Enter an epic slug to open.");
-                    cx.notify();
-                    return;
-                }
-
-                let span = redesmyn_logging::redesmyn_info_span!(
-                    "command_palette.open_epic.select",
-                    epic_slug = %slug
-                );
-                let _guard = span.enter();
-
-                self.selected_epic_slug = Some(slug.to_string().into());
-                self.exit_open_epic_mode(cx);
-            }
-        }
-    }
-
-    fn filtered_commands(&self, cx: &App) -> Vec<CommandId> {
-        let query = self.palette_input.read(cx).text().as_ref();
-        self.command_registry.matching(query)
-    }
-
-    fn disabled_reason_for(&self, command: CommandId) -> Option<SharedString> {
-        match command {
-            CommandId::RefreshGraph if self.selected_epic_slug.is_none() => {
-                Some("Select an epic first.".into())
-            }
-            _ => None,
-        }
-    }
-
-    fn execute_command(&mut self, command: CommandId, cx: &mut Context<Self>) {
-        if self.command_action.in_flight {
-            return;
-        }
-
-        if let Some(reason) = self.disabled_reason_for(command) {
-            self.command_action.fail(reason);
-            cx.notify();
-            return;
-        }
-
-        if command == CommandId::OpenEpic {
-            self.enter_open_epic_mode(cx);
-            return;
-        }
-
-        let span = redesmyn_logging::redesmyn_info_span!(
-            "command_palette.command.run",
-            command_id = command.id_str(),
-        );
-        let _guard = span.enter();
-
-        self.command_action.start();
-        self.running_command = Some(command);
-        cx.notify();
-
-        match command {
-            CommandId::ToggleTheme => {
-                if let Err(error) = self.toggle_theme(cx) {
-                    self.command_action.fail(error);
-                } else {
-                    self.command_action.succeed();
-                }
-
-                self.running_command = None;
-                cx.notify();
-            }
-            CommandId::ToggleLeftSessionPane => {
-                self.split_pane.update(cx, |pane, cx| pane.toggle_collapsed(cx));
-                self.command_action.succeed();
-                self.running_command = None;
-                cx.notify();
-            }
-            CommandId::RefreshGraph => {
-                let epic_slug = self
-                    .selected_epic_slug
-                    .clone()
-                    .unwrap_or_else(|| "<none>".into());
-
-                redesmyn_logging::tracing::info!(epic_slug = %epic_slug, "refreshing graph");
-
-                self.running_command_task = Some(cx.spawn(
-                    move |weak: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
-                        let cx = cx.clone();
-                        async move {
-                            gpui::Timer::after(Duration::from_millis(900)).await;
-                            let Some(entity) = weak.upgrade() else {
-                                return;
-                            };
-
-                            let _ = cx.update(|cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.running_command_task = None;
-                                    this.graph_refresh_count += 1;
-                                    this.workspace_pane
-                                        .update(cx, |pane, cx| pane.refresh_graph(cx));
-                                    this.command_action.succeed();
-                                    this.running_command = None;
-                                    cx.notify();
-                                });
-                            });
-                        }
-                    },
-                ));
-            }
-            CommandId::OpenEpic => {}
-        }
-    }
-
-    fn toggle_theme(&mut self, cx: &mut Context<Self>) -> Result<(), SharedString> {
-        let Some(ui) = cx.try_global::<UiContext>() else {
-            return Err("UI context not initialized.".into());
-        };
-
-        let preference = ui.theme_preference();
-        let next = match preference {
-            ThemePreference::Light => ThemePreference::Dark,
-            ThemePreference::Dark | ThemePreference::System => ThemePreference::Light,
-        };
-
-        match cx.global_mut::<UiContext>().set_theme_preference(next) {
-            Ok(()) => {
-                redesmyn_logging::tracing::info!(from = ?preference, to = ?next, "theme toggled");
-                Ok(())
-            }
-            Err(err) => {
-                redesmyn_logging::tracing::error!(error = %err, "failed to save theme preference");
-                Err(err.to_string().into())
-            }
-        }
-    }
-
-    fn enter_open_epic_mode(&mut self, cx: &mut Context<Self>) {
-        let span = redesmyn_logging::redesmyn_info_span!("command_palette.open_epic.enter");
-        let _guard = span.enter();
-
-        self.palette_mode = PaletteMode::OpenEpic;
-        self.command_action.clear_error();
-        self.palette_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-    }
-
-    fn exit_open_epic_mode(&mut self, cx: &mut Context<Self>) {
-        self.palette_mode = PaletteMode::Commands;
-        self.palette_selected_index = 0;
-        self.command_action.clear_error();
-        self.palette_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-    }
-
-    fn dismiss_command_error(&mut self, cx: &mut Context<Self>) {
-        self.command_action.clear_error();
-        cx.notify();
-    }
-
-    fn dismiss_palette_overlay(&mut self, cx: &mut Context<Self>) {
-        self.palette_mode = PaletteMode::Commands;
-        self.palette_open = false;
-        self.command_action.clear_error();
-        self.running_command = None;
-        self.palette_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-    }
-
-    fn render_palette_overlay(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = theme_for_window(window, cx);
-        let root = cx.entity();
-
-        let header_title = match self.palette_mode {
-            PaletteMode::Commands => "Command palette",
-            PaletteMode::OpenEpic => "Open epic…",
-        };
-
-        let running = self.running_command.map(|command| command.title());
-
-        let left_header = div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child(header_title),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(match self.palette_mode {
-                        PaletteMode::Commands => "Type to filter, ↑/↓ to select, Enter to run.",
-                        PaletteMode::OpenEpic => "Type an epic slug and press Enter.",
-                    }),
-            );
-
-        let mut right_header = div().flex().flex_row().items_center().gap(theme.spacing.sm);
-
-        if self.command_action.in_flight {
-            if let Some(running) = running {
-                right_header = right_header.child(
-                    ProgressPill::new(format!("Running: {running}")).kind(ProgressPillKind::Accent),
-                );
-            } else {
-                right_header = right_header
-                    .child(ProgressPill::new("Running…").kind(ProgressPillKind::Accent));
-            }
-        }
-
-        right_header = right_header.child(
-            IconButton::new(("command_palette_close", cx.entity_id()), div().child("×"))
-                .tooltip("Close (Esc)")
-                .on_click({
-                    let root = root.clone();
-                    move |_, window, cx| {
-                        let focus = root.read(cx).focus_handle.clone();
-                        root.update(cx, |this, cx| this.dismiss_palette_overlay(cx));
-                        window.focus(&focus);
-                    }
-                }),
-        );
-
-        let palette_header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .pb(theme.spacing.sm)
-            .child(left_header)
-            .child(right_header);
-
-        let mut palette_body = div().flex().flex_col().gap(theme.spacing.sm);
-
-        if let Some(error) = self.command_action.error.clone() {
-            palette_body = palette_body.child(
-                Callout::new(error)
-                    .kind(CalloutKind::Danger)
-                    .title("Command failed")
-                    .action(
-                        TextButton::new(("command_error_dismiss", cx.entity_id()), "Dismiss")
-                            .kind(ButtonKind::Ghost)
-                            .on_click({
-                                let root = root.clone();
-                                move |_, _, cx| {
-                                    root.update(cx, |this, cx| this.dismiss_command_error(cx));
-                                }
-                            }),
-                    ),
-            );
-        }
-
-        palette_body = palette_body.child(self.palette_input.clone());
-
-        match self.palette_mode {
-            PaletteMode::Commands => {
-                let visible = self.filtered_commands(cx);
-                let selected_index = self
-                    .palette_selected_index
-                    .min(visible.len().saturating_sub(1));
-
-                let mut last_group: Option<CommandGroup> = None;
-                let mut list = div().flex().flex_col().gap(theme.spacing.xs);
-
-                if visible.is_empty() {
-                    list = list.child(
-                        div()
-                            .py(theme.spacing.sm)
-                            .text_sm()
-                            .text_color(theme.colors.foreground_muted)
-                            .child("No commands match."),
-                    );
-                } else {
-                    for (ix, command) in visible.iter().copied().enumerate() {
-                        let group = command.group();
-                        if Some(group) != last_group {
-                            last_group = Some(group);
-                            let label = match group {
-                                CommandGroup::Navigation => "Navigation",
-                                CommandGroup::Actions => "Actions",
-                            };
-                            list = list.child(
-                                div()
-                                    .pt(theme.spacing.sm)
-                                    .text_xs()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .child(label),
-                            );
-                        }
-
-                        let disabled_reason = self.disabled_reason_for(command);
-                        let disabled = self.command_action.in_flight || disabled_reason.is_some();
-                        let is_selected = ix == selected_index;
-
-                        let mut row = div()
-                            .id((command.id_str(), cx.entity_id()))
-                            .flex()
-                            .flex_col()
-                            .gap(theme.spacing.xs)
-                            .px(theme.spacing.md)
-                            .py(theme.spacing.sm)
-                            .rounded(theme.radius.md)
-                            .border_1()
-                            .border_color(theme.colors.border.opacity(0.6))
-                            .bg(theme.colors.surface_elevated)
-                            .when(is_selected, |this| {
-                                this.border_color(theme.colors.ring).bg(theme.colors.accent)
-                            })
-                            .hover(|this| this.bg(theme.colors.accent))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme.colors.foreground)
-                                            .child(command.title()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.colors.foreground_muted)
-                                            .child(match group {
-                                                CommandGroup::Navigation => "Nav",
-                                                CommandGroup::Actions => "Action",
-                                            }),
-                                    ),
-                            );
-
-                        if let Some(reason) = disabled_reason.clone() {
-                            row = row.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .child(reason),
-                            );
-                        }
-
-                        if disabled {
-                            row = row.opacity(0.55).cursor_not_allowed();
-                        } else {
-                            row = row.cursor_pointer().on_click({
-                                let root = root.clone();
-                                move |_, _, cx| {
-                                    root.update(cx, |this, cx| this.execute_command(command, cx));
-                                }
-                            });
-                        }
-
-                        list = list.child(row);
-                    }
-                }
-
-                let list = ScrollArea::new(
-                    ("command_palette_list", cx.entity_id()),
-                    self.palette_scroll.clone(),
-                )
-                .scrollbar_width(px(10.0))
-                .child(list);
-
-                palette_body = palette_body.child(div().max_h(px(320.0)).child(list));
-            }
-            PaletteMode::OpenEpic => {
-                palette_body = palette_body.child(
-                    Callout::new(
-                        "This is a v0 skeleton. Type an epic slug and press Enter to select it.",
-                    )
-                    .kind(CalloutKind::Info)
-                    .title("Open epic"),
-                );
-                palette_body = palette_body.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Esc returns to the command list."),
-                );
-            }
-        }
-
-        let palette_card = div()
-            .key_context("CommandPalette")
-            .w(px(680.0))
-            .max_w(px(820.0))
-            .px(theme.spacing.lg)
-            .py(theme.spacing.lg)
-            .bg(theme.colors.surface)
-            .border_1()
-            .border_color(theme.colors.border)
-            .rounded(theme.radius.xl)
-            .shadow_lg()
-            .child(palette_header)
-            .child(palette_body);
-
-        div()
-            .size_full()
-            .child(
-                div()
-                    .size_full()
-                    .bg(theme.colors.background.opacity(0.6))
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .id(("command_palette_backdrop", cx.entity_id()))
-                    .cursor_pointer()
-                    .on_click({
-                        let root = root.clone();
-                        move |_, window, cx| {
-                            let focus = root.read(cx).focus_handle.clone();
-                            root.update(cx, |this, cx| this.dismiss_palette_overlay(cx));
-                            window.focus(&focus);
-                        }
-                    }),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .pt(px(120.0))
-                    .child(palette_card),
-            )
+        self.command_palette.select_next(cx);
     }
 }
 
@@ -768,8 +210,8 @@ impl Render for RootView {
             .bg(theme.colors.background)
             .child(self.split_pane.clone());
 
-        if self.palette_open {
-            root = root.child(self.render_palette_overlay(window, cx));
+        if self.command_palette.is_open() {
+            root = root.child(self.command_palette.render(window, cx));
         }
 
         root
