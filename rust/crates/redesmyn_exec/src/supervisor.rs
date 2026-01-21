@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -6,12 +6,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_logging::tracing;
-use redesmyn_protocol::{ProtocolEnvelope, Timestamp};
 use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage, SessionEventBatch};
 use redesmyn_protocol::session::{
     ArtifactEmitted, InterfaceMode, SessionEnded, SessionEvent, SessionEventKind, SessionScope,
     SessionStarted, StatusUpdate, TurnCompleted, TurnStarted, TurnState,
 };
+use redesmyn_protocol::{ProtocolEnvelope, Timestamp};
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::{Mutex, mpsc};
 
@@ -104,7 +104,7 @@ pub struct ExecSessionSupervisor {
 struct SupervisorState {
     is_shutting_down: bool,
     sessions: HashMap<SessionId, SessionEntry>,
-    active_by_task: HashMap<(TaskId, InterfaceMode), SessionId>,
+    active_by_task: HashMap<(TaskId, InterfaceMode), HashSet<SessionId>>,
 }
 
 #[derive(Debug)]
@@ -142,8 +142,13 @@ impl ExecSessionSupervisor {
             while let Some(session_id) = cleanup_rx.recv().await {
                 let mut st = state_for_cleanup.lock().await;
                 if let Some(entry) = st.sessions.remove(&session_id) {
-                    st.active_by_task
-                        .remove(&(entry.task_id, entry.interface_mode));
+                    let key = (entry.task_id, entry.interface_mode);
+                    if let Some(active) = st.active_by_task.get_mut(&key) {
+                        active.remove(&session_id);
+                        if active.is_empty() {
+                            st.active_by_task.remove(&key);
+                        }
+                    }
                 }
             }
         });
@@ -176,7 +181,11 @@ impl ExecSessionSupervisor {
         }
 
         if !spec.allow_concurrent_for_task {
-            if let Some(existing) = st.active_by_task.get(&(task_id, spec.interface_mode)) {
+            if let Some(existing) = st
+                .active_by_task
+                .get(&(task_id, spec.interface_mode))
+                .and_then(|active| active.iter().next())
+            {
                 return Err(StartSessionError::TaskHasActiveSession {
                     session_id: *existing,
                     interface_mode: spec.interface_mode,
@@ -229,7 +238,9 @@ impl ExecSessionSupervisor {
         );
 
         st.active_by_task
-            .insert((task_id, interface_mode), session_id);
+            .entry((task_id, interface_mode))
+            .or_default()
+            .insert(session_id);
 
         Ok(session_id)
     }
@@ -286,8 +297,12 @@ impl ExecSessionSupervisor {
 
 fn validate_task_scope(task_id: TaskId, scope: SessionScope) -> Result<(), StartSessionError> {
     match scope {
-        SessionScope::Task { task_id: scope_task_id } if scope_task_id == task_id => Ok(()),
-        SessionScope::Task { task_id: scope_task_id } => Err(StartSessionError::InvalidScope {
+        SessionScope::Task {
+            task_id: scope_task_id,
+        } if scope_task_id == task_id => Ok(()),
+        SessionScope::Task {
+            task_id: scope_task_id,
+        } => Err(StartSessionError::InvalidScope {
             reason: format!("scope.task_id must match task_id ({task_id}); got {scope_task_id}"),
         }),
         _ => Err(StartSessionError::InvalidScope {
