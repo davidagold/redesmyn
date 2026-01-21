@@ -170,20 +170,23 @@ impl GraphScene {
         );
         let _guard = span.enter();
 
+        // TEMPORARY: `EpicGraph` currently identifies tasks by slug (string) instead of a stable
+        // protocol id (e.g. ULID-backed `TaskId`). Hash slugs into deterministic IDs so node/edge
+        // IDs remain stable across refreshes until the protocol exports real identifiers.
         let mut nodes = BTreeMap::new();
         let mut parent_by_child = BTreeMap::new();
 
         let mut edges = BTreeMap::new();
         for edge in &graph.edges {
-            let from = GraphNodeId::Task(stable_task_id_for_slug(&edge.from_task_slug));
-            let to = GraphNodeId::Task(stable_task_id_for_slug(&edge.to_task_slug));
+            let from = GraphNodeId::Task(temporary_task_id_for_slug(&edge.from_task_slug));
+            let to = GraphNodeId::Task(temporary_task_id_for_slug(&edge.to_task_slug));
             let edge_id = GraphEdgeId { from, to };
             edges.insert(edge_id, GraphSceneEdge { id: edge_id });
             parent_by_child.entry(to).or_insert(from);
         }
 
         for node in &graph.nodes {
-            let id = GraphNodeId::Task(stable_task_id_for_slug(&node.task_slug));
+            let id = GraphNodeId::Task(temporary_task_id_for_slug(&node.task_slug));
             nodes.insert(
                 id,
                 GraphSceneNode {
@@ -280,9 +283,10 @@ fn default_node_size() -> redesmyn_graph_layout::Size {
     }
 }
 
-fn stable_task_id_for_slug(slug: &str) -> TaskId {
-    // We currently receive task identifiers as strings over the client protocol. This adapter keeps
-    // graph IDs stable and deterministic until the Rust control plane exports ULID-backed ids.
+fn temporary_task_id_for_slug(slug: &str) -> TaskId {
+    // TEMPORARY: The client protocol currently provides task identifiers as slugs (strings). This
+    // adapter keeps graph IDs stable and deterministic until the protocol exports real identifiers.
+    // When protocol `TaskId` is available, delete this function and use the provided id directly.
     // (Avoid std::collections hashing because RandomState is non-deterministic.)
     let bytes = stable_128bit_hash(slug.as_bytes());
     TaskId::from_bytes(bytes)
@@ -312,9 +316,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stable_task_id_hash_is_deterministic() {
-        let a = stable_task_id_for_slug("T-50");
-        let b = stable_task_id_for_slug("T-50");
+    fn temporary_task_id_hash_is_deterministic() {
+        let a = temporary_task_id_for_slug("T-50");
+        let b = temporary_task_id_for_slug("T-50");
         assert_eq!(a, b);
     }
 }

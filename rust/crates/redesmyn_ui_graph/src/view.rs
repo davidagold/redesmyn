@@ -62,11 +62,11 @@ impl GraphView {
 
         match hit_test(&self.scene, &self.camera, canvas_bounds, event.position) {
             Some(GraphHit::Node(id)) => {
-                redesmyn_logging::tracing::debug!(node_id = %id, "graph selection changed");
+                redesmyn_logging::tracing::trace!(node_id = %id, "graph selection changed");
                 self.scene.select_node(id);
             }
             Some(GraphHit::Edge(id)) => {
-                redesmyn_logging::tracing::debug!(edge_id = %id, "graph selection changed");
+                redesmyn_logging::tracing::trace!(edge_id = %id, "graph selection changed");
                 self.scene.select_edge(id);
             }
             None => {
