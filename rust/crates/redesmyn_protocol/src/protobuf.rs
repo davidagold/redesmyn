@@ -5,7 +5,6 @@ use redesmyn_ids::{
     RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
-use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 use crate::daemon::{
     AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate, ControlPlaneHelloAck,
@@ -13,6 +12,7 @@ use crate::daemon::{
     ResyncRequest, TelemetryEvent, TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot,
     SessionEventBatch, UnknownEvent, WorktreeEvent,
 };
+use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
     SessionEventKind, SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
@@ -537,13 +537,9 @@ impl TelemetryEvent {
         pbv1::TelemetryEvent {
             kind: Some(match self {
                 Self::Git(event) => pbv1::telemetry_event::Kind::Git(event.to_protobuf()),
-                Self::Worktree(event) => {
-                    pbv1::telemetry_event::Kind::Worktree(event.to_protobuf())
-                }
+                Self::Worktree(event) => pbv1::telemetry_event::Kind::Worktree(event.to_protobuf()),
                 Self::Agent(event) => pbv1::telemetry_event::Kind::Agent(event.to_protobuf()),
-                Self::MergeRun(event) => {
-                    pbv1::telemetry_event::Kind::MergeRun(event.to_protobuf())
-                }
+                Self::MergeRun(event) => pbv1::telemetry_event::Kind::MergeRun(event.to_protobuf()),
                 Self::Unknown(event) => pbv1::telemetry_event::Kind::Unknown(event.to_protobuf()),
             }),
         }
@@ -581,7 +577,11 @@ impl TelemetryEventBatch {
     pub fn to_protobuf(&self) -> pbv1::TelemetryEventBatch {
         pbv1::TelemetryEventBatch {
             scope: Some(self.scope.to_protobuf()),
-            events: self.events.iter().map(|event| event.to_protobuf()).collect(),
+            events: self
+                .events
+                .iter()
+                .map(|event| event.to_protobuf())
+                .collect(),
         }
     }
 
@@ -912,9 +912,9 @@ impl StorageHint {
     pub fn to_protobuf(&self) -> pbv1::StorageHint {
         pbv1::StorageHint {
             hint: match self {
-                Self::LocalPath { local_path } => Some(pbv1::storage_hint::Hint::LocalPath(
-                    local_path.clone(),
-                )),
+                Self::LocalPath { local_path } => {
+                    Some(pbv1::storage_hint::Hint::LocalPath(local_path.clone()))
+                }
                 Self::BlobKey { blob_key } => {
                     Some(pbv1::storage_hint::Hint::BlobKey(blob_key.clone()))
                 }
@@ -1091,7 +1091,10 @@ impl TurnStarted {
     pub fn to_protobuf(&self) -> pbv1::TurnStarted {
         pbv1::TurnStarted {
             interface_mode: encode_interface_mode(self.interface_mode),
-            external_session_ref: self.external_session_ref.as_ref().map(ExternalSessionRef::to_protobuf),
+            external_session_ref: self
+                .external_session_ref
+                .as_ref()
+                .map(ExternalSessionRef::to_protobuf),
             idempotency_key: normalize_optional_string(self.idempotency_key.clone()),
             log_offset_bytes: self.log_offset_bytes,
         }
@@ -1115,7 +1118,10 @@ impl TurnCompleted {
     pub fn to_protobuf(&self) -> pbv1::TurnCompleted {
         pbv1::TurnCompleted {
             interface_mode: encode_interface_mode(self.interface_mode),
-            external_session_ref: self.external_session_ref.as_ref().map(ExternalSessionRef::to_protobuf),
+            external_session_ref: self
+                .external_session_ref
+                .as_ref()
+                .map(ExternalSessionRef::to_protobuf),
             exit_code: self.exit_code,
             error: self.error.as_ref().map(ErrorEnvelope::to_protobuf),
         }
@@ -1140,7 +1146,10 @@ impl UserMessage {
         pbv1::UserMessage {
             text: self.text.clone(),
             preview: self.preview.clone(),
-            full_text_artifact: self.full_text_artifact.as_ref().map(ArtifactRef::to_protobuf),
+            full_text_artifact: self
+                .full_text_artifact
+                .as_ref()
+                .map(ArtifactRef::to_protobuf),
         }
     }
 
@@ -1162,7 +1171,10 @@ impl AssistantMessage {
         pbv1::AssistantMessage {
             text: self.text.clone(),
             preview: self.preview.clone(),
-            full_text_artifact: self.full_text_artifact.as_ref().map(ArtifactRef::to_protobuf),
+            full_text_artifact: self
+                .full_text_artifact
+                .as_ref()
+                .map(ArtifactRef::to_protobuf),
         }
     }
 
@@ -1402,6 +1414,15 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::Status => pbv1::ClientMethod::Status as i32,
         crate::client::ClientMethod::ListEpics => pbv1::ClientMethod::ListEpics as i32,
         crate::client::ClientMethod::GetEpicGraph => pbv1::ClientMethod::GetEpicGraph as i32,
+        crate::client::ClientMethod::GetSessionEvents => {
+            pbv1::ClientMethod::GetSessionEvents as i32
+        }
+        crate::client::ClientMethod::GetLatestTaskSession => {
+            pbv1::ClientMethod::GetLatestTaskSession as i32
+        }
+        crate::client::ClientMethod::GetEpicPinnedChatSession => {
+            pbv1::ClientMethod::GetEpicPinnedChatSession as i32
+        }
     }
 }
 
@@ -1411,6 +1432,15 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::Status) => Ok(crate::client::ClientMethod::Status),
         Ok(pbv1::ClientMethod::ListEpics) => Ok(crate::client::ClientMethod::ListEpics),
         Ok(pbv1::ClientMethod::GetEpicGraph) => Ok(crate::client::ClientMethod::GetEpicGraph),
+        Ok(pbv1::ClientMethod::GetSessionEvents) => {
+            Ok(crate::client::ClientMethod::GetSessionEvents)
+        }
+        Ok(pbv1::ClientMethod::GetLatestTaskSession) => {
+            Ok(crate::client::ClientMethod::GetLatestTaskSession)
+        }
+        Ok(pbv1::ClientMethod::GetEpicPinnedChatSession) => {
+            Ok(crate::client::ClientMethod::GetEpicPinnedChatSession)
+        }
         Ok(pbv1::ClientMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
             format!("unknown enum value for ClientMethod: {value}"),
@@ -1439,6 +1469,9 @@ fn decode_response_status(value: i32) -> Result<crate::client::ResponseStatus, E
 fn encode_subscription_topic(value: crate::client::SubscriptionTopic) -> i32 {
     match value {
         crate::client::SubscriptionTopic::EventLog => pbv1::SubscriptionTopic::EventLog as i32,
+        crate::client::SubscriptionTopic::SessionEvents => {
+            pbv1::SubscriptionTopic::SessionEvents as i32
+        }
     }
 }
 
@@ -1447,6 +1480,9 @@ fn decode_subscription_topic(
 ) -> Result<crate::client::SubscriptionTopic, ErrorEnvelope> {
     match pbv1::SubscriptionTopic::try_from(value) {
         Ok(pbv1::SubscriptionTopic::EventLog) => Ok(crate::client::SubscriptionTopic::EventLog),
+        Ok(pbv1::SubscriptionTopic::SessionEvents) => {
+            Ok(crate::client::SubscriptionTopic::SessionEvents)
+        }
         Ok(pbv1::SubscriptionTopic::Unspecified) | Err(_) => Err(invalid_field(
             "topic",
             format!("unknown enum value for SubscriptionTopic: {value}"),
@@ -1593,6 +1629,15 @@ impl crate::client::Request {
                 crate::client::RequestPayload::GetEpicGraph(req) => {
                     pbv1::request::Payload::GetEpicGraph(req.to_protobuf())
                 }
+                crate::client::RequestPayload::GetSessionEvents(req) => {
+                    pbv1::request::Payload::GetSessionEvents(req.to_protobuf())
+                }
+                crate::client::RequestPayload::GetLatestTaskSession(req) => {
+                    pbv1::request::Payload::GetLatestTaskSession(req.to_protobuf())
+                }
+                crate::client::RequestPayload::GetEpicPinnedChatSession(req) => {
+                    pbv1::request::Payload::GetEpicPinnedChatSession(req.to_protobuf())
+                }
             }),
         }
     }
@@ -1614,6 +1659,21 @@ impl crate::client::Request {
             pbv1::request::Payload::GetEpicGraph(req) => {
                 crate::client::RequestPayload::GetEpicGraph(
                     crate::client::GetEpicGraphRequest::from_protobuf(req),
+                )
+            }
+            pbv1::request::Payload::GetSessionEvents(req) => {
+                crate::client::RequestPayload::GetSessionEvents(
+                    crate::client::GetSessionEventsRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::GetLatestTaskSession(req) => {
+                crate::client::RequestPayload::GetLatestTaskSession(
+                    crate::client::GetLatestTaskSessionRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::GetEpicPinnedChatSession(req) => {
+                crate::client::RequestPayload::GetEpicPinnedChatSession(
+                    crate::client::GetEpicPinnedChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
         };
@@ -1685,6 +1745,171 @@ impl crate::client::GetEpicGraphRequest {
     }
 }
 
+impl crate::client::SessionEventCursor {
+    #[must_use]
+    pub fn to_protobuf(self) -> pbv1::SessionEventCursor {
+        pbv1::SessionEventCursor {
+            created_at: Some(encode_timestamp(self.created_at)),
+            session_event_id: self.session_event_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionEventCursor) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            created_at: decode_required_timestamp("created_at", proto.created_at)?,
+            session_event_id: decode_required_ulid::<SessionEventId>(
+                "session_event_id",
+                &proto.session_event_id,
+            )?,
+        })
+    }
+}
+
+fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter) -> i32 {
+    match value {
+        crate::client::SessionEventKindFilter::SessionStarted => {
+            pbv1::SessionEventKindFilter::SessionStarted as i32
+        }
+        crate::client::SessionEventKindFilter::SessionEnded => {
+            pbv1::SessionEventKindFilter::SessionEnded as i32
+        }
+        crate::client::SessionEventKindFilter::TurnStarted => {
+            pbv1::SessionEventKindFilter::TurnStarted as i32
+        }
+        crate::client::SessionEventKindFilter::TurnCompleted => {
+            pbv1::SessionEventKindFilter::TurnCompleted as i32
+        }
+        crate::client::SessionEventKindFilter::UserMessage => {
+            pbv1::SessionEventKindFilter::UserMessage as i32
+        }
+        crate::client::SessionEventKindFilter::AssistantMessage => {
+            pbv1::SessionEventKindFilter::AssistantMessage as i32
+        }
+        crate::client::SessionEventKindFilter::ToolInvocation => {
+            pbv1::SessionEventKindFilter::ToolInvocation as i32
+        }
+        crate::client::SessionEventKindFilter::ToolResult => {
+            pbv1::SessionEventKindFilter::ToolResult as i32
+        }
+        crate::client::SessionEventKindFilter::StatusUpdate => {
+            pbv1::SessionEventKindFilter::StatusUpdate as i32
+        }
+        crate::client::SessionEventKindFilter::ArtifactEmitted => {
+            pbv1::SessionEventKindFilter::ArtifactEmitted as i32
+        }
+        crate::client::SessionEventKindFilter::Unknown => {
+            pbv1::SessionEventKindFilter::Unspecified as i32
+        }
+    }
+}
+
+fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKindFilter {
+    match pbv1::SessionEventKindFilter::try_from(value) {
+        Ok(pbv1::SessionEventKindFilter::SessionStarted) => {
+            crate::client::SessionEventKindFilter::SessionStarted
+        }
+        Ok(pbv1::SessionEventKindFilter::SessionEnded) => {
+            crate::client::SessionEventKindFilter::SessionEnded
+        }
+        Ok(pbv1::SessionEventKindFilter::TurnStarted) => {
+            crate::client::SessionEventKindFilter::TurnStarted
+        }
+        Ok(pbv1::SessionEventKindFilter::TurnCompleted) => {
+            crate::client::SessionEventKindFilter::TurnCompleted
+        }
+        Ok(pbv1::SessionEventKindFilter::UserMessage) => {
+            crate::client::SessionEventKindFilter::UserMessage
+        }
+        Ok(pbv1::SessionEventKindFilter::AssistantMessage) => {
+            crate::client::SessionEventKindFilter::AssistantMessage
+        }
+        Ok(pbv1::SessionEventKindFilter::ToolInvocation) => {
+            crate::client::SessionEventKindFilter::ToolInvocation
+        }
+        Ok(pbv1::SessionEventKindFilter::ToolResult) => {
+            crate::client::SessionEventKindFilter::ToolResult
+        }
+        Ok(pbv1::SessionEventKindFilter::StatusUpdate) => {
+            crate::client::SessionEventKindFilter::StatusUpdate
+        }
+        Ok(pbv1::SessionEventKindFilter::ArtifactEmitted) => {
+            crate::client::SessionEventKindFilter::ArtifactEmitted
+        }
+        Ok(pbv1::SessionEventKindFilter::Unspecified) | Err(_) => {
+            crate::client::SessionEventKindFilter::Unknown
+        }
+    }
+}
+
+impl crate::client::GetSessionEventsRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetSessionEventsRequest {
+        pbv1::GetSessionEventsRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            before: self
+                .before
+                .map(crate::client::SessionEventCursor::to_protobuf),
+            limit: self.limit,
+            kinds: self
+                .kinds
+                .iter()
+                .copied()
+                .map(encode_session_event_kind_filter)
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::GetSessionEventsRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            before: proto
+                .before
+                .map(crate::client::SessionEventCursor::try_from_protobuf)
+                .transpose()?,
+            limit: proto.limit,
+            kinds: proto
+                .kinds
+                .into_iter()
+                .map(decode_session_event_kind_filter)
+                .collect(),
+        })
+    }
+}
+
+impl crate::client::GetLatestTaskSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetLatestTaskSessionRequest {
+        pbv1::GetLatestTaskSessionRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::GetLatestTaskSessionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::client::GetEpicPinnedChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetEpicPinnedChatSessionRequest {
+        pbv1::GetEpicPinnedChatSessionRequest {
+            epic_id: self.epic_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::GetEpicPinnedChatSessionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            epic_id: decode_required_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+        })
+    }
+}
+
 impl crate::client::Response {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::Response {
@@ -1703,6 +1928,15 @@ impl crate::client::Response {
                 }
                 crate::client::ResponseResult::GetEpicGraph(resp) => {
                     pbv1::response::Result::GetEpicGraph(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::GetSessionEvents(resp) => {
+                    pbv1::response::Result::GetSessionEvents(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::GetLatestTaskSession(resp) => {
+                    pbv1::response::Result::GetLatestTaskSession(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::GetEpicPinnedChatSession(resp) => {
+                    pbv1::response::Result::GetEpicPinnedChatSession(resp.to_protobuf())
                 }
                 crate::client::ResponseResult::Error(err) => {
                     pbv1::response::Result::Error(err.to_protobuf())
@@ -1728,6 +1962,21 @@ impl crate::client::Response {
             pbv1::response::Result::GetEpicGraph(resp) => {
                 crate::client::ResponseResult::GetEpicGraph(
                     crate::client::GetEpicGraphResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::GetSessionEvents(resp) => {
+                crate::client::ResponseResult::GetSessionEvents(
+                    crate::client::GetSessionEventsResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::GetLatestTaskSession(resp) => {
+                crate::client::ResponseResult::GetLatestTaskSession(
+                    crate::client::GetLatestTaskSessionResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::GetEpicPinnedChatSession(resp) => {
+                crate::client::ResponseResult::GetEpicPinnedChatSession(
+                    crate::client::GetEpicPinnedChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::Error(err) => {
@@ -2142,6 +2391,72 @@ impl crate::client::GetEpicGraphResponse {
     }
 }
 
+impl crate::client::GetSessionEventsResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetSessionEventsResponse {
+        pbv1::GetSessionEventsResponse {
+            events: self.events.iter().map(SessionEvent::to_protobuf).collect(),
+            next_cursor: self
+                .next_cursor
+                .map(crate::client::SessionEventCursor::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::GetSessionEventsResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            events: proto
+                .events
+                .into_iter()
+                .map(SessionEvent::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            next_cursor: proto
+                .next_cursor
+                .map(crate::client::SessionEventCursor::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::GetLatestTaskSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetLatestTaskSessionResponse {
+        pbv1::GetLatestTaskSessionResponse {
+            session_id: self
+                .session_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::GetLatestTaskSessionResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_optional_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::GetEpicPinnedChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::GetEpicPinnedChatSessionResponse {
+        pbv1::GetEpicPinnedChatSessionResponse {
+            session_id: self
+                .session_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::GetEpicPinnedChatSessionResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_optional_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
 impl crate::client::Subscribe {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::Subscribe {
@@ -2151,6 +2466,9 @@ impl crate::client::Subscribe {
             filter: Some(match &self.filter {
                 crate::client::SubscriptionFilter::EventLog(filter) => {
                     pbv1::subscribe::Filter::EventLog(filter.to_protobuf())
+                }
+                crate::client::SubscriptionFilter::SessionEvents(filter) => {
+                    pbv1::subscribe::Filter::SessionEvents(filter.to_protobuf())
                 }
             }),
         }
@@ -2165,6 +2483,11 @@ impl crate::client::Subscribe {
             pbv1::subscribe::Filter::EventLog(filter) => {
                 crate::client::SubscriptionFilter::EventLog(
                     crate::client::EventLogFilter::from_protobuf(filter)?,
+                )
+            }
+            pbv1::subscribe::Filter::SessionEvents(filter) => {
+                crate::client::SubscriptionFilter::SessionEvents(
+                    crate::client::SessionEventsFilter::try_from_protobuf(filter)?,
                 )
             }
         };
@@ -2201,6 +2524,28 @@ impl crate::client::EventLogFilter {
                 "after_event_id",
                 &proto.after_event_id,
             )?,
+        })
+    }
+}
+
+impl crate::client::SessionEventsFilter {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionEventsFilter {
+        pbv1::SessionEventsFilter {
+            session_id: self.session_id.to_bytes().to_vec(),
+            after: self
+                .after
+                .map(crate::client::SessionEventCursor::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionEventsFilter) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            after: proto
+                .after
+                .map(crate::client::SessionEventCursor::try_from_protobuf)
+                .transpose()?,
         })
     }
 }
@@ -2271,6 +2616,9 @@ impl crate::client::Event {
                 crate::client::SubscriptionEvent::EventLog(ev) => {
                     pbv1::event::Event::EventLog(ev.to_protobuf())
                 }
+                crate::client::SubscriptionEvent::SessionEvent(ev) => {
+                    pbv1::event::Event::SessionEvent(ev.to_protobuf())
+                }
                 crate::client::SubscriptionEvent::Error(err) => {
                     pbv1::event::Event::Error(err.to_protobuf())
                 }
@@ -2288,6 +2636,9 @@ impl crate::client::Event {
             pbv1::event::Event::EventLog(ev) => crate::client::SubscriptionEvent::EventLog(
                 crate::client::EventLogEvent::try_from_protobuf(ev)?,
             ),
+            pbv1::event::Event::SessionEvent(ev) => {
+                crate::client::SubscriptionEvent::SessionEvent(SessionEvent::try_from_protobuf(ev)?)
+            }
             pbv1::event::Event::Error(err) => {
                 crate::client::SubscriptionEvent::Error(ErrorEnvelope::from_protobuf(err))
             }

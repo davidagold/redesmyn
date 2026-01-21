@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package redesmyn.protocol.v1;
 
+import "artifacts.proto";
 import "envelope.proto";
 import "daemon.proto";
 import "google/protobuf/timestamp.proto";
@@ -36,6 +37,9 @@ enum ClientMethod {
   CLIENT_METHOD_STATUS = 2;
   CLIENT_METHOD_LIST_EPICS = 3;
   CLIENT_METHOD_GET_EPIC_GRAPH = 4;
+  CLIENT_METHOD_GET_SESSION_EVENTS = 5;
+  CLIENT_METHOD_GET_LATEST_TASK_SESSION = 6;
+  CLIENT_METHOD_GET_EPIC_PINNED_CHAT_SESSION = 7;
 }
 
 // Request for a control-plane method.
@@ -49,6 +53,9 @@ message Request {
     StatusRequest status = 11;
     ListEpicsRequest list_epics = 12;
     GetEpicGraphRequest get_epic_graph = 13;
+    GetSessionEventsRequest get_session_events = 14;
+    GetLatestTaskSessionRequest get_latest_task_session = 15;
+    GetEpicPinnedChatSessionRequest get_epic_pinned_chat_session = 16;
   }
 }
 
@@ -69,6 +76,9 @@ message Response {
     StatusResponse status_response = 11;
     ListEpicsResponse list_epics = 12;
     GetEpicGraphResponse get_epic_graph = 13;
+    GetSessionEventsResponse get_session_events = 14;
+    GetLatestTaskSessionResponse get_latest_task_session = 15;
+    GetEpicPinnedChatSessionResponse get_epic_pinned_chat_session = 16;
     ErrorEnvelope error = 100;
   }
 }
@@ -217,10 +227,74 @@ message GetEpicGraphResponse {
   EpicGraph graph = 1;
 }
 
+// Stable cursor for session event pagination/subscriptions.
+//
+// Ordering: `(created_at, session_event_id)` tuple.
+message SessionEventCursor {
+  google.protobuf.Timestamp created_at = 1;
+  // SessionEventId (ULID bytes, length = 16).
+  bytes session_event_id = 2;
+}
+
+enum SessionEventKindFilter {
+  SESSION_EVENT_KIND_FILTER_UNSPECIFIED = 0;
+  SESSION_EVENT_KIND_FILTER_SESSION_STARTED = 1;
+  SESSION_EVENT_KIND_FILTER_SESSION_ENDED = 2;
+  SESSION_EVENT_KIND_FILTER_TURN_STARTED = 3;
+  SESSION_EVENT_KIND_FILTER_TURN_COMPLETED = 4;
+  SESSION_EVENT_KIND_FILTER_USER_MESSAGE = 5;
+  SESSION_EVENT_KIND_FILTER_ASSISTANT_MESSAGE = 6;
+  SESSION_EVENT_KIND_FILTER_TOOL_INVOCATION = 7;
+  SESSION_EVENT_KIND_FILTER_TOOL_RESULT = 8;
+  SESSION_EVENT_KIND_FILTER_STATUS_UPDATE = 9;
+  SESSION_EVENT_KIND_FILTER_ARTIFACT_EMITTED = 10;
+}
+
+message GetSessionEventsRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+
+  // If set, return events strictly older than this cursor.
+  SessionEventCursor before = 2;
+
+  // Maximum number of events to return.
+  uint32 limit = 3;
+
+  // Optional kind filter (empty => no filtering).
+  repeated SessionEventKindFilter kinds = 4;
+}
+
+message GetSessionEventsResponse {
+  repeated SessionEvent events = 1;
+  // Cursor to request the next older page (absent => end of history).
+  SessionEventCursor next_cursor = 2;
+}
+
+message GetLatestTaskSessionRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message GetLatestTaskSessionResponse {
+  // SessionId (ULID bytes, length = 16). Empty => none.
+  bytes session_id = 1;
+}
+
+message GetEpicPinnedChatSessionRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+}
+
+message GetEpicPinnedChatSessionResponse {
+  // SessionId (ULID bytes, length = 16). Empty => none.
+  bytes session_id = 1;
+}
+
 // Subscription topic for server-pushed streams.
 enum SubscriptionTopic {
   SUBSCRIPTION_TOPIC_UNSPECIFIED = 0;
   SUBSCRIPTION_TOPIC_EVENT_LOG = 1;
+  SUBSCRIPTION_TOPIC_SESSION_EVENTS = 2;
 }
 
 // Subscribe to a server stream (correlate events via `subscription_id`).
@@ -231,6 +305,7 @@ message Subscribe {
 
   oneof filter {
     EventLogFilter event_log = 10;
+    SessionEventsFilter session_events = 11;
   }
 }
 
@@ -259,6 +334,13 @@ message EventLogEvent {
   bytes json_payload = 4;
 }
 
+message SessionEventsFilter {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // If set, start after this cursor (exclusive).
+  SessionEventCursor after = 2;
+}
+
 // Server-pushed event for a subscription.
 message Event {
   // SubscriptionId (ULID bytes, length = 16).
@@ -267,6 +349,7 @@ message Event {
   oneof event {
     Subscribed subscribed = 10;
     EventLogEvent event_log = 11;
+    SessionEvent session_event = 12;
     ErrorEnvelope error = 100;
   }
 }

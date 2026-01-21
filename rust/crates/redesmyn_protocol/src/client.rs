@@ -9,7 +9,7 @@ use redesmyn_ids::{
     SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
-use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Timestamp};
+use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, SessionEvent, Timestamp};
 
 /// A single client ↔ control plane protocol frame.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -33,6 +33,9 @@ pub enum ClientMethod {
     Status,
     ListEpics,
     GetEpicGraph,
+    GetSessionEvents,
+    GetLatestTaskSession,
+    GetEpicPinnedChatSession,
 }
 
 /// A request issued by a client.
@@ -56,6 +59,9 @@ pub enum RequestPayload {
     Status(StatusRequest),
     ListEpics(ListEpicsRequest),
     GetEpicGraph(GetEpicGraphRequest),
+    GetSessionEvents(GetSessionEventsRequest),
+    GetLatestTaskSession(GetLatestTaskSessionRequest),
+    GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
 }
 
 impl RequestPayload {
@@ -66,6 +72,9 @@ impl RequestPayload {
             Self::Status(_) => ClientMethod::Status,
             Self::ListEpics(_) => ClientMethod::ListEpics,
             Self::GetEpicGraph(_) => ClientMethod::GetEpicGraph,
+            Self::GetSessionEvents(_) => ClientMethod::GetSessionEvents,
+            Self::GetLatestTaskSession(_) => ClientMethod::GetLatestTaskSession,
+            Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
         }
     }
 }
@@ -101,6 +110,9 @@ pub enum ResponseResult {
     Status(StatusResponse),
     ListEpics(ListEpicsResponse),
     GetEpicGraph(GetEpicGraphResponse),
+    GetSessionEvents(GetSessionEventsResponse),
+    GetLatestTaskSession(GetLatestTaskSessionResponse),
+    GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
     Error(ErrorEnvelope),
 }
 
@@ -299,11 +311,81 @@ pub struct GetEpicGraphResponse {
     pub graph: EpicGraph,
 }
 
+/// Stable cursor for session event pagination/subscriptions.
+///
+/// Ordering: `(created_at, session_event_id)` tuple.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct SessionEventCursor {
+    pub created_at: Timestamp,
+    pub session_event_id: SessionEventId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionEventKindFilter {
+    SessionStarted,
+    SessionEnded,
+    TurnStarted,
+    TurnCompleted,
+    UserMessage,
+    AssistantMessage,
+    ToolInvocation,
+    ToolResult,
+    StatusUpdate,
+    ArtifactEmitted,
+    /// A kind not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetSessionEventsRequest {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<SessionEventCursor>,
+    pub limit: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kinds: Vec<SessionEventKindFilter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetSessionEventsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<SessionEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<SessionEventCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetLatestTaskSessionRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetLatestTaskSessionResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetEpicPinnedChatSessionRequest {
+    pub epic_id: EpicId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GetEpicPinnedChatSessionResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+}
+
 /// Subscription topics for server-pushed streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubscriptionTopic {
     EventLog,
+    SessionEvents,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -323,6 +405,7 @@ impl Subscribe {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum SubscriptionFilter {
     EventLog(EventLogFilter),
+    SessionEvents(SessionEventsFilter),
 }
 
 impl SubscriptionFilter {
@@ -330,6 +413,7 @@ impl SubscriptionFilter {
     pub const fn topic(&self) -> SubscriptionTopic {
         match self {
             Self::EventLog(_) => SubscriptionTopic::EventLog,
+            Self::SessionEvents(_) => SubscriptionTopic::SessionEvents,
         }
     }
 }
@@ -348,6 +432,13 @@ pub struct Subscribed {
 pub struct EventLogFilter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_event_id: Option<EventId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionEventsFilter {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<SessionEventCursor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -371,6 +462,7 @@ pub struct Event {
 pub enum SubscriptionEvent {
     Subscribed(Subscribed),
     EventLog(EventLogEvent),
+    SessionEvent(SessionEvent),
     Error(ErrorEnvelope),
 }
 

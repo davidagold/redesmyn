@@ -5,6 +5,7 @@ use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CommandState, CommandSummary, CommandUpdateSummary,
     DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent, GetEpicGraphResponse,
+    GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse, GetSessionEventsResponse,
     HealthResponse, ListEpicsResponse, MergeReadiness, Response, ResponseResult, SessionSummary,
     StatusResponse, Subscribed, SubscriptionEvent, TaskState,
 };
@@ -17,6 +18,9 @@ use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
 use crate::ControlPlane;
 use crate::error::ControlPlaneError;
+use crate::session_events::{
+    SessionEventsResync, SessionEventsResyncReason, SessionEventsSubscriptionItem,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
@@ -329,6 +333,54 @@ where
                                     (handle, start_tx)
                                 })
                             }
+                            redesmyn_protocol::client::SubscriptionFilter::SessionEvents(filter) => {
+                                let mut feed = control_plane
+                                    .session_events()
+                                    .subscribe(filter.session_id, filter.after);
+                                let tx = events_tx.clone();
+                                let request_envelope = frame.envelope.clone();
+                                let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+
+                                let handle = tokio::spawn(async move {
+                                    if start_rx.await.is_err() {
+                                        return;
+                                    }
+
+                                    while let Some(item) = feed.recv().await {
+                                        let (event, terminal) = match item {
+                                            SessionEventsSubscriptionItem::Event(event) => {
+                                                (SubscriptionEvent::SessionEvent(event), false)
+                                            }
+                                            SessionEventsSubscriptionItem::ResyncRequired(
+                                                resync,
+                                            ) => (
+                                                SubscriptionEvent::Error(
+                                                    session_events_resync_error_envelope(resync),
+                                                ),
+                                                true,
+                                            ),
+                                        };
+
+                                        let frame = ClientFrame::new(
+                                            response_envelope(&request_envelope, accepted),
+                                            ClientMessage::Event(Event {
+                                                subscription_id,
+                                                event,
+                                            }),
+                                        );
+
+                                        if tx.send(frame).await.is_err() {
+                                            return;
+                                        }
+
+                                        if terminal {
+                                            return;
+                                        }
+                                    }
+                                });
+
+                                Some((handle, start_tx))
+                            }
                         };
 
                         if let Some((handle, start_tx)) = handle {
@@ -461,6 +513,82 @@ async fn handle_request_result(
 
             Ok(ResponseResult::GetEpicGraph(GetEpicGraphResponse { graph }))
         }
+        redesmyn_protocol::client::RequestPayload::GetSessionEvents(get) => {
+            const MAX_LIMIT: u32 = 512;
+            if get.limit == 0 {
+                Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "GetSessionEvents.limit must be > 0.",
+                )))
+            } else if get.limit > MAX_LIMIT {
+                Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "GetSessionEvents.limit is too large.",
+                    )
+                    .with_detail(ErrorDetail::from([(
+                        "max_limit".to_string(),
+                        MAX_LIMIT.to_string(),
+                    )])),
+                ))
+            } else {
+                match control_plane
+                    .session_events()
+                    .get_session_events(get.session_id, get.before, get.limit, &get.kinds)
+                    .await
+                {
+                    Ok((events, next_cursor)) => Ok(ResponseResult::GetSessionEvents(
+                        GetSessionEventsResponse {
+                            events,
+                            next_cursor,
+                        },
+                    )),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "GetSessionEvents failed");
+                        Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::Internal,
+                            "Failed to query session events.",
+                        )))
+                    }
+                }
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::GetLatestTaskSession(get) => {
+            match control_plane
+                .session_events()
+                .get_latest_task_session(get.task_id)
+                .await
+            {
+                Ok(session_id) => Ok(ResponseResult::GetLatestTaskSession(
+                    GetLatestTaskSessionResponse { session_id },
+                )),
+                Err(err) => {
+                    tracing::warn!(error = %err, "GetLatestTaskSession failed");
+                    Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Internal,
+                        "Failed to query latest task session.",
+                    )))
+                }
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::GetEpicPinnedChatSession(get) => {
+            match control_plane
+                .session_events()
+                .get_epic_pinned_chat_session(get.epic_id)
+                .await
+            {
+                Ok(session_id) => Ok(ResponseResult::GetEpicPinnedChatSession(
+                    GetEpicPinnedChatSessionResponse { session_id },
+                )),
+                Err(err) => {
+                    tracing::warn!(error = %err, "GetEpicPinnedChatSession failed");
+                    Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Internal,
+                        "Failed to query epic pinned chat session.",
+                    )))
+                }
+            }
+        }
     }
 }
 
@@ -525,6 +653,42 @@ fn resync_error_envelope(resync: crate::event_log::EventLogResync) -> ErrorEnvel
     ErrorEnvelope::new(
         ErrorCategory::Unavailable,
         "Event subscription requires resync.",
+    )
+    .with_detail(detail)
+}
+
+fn session_events_resync_error_envelope(resync: SessionEventsResync) -> ErrorEnvelope {
+    let reason = match resync.reason {
+        SessionEventsResyncReason::Lagged => "lagged",
+        SessionEventsResyncReason::CursorNotFound => "cursor_not_found",
+        SessionEventsResyncReason::CursorSessionMismatch => "cursor_session_mismatch",
+        SessionEventsResyncReason::DbError => "db_error",
+    };
+
+    let mut detail: ErrorDetail = ErrorDetail::new();
+    detail.insert("reason".to_string(), reason.to_string());
+
+    if let Some(cursor) = resync.resume_after {
+        detail.insert(
+            "resume_after_session_event_id".to_string(),
+            cursor.session_event_id.to_string(),
+        );
+
+        let created_at = cursor
+            .created_at
+            .into_offset_date_time()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        detail.insert("resume_after_created_at".to_string(), created_at);
+    }
+
+    if let Some(skipped) = resync.dropped_events {
+        detail.insert("dropped_events".to_string(), skipped.to_string());
+    }
+
+    ErrorEnvelope::new(
+        ErrorCategory::Unavailable,
+        "Session event subscription requires resync.",
     )
     .with_detail(detail)
 }

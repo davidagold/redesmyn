@@ -7,6 +7,7 @@ use tokio::runtime::Handle;
 use crate::client_api::{ClientApiCodec, ClientApiServeError};
 use crate::command::{CommandRegistry, CommandState};
 use crate::event_log::{EventLog, EventLogConfig};
+use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
 
 #[derive(Debug, thiserror::Error)]
@@ -54,13 +55,15 @@ pub enum ControlPlaneStartError {
 pub struct ControlPlane {
     pool: SqlitePool,
     event_log: EventLog,
+    session_events: SessionEvents,
 }
 
 impl ControlPlane {
     pub async fn open(db_path: impl AsRef<Path>) -> Result<Self, ControlPlaneInitError> {
         let db_path = db_path.as_ref().to_path_buf();
         let db_path_display = db_path.display().to_string();
-        let span = redesmyn_logging::tracing::info_span!("control_plane.open", db_path = %db_path_display);
+        let span =
+            redesmyn_logging::tracing::info_span!("control_plane.open", db_path = %db_path_display);
 
         async {
             info!(db_path = %db_path_display, "opening control plane");
@@ -76,7 +79,9 @@ impl ControlPlane {
             let pool = redesmyn_storage::open_test_sqlite_pool().await?;
             Ok(Self::new(pool))
         }
-        .instrument(redesmyn_logging::tracing::info_span!("control_plane.open_test"))
+        .instrument(redesmyn_logging::tracing::info_span!(
+            "control_plane.open_test"
+        ))
         .await
     }
 
@@ -88,7 +93,13 @@ impl ControlPlane {
     #[must_use]
     pub fn new_with_event_log_config(pool: SqlitePool, config: EventLogConfig) -> Self {
         let event_log = EventLog::new_with_config(pool.clone(), config);
-        Self { pool, event_log }
+        let session_events =
+            SessionEvents::new_with_config(pool.clone(), SessionEventsConfig::default());
+        Self {
+            pool,
+            event_log,
+            session_events,
+        }
     }
 
     #[must_use]
@@ -99,6 +110,11 @@ impl ControlPlane {
     #[must_use]
     pub fn event_log(&self) -> &EventLog {
         &self.event_log
+    }
+
+    #[must_use]
+    pub fn session_events(&self) -> &SessionEvents {
+        &self.session_events
     }
 
     pub async fn start(
@@ -193,9 +209,12 @@ impl ControlPlaneHandle {
             let span = tracing::info_span!("client.api.connection", peer = "<in_proc>");
             let _enter = span.enter();
 
-            if let Err(err) =
-                crate::client_api::serve_connection(&mut server, server_control_plane, &mut shutdown)
-                    .await
+            if let Err(err) = crate::client_api::serve_connection(
+                &mut server,
+                server_control_plane,
+                &mut shutdown,
+            )
+            .await
             {
                 tracing::warn!(
                     error = %err,

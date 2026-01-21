@@ -3,14 +3,14 @@
 use std::os::unix::fs::PermissionsExt as _;
 use std::time::Duration;
 
-use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::ControlPlane;
+use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_ids::{RepoId, RequestId, SubscriptionId, WorkspaceId};
-use redesmyn_protocol::{ProtocolEnvelope, RepoScope, TraceId};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, EventLogFilter, HealthRequest, Request, RequestPayload,
     ResponseResult, StatusRequest, Subscribe, SubscriptionEvent, SubscriptionFilter,
 };
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope, TraceId};
 use redesmyn_storage::events::EventScope;
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
@@ -198,6 +198,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
                 break;
             }
             SubscriptionEvent::EventLog(_) => continue,
+            SubscriptionEvent::SessionEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
@@ -229,6 +230,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
                 break;
             }
             SubscriptionEvent::Subscribed(_) => continue,
+            SubscriptionEvent::SessionEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
@@ -343,6 +345,7 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
                 assert_eq!(frame.envelope.correlation_id, Some(subscribe_msg_id));
                 break;
             }
+            SubscriptionEvent::SessionEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
