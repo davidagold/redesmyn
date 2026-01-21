@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use gpui::SharedString;
@@ -170,29 +170,62 @@ impl GraphScene {
         );
         let _guard = span.enter();
 
-        // TEMPORARY: `EpicGraph` currently identifies tasks by slug (string) instead of a stable
-        // protocol id (e.g. ULID-backed `TaskId`). Hash slugs into deterministic IDs so node/edge
-        // IDs remain stable across refreshes until the protocol exports real identifiers.
-        let mut nodes = BTreeMap::new();
+        // Prefer stable protocol identifiers when available, but fall back to deterministic
+        // slug hashing for older protocol versions (or partial payloads) that omit ids.
+        let mut node_id_by_slug: BTreeMap<String, GraphNodeId> = BTreeMap::new();
+        for node in &graph.nodes {
+            let id = match node.task_id {
+                Some(id) => GraphNodeId::Task(id),
+                None => GraphNodeId::Task(temporary_task_id_for_slug(&node.task_slug)),
+            };
+            node_id_by_slug.insert(node.task_slug.clone(), id);
+        }
+
+        let known_node_ids: BTreeSet<GraphNodeId> = node_id_by_slug.values().copied().collect();
         let mut parent_by_child = BTreeMap::new();
 
         let mut edges = BTreeMap::new();
         for edge in &graph.edges {
-            let from = GraphNodeId::Task(temporary_task_id_for_slug(&edge.from_task_slug));
-            let to = GraphNodeId::Task(temporary_task_id_for_slug(&edge.to_task_slug));
+            let from = match edge.from_task_id {
+                Some(id) => GraphNodeId::Task(id),
+                None => node_id_by_slug
+                    .get(&edge.from_task_slug)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        GraphNodeId::Task(temporary_task_id_for_slug(&edge.from_task_slug))
+                    }),
+            };
+            let to = match edge.to_task_id {
+                Some(id) => GraphNodeId::Task(id),
+                None => node_id_by_slug
+                    .get(&edge.to_task_slug)
+                    .copied()
+                    .unwrap_or_else(|| GraphNodeId::Task(temporary_task_id_for_slug(&edge.to_task_slug))),
+            };
             let edge_id = GraphEdgeId { from, to };
             edges.insert(edge_id, GraphSceneEdge { id: edge_id });
             parent_by_child.entry(to).or_insert(from);
         }
 
+        let mut nodes = BTreeMap::new();
         for node in &graph.nodes {
-            let id = GraphNodeId::Task(temporary_task_id_for_slug(&node.task_slug));
+            let id = node_id_by_slug
+                .get(&node.task_slug)
+                .copied()
+                .unwrap_or_else(|| GraphNodeId::Task(temporary_task_id_for_slug(&node.task_slug)));
+
+            let parent_id = node
+                .parent_task_id
+                .map(GraphNodeId::Task)
+                .or_else(|| parent_by_child.get(&id).copied())
+                .filter(|parent_id| known_node_ids.contains(parent_id));
+
             nodes.insert(
                 id,
                 GraphSceneNode {
                     id,
                     title: SharedString::new(node.title.clone()),
-                    parent_id: parent_by_child.get(&id).copied(),
+                    parent_id,
                 },
             );
         }
