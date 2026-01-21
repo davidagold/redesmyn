@@ -586,14 +586,16 @@ async fn read_stream(
 
         writer.write_all(&buf[..n]).await?;
 
-        if parser_tx
-            .try_send(OutputChunk {
-                stream,
-                bytes: buf[..n].to_vec(),
-            })
-            .is_err()
-        {
-            dropped_bytes.fetch_add(n as u64, Ordering::Relaxed);
+        match parser_tx.try_reserve() {
+            Ok(permit) => {
+                permit.send(OutputChunk {
+                    stream,
+                    bytes: buf[..n].to_vec(),
+                });
+            }
+            Err(_) => {
+                dropped_bytes.fetch_add(n as u64, Ordering::Relaxed);
+            }
         }
     }
 
