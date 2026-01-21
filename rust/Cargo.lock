@@ -4711,7 +4711,7 @@ dependencies = [
  "redesmyn_logging",
  "redesmyn_protocol",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
