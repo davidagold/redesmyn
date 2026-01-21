@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Timestam
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::artifact_store::{ArtifactStoreError, LocalArtifactStore};
+use crate::text_limits::{normalize_preview, truncate_chars};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -181,7 +182,7 @@ pub struct AppServerSupervisor {
 struct SupervisorState {
     is_shutting_down: bool,
     sessions: HashMap<SessionId, SessionEntry>,
-    active_by_task: HashMap<(TaskId, InterfaceMode), SessionId>,
+    active_by_task: HashMap<(TaskId, InterfaceMode), HashSet<SessionId>>,
 }
 
 #[derive(Debug)]
@@ -222,8 +223,13 @@ impl AppServerSupervisor {
             while let Some(session_id) = cleanup_rx.recv().await {
                 let mut st = state_for_cleanup.lock().await;
                 if let Some(entry) = st.sessions.remove(&session_id) {
-                    st.active_by_task
-                        .remove(&(entry.task_id, entry.interface_mode));
+                    let key = (entry.task_id, entry.interface_mode);
+                    if let Some(active) = st.active_by_task.get_mut(&key) {
+                        active.remove(&session_id);
+                        if active.is_empty() {
+                            st.active_by_task.remove(&key);
+                        }
+                    }
                 }
             }
         });
@@ -263,7 +269,11 @@ impl AppServerSupervisor {
             }
 
             if !spec.allow_concurrent_for_task {
-                if let Some(existing) = st.active_by_task.get(&(task_id, interface_mode)) {
+                if let Some(existing) = st
+                    .active_by_task
+                    .get(&(task_id, interface_mode))
+                    .and_then(|active| active.iter().next())
+                {
                     return Err(StartSessionError::TaskHasActiveSession {
                         session_id: *existing,
                         interface_mode,
@@ -308,7 +318,9 @@ impl AppServerSupervisor {
                 },
             );
             st.active_by_task
-                .insert((task_id, interface_mode), session_id);
+                .entry((task_id, interface_mode))
+                .or_default()
+                .insert(session_id);
         }
 
         match ready_rx.await {
@@ -391,8 +403,13 @@ impl AppServerSupervisor {
     async fn cleanup_local(&self, session_id: SessionId) {
         let mut st = self.state.lock().await;
         if let Some(entry) = st.sessions.remove(&session_id) {
-            st.active_by_task
-                .remove(&(entry.task_id, entry.interface_mode));
+            let key = (entry.task_id, entry.interface_mode);
+            if let Some(active) = st.active_by_task.get_mut(&key) {
+                active.remove(&session_id);
+                if active.is_empty() {
+                    st.active_by_task.remove(&key);
+                }
+            }
         }
     }
 
@@ -465,6 +482,12 @@ async fn run_session(
         Ok(conn) => conn,
         Err(err) => {
             tracing::error!(error = %err, "app-server connect failed");
+            if let Err(shutdown_err) = process.shutdown().await {
+                tracing::warn!(
+                    error = %shutdown_err,
+                    "app-server shutdown after connect failure failed"
+                );
+            }
             let _ = ready_tx.send(Err(err));
             return Ok(());
         }
@@ -478,14 +501,14 @@ async fn run_session(
     )
     .await?;
 
-    let mut event_forwarder = tokio::spawn(run_event_forwarder(
+    let mut event_forwarder = spawn_event_forwarder(
         frames_tx.clone(),
         artifact_store.clone(),
         config.clone(),
         session_id,
         scope,
         events,
-    ));
+    );
 
     let _ = ready_tx.send(Ok(()));
     tracing::info!(%task_id, %session_id, "app-server session started");
@@ -547,45 +570,54 @@ async fn run_session(
                 let _ = reply.send(response);
             }
             SessionCommand::Interrupt { reply } => {
+                try_emit_status_update(
+                    &frames_tx,
+                    session_id,
+                    scope,
+                    "interrupt_requested".to_owned(),
+                );
                 let response = client.request(AppServerRequest::Interrupt).await;
                 let _ = reply.send(response);
             }
             SessionCommand::Reconnect { reply } => {
-                event_forwarder.abort();
                 match process.connect().await {
                     Ok(AppServerConnection {
                         client: new_client,
                         events: new_events,
                     }) => {
+                        event_forwarder.abort();
                         client = new_client;
-                        event_forwarder = tokio::spawn(run_event_forwarder(
+                        event_forwarder = spawn_event_forwarder(
                             frames_tx.clone(),
                             artifact_store.clone(),
                             config.clone(),
                             session_id,
                             scope,
                             new_events,
-                        ));
-                        let _ = emit_event(
+                        );
+                        try_emit_status_update(
                             &frames_tx,
                             session_id,
                             scope,
-                            SessionEventKind::StatusUpdate(StatusUpdate {
-                                turn_state: TurnState::Running,
-                                blocking: None,
-                                progress_percent: None,
-                                message: Some("app_server_reconnected".to_owned()),
-                            }),
-                        )
-                        .await;
+                            "app_server_reconnected".to_owned(),
+                        );
                         let _ = reply.send(Ok(()));
                     }
                     Err(err) => {
+                        try_emit_status_update(
+                            &frames_tx,
+                            session_id,
+                            scope,
+                            format!("app_server_reconnect_failed: {err}"),
+                        );
                         let _ = reply.send(Err(err));
                     }
                 }
             }
-            SessionCommand::Stop => break,
+            SessionCommand::Stop => {
+                try_emit_status_update(&frames_tx, session_id, scope, "stop_requested".to_owned());
+                break;
+            }
         }
     }
 
@@ -626,6 +658,35 @@ async fn run_event_forwarder(
         .await?;
     }
     Ok(())
+}
+
+fn spawn_event_forwarder(
+    frames_tx: mpsc::Sender<DaemonFrame>,
+    artifact_store: LocalArtifactStore,
+    config: AppServerSupervisorConfig,
+    session_id: SessionId,
+    scope: SessionScope,
+    rx: mpsc::Receiver<AppServerEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        match run_event_forwarder(
+            frames_tx,
+            artifact_store,
+            config,
+            session_id,
+            scope,
+            rx,
+        )
+        .await
+        {
+            Ok(()) => {
+                tracing::debug!(%session_id, "app-server event forwarder exited");
+            }
+            Err(err) => {
+                tracing::warn!(%session_id, error = %err, "app-server event forwarder exited unexpectedly");
+            }
+        }
+    })
 }
 
 async fn emit_app_server_event(
@@ -779,38 +840,17 @@ async fn limit_tool_text(
     Ok((preview, Some(artifact)))
 }
 
-fn normalize_preview(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
-
 #[derive(Debug, thiserror::Error)]
 enum EmitEventError {
     #[error("control plane session event stream closed")]
     StreamClosed,
 }
 
-async fn emit_event(
-    frames_tx: &mpsc::Sender<DaemonFrame>,
+fn make_session_event_frame(
     session_id: SessionId,
     scope: SessionScope,
     kind: SessionEventKind,
-) -> Result<(), EmitEventError> {
+) -> DaemonFrame {
     let record = SessionEvent {
         session_event_id: SessionEventId::new(),
         created_at: Timestamp::now_utc(),
@@ -822,13 +862,39 @@ async fn emit_event(
     let batch = SessionEventBatch {
         events: vec![record],
     };
-    let frame = DaemonFrame::new(
+    DaemonFrame::new(
         ProtocolEnvelope::new(),
         DaemonMessage::SessionEventBatch(batch),
-    );
+    )
+}
 
+fn try_emit_status_update(
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    session_id: SessionId,
+    scope: SessionScope,
+    message: String,
+) {
+    let frame = make_session_event_frame(
+        session_id,
+        scope,
+        SessionEventKind::StatusUpdate(StatusUpdate {
+            turn_state: TurnState::Running,
+            blocking: None,
+            progress_percent: None,
+            message: Some(message),
+        }),
+    );
+    let _ = frames_tx.try_send(frame);
+}
+
+async fn emit_event(
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    session_id: SessionId,
+    scope: SessionScope,
+    kind: SessionEventKind,
+) -> Result<(), EmitEventError> {
     frames_tx
-        .send(frame)
+        .send(make_session_event_frame(session_id, scope, kind))
         .await
         .map_err(|_| EmitEventError::StreamClosed)
 }
