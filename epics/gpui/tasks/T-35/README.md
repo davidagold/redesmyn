@@ -73,6 +73,9 @@ Supervisor-core requirement:
 
 - The core must support **bidirectional** IO so an app-server adapter can write requests to stdin
   while concurrently reading framed responses/notifications (with backpressure).
+- For exec-based sessions, stdin is treated as **closed by default** (no implicit piping). Any
+  prompts/config must be passed via argv/env/artifacts until T-39 introduces an explicit
+  bidirectional IO adapter.
 
 ### 3) Backpressure, size limits, and “no giant payloads”
 
@@ -88,6 +91,8 @@ If output is huge:
 
 - store content as an artifact (T-14 `ArtifactRef`),
 - and emit a small `ArtifactEmitted` session event referencing it.
+- stdout/stderr logs are treated as artifacts as well (debuggable by default); small-log retention is
+  configurable but defaults to keeping logs and emitting references.
 
 ### 4) Interrupt semantics
 

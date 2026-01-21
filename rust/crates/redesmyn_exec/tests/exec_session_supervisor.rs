@@ -122,7 +122,7 @@ async fn interrupt_session_emits_parsed_message_events() {
 	trap 'exit 0' INT TERM
 	echo "assistant: hello"
 echo "assistant: world" >&2
-while read -r _line; do :; done
+while true; do sleep 0.1; done
 "#;
 
     let spec = ExecSessionSpec {
@@ -210,7 +210,7 @@ async fn enforces_one_active_session_per_task() {
 set -euo pipefail
 trap 'exit 0' INT TERM
 echo "assistant: started"
-while read -r _line; do :; done
+while true; do sleep 0.1; done
 "#;
 
     let spec = ExecSessionSpec {
