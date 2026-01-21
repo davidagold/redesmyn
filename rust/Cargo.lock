@@ -4889,9 +4889,14 @@ dependencies = [
  "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
+ "serde",
+ "serde_json",
  "sqlx",
+ "tempfile",
+ "time",
  "thiserror 2.0.18",
  "tokio",
+ "ulid",
 ]
 
 [[package]]

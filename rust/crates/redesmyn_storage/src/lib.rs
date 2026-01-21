@@ -22,6 +22,7 @@ mod error;
 pub mod commands;
 pub mod epic_graph;
 pub mod events;
+pub mod legacy_import;
 pub mod schema;
 pub mod sessions;
 pub mod sqlite;

@@ -9,6 +9,22 @@ pub enum StorageError {
         source: std::io::Error,
     },
 
+    #[error("legacy DB not found: {path}")]
+    LegacyDbNotFound { path: PathBuf },
+
+    #[error("failed to snapshot legacy DB: {path}")]
+    LegacyDbSnapshot {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("legacy repository row not found for repo root: {repo_root}")]
+    LegacyRepoNotFound { repo_root: PathBuf },
+
+    #[error("conflict: {message}")]
+    Conflict { message: String },
+
     #[error("invalid data: {message}")]
     InvalidData { message: String },
 
