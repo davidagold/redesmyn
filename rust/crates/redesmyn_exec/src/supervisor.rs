@@ -35,7 +35,7 @@ impl Default for ExecSessionSupervisorConfig {
             parser_input_capacity: 128,
             max_message_chars: 4_000,
             max_preview_chars: 240,
-            emit_log_artifact_threshold_bytes: 64 * 1024,
+            emit_log_artifact_threshold_bytes: 0,
             stop_grace_period: std::time::Duration::from_secs(2),
         }
     }
@@ -345,7 +345,7 @@ async fn run_session(
         cmd.args(&spec.argv[1..]);
     }
     cmd.current_dir(&spec.cwd);
-    cmd.stdin(Stdio::piped());
+    cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     for (k, v) in &spec.env {
@@ -494,7 +494,8 @@ async fn run_session(
     let stdout_ref = stdout_writer.finish();
     let stderr_ref = stderr_writer.finish();
 
-    if stdout_ref.byte_len.unwrap_or_default() < config.emit_log_artifact_threshold_bytes {
+    let stdout_len = stdout_ref.byte_len.unwrap_or_default();
+    if stdout_len == 0 || stdout_len < config.emit_log_artifact_threshold_bytes {
         artifact_store
             .remove_artifact(stdout_ref.artifact_id)
             .await?;
@@ -511,7 +512,8 @@ async fn run_session(
         .await?;
     }
 
-    if stderr_ref.byte_len.unwrap_or_default() < config.emit_log_artifact_threshold_bytes {
+    let stderr_len = stderr_ref.byte_len.unwrap_or_default();
+    if stderr_len == 0 || stderr_len < config.emit_log_artifact_threshold_bytes {
         artifact_store
             .remove_artifact(stderr_ref.artifact_id)
             .await?;
