@@ -28,10 +28,10 @@ Provide an explicit, testable import/cutover mechanism that:
 
 - creates the Rust DB (if missing),
 - applies Rust `sqlx` migrations,
-- optionally imports selected legacy state,
+- optionally imports selected legacy state (v0: graph + minimal session preview),
 - and leaves the legacy DB untouched as a backup/forensics artifact.
 
-This is a migration *tooling* ticket, not the full control plane implementation.
+This is a migration *tooling* ticket: a split-codebase bridge, not the full control plane implementation.
 
 ## Requirements
 
@@ -48,6 +48,9 @@ Safety rules:
 - Never delete the legacy DB.
 - Import must be explicitly triggered (CLI and/or a clearly visible UI affordance), not a silent background action.
 
+Implementation note (v0): the importer snapshots the legacy SQLite file (and `-wal`/`-shm` if present) into a
+temporary directory and opens the snapshot in read-only mode.
+
 ### 2) Import surface (AI-first + CLI-first)
 
 Provide a developer-facing import surface, at minimum via Rust CLI:
@@ -57,7 +60,7 @@ Provide a developer-facing import surface, at minimum via Rust CLI:
 Requirements:
 
 - `--dry-run` reports what would be imported (counts, tables, schema version) without writing.
-- `--json` produces machine-readable output suitable for CI/agent verification.
+- `--json` (or `--output json`) produces machine-readable output suitable for CI/agent verification.
 - Exit codes follow the shared error conventions (T-3).
 
 Future direction (not required in this ticket):
@@ -68,15 +71,18 @@ Future direction (not required in this ticket):
 
 Start minimal. Import only what provides immediate value for continuity and UI/UX:
 
-- epics/tasks metadata needed to render the graph (including stable human refs like `T-123` if available),
-- branch/worktree references needed for diff/review surfaces,
-- recent session summaries / last assistant message previews (if cheap),
-- optionally: the legacy `events` table as a **best-effort** history feed (see notes).
+- workspace/repo/epic/task metadata needed to render the graph:
+  - repo + epic slugs/titles,
+  - task title, parent topology, branch name,
+  - stable human refs like `T-123` when derivable from `local_path` (best-effort),
+  - task state when a Rust `tasks.state` column exists (forward-compatible),
+- one best-effort per-task session preview event (latest legacy session by id) using legacy `agent_preview.last_assistant_message_preview`,
+  - plus the legacy `turn_id` when present.
 
 Notes:
 
 - The legacy DB uses integer primary keys; the Rust DB uses ULID newtypes. The importer must define an explicit mapping strategy.
-- If we import legacy events, preserve the original `event_type` string (do not attempt to force it into a closed enum) and store payloads in the new Rust event log format.
+- Future direction (not required in v0): import legacy `events` as best-effort history feed, preserving the original `event_type` string.
 
 ### 4) ID mapping strategy (explicit)
 
@@ -89,6 +95,12 @@ Requirements:
 
 - Import is idempotent (re-running does not duplicate rows).
 - Mapping is queryable for debugging and support.
+
+Implementation note (v0): `legacy_id_map` is used for:
+
+- `repositories`, `epics`, `tasks` (graph core)
+- `agent_sessions` (session id)
+- `agent_session_preview_events` (distinct session event ids; do not reuse `session_id` as `event_id`)
 
 ### 5) Tests
 
@@ -104,6 +116,12 @@ Add a deterministic test that:
 - A developer can run an explicit import command and end up with a valid Rust DB.
 - Import emits deliberate `tracing` logs (start/end + counts + errors), without noisy per-row logs.
 - The process is safe and repeatable (idempotent; no legacy DB mutation).
+
+## How to run (dev)
+
+- Dry run (plan only): `rn-rs db import-legacy --dry-run --json`
+- Apply import: `rn-rs db import-legacy`
+- From the repo root via Cargo: `cargo run -p rn -- db import-legacy --dry-run --json`
 
 ## Dependencies / sequencing
 
