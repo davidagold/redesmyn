@@ -8,6 +8,7 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use redesmyn_config::{discover_repo_root_from, legacy_db_path, rust_db_path};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::Serialize;
 
@@ -25,7 +26,11 @@ fn main() -> ExitCode {
         Err(err) => return exit_from_clap_error(err, output_for_clap_errors),
     };
 
-    let output = Output::new(cli.global.output);
+    let output = Output::new(if cli.global.json {
+        OutputFormat::Json
+    } else {
+        cli.global.output
+    });
 
     // Keep `rn-rs --help` zippy: clap will handle `--help/--version` and exit before we reach this.
     redesmyn_logging::init();
@@ -74,8 +79,13 @@ fn exit_from_clap_error(err: clap::Error, output_format: OutputFormat) -> ExitCo
 fn run(cli: Cli, output: &Output) -> CommandOutcome {
     match cli.command {
         Commands::Doctor(args) => doctor(args, output),
+<<<<<<< HEAD
         Commands::Protocol(cmd) => protocol::protocol(cmd, output),
         Commands::UiDriver(cmd) => ui_driver::ui_driver(cmd, output),
+=======
+        Commands::Protocol(cmd) => protocol(cmd, output),
+        Commands::Db(cmd) => db(cmd, output),
+>>>>>>> f5616cf1 (rn-rs: add db import-legacy command)
         Commands::Version(args) => version(args, output),
         Commands::Bench(cmd) => bench(cmd, output),
     }
@@ -101,6 +111,10 @@ struct GlobalArgs {
     /// Output format for command results and errors.
     #[arg(long, value_enum, default_value_t = OutputFormat::Human, global = true)]
     output: OutputFormat,
+
+    /// Shorthand for `--output json`.
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -114,6 +128,9 @@ impl OutputFormat {
     fn detect_from_env_args() -> Self {
         let mut args = env::args_os().skip(1);
         while let Some(arg) = args.next() {
+            if arg == "--json" {
+                return Self::Json;
+            }
             if arg == "--output" {
                 if matches!(args.next(), Some(val) if val == "json") {
                     return Self::Json;
@@ -141,6 +158,10 @@ enum Commands {
     #[command(subcommand)]
     UiDriver(ui_driver::UiDriverCommands),
 
+    /// DB tooling.
+    #[command(subcommand)]
+    Db(DbCommands),
+
     /// Prints version information.
     Version(VersionArgs),
 
@@ -152,6 +173,54 @@ enum Commands {
 #[derive(Debug, Args)]
 struct DoctorArgs {}
 
+<<<<<<< HEAD
+=======
+#[derive(Debug, Subcommand)]
+enum ProtocolCommands {
+    /// Decodes (or pretty-prints) protocol frames for debugging.
+    Decode(ProtocolDecodeArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum DbCommands {
+    /// Imports selected legacy Python DB state into the Rust DB (safe; idempotent).
+    ImportLegacy(DbImportLegacyArgs),
+}
+
+#[derive(Debug, Args)]
+struct DbImportLegacyArgs {
+    /// Path within the repo to import from (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Report what would be imported without writing.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum ProtocolCodec {
+    Json,
+    Protobuf,
+}
+
+#[derive(Debug, Args)]
+struct ProtocolDecodeArgs {
+    /// Codec to use when decoding input.
+    #[arg(long, value_enum, default_value_t = ProtocolCodec::Json)]
+    codec: ProtocolCodec,
+
+    /// Path to read from (defaults to stdin).
+    #[arg(long)]
+    input: Option<PathBuf>,
+
+    /// Pretty-print JSON output.
+    #[arg(long, default_value_t = true)]
+    pretty: bool,
+}
+
+>>>>>>> f5616cf1 (rn-rs: add db import-legacy command)
 #[derive(Debug, Args)]
 struct VersionArgs {
     /// Print only the version string.
@@ -332,6 +401,295 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
+<<<<<<< HEAD
+=======
+fn protocol(cmd: ProtocolCommands, output: &Output) -> CommandOutcome {
+    match cmd {
+        ProtocolCommands::Decode(args) => protocol_decode(args, output),
+    }
+}
+
+fn db(cmd: DbCommands, output: &Output) -> CommandOutcome {
+    match cmd {
+        DbCommands::ImportLegacy(args) => db_import_legacy(args, output),
+    }
+}
+
+fn db_import_legacy(args: DbImportLegacyArgs, output: &Output) -> CommandOutcome {
+    #[derive(Debug, Serialize)]
+    struct PlannedCounts {
+        epics: usize,
+        tasks: usize,
+        session_previews: usize,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct AppliedCounts {
+        workspace_id: String,
+        repo_id: String,
+        upserted_workspaces: u64,
+        upserted_repositories: u64,
+        upserted_epics: u64,
+        upserted_tasks: u64,
+        upserted_session_events: u64,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct Report {
+        repo_root: String,
+        legacy_db_path: String,
+        rust_db_path: String,
+        dry_run: bool,
+        legacy_alembic_version: Option<String>,
+        rust_sqlx_version_before: Option<i64>,
+        rust_sqlx_version_after: Option<i64>,
+        tables: [&'static str; 6],
+        planned: PlannedCounts,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        applied: Option<AppliedCounts>,
+    }
+
+    let start = match args.repo {
+        Some(path) => path,
+        None => match env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(err) => {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read cwd: {err}"),
+                ));
+            }
+        },
+    };
+
+    let repo_root = match discover_repo_root_from(&start) {
+        Some(repo_root) => repo_root,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "no .git directory found from {} (pass --repo to specify a repo)",
+                    start.display()
+                ),
+            ));
+        }
+    };
+
+    let legacy_db_path = legacy_db_path(&repo_root);
+    let rust_db_path = rust_db_path(&repo_root);
+
+    let options = redesmyn_storage::legacy_import::ImportLegacyOptions {
+        repo_root: repo_root.clone(),
+        legacy_db_path: legacy_db_path.clone(),
+        rust_db_path: rust_db_path.clone(),
+        dry_run: args.dry_run,
+    };
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            ));
+        }
+    };
+
+    let outcome = match runtime.block_on(redesmyn_storage::legacy_import::import_legacy(options)) {
+        Ok(outcome) => outcome,
+        Err(err) => return CommandOutcome::Failure(storage_error_to_envelope(err)),
+    };
+
+    let report = Report {
+        repo_root: repo_root.display().to_string(),
+        legacy_db_path: legacy_db_path.display().to_string(),
+        rust_db_path: rust_db_path.display().to_string(),
+        dry_run: args.dry_run,
+        legacy_alembic_version: outcome.legacy_alembic_version.clone(),
+        rust_sqlx_version_before: outcome.rust_sqlx_version_before,
+        rust_sqlx_version_after: outcome.rust_sqlx_version_after,
+        tables: [
+            "workspaces",
+            "repositories",
+            "epics",
+            "tasks",
+            "session_events",
+            "legacy_id_map",
+        ],
+        planned: PlannedCounts {
+            epics: outcome.planned.epics,
+            tasks: outcome.planned.tasks,
+            session_previews: outcome.planned.session_previews,
+        },
+        applied: outcome.applied.as_ref().map(|applied| AppliedCounts {
+            workspace_id: applied.workspace_id.to_string(),
+            repo_id: applied.repo_id.to_string(),
+            upserted_workspaces: applied.upserted_workspaces,
+            upserted_repositories: applied.upserted_repositories,
+            upserted_epics: applied.upserted_epics,
+            upserted_tasks: applied.upserted_tasks,
+            upserted_session_events: applied.upserted_session_events,
+        }),
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            println!("repo:      {}", report.repo_root);
+            println!("legacy db: {}", report.legacy_db_path);
+            println!("rust db:   {}", report.rust_db_path);
+            if let Some(version) = &report.legacy_alembic_version {
+                println!("legacy alembic: {version}");
+            }
+            if let Some(version) = report.rust_sqlx_version_before {
+                println!("rust sqlx (before): {version}");
+            }
+            if let Some(version) = report.rust_sqlx_version_after {
+                println!("rust sqlx (after):  {version}");
+            }
+            if report.dry_run {
+                println!(
+                    "would import: epics={} tasks={} session_previews={}",
+                    report.planned.epics, report.planned.tasks, report.planned.session_previews
+                );
+            } else if let Some(applied) = &report.applied {
+                println!(
+                    "upserted: workspaces={} repositories={} epics={} tasks={} session_events={}",
+                    applied.upserted_workspaces,
+                    applied.upserted_repositories,
+                    applied.upserted_epics,
+                    applied.upserted_tasks,
+                    applied.upserted_session_events
+                );
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    CommandOutcome::Success
+}
+
+fn storage_error_to_envelope(err: redesmyn_storage::StorageError) -> ErrorEnvelope {
+    use redesmyn_storage::StorageError as E;
+
+    match err {
+        E::LegacyDbNotFound { path } => ErrorEnvelope::new(
+            ErrorCategory::NotFound,
+            format!("legacy DB not found: {}", path.display()),
+        ),
+        E::LegacyRepoNotFound { repo_root } => ErrorEnvelope::new(
+            ErrorCategory::NotFound,
+            format!(
+                "legacy DB does not contain repository metadata for {}",
+                repo_root.display()
+            ),
+        ),
+        E::Conflict { message } => ErrorEnvelope::new(ErrorCategory::Conflict, message),
+        E::InvalidData { message } => ErrorEnvelope::new(ErrorCategory::InvalidRequest, message),
+        E::LegacyDbSnapshot { path, source } => ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("failed to snapshot legacy DB {}: {source}", path.display()),
+        ),
+        E::CreateDbDir { path, source } => ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("failed to create db directory {}: {source}", path.display()),
+        ),
+        E::Migrate(source) => ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("failed to apply migrations: {source}"),
+        ),
+        E::Sqlx(source) => ErrorEnvelope::new(ErrorCategory::Internal, format!("db error: {source}")),
+    }
+}
+
+fn protocol_decode(args: ProtocolDecodeArgs, output: &Output) -> CommandOutcome {
+    match args.codec {
+        ProtocolCodec::Protobuf => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "protobuf decoding is not available yet (depends on T-7 transport + codec scaffolding)",
+            ));
+        }
+        ProtocolCodec::Json => {}
+    }
+
+    let input_bytes = match read_all_input(args.input) {
+        Ok(bytes) => bytes,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let json_value: serde_json::Value = match serde_json::from_slice(&input_bytes) {
+        Ok(value) => value,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "failed to parse JSON input: {err}\n(note: protocol framing decode is not implemented yet; this currently only pretty-prints JSON)"
+                ),
+            ));
+        }
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            if args.pretty {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json_value)
+                        .unwrap_or_else(|_| "<failed to render JSON>".to_owned())
+                );
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json_value)
+                        .unwrap_or_else(|_| "<failed to render JSON>".to_owned())
+                );
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&json_value) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    CommandOutcome::Success
+}
+
+fn read_all_input(input: Option<PathBuf>) -> Result<Vec<u8>, ErrorEnvelope> {
+    match input {
+        Some(path) => fs::read(&path).map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to read input file {}: {err}", path.display()),
+            )
+        }),
+        None => {
+            let mut bytes = Vec::new();
+            io::stdin().lock().read_to_end(&mut bytes).map_err(|err| {
+                ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read stdin: {err}"),
+                )
+            })?;
+            Ok(bytes)
+        }
+    }
+}
+
+>>>>>>> f5616cf1 (rn-rs: add db import-legacy command)
 fn version(args: VersionArgs, output: &Output) -> CommandOutcome {
     #[derive(Serialize)]
     struct VersionInfo<'a> {
