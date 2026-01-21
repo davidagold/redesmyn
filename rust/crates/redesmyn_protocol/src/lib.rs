@@ -155,6 +155,11 @@ impl Timestamp {
         Self(time::OffsetDateTime::now_utc())
     }
 
+    pub fn from_unix_millis(ms: i64) -> Result<Self, time::error::ComponentRange> {
+        let nanos = i128::from(ms).saturating_mul(1_000_000);
+        Ok(Self(time::OffsetDateTime::from_unix_timestamp_nanos(nanos)?))
+    }
+
     #[must_use]
     pub const fn from_offset_date_time(value: time::OffsetDateTime) -> Self {
         Self(value)

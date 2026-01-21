@@ -149,6 +149,32 @@ pub struct SessionEventRecord {
     pub payload: Vec<u8>,
 }
 
+type SessionEventRow = (
+    SessionEventId,
+    SessionId,
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<ArtifactId>,
+    Vec<u8>,
+);
+
+fn decode_session_event_row(
+    (id, session_id, created_at_ms, kind, turn_id, message_preview, artifact_id, payload): SessionEventRow,
+) -> SessionEventRecord {
+    SessionEventRecord {
+        id,
+        session_id,
+        created_at_ms,
+        kind,
+        turn_id,
+        message_preview,
+        artifact_id,
+        payload,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionEventCursor {
     pub created_at_ms: i64,
@@ -682,39 +708,172 @@ where
     builder.push(" ORDER BY created_at_ms ASC, id ASC LIMIT ");
     builder.push_bind(i64::from(query.limit));
 
-    let rows: Vec<(
-        SessionEventId,
-        SessionId,
-        i64,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<ArtifactId>,
-        Vec<u8>,
-    )> = builder.build_query_as().fetch_all(executor).await?;
+    let rows: Vec<SessionEventRow> = builder.build_query_as().fetch_all(executor).await?;
+    Ok(rows.into_iter().map(decode_session_event_row).collect())
+}
 
-    Ok(rows
-        .into_iter()
-        .map(
-            |(
-                id,
-                session_id,
-                created_at_ms,
-                kind,
-                turn_id,
-                message_preview,
-                artifact_id,
-                payload,
-            )| SessionEventRecord {
-                id,
-                session_id,
-                created_at_ms,
-                kind,
-                turn_id,
-                message_preview,
-                artifact_id,
-                payload,
-            },
-        )
-        .collect())
+pub async fn get_session_event_cursor<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    after_event_id: SessionEventId,
+) -> Result<Option<SessionEventCursor>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT created_at_ms
+        FROM session_events
+        WHERE session_id = ?1 AND id = ?2
+        "#,
+    )
+    .bind(session_id)
+    .bind(after_event_id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row.map(|(created_at_ms,)| SessionEventCursor {
+        created_at_ms,
+        id: after_event_id,
+    }))
+}
+
+pub async fn get_task_session_event_cursor<'e, E>(
+    executor: E,
+    task_id: TaskId,
+    after_event_id: SessionEventId,
+) -> Result<Option<SessionEventCursor>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT created_at_ms
+        FROM session_events
+        WHERE task_id = ?1 AND id = ?2
+        "#,
+    )
+    .bind(task_id)
+    .bind(after_event_id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row.map(|(created_at_ms,)| SessionEventCursor {
+        created_at_ms,
+        id: after_event_id,
+    }))
+}
+
+pub async fn get_task_session_events<'e, E>(
+    executor: E,
+    task_id: TaskId,
+    query: &SessionEventsQuery,
+) -> Result<Vec<SessionEventRecord>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let mut builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+        r#"
+        SELECT
+            id,
+            session_id,
+            created_at_ms,
+            kind,
+            turn_id,
+            message_preview,
+            artifact_id,
+            payload
+        FROM session_events
+        WHERE task_id =
+        "#,
+    );
+    builder.push_bind(task_id);
+
+    if let Some(after) = query.after {
+        builder.push(" AND (created_at_ms > ");
+        builder.push_bind(after.created_at_ms);
+        builder.push(" OR (created_at_ms = ");
+        builder.push_bind(after.created_at_ms);
+        builder.push(" AND id > ");
+        builder.push_bind(after.id);
+        builder.push("))");
+    }
+
+    if !query.kinds.is_empty() {
+        builder.push(" AND kind IN (");
+        {
+            let mut separated = builder.separated(", ");
+            for kind in &query.kinds {
+                separated.push_bind(kind);
+            }
+        }
+        builder.push(")");
+    }
+
+    builder.push(" ORDER BY created_at_ms ASC, id ASC LIMIT ");
+    builder.push_bind(i64::from(query.limit));
+
+    let rows: Vec<SessionEventRow> = builder.build_query_as().fetch_all(executor).await?;
+    Ok(rows.into_iter().map(decode_session_event_row).collect())
+}
+
+pub async fn task_exists_in_repo<'e, E>(
+    executor: E,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+) -> Result<bool, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT 1
+        FROM tasks
+        JOIN epics ON tasks.epic_id = epics.id
+        JOIN repositories ON epics.repo_id = repositories.id
+        WHERE
+            tasks.id = ?1
+            AND repositories.workspace_id = ?2
+            AND repositories.id = ?3
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row.is_some())
+}
+
+pub async fn epic_exists_in_repo<'e, E>(
+    executor: E,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    epic_id: EpicId,
+) -> Result<bool, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT 1
+        FROM epics
+        JOIN repositories ON epics.repo_id = repositories.id
+        WHERE
+            epics.id = ?1
+            AND repositories.workspace_id = ?2
+            AND repositories.id = ?3
+        LIMIT 1
+        "#,
+    )
+    .bind(epic_id)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row.is_some())
 }

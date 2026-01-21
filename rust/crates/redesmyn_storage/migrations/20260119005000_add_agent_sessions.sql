@@ -124,9 +124,9 @@ CREATE TABLE session_events (
     )
 );
 
-CREATE INDEX idx_session_events_session_created_at ON session_events (session_id, created_at_ms);
-CREATE INDEX idx_session_events_task_created_at ON session_events (task_id, created_at_ms);
-CREATE INDEX idx_session_events_session_kind_created_at ON session_events (session_id, kind, created_at_ms);
+CREATE INDEX idx_session_events_session_created_at ON session_events (session_id, created_at_ms, id);
+CREATE INDEX idx_session_events_task_created_at ON session_events (task_id, created_at_ms, id);
+CREATE INDEX idx_session_events_session_kind_created_at ON session_events (session_id, kind, created_at_ms, id);
 CREATE INDEX idx_session_events_turn_id ON session_events (turn_id);
 
 INSERT INTO session_events (
