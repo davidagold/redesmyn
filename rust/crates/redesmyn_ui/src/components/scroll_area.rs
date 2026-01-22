@@ -37,6 +37,7 @@ impl RenderOnce for ScrollArea {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let mut root = div()
             .id(self.id)
+            .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .block_mouse_except_scroll();
