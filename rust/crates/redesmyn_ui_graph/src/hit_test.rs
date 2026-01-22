@@ -1,6 +1,8 @@
-use gpui::{Bounds, Pixels, Point, px};
+use gpui::{Bounds, Pixels, Point};
 
-use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window, node_bounds_in_window};
+use crate::geometry::{
+    DEFAULT_EDGE_INTERACTION_WIDTH_PX, edge_route_in_window, node_bounds_in_window,
+};
 use crate::{GraphCamera, GraphEdgeId, GraphNodeId, GraphScene};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +24,10 @@ pub fn hit_test(
         }
     }
 
-    let tolerance = px(3.0);
+    let hit_radius_sq = {
+        let r = f32::from(DEFAULT_EDGE_INTERACTION_WIDTH_PX) / 2.0;
+        r * r
+    };
     for edge in scene.edges() {
         let Some(from_bounds) = scene
             .node(edge.id.from)
@@ -37,15 +42,43 @@ pub fn hit_test(
             continue;
         };
 
-        let segments = edge_segments_in_window(from_bounds, to_bounds, DEFAULT_EDGE_THICKNESS_PX);
-        for segment in segments.segments.iter().flatten() {
-            if segment.dilate(tolerance).contains(&window_point) {
+        let route = edge_route_in_window(from_bounds, to_bounds);
+        for (a, b) in route.segments() {
+            if point_distance_sq_to_segment(window_point, a, b) <= hit_radius_sq {
                 return Some(GraphHit::Edge(edge.id));
             }
         }
     }
 
     None
+}
+
+fn point_distance_sq_to_segment(p: Point<Pixels>, a: Point<Pixels>, b: Point<Pixels>) -> f32 {
+    let ax = f32::from(a.x);
+    let ay = f32::from(a.y);
+    let bx = f32::from(b.x);
+    let by = f32::from(b.y);
+    let px = f32::from(p.x);
+    let py = f32::from(p.y);
+
+    let abx = bx - ax;
+    let aby = by - ay;
+    let apx = px - ax;
+    let apy = py - ay;
+
+    let ab_len_sq = abx * abx + aby * aby;
+    if ab_len_sq == 0.0 {
+        return apx * apx + apy * apy;
+    }
+
+    let t = ((apx * abx) + (apy * aby)) / ab_len_sq;
+    let t = t.clamp(0.0, 1.0);
+    let closest_x = ax + (t * abx);
+    let closest_y = ay + (t * aby);
+
+    let dx = px - closest_x;
+    let dy = py - closest_y;
+    (dx * dx) + (dy * dy)
 }
 
 #[cfg(test)]
@@ -58,17 +91,40 @@ mod tests {
         let scene = GraphScene::demo();
         let camera = GraphCamera::new(GraphCameraLimits::default());
         let canvas = Bounds {
-            origin: gpui::point(px(0.0), px(0.0)),
-            size: gpui::size(px(800.0), px(600.0)),
+            origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            size: gpui::size(gpui::px(800.0), gpui::px(600.0)),
         };
 
         let first_node = scene.nodes().next().unwrap();
         let bounds = node_bounds_in_window(&scene, &camera, first_node, canvas);
-        let point = gpui::point(bounds.left() + px(4.0), bounds.top() + px(4.0));
+        let point = gpui::point(bounds.left() + gpui::px(4.0), bounds.top() + gpui::px(4.0));
 
         assert_eq!(
             hit_test(&scene, &camera, canvas, point),
             Some(GraphHit::Node(first_node.id))
+        );
+    }
+
+    #[test]
+    fn hit_test_finds_demo_edge() {
+        let scene = GraphScene::demo();
+        let camera = GraphCamera::new(GraphCameraLimits::default());
+        let canvas = Bounds {
+            origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            size: gpui::size(gpui::px(800.0), gpui::px(600.0)),
+        };
+
+        let edge = scene.edges().next().unwrap();
+        let from = scene.node(edge.id.from).unwrap();
+        let to = scene.node(edge.id.to).unwrap();
+        let from_bounds = node_bounds_in_window(&scene, &camera, from, canvas);
+        let to_bounds = node_bounds_in_window(&scene, &camera, to, canvas);
+        let route = edge_route_in_window(from_bounds, to_bounds);
+
+        let point = route.label_center();
+        assert_eq!(
+            hit_test(&scene, &camera, canvas, point),
+            Some(GraphHit::Edge(edge.id))
         );
     }
 }

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, AsyncApp, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent, Task,
-    Window, canvas, div, fill, prelude::*, px, rems,
+    TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
 };
 
 use redesmyn_ui::components::{
@@ -14,7 +14,9 @@ use redesmyn_ui::utils::UserActionState;
 use redesmyn_ui::utils::theme_for_window;
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
-use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window};
+use crate::geometry::{
+    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band, edge_route_in_window,
+};
 use crate::hit_test::{GraphHit, hit_test};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene};
 
@@ -322,6 +324,7 @@ impl GraphView {
             None => {
                 let had_selection = self.scene.selection().selected_node.is_some()
                     || self.scene.selection().selected_edge.is_some();
+                self.scene.clear_hover();
                 self.pan_drag = Some(PanDrag {
                     start_mouse: event.position,
                     start_origin_world: self.camera.origin_world(),
@@ -338,33 +341,47 @@ impl GraphView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(mut drag) = self.pan_drag else {
+        if let Some(mut drag) = self.pan_drag {
+            if !event.dragging() {
+                self.pan_drag = None;
+                cx.notify();
+                return;
+            }
+
+            let delta = event.position - drag.start_mouse;
+
+            if drag.pending_clear_selection && !drag.did_pan {
+                let threshold = px(3.0);
+                if delta.x.abs() < threshold && delta.y.abs() < threshold {
+                    return;
+                }
+                drag.pending_clear_selection = false;
+                drag.did_pan = true;
+            }
+
+            let mut camera = self.camera;
+            camera.set_origin_world(drag.start_origin_world);
+            camera.pan_by_screen_delta(delta);
+            self.camera = camera;
+            self.pan_drag = Some(drag);
+
+            cx.notify();
+            return;
+        }
+
+        let Some(canvas_bounds) = self.last_canvas_bounds else {
             return;
         };
 
-        if !event.dragging() {
-            self.pan_drag = None;
-            return;
+        let changed = match hit_test(&self.scene, &self.camera, canvas_bounds, event.position) {
+            Some(GraphHit::Node(id)) => self.scene.set_hovered_node(Some(id)),
+            Some(GraphHit::Edge(id)) => self.scene.set_hovered_edge(Some(id)),
+            None => self.scene.clear_hover(),
+        };
+
+        if changed {
+            cx.notify();
         }
-
-        let delta = event.position - drag.start_mouse;
-
-        if drag.pending_clear_selection && !drag.did_pan {
-            let threshold = px(3.0);
-            if delta.x.abs() < threshold && delta.y.abs() < threshold {
-                return;
-            }
-            drag.pending_clear_selection = false;
-            drag.did_pan = true;
-        }
-
-        let mut camera = self.camera;
-        camera.set_origin_world(drag.start_origin_world);
-        camera.pan_by_screen_delta(delta);
-        self.camera = camera;
-        self.pan_drag = Some(drag);
-
-        cx.notify();
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -422,6 +439,7 @@ impl GraphView {
     ) {
         let theme = theme_for_window(window, cx);
         let t = self.layout_animation_progress_for_paint();
+        let lod = edge_lod_band(self.camera.zoom());
 
         for edge in self.scene.edges() {
             let Some(from) = self.scene.node(edge.id.from) else {
@@ -435,16 +453,39 @@ impl GraphView {
             let to_bounds = self.node_bounds_in_window_for_progress(to.id, canvas_bounds, t);
 
             let selected = self.scene.selection().selected_edge == Some(edge.id);
+            let hovered = self.scene.selection().hovered_edge == Some(edge.id);
+
             let edge_color = if selected {
                 theme.colors.ring
+            } else if hovered {
+                theme.colors.border.opacity(0.95)
             } else {
-                theme.colors.border.opacity(0.9)
+                theme.colors.border.opacity(0.65)
             };
 
-            let segments =
-                edge_segments_in_window(from_bounds, to_bounds, DEFAULT_EDGE_THICKNESS_PX);
-            for segment in segments.segments.iter().flatten() {
+            let thickness = if selected {
+                px(3.0)
+            } else if hovered {
+                px(2.5)
+            } else {
+                DEFAULT_EDGE_STROKE_PX
+            };
+
+            let route = edge_route_in_window(from_bounds, to_bounds);
+            for segment in route.segment_bounds(thickness).iter().flatten() {
                 window.paint_quad(fill(*segment, edge_color));
+            }
+
+            if lod == EdgeLodBand::Ticks
+                && let Some(commit_count) = edge.commit_count
+            {
+                self.paint_edge_ticks(route, commit_count, edge_color, window);
+            }
+
+            if lod >= EdgeLodBand::Labels
+                && let Some(label) = edge.commit_count_label.as_ref()
+            {
+                self.paint_commit_count_label(route.label_center(), label, &theme, window);
             }
         }
     }
@@ -453,6 +494,138 @@ impl GraphView {
 impl Focusable for GraphView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl GraphView {
+    fn paint_edge_ticks(
+        &self,
+        route: EdgeRoute,
+        commit_count: u32,
+        color: gpui::Hsla,
+        window: &mut Window,
+    ) {
+        if commit_count == 0 {
+            return;
+        }
+
+        let [_, _, a, b] = route.points;
+        if a.y != b.y {
+            return;
+        }
+
+        let (left, right) = if a.x <= b.x { (a.x, b.x) } else { (b.x, a.x) };
+        let length = right - left;
+        if length <= px(12.0) {
+            return;
+        }
+
+        let tick_thickness = px(1.0);
+        let tick_height = px(6.0);
+        let min_spacing = px(6.0);
+        let max_by_space = (f32::from(length) / f32::from(min_spacing)).floor() as u32;
+        let tick_count = commit_count.min(20).min(max_by_space);
+        if tick_count == 0 {
+            return;
+        }
+
+        let spacing = f32::from(length) / (tick_count as f32 + 1.0);
+        for index in 1..=tick_count {
+            let x = left + px(spacing * index as f32);
+            let bounds = gpui::Bounds {
+                origin: gpui::point(x - tick_thickness / 2.0, a.y - tick_height / 2.0),
+                size: gpui::size(tick_thickness, tick_height),
+            };
+            window.paint_quad(fill(bounds, color.opacity(0.75)));
+        }
+    }
+
+    fn paint_commit_count_label(
+        &self,
+        center: gpui::Point<gpui::Pixels>,
+        text: &gpui::SharedString,
+        theme: &redesmyn_ui::styles::UiTheme,
+        window: &mut Window,
+    ) {
+        let font_size = px(11.0);
+        let line_height = px(14.0);
+        let padding_x = px(6.0);
+        let padding_y = px(2.0);
+
+        let run = TextRun {
+            len: text.len(),
+            font: theme.typography.caption.font.clone(),
+            color: theme.colors.foreground.opacity(0.8),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let shaped = window.text_system().shape_line(
+            text.clone(),
+            font_size,
+            std::slice::from_ref(&run),
+            None,
+        );
+
+        let bubble_size = gpui::size(
+            shaped.width + padding_x * 2.0,
+            line_height + padding_y * 2.0,
+        );
+
+        let bubble_bounds = gpui::Bounds {
+            origin: gpui::point(
+                center.x - bubble_size.width / 2.0,
+                center.y - bubble_size.height / 2.0,
+            ),
+            size: bubble_size,
+        };
+
+        let bubble_radius = bubble_bounds.size.height / 2.0;
+        let bubble = quad(
+            bubble_bounds,
+            bubble_radius,
+            theme.colors.background.opacity(0.8),
+            1.0,
+            theme.colors.border.opacity(0.3),
+            gpui::BorderStyle::Solid,
+        );
+
+        window.paint_quad(bubble);
+        let text_origin = gpui::point(
+            bubble_bounds.origin.x + padding_x,
+            bubble_bounds.origin.y + padding_y,
+        );
+        self.paint_shaped_line(text_origin, line_height, &shaped, run.color, window);
+    }
+
+    fn paint_shaped_line(
+        &self,
+        origin: gpui::Point<gpui::Pixels>,
+        line_height: gpui::Pixels,
+        shaped: &gpui::ShapedLine,
+        color: gpui::Hsla,
+        window: &mut Window,
+    ) {
+        let padding_top = (line_height - shaped.ascent - shaped.descent) / 2.0;
+        let baseline_offset = gpui::point(px(0.0), padding_top + shaped.ascent);
+
+        for run in shaped.runs.iter() {
+            for glyph in run.glyphs.iter() {
+                if glyph.is_emoji {
+                    continue;
+                }
+
+                let glyph_origin = gpui::point(origin.x + glyph.position.x, origin.y);
+                let _ = window.paint_glyph(
+                    glyph_origin + baseline_offset,
+                    run.font_id,
+                    glyph.id,
+                    shaped.font_size,
+                    color,
+                );
+            }
+        }
     }
 }
 
@@ -846,6 +1019,10 @@ impl Render for GraphView {
                     .relative()
                     .cursor(if self.pan_drag.is_some() {
                         CursorStyle::ClosedHand
+                    } else if self.scene.selection().hovered_node.is_some()
+                        || self.scene.selection().hovered_edge.is_some()
+                    {
+                        CursorStyle::PointingHand
                     } else {
                         CursorStyle::Arrow
                     })
@@ -942,7 +1119,10 @@ fn task_state_chip(state: TaskState, theme: &redesmyn_ui::styles::UiTheme) -> im
     let (bg, fg) = match state {
         TaskState::InProgress => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
         TaskState::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
-        TaskState::Done => (theme.colors.accent.opacity(0.75), theme.colors.foreground_muted),
+        TaskState::Done => (
+            theme.colors.accent.opacity(0.75),
+            theme.colors.foreground_muted,
+        ),
         TaskState::Todo | TaskState::Unknown => {
             (theme.colors.surface_elevated, theme.colors.foreground_muted)
         }
@@ -980,7 +1160,10 @@ fn agent_status_label(status: AgentStatus) -> &'static str {
     }
 }
 
-fn agent_status_chip(status: AgentStatus, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
+fn agent_status_chip(
+    status: AgentStatus,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
     let (bg, fg) = match status {
         AgentStatus::Running => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
         AgentStatus::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),

@@ -60,6 +60,8 @@ pub struct GraphSceneNode {
 #[derive(Debug, Clone)]
 pub struct GraphSceneEdge {
     pub id: GraphEdgeId,
+    pub commit_count: Option<u32>,
+    pub commit_count_label: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +77,8 @@ pub enum AgentStatus {
 pub struct GraphSelection {
     pub selected_node: Option<GraphNodeId>,
     pub selected_edge: Option<GraphEdgeId>,
+    pub hovered_node: Option<GraphNodeId>,
+    pub hovered_edge: Option<GraphEdgeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,9 +145,9 @@ impl GraphScene {
             branch_name: Some("feat/grandchild".into()),
         });
 
-        scene.insert_edge(GraphEdgeId { from: a, to: b });
-        scene.insert_edge(GraphEdgeId { from: a, to: c });
-        scene.insert_edge(GraphEdgeId { from: b, to: d });
+        scene.insert_edge(GraphEdgeId { from: a, to: b }, Some(12));
+        scene.insert_edge(GraphEdgeId { from: a, to: c }, Some(3));
+        scene.insert_edge(GraphEdgeId { from: b, to: d }, Some(27));
 
         scene.relayout();
         scene
@@ -257,6 +261,36 @@ impl GraphScene {
         changed
     }
 
+    pub fn set_hovered_node(&mut self, id: Option<GraphNodeId>) -> bool {
+        if self.selection.hovered_node == id && self.selection.hovered_edge.is_none() {
+            return false;
+        }
+
+        self.selection.hovered_node = id;
+        self.selection.hovered_edge = None;
+        true
+    }
+
+    pub fn set_hovered_edge(&mut self, id: Option<GraphEdgeId>) -> bool {
+        if self.selection.hovered_edge == id && self.selection.hovered_node.is_none() {
+            return false;
+        }
+
+        self.selection.hovered_edge = id;
+        self.selection.hovered_node = None;
+        true
+    }
+
+    pub fn clear_hover(&mut self) -> bool {
+        if self.selection.hovered_node.is_none() && self.selection.hovered_edge.is_none() {
+            return false;
+        }
+
+        self.selection.hovered_node = None;
+        self.selection.hovered_edge = None;
+        true
+    }
+
     pub fn replace_from_epic_graph(&mut self, graph: &redesmyn_protocol::client::EpicGraph) {
         let span = redesmyn_logging::redesmyn_info_span!(
             "ui.graph_scene.replace_from_epic_graph",
@@ -303,7 +337,14 @@ impl GraphScene {
                     }),
             };
             let edge_id = GraphEdgeId { from, to };
-            edges.insert(edge_id, GraphSceneEdge { id: edge_id });
+            edges.insert(
+                edge_id,
+                GraphSceneEdge {
+                    id: edge_id,
+                    commit_count: None,
+                    commit_count_label: None,
+                },
+            );
             parent_by_child.entry(to).or_insert(from);
         }
 
@@ -333,7 +374,10 @@ impl GraphScene {
                         .task_id
                         .and_then(|id| agent_status_by_task_id.get(&id).copied())
                         .unwrap_or(AgentStatus::Unknown),
-                    branch_name: node.branch_name.as_ref().map(|name| SharedString::new(name.clone())),
+                    branch_name: node
+                        .branch_name
+                        .as_ref()
+                        .map(|name| SharedString::new(name.clone())),
                 },
             );
         }
@@ -351,6 +395,18 @@ impl GraphScene {
             && !self.edges.contains_key(&selected)
         {
             self.selection.selected_edge = None;
+        }
+
+        if let Some(hovered) = self.selection.hovered_node
+            && !self.nodes.contains_key(&hovered)
+        {
+            self.selection.hovered_node = None;
+        }
+
+        if let Some(hovered) = self.selection.hovered_edge
+            && !self.edges.contains_key(&hovered)
+        {
+            self.selection.hovered_edge = None;
         }
 
         self.apply_expandedness_policy();
@@ -379,8 +435,15 @@ impl GraphScene {
         self.node_sizes.entry(id).or_insert_with(default_node_size);
     }
 
-    fn insert_edge(&mut self, id: GraphEdgeId) {
-        self.edges.insert(id, GraphSceneEdge { id });
+    fn insert_edge(&mut self, id: GraphEdgeId, commit_count: Option<u32>) {
+        self.edges.insert(
+            id,
+            GraphSceneEdge {
+                id,
+                commit_count,
+                commit_count_label: commit_count.map(|count| count.to_string().into()),
+            },
+        );
     }
 
     fn relayout(&mut self) {
