@@ -4,10 +4,75 @@ use redesmyn_control_plane::ControlPlane;
 use redesmyn_control_plane::session_events::{
     SessionEventsResyncReason, SessionEventsSubscription, SessionEventsSubscriptionItem,
 };
-use redesmyn_ids::{SessionEventId, SessionId};
+use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
 use redesmyn_protocol::client::{SessionEventCursor, SessionEventKindFilter};
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{SessionEvent, Timestamp};
+use redesmyn_storage::schema::{
+    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
+    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentSessionStatus as StorageAgentSessionStatus,
+};
+use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
+
+async fn insert_repo_and_chat_session(control_plane: &ControlPlane, session_id: SessionId) {
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let now_ms = 0_i64;
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?, ?, ?, ?)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-workspace")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert workspace");
+
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-repo")
+    .bind("Test Repo")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert repository");
+
+    insert_agent_session(
+        control_plane.pool(),
+        &AgentSessionRecord {
+            session_id,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: StorageAgentSessionScopeKind::Chat,
+            task_id: None,
+            agent_kind: StorageAgentKind::Shell,
+            interface_mode: StorageAgentInterfaceMode::ShellTmux,
+            status: StorageAgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            title: None,
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        },
+    )
+    .await
+    .expect("insert agent session");
+}
 
 async fn recv_item(sub: &mut SessionEventsSubscription) -> SessionEventsSubscriptionItem {
     tokio::time::timeout(Duration::from_secs(2), sub.recv())
@@ -60,6 +125,7 @@ async fn session_events_pagination_returns_stable_next_cursor() {
     let control_plane = ControlPlane::open_test().await.expect("control plane");
 
     let session_id = SessionId::new();
+    insert_repo_and_chat_session(&control_plane, session_id).await;
     let e1 = user_event(session_id, SessionEventId::new(), ts(1));
     let e2 = user_event(session_id, SessionEventId::new(), ts(2));
     let e3 = user_event(session_id, SessionEventId::new(), ts(3));
@@ -121,6 +187,7 @@ async fn session_events_pagination_supports_kind_filtering() {
     let control_plane = ControlPlane::open_test().await.expect("control plane");
 
     let session_id = SessionId::new();
+    insert_repo_and_chat_session(&control_plane, session_id).await;
     let user = user_event(session_id, SessionEventId::new(), ts(1));
     let assistant = assistant_event(session_id, SessionEventId::new(), ts(2));
 
@@ -174,6 +241,7 @@ async fn session_events_subscription_resumes_from_cursor_and_delivers_appends() 
     let control_plane = ControlPlane::open_test().await.expect("control plane");
 
     let session_id = SessionId::new();
+    insert_repo_and_chat_session(&control_plane, session_id).await;
     let first = user_event(session_id, SessionEventId::new(), ts(1));
     let second = user_event(session_id, SessionEventId::new(), ts(2));
 
