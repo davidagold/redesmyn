@@ -327,8 +327,18 @@ impl RootView {
             return;
         }
 
-        self.chrome.selected_epic_slug = Some(slug);
+        self.chrome.selected_epic_slug = Some(slug.clone());
         self.chrome.panel = None;
+
+        let selected = self
+            .chrome
+            .epics
+            .iter()
+            .find(|epic| epic.slug == slug)
+            .cloned();
+
+        self.session_pane
+            .update(cx, |pane, cx| pane.set_selected_epic(selected, cx));
         self.notify_ui_updated(cx);
     }
 
@@ -476,6 +486,18 @@ impl RootView {
                                             this.chrome.selected_epic_slug = None;
                                         }
                                     }
+
+                                    let selected = this
+                                        .chrome
+                                        .selected_epic_slug
+                                        .as_deref()
+                                        .and_then(|slug| {
+                                            this.chrome.epics.iter().find(|epic| epic.slug == slug)
+                                        })
+                                        .cloned();
+                                    this.session_pane.update(cx, |pane, cx| {
+                                        pane.set_selected_epic(selected, cx);
+                                    });
                                 }
                                 Err(error) => {
                                     redesmyn_logging::tracing::error!(
@@ -1921,31 +1943,120 @@ impl Render for RootView {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EpicSessionPanePanel {
+    PinExisting,
+}
+
 struct EpicSessionPaneHost {
     session_view: Entity<SessionView>,
+    control_plane_client: Option<ControlPlaneClient>,
     fixture: Option<SessionViewerFixtureEmitter>,
+    fallback_session_id: Option<redesmyn_ids::SessionId>,
+    selected_epic: Option<redesmyn_protocol::client::EpicSummary>,
+    pinned_session_id: Option<redesmyn_ids::SessionId>,
+    chat_sessions: Vec<redesmyn_protocol::client::AgentSessionSummary>,
+    panel: Option<EpicSessionPanePanel>,
+    scroll: ScrollHandle,
+    load: UserActionState,
+    create_and_pin: UserActionState,
+    pin_existing: UserActionState,
+    unpin: UserActionState,
+    close_session: UserActionState,
     emit_demo_task: Option<Task<()>>,
     emit_demo_in_flight: bool,
     emit_demo_error: Option<SharedString>,
+    load_task: Option<Task<()>>,
+    action_task: Option<Task<()>>,
+    selection_generation: u64,
 }
 
 impl EpicSessionPaneHost {
     fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        let (client, fixture) = model.update(cx, |model, _cx| {
+        let (session_client, fixture) = model.update(cx, |model, _cx| {
             (
                 model.take_control_plane_client(),
                 model.take_session_viewer_fixture(),
             )
         });
-        let initial_session_id = fixture.as_ref().map(|fixture| fixture.session_id());
-        let session_view = cx.new(|cx| SessionView::new(client, initial_session_id, cx));
+        let control_plane_client = model.read(cx).chrome_control_plane_client.clone();
+        let fallback_session_id = fixture.as_ref().map(|fixture| fixture.session_id());
+        let session_view = cx.new(|cx| SessionView::new(session_client, fallback_session_id, cx));
         Self {
             session_view,
+            control_plane_client,
             fixture,
+            fallback_session_id,
+            selected_epic: None,
+            pinned_session_id: None,
+            chat_sessions: Vec::new(),
+            panel: None,
+            scroll: ScrollHandle::new(),
+            load: UserActionState::default(),
+            create_and_pin: UserActionState::default(),
+            pin_existing: UserActionState::default(),
+            unpin: UserActionState::default(),
+            close_session: UserActionState::default(),
             emit_demo_task: None,
             emit_demo_in_flight: false,
             emit_demo_error: None,
+            load_task: None,
+            action_task: None,
+            selection_generation: 0,
         }
+    }
+
+    fn set_selected_epic(
+        &mut self,
+        epic: Option<redesmyn_protocol::client::EpicSummary>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_epic == epic {
+            return;
+        }
+
+        self.selection_generation = self.selection_generation.wrapping_add(1);
+        self.selected_epic = epic;
+        self.pinned_session_id = None;
+        self.chat_sessions.clear();
+        self.panel = None;
+        self.load_task = None;
+        self.action_task = None;
+
+        self.load.in_flight = false;
+        self.load.clear_error();
+        self.create_and_pin.in_flight = false;
+        self.create_and_pin.clear_error();
+        self.pin_existing.in_flight = false;
+        self.pin_existing.clear_error();
+        self.unpin.in_flight = false;
+        self.unpin.clear_error();
+        self.close_session.in_flight = false;
+        self.close_session.clear_error();
+
+        let session_id = if self.selected_epic.is_some() {
+            None
+        } else {
+            self.fallback_session_id
+        };
+        self.session_view
+            .update(cx, |view, cx| view.set_session_id(session_id, cx));
+
+        if self.selected_epic.is_some() {
+            self.refresh(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn is_current_selection(&self, generation: u64, epic_slug: &str) -> bool {
+        if self.selection_generation != generation {
+            return false;
+        }
+        matches!(
+            self.selected_epic.as_ref(),
+            Some(epic) if epic.slug == epic_slug
+        )
     }
 
     fn emit_demo_message(
@@ -2002,70 +2113,884 @@ impl EpicSessionPaneHost {
             }
         }));
     }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.load.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.load.fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+
+        self.load.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.load_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+                    let epic_id = selected_epic
+                        .epic_id
+                        .or(graph.epic_id)
+                        .ok_or_else(|| ControlPlaneClientError::Server {
+                            message: "Epic id unavailable for selected epic.".to_string(),
+                        })?;
+
+                    let pinned_session_id = client
+                        .get_epic_pinned_chat_session(scope, epic_id)
+                        .await?;
+                    let chat_sessions = client.list_chat_sessions(scope, true, 100).await?;
+
+                    Ok::<_, ControlPlaneClientError>((pinned_session_id, chat_sessions))
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.load_task = None;
+                                this.load.fail(format!("Refresh failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.load_task = None;
+
+                        match result {
+                            Ok((pinned_session_id, chat_sessions)) => {
+                                this.pinned_session_id = pinned_session_id;
+                                this.chat_sessions = chat_sessions;
+                                this.load.succeed();
+                                this.session_view.update(cx, |view, cx| {
+                                    view.set_session_id(pinned_session_id, cx);
+                                });
+                            }
+                            Err(err) => this.load.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn create_and_pin_chat(&mut self, cx: &mut Context<Self>) {
+        if self.create_and_pin.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.create_and_pin.fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            self.create_and_pin.fail("Select an epic before creating a chat session.");
+            cx.notify();
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+
+        self.create_and_pin.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.action_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+                    let epic_id = selected_epic
+                        .epic_id
+                        .or(graph.epic_id)
+                        .ok_or_else(|| ControlPlaneClientError::Server {
+                            message: "Epic id unavailable for selected epic.".to_string(),
+                        })?;
+
+                    let resp = client.create_chat_session(scope, None).await?;
+                    let session_id = resp.session_id;
+
+                    client
+                        .pin_chat_session_to_epic(scope, epic_id, session_id)
+                        .await?;
+
+                    let chat_sessions = client.list_chat_sessions(scope, true, 100).await?;
+
+                    Ok::<_, ControlPlaneClientError>((session_id, chat_sessions))
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.action_task = None;
+                                this.create_and_pin.fail(format!("Create failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.action_task = None;
+
+                        match result {
+                            Ok((session_id, sessions)) => {
+                                this.create_and_pin.succeed();
+                                this.pinned_session_id = Some(session_id);
+                                this.chat_sessions = sessions;
+                                this.session_view.update(cx, |view, cx| {
+                                    view.set_session_id(Some(session_id), cx);
+                                });
+                            }
+                            Err(err) => this.create_and_pin.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn open_pin_existing(&mut self, cx: &mut Context<Self>) {
+        self.panel = Some(EpicSessionPanePanel::PinExisting);
+        cx.notify();
+    }
+
+    fn close_panel(&mut self, cx: &mut Context<Self>) {
+        if self.panel.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn pin_existing_chat(&mut self, session_id: redesmyn_ids::SessionId, cx: &mut Context<Self>) {
+        if self.pin_existing.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.pin_existing.fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            self.pin_existing.fail("Select an epic before pinning.");
+            cx.notify();
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+
+        self.pin_existing.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.action_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+                    let epic_id = selected_epic
+                        .epic_id
+                        .or(graph.epic_id)
+                        .ok_or_else(|| ControlPlaneClientError::Server {
+                            message: "Epic id unavailable for selected epic.".to_string(),
+                        })?;
+
+                    client
+                        .pin_chat_session_to_epic(scope, epic_id, session_id)
+                        .await?;
+
+                    let chat_sessions = client.list_chat_sessions(scope, true, 100).await?;
+
+                    Ok::<_, ControlPlaneClientError>(chat_sessions)
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.action_task = None;
+                                this.pin_existing.fail(format!("Pin failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.action_task = None;
+
+                        match result {
+                            Ok(sessions) => {
+                                this.pin_existing.succeed();
+                                this.panel = None;
+                                this.pinned_session_id = Some(session_id);
+                                this.chat_sessions = sessions;
+                                this.session_view.update(cx, |view, cx| {
+                                    view.set_session_id(Some(session_id), cx);
+                                });
+                            }
+                            Err(err) => this.pin_existing.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn unpin_chat(&mut self, cx: &mut Context<Self>) {
+        if self.unpin.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.unpin.fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            self.unpin.fail("Select an epic before unpinning.");
+            cx.notify();
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+
+        self.unpin.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.action_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+                    let epic_id = selected_epic
+                        .epic_id
+                        .or(graph.epic_id)
+                        .ok_or_else(|| ControlPlaneClientError::Server {
+                            message: "Epic id unavailable for selected epic.".to_string(),
+                        })?;
+
+                    client.unpin_chat_session_from_epic(scope, epic_id).await?;
+
+                    Ok::<_, ControlPlaneClientError>(())
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.action_task = None;
+                                this.unpin.fail(format!("Unpin failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.action_task = None;
+
+                        match result {
+                            Ok(()) => {
+                                this.unpin.succeed();
+                                this.pinned_session_id = None;
+                                this.session_view.update(cx, |view, cx| {
+                                    view.set_session_id(None, cx);
+                                });
+                            }
+                            Err(err) => this.unpin.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn close_current_chat(&mut self, cx: &mut Context<Self>) {
+        if self.close_session.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.close_session.fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            self.close_session.fail("Select an epic before closing.");
+            cx.notify();
+            return;
+        };
+
+        let Some(session_id) = self.pinned_session_id else {
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+
+        self.close_session.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.action_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+
+                    client.close_chat_session(scope, session_id).await?;
+                    let sessions = client.list_chat_sessions(scope, true, 100).await?;
+                    Ok::<_, ControlPlaneClientError>(sessions)
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.action_task = None;
+                                this.close_session.fail(format!("Close failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.action_task = None;
+
+                        match result {
+                            Ok(sessions) => {
+                                this.close_session.succeed();
+                                this.chat_sessions = sessions;
+                            }
+                            Err(err) => this.close_session.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn pinned_chat_summary(
+        &self,
+    ) -> Option<&redesmyn_protocol::client::AgentSessionSummary> {
+        let pinned = self.pinned_session_id?;
+        self.chat_sessions
+            .iter()
+            .find(|session| session.session_id == pinned)
+    }
 }
 
 impl Render for EpicSessionPaneHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
+        let view = cx.entity();
 
-        let content = div()
+        let epic_slug = self
+            .selected_epic
+            .as_ref()
+            .map(|epic| epic.slug.clone())
+            .unwrap_or_else(|| "Select epic".to_string());
+
+        let in_flight_label = if self.load.in_flight {
+            Some("Loading chat")
+        } else if self.create_and_pin.in_flight {
+            Some("Creating chat")
+        } else if self.pin_existing.in_flight {
+            Some("Pinning chat")
+        } else if self.unpin.in_flight {
+            Some("Unpinning")
+        } else if self.close_session.in_flight {
+            Some("Closing")
+        } else {
+            None
+        };
+
+        let mut header_actions = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(theme.spacing.sm);
+
+        if let Some(label) = in_flight_label {
+            header_actions = header_actions.child(ProgressPill::new(label));
+        }
+
+        let can_act_on_epic = self.selected_epic.is_some() && !self.load.in_flight;
+        let has_pinned = self.pinned_session_id.is_some();
+
+        let create_button = TextButton::new(("chat_create", cx.entity_id()), "Create chat")
+            .kind(ButtonKind::Secondary)
+            .disabled(!can_act_on_epic || self.create_and_pin.in_flight)
+            .disabled_reason("Loading…")
+            .on_click({
+                let view = view.clone();
+                move |_, _, cx| view.update(cx, |this, cx| this.create_and_pin_chat(cx))
+            });
+
+        let pin_existing_button =
+            TextButton::new(("chat_pin_existing", cx.entity_id()), "Pin existing…")
+                .kind(ButtonKind::Ghost)
+                .disabled(!can_act_on_epic || self.pin_existing.in_flight)
+                .disabled_reason("Loading…")
+                .on_click({
+                    let view = view.clone();
+                    move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
+                });
+
+        let unpin_button = TextButton::new(("chat_unpin", cx.entity_id()), "Unpin")
+            .kind(ButtonKind::Ghost)
+            .disabled(!can_act_on_epic || !has_pinned || self.unpin.in_flight)
+            .disabled_reason("No pinned chat")
+            .on_click({
+                let view = view.clone();
+                move |_, _, cx| view.update(cx, |this, cx| this.unpin_chat(cx))
+            });
+
+        let close_button = TextButton::new(("chat_close", cx.entity_id()), "Close")
+            .kind(ButtonKind::Ghost)
+            .disabled(!can_act_on_epic || !has_pinned || self.close_session.in_flight)
+            .disabled_reason("No pinned chat")
+            .on_click({
+                let view = view.clone();
+                move |_, _, cx| view.update(cx, |this, cx| this.close_current_chat(cx))
+            });
+
+        header_actions = header_actions
+            .child(create_button)
+            .child(pin_existing_button)
+            .when(has_pinned, |this| this.child(unpin_button).child(close_button));
+
+        if self.fixture.is_some() {
+            let label = if self.emit_demo_in_flight {
+                "Emitting…"
+            } else {
+                "Emit demo message"
+            };
+            header_actions = header_actions.child(
+                TextButton::new(("session_fixture_emit_demo", cx.entity_id()), label)
+                    .kind(ButtonKind::Ghost)
+                    .disabled(self.emit_demo_in_flight)
+                    .on_click(cx.listener(Self::emit_demo_message)),
+            );
+        }
+
+        let header = div()
+            .h(px(44.0))
+            .px(theme.spacing.md)
+            .flex()
+            .items_center()
+            .justify_between()
+            .bg(theme.colors.surface_elevated)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.sm)
+                    .child(div().text_sm().text_color(theme.colors.foreground).child("Chat"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground_muted)
+                            .child(epic_slug),
+                    ),
+            )
+            .child(header_actions);
+
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .px(theme.spacing.md)
+            .py(theme.spacing.md)
+            .gap(theme.spacing.sm);
+
+        let error = self
+            .load
+            .error
+            .clone()
+            .or_else(|| self.create_and_pin.error.clone())
+            .or_else(|| self.pin_existing.error.clone())
+            .or_else(|| self.unpin.error.clone())
+            .or_else(|| self.close_session.error.clone())
+            .or_else(|| self.emit_demo_error.clone());
+
+        if let Some(error) = error {
+            body = body.child(
+                Callout::new(error)
+                    .kind(CalloutKind::Danger)
+                    .title("Chat action failed"),
+            );
+        }
+
+        match self.selected_epic.as_ref() {
+            None => {
+                body = body.child(
+                    Callout::new("Select an epic to view or pin a chat session.")
+                        .kind(CalloutKind::Info)
+                        .title("Chat"),
+                );
+            }
+            Some(_) if self.load.in_flight => {
+                body = body.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground_muted)
+                        .child("Loading pinned chat…"),
+                );
+            }
+            Some(_) if self.pinned_session_id.is_none() => {
+                body = body.child(
+                    Callout::new("No chat is pinned to this epic yet.")
+                        .kind(CalloutKind::Info)
+                        .title("Pinned chat")
+                        .action(
+                            TextButton::new(("chat_empty_create", cx.entity_id()), "Create chat")
+                                .kind(ButtonKind::Secondary)
+                                .disabled(self.create_and_pin.in_flight)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| this.create_and_pin_chat(cx))
+                                    }
+                                }),
+                        ),
+                );
+            }
+            Some(_) => {
+                let title = self
+                    .pinned_chat_summary()
+                    .and_then(|summary| summary.title.clone())
+                    .unwrap_or_else(|| "Pinned chat".to_string());
+                let closed = self
+                    .pinned_chat_summary()
+                    .and_then(|summary| summary.closed_at)
+                    .is_some();
+
+                let subtitle = self
+                    .pinned_session_id
+                    .map(|id| {
+                        if closed {
+                            format!("{id} · closed")
+                        } else {
+                            id.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(theme.spacing.xs)
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.colors.foreground)
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.colors.foreground_muted)
+                                .child(subtitle),
+                        ),
+                );
+            }
+        }
+
+        body = body.child(div().flex_1().min_h(px(0.0)).child(self.session_view.clone()));
+
+        let mut container = div()
             .flex()
             .flex_col()
             .size_full()
             .bg(theme.colors.surface)
-            .child(
+            .child(header)
+            .child(body)
+            .relative();
+
+        if matches!(self.panel, Some(EpicSessionPanePanel::PinExisting)) {
+            let entity_id = cx.entity_id();
+            let pinned = self.pinned_session_id;
+            let in_flight = self.pin_existing.in_flight;
+
+            let mut menu_body = div().flex().flex_col().gap(theme.spacing.sm).child(
                 div()
-                    .h(px(44.0))
-                    .px(theme.spacing.md)
-                    .flex()
-                    .items_center()
-                    .bg(theme.colors.surface_elevated)
-                    .justify_between()
+                    .text_sm()
+                    .text_color(theme.colors.foreground)
+                    .child("Pin an existing chat"),
+            );
+
+            if self.chat_sessions.is_empty() {
+                menu_body = menu_body.child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground_muted)
+                        .child("No chat sessions exist yet."),
+                );
+            } else {
+                let scroll = self.scroll.clone();
+                let view_for_items = view.clone();
+                let list = ScrollArea::new(("chat_pin_scroll", cx.entity_id()), scroll)
+                    .scrollbar_width(px(8.0))
                     .child(
                         div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground)
-                            .child("Sessions"),
-                    )
-                    .child({
-                        let mut controls = div().flex().flex_row().gap(theme.spacing.sm);
-                        if self.fixture.is_some() {
-                            let label = if self.emit_demo_in_flight {
-                                "Emitting…"
-                            } else {
-                                "Emit demo message"
-                            };
-                            controls = controls.child(
-                                TextButton::new(
-                                    ("session_fixture_emit_demo", cx.entity_id()),
-                                    label,
-                                )
-                                .disabled(self.emit_demo_in_flight)
-                                .on_click(cx.listener(Self::emit_demo_message)),
-                            );
-                        }
-                        controls
-                    }),
-            )
-            .child({
-                let mut body = div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .px(theme.spacing.md)
-                    .py(theme.spacing.md);
+                            .flex()
+                            .flex_col()
+                            .w_full()
+                            .gap(theme.spacing.xs)
+                            .children(self.chat_sessions.iter().map(|session| {
+                                let title = session
+                                    .title
+                                    .clone()
+                                    .unwrap_or_else(|| "Untitled chat".to_string());
+                                let closed = session.closed_at.is_some();
+                                let label = if closed {
+                                    format!("{title} (closed)")
+                                } else {
+                                    title
+                                };
 
-                if let Some(error) = self.emit_demo_error.clone() {
-                    body = body.child(
-                        Callout::new(error)
-                            .kind(CalloutKind::Warning)
-                            .title("Session viewer fixture"),
+                                let is_pinned = pinned == Some(session.session_id);
+                                let kind = if is_pinned {
+                                    ButtonKind::Secondary
+                                } else {
+                                    ButtonKind::Ghost
+                                };
+
+                                let item_id = (
+                                    gpui::ElementId::from(("chat_pin_item", entity_id)),
+                                    session.session_id.to_string(),
+                                );
+
+                                TextButton::new(item_id, label)
+                                    .menu_item()
+                                    .kind(kind)
+                                    .disabled(in_flight)
+                                    .disabled_reason("Pinning…")
+                                    .on_click({
+                                        let view = view_for_items.clone();
+                                        let session_id = session.session_id;
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.pin_existing_chat(session_id, cx)
+                                            });
+                                        }
+                                    })
+                            })),
                     );
-                }
 
-                body.child(self.session_view.clone())
-            });
+                menu_body =
+                    menu_body.child(div().h(px(260.0)).w_full().overflow_hidden().child(list));
+            }
 
-        content
+            let overlay = div()
+                .absolute()
+                .inset_0()
+                .child(div().absolute().inset_0().occlude().on_mouse_down(
+                    gpui::MouseButton::Left,
+                    {
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            view.update(cx, |this, cx| this.close_panel(cx));
+                            cx.stop_propagation();
+                        }
+                    },
+                ))
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(44.0) + theme.spacing.xs)
+                        .left(theme.spacing.md)
+                        .child(
+                            div()
+                                .w(px(360.0))
+                                .p(theme.spacing.md)
+                                .rounded_md()
+                                .bg(theme.colors.surface_elevated)
+                                .border_1()
+                                .border_color(theme.colors.border.opacity(0.4))
+                                .child(menu_body),
+                        ),
+                );
+
+            container = container.child(overlay);
+        }
+
+        container
     }
 }
 

@@ -6,6 +6,7 @@ use redesmyn_protocol::client::{
     CreateChatSessionResponse, GetEpicGraphRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
     Request, RequestPayload, ResponseResult, StatusRequest, StatusResponse,
     UnpinChatSessionFromEpicRequest,
+    GetEpicPinnedChatSessionRequest, ListChatSessionsRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
@@ -86,6 +87,28 @@ impl ControlPlaneClient {
         }
     }
 
+    pub async fn get_epic_pinned_chat_session(
+        &self,
+        scope: RepoScope,
+        epic_id: EpicId,
+    ) -> Result<Option<SessionId>, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+                    epic_id,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::GetEpicPinnedChatSession(resp) => Ok(resp.session_id),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
     pub async fn create_chat_session(
         &self,
         scope: RepoScope,
@@ -99,6 +122,30 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::CreateChatSession(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn list_chat_sessions(
+        &self,
+        scope: RepoScope,
+        include_closed: bool,
+        limit: u32,
+    ) -> Result<Vec<redesmyn_protocol::client::AgentSessionSummary>, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::ListChatSessions(ListChatSessionsRequest {
+                    include_closed,
+                    limit,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::ListChatSessions(resp) => Ok(resp.sessions),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),

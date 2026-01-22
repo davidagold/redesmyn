@@ -416,6 +416,26 @@ impl SessionView {
         this
     }
 
+    pub fn set_session_id(&mut self, session_id: Option<SessionId>, cx: &mut Context<Self>) {
+        let Some(session_id) = session_id else {
+            self.subscription_id = None;
+            self.subscription_task = None;
+            self.load_task = None;
+            self.load_older_task = None;
+            self.pending_scroll_restore = None;
+            self.error = None;
+            self.feed = None;
+            self.session_id_input
+                .update(cx, |input, cx| input.set_text("", cx));
+            cx.notify();
+            return;
+        };
+
+        self.session_id_input
+            .update(cx, |input, cx| input.set_text(session_id.to_string(), cx));
+        self.load_session_id(&session_id.to_string(), cx);
+    }
+
     fn load_session_id(&mut self, raw: &str, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
             self.error = Some("Control plane client is unavailable.".into());
@@ -440,6 +460,12 @@ impl SessionView {
                 return;
             }
         };
+
+        self.subscription_id = None;
+        self.subscription_task = None;
+        self.load_task = None;
+        self.load_older_task = None;
+        self.pending_scroll_restore = None;
 
         self.error = None;
         self.subscription_task = None;
@@ -649,6 +675,9 @@ impl SessionView {
 
         match event {
             SubscriptionEvent::SessionEvent(ev) => {
+                if ev.session_id != feed.session_id {
+                    return;
+                }
                 feed.apply_live_event(ev);
                 apply_scroll_intents(feed, scroll_handle);
             }
