@@ -358,7 +358,24 @@ impl Render for GraphView {
                     .border_1()
                     .border_color(border)
                     .overflow_hidden()
-                    .occlude();
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, {
+                        let graph = graph.clone();
+                        move |_, _, cx| {
+                            graph.update(cx, |this, cx| {
+                                let previous = this.scene.selection().clone();
+                                this.scene.select_node(node_id);
+
+                                let next = this.scene.selection().clone();
+                                if previous != next {
+                                    this.reset_expanded_card_state();
+                                }
+
+                                cx.notify();
+                            });
+                            cx.stop_propagation();
+                        }
+                    });
 
                 if !is_expanded {
                     let title = node.title.clone();
