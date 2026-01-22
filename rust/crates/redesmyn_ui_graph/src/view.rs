@@ -2147,3 +2147,65 @@ fn task_details(
         theme,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_bar_visibility_requires_multi_selection() {
+        let mut scene = GraphScene::empty_demo();
+        let a = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([1; 16]));
+        let b = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([2; 16]));
+        scene.insert_demo_node(a);
+        scene.insert_demo_node(b);
+
+        let selection_bar_visible =
+            |scene: &GraphScene| scene.selection().selected_edge.is_none()
+                && scene.selection().selected_nodes.len() > 1;
+
+        assert!(!selection_bar_visible(&scene));
+
+        scene.select_node(a);
+        assert!(!selection_bar_visible(&scene));
+
+        scene.toggle_node(b);
+        assert!(selection_bar_visible(&scene));
+
+        scene.select_edge(GraphEdgeId { from: a, to: b });
+        assert!(!selection_bar_visible(&scene));
+    }
+
+    #[test]
+    fn bulk_start_targets_respect_task_state() {
+        let mut scene = GraphScene::demo();
+        let a = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([1; 16]));
+        let b = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([2; 16]));
+        let c = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([3; 16]));
+        let d = GraphNodeId::Task(redesmyn_ids::TaskId::from_bytes([4; 16]));
+
+        scene.toggle_node(a);
+        scene.toggle_node(b);
+        scene.toggle_node(c);
+        scene.toggle_node(d);
+
+        let targets: Vec<_> = scene
+            .selection()
+            .selected_nodes
+            .iter()
+            .copied()
+            .filter(|id| matches!(id, GraphNodeId::Task(_)))
+            .filter(|id| {
+                let Some(node) = scene.node(*id) else {
+                    return false;
+                };
+                matches!(
+                    node.state,
+                    TaskState::Todo | TaskState::InProgress | TaskState::Unknown
+                )
+            })
+            .collect();
+
+        assert_eq!(targets, vec![a, c]);
+    }
+}
