@@ -3,7 +3,7 @@ mod command_palette;
 mod foundations_demo;
 mod root_view;
 
-use gpui::AppContext as _;
+use gpui::{AppContext as _, Focusable as _};
 
 use crate::foundations_demo::FoundationsDemo;
 
@@ -67,7 +67,7 @@ fn main() {
             ..Default::default()
         };
 
-        let _window = cx
+        let window = cx
             .open_window(options, move |_, cx| {
                 let model = cx.new(|_| {
                     crate::root_view::DesktopModel::new(
@@ -79,6 +79,13 @@ fn main() {
                 cx.new(|cx| crate::root_view::RootView::new(model, cx))
             })
             .expect("window open should succeed");
+
+        window
+            .update(cx, |view: &mut crate::root_view::RootView, window, cx| {
+                window.focus(&view.focus_handle(cx));
+                cx.activate(true);
+            })
+            .ok();
     });
 
     desktop.shutdown();
