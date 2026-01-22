@@ -372,3 +372,4 @@ Tasks:
 - `epics/gpui/tasks/T-64/README.md`: Expanded task card: latest session view (latest session only).
 - `epics/gpui/tasks/T-65/README.md`: Interactive (tmux) session placeholder UX (attach/copy; no terminal emulator in port).
 - `epics/gpui/tasks/T-66/README.md`: Session viewer AI-testability (UI driver actions + semantic snapshot + tests).
+- `epics/gpui/tasks/T-70/README.md`: Desktop fixture mode for SessionView (seeded DB + demo events).
