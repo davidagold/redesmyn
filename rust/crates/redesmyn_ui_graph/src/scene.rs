@@ -18,6 +18,8 @@ pub(crate) const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
         height: 560,
     };
 
+use crate::focus_span::compute_focus_span;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GraphNodeId {
     Task(TaskId),
@@ -86,6 +88,8 @@ pub struct GraphScene {
     nodes: BTreeMap<GraphNodeId, GraphSceneNode>,
     edges: BTreeMap<GraphEdgeId, GraphSceneEdge>,
     selection: GraphSelection,
+    focus_mode_enabled: bool,
+    focus_nodes: Option<BTreeSet<GraphNodeId>>,
     node_sizes: BTreeMap<GraphNodeId, redesmyn_graph_layout::Size>,
     node_positions: BTreeMap<GraphNodeId, redesmyn_graph_layout::Point>,
     bounds: redesmyn_graph_layout::Rect,
@@ -159,6 +163,8 @@ impl GraphScene {
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
             selection: GraphSelection::default(),
+            focus_mode_enabled: false,
+            focus_nodes: None,
             node_sizes: BTreeMap::new(),
             node_positions: BTreeMap::new(),
             bounds: redesmyn_graph_layout::Rect {
@@ -188,11 +194,15 @@ impl GraphScene {
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &GraphSceneNode> {
-        self.nodes.values()
+        self.nodes
+            .values()
+            .filter(|node| self.is_node_visible(node.id))
     }
 
     pub fn edges(&self) -> impl Iterator<Item = &GraphSceneEdge> {
-        self.edges.values()
+        self.edges
+            .values()
+            .filter(|edge| self.is_edge_visible(edge.id))
     }
 
     #[must_use]
@@ -229,9 +239,32 @@ impl GraphScene {
         self.selection.selected_edge = selected_edge;
 
         let sizes_changed = self.apply_expandedness_policy();
-        if selection_changed || sizes_changed {
+        let focus_changed = self.refresh_focus_filter();
+
+        if selection_changed || sizes_changed || focus_changed {
             self.relayout();
         }
+    }
+
+    #[must_use]
+    pub fn focus_mode_enabled(&self) -> bool {
+        self.focus_mode_enabled
+    }
+
+    pub fn set_focus_mode_enabled(&mut self, enabled: bool) {
+        if self.focus_mode_enabled == enabled {
+            return;
+        }
+
+        self.focus_mode_enabled = enabled;
+        if self.refresh_focus_filter() {
+            self.relayout();
+        }
+    }
+
+    #[must_use]
+    pub fn layout_bounds(&self) -> redesmyn_graph_layout::Rect {
+        self.bounds
     }
 
     fn apply_expandedness_policy(&mut self) -> bool {
@@ -345,7 +378,14 @@ impl GraphScene {
                     commit_count_label: None,
                 },
             );
-            parent_by_child.entry(to).or_insert(from);
+            parent_by_child
+                .entry(to)
+                .and_modify(|existing| {
+                    if from < *existing {
+                        *existing = from;
+                    }
+                })
+                .or_insert(from);
         }
 
         let mut nodes = BTreeMap::new();
@@ -410,6 +450,7 @@ impl GraphScene {
         }
 
         self.apply_expandedness_policy();
+        self.refresh_focus_filter();
         self.relayout();
     }
 
@@ -455,6 +496,10 @@ impl GraphScene {
         );
 
         for node in self.nodes.values() {
+            if !self.is_node_visible(node.id) {
+                continue;
+            }
+
             self.layout_nodes_scratch.push(LayoutNode {
                 id: node.id,
                 parent_id: node.parent_id,
@@ -483,6 +528,36 @@ impl GraphScene {
                 );
             }
         }
+    }
+
+    fn is_node_visible(&self, id: GraphNodeId) -> bool {
+        self.focus_nodes
+            .as_ref()
+            .map_or(true, |set| set.contains(&id))
+    }
+
+    fn is_edge_visible(&self, id: GraphEdgeId) -> bool {
+        let Some(focus_nodes) = &self.focus_nodes else {
+            return true;
+        };
+        focus_nodes.contains(&id.from) && focus_nodes.contains(&id.to)
+    }
+
+    fn refresh_focus_filter(&mut self) -> bool {
+        let next = if !self.focus_mode_enabled {
+            None
+        } else if let Some(selected_node) = self.selection.selected_node {
+            compute_focus_span(selected_node, &self.nodes).map(|span| span.into_iter().collect())
+        } else {
+            None
+        };
+
+        if self.focus_nodes == next {
+            return false;
+        }
+
+        self.focus_nodes = next;
+        true
     }
 }
 
