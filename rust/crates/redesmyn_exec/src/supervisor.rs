@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -15,8 +15,10 @@ use redesmyn_protocol::{ProtocolEnvelope, Timestamp};
 use tokio::io::AsyncReadExt as _;
 use tokio::sync::{Mutex, mpsc};
 
+use crate::active_sessions::ActiveSessionsByTask;
 use crate::artifact_store::{ArtifactStoreError, LocalArtifactStore};
 use crate::parser::{OutputStream, SessionOutputParser};
+use crate::text_limits::{normalize_preview, truncate_chars};
 
 #[derive(Debug, Clone)]
 pub struct ExecSessionSupervisorConfig {
@@ -104,7 +106,7 @@ pub struct ExecSessionSupervisor {
 struct SupervisorState {
     is_shutting_down: bool,
     sessions: HashMap<SessionId, SessionEntry>,
-    active_by_task: HashMap<(TaskId, InterfaceMode), HashSet<SessionId>>,
+    active_by_task: ActiveSessionsByTask,
 }
 
 #[derive(Debug)]
@@ -142,13 +144,8 @@ impl ExecSessionSupervisor {
             while let Some(session_id) = cleanup_rx.recv().await {
                 let mut st = state_for_cleanup.lock().await;
                 if let Some(entry) = st.sessions.remove(&session_id) {
-                    let key = (entry.task_id, entry.interface_mode);
-                    if let Some(active) = st.active_by_task.get_mut(&key) {
-                        active.remove(&session_id);
-                        if active.is_empty() {
-                            st.active_by_task.remove(&key);
-                        }
-                    }
+                    st.active_by_task
+                        .remove(entry.task_id, entry.interface_mode, session_id);
                 }
             }
         });
@@ -181,13 +178,9 @@ impl ExecSessionSupervisor {
         }
 
         if !spec.allow_concurrent_for_task {
-            if let Some(existing) = st
-                .active_by_task
-                .get(&(task_id, spec.interface_mode))
-                .and_then(|active| active.iter().next())
-            {
+            if let Some(existing) = st.active_by_task.any_session(task_id, spec.interface_mode) {
                 return Err(StartSessionError::TaskHasActiveSession {
-                    session_id: *existing,
+                    session_id: existing,
                     interface_mode: spec.interface_mode,
                 });
             }
@@ -238,9 +231,7 @@ impl ExecSessionSupervisor {
         );
 
         st.active_by_task
-            .entry((task_id, interface_mode))
-            .or_default()
-            .insert(session_id);
+            .insert(task_id, interface_mode, session_id);
 
         Ok(session_id)
     }
@@ -766,24 +757,4 @@ async fn limit_message_event(
     *full_text_artifact = Some(artifact);
     *text = truncate_chars(text, config.max_message_chars);
     Ok(())
-}
-
-fn normalize_preview(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
-
-    let mut out = String::new();
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= max_chars {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-    }
-    out
 }
