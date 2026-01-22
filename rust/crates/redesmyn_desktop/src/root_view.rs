@@ -205,10 +205,16 @@ impl Render for RootView {
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::select_previous_command))
             .on_action(cx.listener(Self::select_next_command))
-            .flex()
             .size_full()
             .bg(theme.colors.background)
-            .child(self.split_pane.clone());
+            .child(
+                div()
+                    .size_full()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .child(self.split_pane.clone()),
+            );
 
         if self.command_palette.is_open() {
             root = root.child(self.command_palette.render(window, cx));
