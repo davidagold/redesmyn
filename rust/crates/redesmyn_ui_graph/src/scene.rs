@@ -5,15 +5,17 @@ use gpui::SharedString;
 use redesmyn_graph_layout::{LayoutConfig, LayoutNode, layout_forest};
 use redesmyn_ids::TaskId;
 
-const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size = redesmyn_graph_layout::Size {
-    width: 320,
-    height: 96,
-};
+pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
+    redesmyn_graph_layout::Size {
+        width: 320,
+        height: 96,
+    };
 
-const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size = redesmyn_graph_layout::Size {
-    width: 960,
-    height: 560,
-};
+pub(crate) const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
+    redesmyn_graph_layout::Size {
+        width: 960,
+        height: 560,
+    };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GraphNodeId {

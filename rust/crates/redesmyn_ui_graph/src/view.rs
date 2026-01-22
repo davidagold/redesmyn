@@ -1,4 +1,5 @@
-use std::time::Duration;
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, AsyncApp, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
@@ -13,14 +14,55 @@ use redesmyn_ui::utils::UserActionState;
 use redesmyn_ui::utils::theme_for_window;
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
-use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window, node_bounds_in_window};
+use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window};
 use crate::hit_test::{GraphHit, hit_test};
-use crate::scene::{GraphNodeId, GraphScene};
+use crate::scene::{GraphEdgeId, GraphNodeId, GraphScene};
 
 #[derive(Debug, Clone, Copy)]
 struct PanDrag {
     start_mouse: gpui::Point<gpui::Pixels>,
     start_origin_world: gpui::Point<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NodeWorldRect {
+    origin: gpui::Point<f32>,
+    width: f32,
+    height: f32,
+}
+
+impl NodeWorldRect {
+    fn from_scene(scene: &GraphScene, node_id: GraphNodeId) -> Self {
+        let origin = scene.node_world_origin(node_id);
+        let size = scene.node_world_size(node_id);
+        Self {
+            origin,
+            width: size.width as f32,
+            height: size.height as f32,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LayoutAnimation {
+    start: Instant,
+    duration: Duration,
+    from_layout: BTreeMap<GraphNodeId, NodeWorldRect>,
+    to_layout: BTreeMap<GraphNodeId, NodeWorldRect>,
+    from_selected_node: Option<GraphNodeId>,
+    to_selected_node: Option<GraphNodeId>,
+}
+
+impl LayoutAnimation {
+    fn progress(&self) -> f32 {
+        if self.duration == Duration::from_millis(0) {
+            return 1.0;
+        }
+
+        let elapsed = self.start.elapsed().as_secs_f32();
+        let total = self.duration.as_secs_f32();
+        ease_out_cubic((elapsed / total).clamp(0.0, 1.0))
+    }
 }
 
 pub struct GraphView {
@@ -33,6 +75,7 @@ pub struct GraphView {
     expanded_details_scroll: ScrollHandle,
     demo_action: UserActionState,
     demo_action_task: Option<Task<()>>,
+    layout_animation: Option<LayoutAnimation>,
 }
 
 impl GraphView {
@@ -50,11 +93,22 @@ impl GraphView {
             expanded_details_scroll: ScrollHandle::new(),
             demo_action: UserActionState::default(),
             demo_action_task: None,
+            layout_animation: None,
+        }
+    }
+
+    fn visual_selected_node(&self) -> Option<GraphNodeId> {
+        if let Some(animation) = self.layout_animation.as_ref()
+            && animation.to_selected_node.is_none()
+        {
+            animation.from_selected_node
+        } else {
+            self.scene.selection().selected_node
         }
     }
 
     fn selection_label(&self) -> String {
-        if let Some(node) = self.scene.selection().selected_node {
+        if let Some(node) = self.visual_selected_node() {
             return format!("Selected node: {node}");
         }
         if let Some(edge) = self.scene.selection().selected_edge {
@@ -63,11 +117,142 @@ impl GraphView {
         "Selected: <none>".to_string()
     }
 
+    fn update_selection(&mut self, mutate: impl FnOnce(&mut GraphScene), cx: &mut Context<Self>) {
+        let previous_selection = self.scene.selection().clone();
+        let from_layout = self.snapshot_displayed_layout();
+
+        mutate(&mut self.scene);
+
+        let next_selection = self.scene.selection().clone();
+        if previous_selection.selected_node != next_selection.selected_node {
+            self.reset_expanded_card_state();
+            self.start_layout_animation(
+                from_layout,
+                self.snapshot_scene_layout(),
+                previous_selection.selected_node,
+                next_selection.selected_node,
+            );
+        }
+
+        cx.notify();
+    }
+
+    fn select_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
+        self.update_selection(|scene| scene.select_node(node_id), cx);
+    }
+
+    fn select_edge(&mut self, edge_id: GraphEdgeId, cx: &mut Context<Self>) {
+        self.update_selection(|scene| scene.select_edge(edge_id), cx);
+    }
+
+    fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.update_selection(|scene| scene.clear_selection(), cx);
+    }
+
     fn reset_expanded_card_state(&mut self) {
         self.expanded_session_scroll = ScrollHandle::new();
         self.expanded_details_scroll = ScrollHandle::new();
         self.demo_action = UserActionState::default();
         self.demo_action_task = None;
+    }
+
+    fn snapshot_scene_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
+        self.scene
+            .nodes()
+            .map(|node| (node.id, NodeWorldRect::from_scene(&self.scene, node.id)))
+            .collect()
+    }
+
+    fn snapshot_displayed_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
+        let t = self
+            .layout_animation
+            .as_ref()
+            .map(LayoutAnimation::progress)
+            .unwrap_or(1.0);
+
+        self.scene
+            .nodes()
+            .map(|node| (node.id, self.node_world_rect_for_progress(node.id, t)))
+            .collect()
+    }
+
+    fn start_layout_animation(
+        &mut self,
+        from_layout: BTreeMap<GraphNodeId, NodeWorldRect>,
+        to_layout: BTreeMap<GraphNodeId, NodeWorldRect>,
+        from_selected_node: Option<GraphNodeId>,
+        to_selected_node: Option<GraphNodeId>,
+    ) {
+        self.layout_animation = Some(LayoutAnimation {
+            start: Instant::now(),
+            duration: Duration::from_millis(180),
+            from_layout,
+            to_layout,
+            from_selected_node,
+            to_selected_node,
+        });
+    }
+
+    fn node_world_rect_for_progress(&self, node_id: GraphNodeId, t: f32) -> NodeWorldRect {
+        let scene_rect = NodeWorldRect::from_scene(&self.scene, node_id);
+        let Some(animation) = self.layout_animation.as_ref() else {
+            return scene_rect;
+        };
+        if t >= 1.0 {
+            return scene_rect;
+        }
+
+        let from = animation
+            .from_layout
+            .get(&node_id)
+            .copied()
+            .unwrap_or(scene_rect);
+        let to = animation
+            .to_layout
+            .get(&node_id)
+            .copied()
+            .unwrap_or(scene_rect);
+        lerp_world_rect(from, to, t)
+    }
+
+    fn node_bounds_in_window_for_progress(
+        &self,
+        node_id: GraphNodeId,
+        canvas_bounds: gpui::Bounds<gpui::Pixels>,
+        t: f32,
+    ) -> gpui::Bounds<gpui::Pixels> {
+        let rect = self.node_world_rect_for_progress(node_id, t);
+        let zoom = self.camera.zoom();
+
+        let local_origin = self.camera.world_to_screen(rect.origin);
+        let local_size = gpui::size(px(rect.width * zoom), px(rect.height * zoom));
+
+        gpui::Bounds {
+            origin: local_origin,
+            size: local_size,
+        } + canvas_bounds.origin
+    }
+
+    fn layout_animation_progress_for_render(&mut self, window: &Window) -> f32 {
+        let Some(animation) = self.layout_animation.as_ref() else {
+            return 1.0;
+        };
+
+        let t = animation.progress();
+        if t >= 1.0 {
+            self.layout_animation = None;
+            1.0
+        } else {
+            window.request_animation_frame();
+            t
+        }
+    }
+
+    fn layout_animation_progress_for_paint(&self) -> f32 {
+        self.layout_animation
+            .as_ref()
+            .map(LayoutAnimation::progress)
+            .unwrap_or(1.0)
     }
 
     fn start_demo_action(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
@@ -121,32 +306,23 @@ impl GraphView {
             return;
         };
 
-        let previous_selection = self.scene.selection().clone();
-
         match hit_test(&self.scene, &self.camera, canvas_bounds, event.position) {
             Some(GraphHit::Node(id)) => {
                 redesmyn_logging::tracing::trace!(node_id = %id, "graph selection changed");
-                self.scene.select_node(id);
+                self.select_node(id, cx);
             }
             Some(GraphHit::Edge(id)) => {
                 redesmyn_logging::tracing::trace!(edge_id = %id, "graph selection changed");
-                self.scene.select_edge(id);
+                self.select_edge(id, cx);
             }
             None => {
-                self.scene.clear_selection();
                 self.pan_drag = Some(PanDrag {
                     start_mouse: event.position,
                     start_origin_world: self.camera.origin_world(),
                 });
+                self.clear_selection(cx);
             }
         }
-
-        let next_selection = self.scene.selection().clone();
-        if previous_selection != next_selection {
-            self.reset_expanded_card_state();
-        }
-
-        cx.notify();
     }
 
     fn on_mouse_move(
@@ -189,16 +365,6 @@ impl GraphView {
             return;
         };
 
-        if let Some(selected_node) = self.scene.selection().selected_node
-            && let Some(node) = self.scene.node(selected_node)
-        {
-            let selected_bounds =
-                node_bounds_in_window(&self.scene, &self.camera, node, canvas_bounds);
-            if selected_bounds.contains(&event.position) {
-                return;
-            }
-        }
-
         let delta = event.delta.pixel_delta(window.line_height());
         if delta.x == px(0.0) && delta.y == px(0.0) {
             return;
@@ -214,6 +380,12 @@ impl GraphView {
             return;
         }
 
+        if should_defer_pan_to_scroll_view(&self.expanded_session_scroll, event.position, delta)
+            || should_defer_pan_to_scroll_view(&self.expanded_details_scroll, event.position, delta)
+        {
+            return;
+        }
+
         self.camera.pan_by_screen_delta(delta);
         cx.notify();
     }
@@ -225,6 +397,7 @@ impl GraphView {
         cx: &App,
     ) {
         let theme = theme_for_window(window, cx);
+        let t = self.layout_animation_progress_for_paint();
 
         for edge in self.scene.edges() {
             let Some(from) = self.scene.node(edge.id.from) else {
@@ -234,8 +407,8 @@ impl GraphView {
                 continue;
             };
 
-            let from_bounds = node_bounds_in_window(&self.scene, &self.camera, from, canvas_bounds);
-            let to_bounds = node_bounds_in_window(&self.scene, &self.camera, to, canvas_bounds);
+            let from_bounds = self.node_bounds_in_window_for_progress(from.id, canvas_bounds, t);
+            let to_bounds = self.node_bounds_in_window_for_progress(to.id, canvas_bounds, t);
 
             let selected = self.scene.selection().selected_edge == Some(edge.id);
             let edge_color = if selected {
@@ -315,15 +488,17 @@ impl Render for GraphView {
         )
         .size_full();
 
+        let t = self.layout_animation_progress_for_render(window);
+
         let nodes_layer = if let Some(canvas_bounds) = self.last_canvas_bounds {
             let entity_id = cx.entity_id();
-            let selected = self.scene.selection().selected_node;
+            let selected = self.visual_selected_node();
 
             let mut layer = div().absolute().inset_0();
 
             for node in self.scene.nodes() {
                 let bounds_in_window =
-                    node_bounds_in_window(&self.scene, &self.camera, node, canvas_bounds);
+                    self.node_bounds_in_window_for_progress(node.id, canvas_bounds, t);
                 let local_origin = bounds_in_window.origin - canvas_bounds.origin;
                 let node_id = node.id;
                 let node_key: gpui::SharedString = node_id.to_string().into();
@@ -362,17 +537,7 @@ impl Render for GraphView {
                     .on_mouse_down(MouseButton::Left, {
                         let graph = graph.clone();
                         move |_, _, cx| {
-                            graph.update(cx, |this, cx| {
-                                let previous = this.scene.selection().clone();
-                                this.scene.select_node(node_id);
-
-                                let next = this.scene.selection().clone();
-                                if previous != next {
-                                    this.reset_expanded_card_state();
-                                }
-
-                                cx.notify();
-                            });
+                            graph.update(cx, |this, cx| this.select_node(node_id, cx));
                             cx.stop_propagation();
                         }
                     });
@@ -431,11 +596,7 @@ impl Render for GraphView {
                     let collapse = {
                         let graph = graph.clone();
                         move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-                            graph.update(cx, |this, cx| {
-                                this.scene.clear_selection();
-                                this.reset_expanded_card_state();
-                                cx.notify();
-                            });
+                            graph.update(cx, |this, cx| this.clear_selection(cx));
                         }
                     };
 
@@ -641,15 +802,13 @@ impl Render for GraphView {
                     }
 
                     let did_clear = graph.update(cx, |this, cx| {
-                        if this.scene.selection().selected_node.is_none()
-                            && this.scene.selection().selected_edge.is_none()
-                        {
+                        let had_selection = this.scene.selection().selected_node.is_some()
+                            || this.scene.selection().selected_edge.is_some();
+                        if !had_selection {
                             return false;
                         }
 
-                        this.scene.clear_selection();
-                        this.reset_expanded_card_state();
-                        cx.notify();
+                        this.clear_selection(cx);
                         true
                     });
 
@@ -678,6 +837,57 @@ impl Render for GraphView {
                     .child(nodes_layer),
             )
             .track_focus(&self.focus_handle(cx))
+    }
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
+}
+
+fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn lerp_point(a: gpui::Point<f32>, b: gpui::Point<f32>, t: f32) -> gpui::Point<f32> {
+    gpui::point(lerp_f32(a.x, b.x, t), lerp_f32(a.y, b.y, t))
+}
+
+fn lerp_world_rect(from: NodeWorldRect, to: NodeWorldRect, t: f32) -> NodeWorldRect {
+    NodeWorldRect {
+        origin: lerp_point(from.origin, to.origin, t),
+        width: lerp_f32(from.width, to.width, t),
+        height: lerp_f32(from.height, to.height, t),
+    }
+}
+
+fn should_defer_pan_to_scroll_view(
+    scroll_handle: &ScrollHandle,
+    window_point: gpui::Point<gpui::Pixels>,
+    delta: gpui::Point<gpui::Pixels>,
+) -> bool {
+    if !scroll_handle.bounds().contains(&window_point) {
+        return false;
+    }
+
+    let max_y = scroll_handle.max_offset().height;
+    if max_y == px(0.0) {
+        return false;
+    }
+
+    let delta_y = if delta.y == px(0.0) { delta.x } else { delta.y };
+    if delta_y == px(0.0) {
+        return false;
+    }
+
+    let offset_y = scroll_handle.offset().y;
+    let epsilon = px(1.0);
+
+    if delta_y > px(0.0) {
+        // Scrolling "up": allow pan only when already at the top edge.
+        offset_y < -epsilon
+    } else {
+        // Scrolling "down": allow pan only when already at the bottom edge.
+        offset_y > (-max_y + epsilon)
     }
 }
 
