@@ -661,8 +661,10 @@ impl Render for GraphView {
                                                     ))
                                                     .child(
                                                         div()
+                                                            .min_w_0()
                                                             .text_sm()
                                                             .text_color(theme.colors.foreground_muted)
+                                                            .truncate()
                                                             .child(task_slug),
                                                     ),
                                             )
