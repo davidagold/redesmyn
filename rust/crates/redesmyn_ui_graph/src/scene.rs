@@ -5,6 +5,16 @@ use gpui::SharedString;
 use redesmyn_graph_layout::{LayoutConfig, LayoutNode, layout_forest};
 use redesmyn_ids::TaskId;
 
+const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size = redesmyn_graph_layout::Size {
+    width: 320,
+    height: 96,
+};
+
+const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size = redesmyn_graph_layout::Size {
+    width: 960,
+    height: 560,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GraphNodeId {
     Task(TaskId),
@@ -148,17 +158,59 @@ impl GraphScene {
     }
 
     pub fn select_node(&mut self, id: GraphNodeId) {
-        self.selection.selected_edge = None;
-        self.selection.selected_node = Some(id);
+        self.set_selection(Some(id), None);
     }
 
     pub fn select_edge(&mut self, id: GraphEdgeId) {
-        self.selection.selected_node = None;
-        self.selection.selected_edge = Some(id);
+        self.set_selection(None, Some(id));
     }
 
     pub fn clear_selection(&mut self) {
-        self.selection = GraphSelection::default();
+        self.set_selection(None, None);
+    }
+
+    fn set_selection(
+        &mut self,
+        selected_node: Option<GraphNodeId>,
+        selected_edge: Option<GraphEdgeId>,
+    ) {
+        let selection_changed = self.selection.selected_node != selected_node
+            || self.selection.selected_edge != selected_edge;
+
+        self.selection.selected_node = selected_node;
+        self.selection.selected_edge = selected_edge;
+
+        let sizes_changed = self.apply_expandedness_policy();
+        if selection_changed || sizes_changed {
+            self.relayout();
+        }
+    }
+
+    fn apply_expandedness_policy(&mut self) -> bool {
+        self.node_sizes.retain(|id, _| self.nodes.contains_key(id));
+
+        let expanded = self.selection.selected_node;
+        let mut changed = false;
+
+        for id in self.nodes.keys().copied() {
+            let desired = if Some(id) == expanded {
+                EXPANDED_TASK_NODE_SIZE
+            } else {
+                COLLAPSED_TASK_NODE_SIZE
+            };
+
+            let size = self
+                .node_sizes
+                .entry(id)
+                .or_insert(COLLAPSED_TASK_NODE_SIZE);
+
+            if *size != desired {
+                *size = desired;
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     pub fn replace_from_epic_graph(&mut self, graph: &redesmyn_protocol::client::EpicGraph) {
@@ -247,6 +299,7 @@ impl GraphScene {
             self.selection.selected_edge = None;
         }
 
+        self.apply_expandedness_policy();
         self.relayout();
     }
 
@@ -312,10 +365,7 @@ impl GraphScene {
 }
 
 fn default_node_size() -> redesmyn_graph_layout::Size {
-    redesmyn_graph_layout::Size {
-        width: 320,
-        height: 96,
-    }
+    COLLAPSED_TASK_NODE_SIZE
 }
 
 fn temporary_task_id_for_slug(slug: &str) -> TaskId {
@@ -355,5 +405,31 @@ mod tests {
         let a = temporary_task_id_for_slug("T-50");
         let b = temporary_task_id_for_slug("T-50");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn selection_expands_only_selected_node() {
+        let mut scene = GraphScene::demo();
+        let ids: Vec<_> = scene.nodes().map(|node| node.id).collect();
+        let first = ids[0];
+
+        scene.select_node(first);
+        assert_eq!(scene.node_world_size(first), EXPANDED_TASK_NODE_SIZE);
+        for id in ids.iter().copied().filter(|id| *id != first) {
+            assert_eq!(scene.node_world_size(id), COLLAPSED_TASK_NODE_SIZE);
+        }
+
+        scene.select_edge(GraphEdgeId {
+            from: first,
+            to: ids[1],
+        });
+        for id in ids.iter().copied() {
+            assert_eq!(scene.node_world_size(id), COLLAPSED_TASK_NODE_SIZE);
+        }
+
+        scene.clear_selection();
+        for id in ids {
+            assert_eq!(scene.node_world_size(id), COLLAPSED_TASK_NODE_SIZE);
+        }
     }
 }
