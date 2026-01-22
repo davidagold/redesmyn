@@ -4,6 +4,7 @@ use std::fmt;
 use gpui::SharedString;
 use redesmyn_graph_layout::{LayoutConfig, LayoutNode, layout_forest};
 use redesmyn_ids::TaskId;
+use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 
 pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
     redesmyn_graph_layout::Size {
@@ -47,13 +48,27 @@ impl fmt::Display for GraphEdgeId {
 #[derive(Debug, Clone)]
 pub struct GraphSceneNode {
     pub id: GraphNodeId,
+    pub task_slug: SharedString,
     pub title: SharedString,
     pub parent_id: Option<GraphNodeId>,
+    pub state: TaskState,
+    pub merge_readiness: MergeReadiness,
+    pub agent_status: AgentStatus,
+    pub branch_name: Option<SharedString>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GraphSceneEdge {
     pub id: GraphEdgeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStatus {
+    Unknown,
+    Running,
+    Blocked,
+    Stopped,
+    Error,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -70,6 +85,7 @@ pub struct GraphScene {
     node_sizes: BTreeMap<GraphNodeId, redesmyn_graph_layout::Size>,
     node_positions: BTreeMap<GraphNodeId, redesmyn_graph_layout::Point>,
     bounds: redesmyn_graph_layout::Rect,
+    layout_nodes_scratch: Vec<LayoutNode<GraphNodeId>>,
 }
 
 impl GraphScene {
@@ -86,23 +102,43 @@ impl GraphScene {
 
         scene.insert_node(GraphSceneNode {
             id: a,
+            task_slug: "T-1".into(),
             title: "T-1 Root".into(),
             parent_id: None,
+            state: TaskState::InProgress,
+            merge_readiness: MergeReadiness::Unknown,
+            agent_status: AgentStatus::Running,
+            branch_name: Some("feat/root".into()),
         });
         scene.insert_node(GraphSceneNode {
             id: b,
+            task_slug: "T-2".into(),
             title: "T-2 Child A".into(),
             parent_id: Some(a),
+            state: TaskState::Blocked,
+            merge_readiness: MergeReadiness::Blocked,
+            agent_status: AgentStatus::Blocked,
+            branch_name: Some("feat/child-a".into()),
         });
         scene.insert_node(GraphSceneNode {
             id: c,
+            task_slug: "T-3".into(),
             title: "T-3 Child B".into(),
             parent_id: Some(a),
+            state: TaskState::Todo,
+            merge_readiness: MergeReadiness::Ready,
+            agent_status: AgentStatus::Stopped,
+            branch_name: Some("feat/child-b".into()),
         });
         scene.insert_node(GraphSceneNode {
             id: d,
+            task_slug: "T-4".into(),
             title: "T-4 Grandchild".into(),
             parent_id: Some(b),
+            state: TaskState::Done,
+            merge_readiness: MergeReadiness::Ready,
+            agent_status: AgentStatus::Stopped,
+            branch_name: Some("feat/grandchild".into()),
         });
 
         scene.insert_edge(GraphEdgeId { from: a, to: b });
@@ -128,6 +164,7 @@ impl GraphScene {
                     height: 0,
                 },
             },
+            layout_nodes_scratch: Vec::new(),
         }
     }
 
@@ -135,8 +172,13 @@ impl GraphScene {
     pub(crate) fn insert_demo_node(&mut self, id: GraphNodeId) {
         self.insert_node(GraphSceneNode {
             id,
+            task_slug: "demo".into(),
             title: "demo".into(),
             parent_id: None,
+            state: TaskState::Unknown,
+            merge_readiness: MergeReadiness::Unknown,
+            agent_status: AgentStatus::Unknown,
+            branch_name: None,
         });
         self.relayout();
     }
@@ -238,6 +280,8 @@ impl GraphScene {
         let known_node_ids: BTreeSet<GraphNodeId> = node_id_by_slug.values().copied().collect();
         let mut parent_by_child = BTreeMap::new();
 
+        let agent_status_by_task_id = agent_status_by_task_id(graph);
+
         let mut edges = BTreeMap::new();
         for edge in &graph.edges {
             let from = match edge.from_task_id {
@@ -280,8 +324,16 @@ impl GraphScene {
                 id,
                 GraphSceneNode {
                     id,
+                    task_slug: SharedString::new(node.task_slug.clone()),
                     title: SharedString::new(node.title.clone()),
                     parent_id,
+                    state: node.state,
+                    merge_readiness: node.merge_readiness,
+                    agent_status: node
+                        .task_id
+                        .and_then(|id| agent_status_by_task_id.get(&id).copied())
+                        .unwrap_or(AgentStatus::Unknown),
+                    branch_name: node.branch_name.as_ref().map(|name| SharedString::new(name.clone())),
                 },
             );
         }
@@ -332,10 +384,15 @@ impl GraphScene {
     }
 
     fn relayout(&mut self) {
-        let nodes = self
-            .nodes
-            .values()
-            .map(|node| LayoutNode {
+        self.layout_nodes_scratch.clear();
+        self.layout_nodes_scratch.reserve(
+            self.nodes
+                .len()
+                .saturating_sub(self.layout_nodes_scratch.capacity()),
+        );
+
+        for node in self.nodes.values() {
+            self.layout_nodes_scratch.push(LayoutNode {
                 id: node.id,
                 parent_id: node.parent_id,
                 size: self
@@ -343,15 +400,15 @@ impl GraphScene {
                     .get(&node.id)
                     .copied()
                     .unwrap_or_else(default_node_size),
-            })
-            .collect::<Vec<_>>();
+            });
+        }
 
         let config = LayoutConfig {
             origin: redesmyn_graph_layout::Point { x: 40, y: 40 },
             ..LayoutConfig::default()
         };
 
-        match layout_forest(nodes, config) {
+        match layout_forest(self.layout_nodes_scratch.iter().copied(), config) {
             Ok(output) => {
                 self.node_positions = output.positions;
                 self.bounds = output.bounds;
@@ -368,6 +425,46 @@ impl GraphScene {
 
 fn default_node_size() -> redesmyn_graph_layout::Size {
     COLLAPSED_TASK_NODE_SIZE
+}
+
+fn agent_status_by_task_id(
+    graph: &redesmyn_protocol::client::EpicGraph,
+) -> BTreeMap<TaskId, AgentStatus> {
+    fn priority(status: AgentStatus) -> u8 {
+        match status {
+            AgentStatus::Error => 4,
+            AgentStatus::Blocked => 3,
+            AgentStatus::Running => 2,
+            AgentStatus::Stopped => 1,
+            AgentStatus::Unknown => 0,
+        }
+    }
+
+    fn from_command_state(state: CommandState) -> AgentStatus {
+        match state {
+            CommandState::Running | CommandState::Accepted => AgentStatus::Running,
+            CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
+            CommandState::Failed => AgentStatus::Error,
+            CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,
+            CommandState::Unknown => AgentStatus::Unknown,
+        }
+    }
+
+    let mut out: BTreeMap<TaskId, AgentStatus> = BTreeMap::new();
+    for summary in &graph.command_summaries {
+        let Some(task_id) = summary.target_task_id else {
+            continue;
+        };
+        let status = from_command_state(summary.state);
+        out.entry(task_id)
+            .and_modify(|existing| {
+                if priority(status) > priority(*existing) {
+                    *existing = status;
+                }
+            })
+            .or_insert(status);
+    }
+    out
 }
 
 fn temporary_task_id_for_slug(slug: &str) -> TaskId {

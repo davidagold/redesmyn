@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, AsyncApp, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent, Task,
-    Window, canvas, div, fill, prelude::*, px,
+    Window, canvas, div, fill, prelude::*, px, rems,
 };
 
 use redesmyn_ui::components::{
@@ -16,7 +16,9 @@ use redesmyn_ui::utils::theme_for_window;
 use crate::camera::{GraphCamera, GraphCameraLimits};
 use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window};
 use crate::hit_test::{GraphHit, hit_test};
-use crate::scene::{GraphEdgeId, GraphNodeId, GraphScene};
+use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene};
+
+use redesmyn_protocol::client::{MergeReadiness, TaskState};
 
 #[derive(Debug, Clone, Copy)]
 struct PanDrag {
@@ -565,52 +567,35 @@ impl Render for GraphView {
                     });
 
                 if !is_expanded {
-                    let title = node.title.clone();
+                    let task_slug = node.task_slug.clone();
+                    let padding_x = px(f32::from(theme.spacing.sm) * zoom);
+                    let padding_y = px(f32::from(theme.spacing.xs) * zoom);
+
                     card = card.child(
                         div()
-                            .p(theme.spacing.sm)
+                            .px(padding_x)
+                            .py(padding_y)
+                            .size_full()
                             .flex()
-                            .flex_col()
-                            .gap(theme.spacing.xs)
+                            .items_center()
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(theme.spacing.sm)
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .text_sm()
-                                            .text_color(theme.colors.foreground)
-                                            .truncate()
-                                            .child(title),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap(theme.spacing.xs)
-                                    .items_center()
-                                    .child(status_chip(
-                                        "idle",
-                                        theme.colors.accent,
-                                        theme.colors.foreground,
-                                        &theme,
-                                    ))
-                                    .child(status_chip(
-                                        "merge: ?",
-                                        theme.colors.surface,
-                                        theme.colors.foreground_muted,
-                                        &theme,
-                                    )),
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(rems(0.82 * zoom))
+                                    .text_color(theme.colors.foreground)
+                                    .truncate()
+                                    .child(task_slug),
                             ),
                     );
                 } else {
                     let title = node.title.clone();
+                    let task_slug = node.task_slug.clone();
+                    let state = node.state;
+                    let merge_readiness = node.merge_readiness;
+                    let agent_status = node.agent_status;
+                    let branch_name = node.branch_name.clone();
+
                     let close_button_id = (
                         gpui::ElementId::from(("task_card_close", entity_id)),
                         node_key.clone(),
@@ -653,28 +638,34 @@ impl Render for GraphView {
                                     .bg(theme.colors.surface)
                                     .border_b_1()
                                     .border_color(theme.colors.border.opacity(0.5))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap(theme.spacing.sm)
                                             .child(
                                                 div()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.foreground)
-                                                    .truncate()
-                                                    .child(title),
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(theme.spacing.sm)
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(theme.colors.foreground)
+                                                            .truncate()
+                                                            .child(title),
+                                                    )
+                                                    .child(task_status_chips(
+                                                        state,
+                                                        merge_readiness,
+                                                        agent_status,
+                                                        &theme,
+                                                    ))
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(theme.colors.foreground_muted)
+                                                            .child(task_slug),
+                                                    ),
                                             )
                                             .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child(format!("{node_id}")),
-                                            ),
-                                    )
-                                    .child(
-                                        IconButton::new(close_button_id, div().child("×"))
+                                                IconButton::new(close_button_id, div().child("×"))
                                             .tooltip("Collapse")
                                             .on_click(collapse),
                                     ),
@@ -788,6 +779,10 @@ impl Render for GraphView {
                                                             entity_id,
                                                             node_id,
                                                             node_key.clone(),
+                                                            state,
+                                                            merge_readiness,
+                                                            agent_status,
+                                                            branch_name,
                                                             action_button_id,
                                                             demo_action,
                                                             start_action,
@@ -929,6 +924,86 @@ fn status_chip(
         .child(label.into())
 }
 
+fn task_state_label(state: TaskState) -> &'static str {
+    match state {
+        TaskState::Todo => "Todo",
+        TaskState::InProgress => "In progress",
+        TaskState::Blocked => "Blocked",
+        TaskState::Done => "Done",
+        TaskState::Unknown => "Unknown",
+    }
+}
+
+fn task_state_chip(state: TaskState, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
+    let (bg, fg) = match state {
+        TaskState::InProgress => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
+        TaskState::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
+        TaskState::Done => (theme.colors.accent.opacity(0.75), theme.colors.foreground_muted),
+        TaskState::Todo | TaskState::Unknown => {
+            (theme.colors.surface_elevated, theme.colors.foreground_muted)
+        }
+    };
+    status_chip(task_state_label(state), bg, fg, theme)
+}
+
+fn merge_readiness_label(readiness: MergeReadiness) -> &'static str {
+    match readiness {
+        MergeReadiness::Ready => "Merge ready",
+        MergeReadiness::Blocked => "Merge blocked",
+        MergeReadiness::Unknown => "Merge ?",
+    }
+}
+
+fn merge_readiness_chip(
+    readiness: MergeReadiness,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    let (bg, fg) = match readiness {
+        MergeReadiness::Ready => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
+        MergeReadiness::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
+        MergeReadiness::Unknown => (theme.colors.surface_elevated, theme.colors.foreground_muted),
+    };
+    status_chip(merge_readiness_label(readiness), bg, fg, theme)
+}
+
+fn agent_status_label(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Running => "Agent running",
+        AgentStatus::Blocked => "Agent blocked",
+        AgentStatus::Stopped => "Agent stopped",
+        AgentStatus::Error => "Agent error",
+        AgentStatus::Unknown => "Agent ?",
+    }
+}
+
+fn agent_status_chip(status: AgentStatus, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
+    let (bg, fg) = match status {
+        AgentStatus::Running => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
+        AgentStatus::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
+        AgentStatus::Error => (theme.colors.danger.opacity(0.18), theme.colors.foreground),
+        AgentStatus::Stopped | AgentStatus::Unknown => {
+            (theme.colors.surface_elevated, theme.colors.foreground_muted)
+        }
+    };
+    status_chip(agent_status_label(status), bg, fg, theme)
+}
+
+fn task_status_chips(
+    state: TaskState,
+    merge_readiness: MergeReadiness,
+    agent_status: AgentStatus,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_row()
+        .gap(theme.spacing.xs)
+        .items_center()
+        .child(task_state_chip(state, theme))
+        .child(merge_readiness_chip(merge_readiness, theme))
+        .child(agent_status_chip(agent_status, theme))
+}
+
 fn placeholder_message(
     text: impl Into<gpui::SharedString>,
     theme: &redesmyn_ui::styles::UiTheme,
@@ -996,6 +1071,10 @@ fn task_details(
     entity_id: gpui::EntityId,
     node_id: GraphNodeId,
     node_key: gpui::SharedString,
+    state: TaskState,
+    merge_readiness: MergeReadiness,
+    agent_status: AgentStatus,
+    branch_name: Option<gpui::SharedString>,
     action_button_id: impl Into<gpui::ElementId>,
     demo_action: UserActionState,
     start_demo_action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -1075,24 +1154,17 @@ fn task_details(
                 div().child(format!("{node_id}")),
                 theme,
             ))
+            .when_some(branch_name.clone(), |this, name| {
+                this.child(details_kv_row("Branch", div().child(name), theme))
+            })
             .child(details_kv_row(
                 "State",
-                status_chip(
-                    "unknown",
-                    theme.colors.accent,
-                    theme.colors.foreground,
-                    theme,
-                ),
+                task_state_chip(state, theme),
                 theme,
             ))
             .child(details_kv_row(
                 "Merge",
-                status_chip(
-                    "unknown",
-                    theme.colors.surface,
-                    theme.colors.foreground_muted,
-                    theme,
-                ),
+                merge_readiness_chip(merge_readiness, theme),
                 theme,
             ))
             .child(details_kv_row("Updated", div().child("—"), theme)),
@@ -1109,7 +1181,11 @@ fn task_details(
                     .flex()
                     .flex_col()
                     .gap(theme.spacing.xs)
-                    .child(details_kv_row("Status", div().child("idle"), theme))
+                    .child(details_kv_row(
+                        "Status",
+                        agent_status_chip(agent_status, theme),
+                        theme,
+                    ))
                     .child(details_kv_row("Session", div().child("unbound"), theme)),
             )
             .child(
@@ -1137,7 +1213,11 @@ fn task_details(
             .flex()
             .flex_col()
             .gap(theme.spacing.xs)
-            .child(details_kv_row("Ready", div().child("—"), theme))
+            .child(details_kv_row(
+                "Ready",
+                merge_readiness_chip(merge_readiness, theme),
+                theme,
+            ))
             .child(details_kv_row("Next", div().child("—"), theme)),
         theme,
     ))
