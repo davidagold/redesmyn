@@ -4617,7 +4617,6 @@ dependencies = [
  "redesmyn_control_plane",
  "redesmyn_logging",
  "redesmyn_protocol",
- "redesmyn_storage",
  "tokio",
 ]
 
