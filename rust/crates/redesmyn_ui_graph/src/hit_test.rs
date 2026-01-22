@@ -18,6 +18,9 @@ pub fn hit_test(
     window_point: Point<Pixels>,
 ) -> Option<GraphHit> {
     for node in scene.nodes() {
+        if node.id == GraphNodeId::Trunk {
+            continue;
+        }
         let bounds = node_bounds_in_window(scene, camera, node, canvas_bounds);
         if bounds.contains(&window_point) {
             return Some(GraphHit::Node(node.id));
@@ -29,6 +32,9 @@ pub fn hit_test(
         r * r
     };
     for edge in scene.edges() {
+        if edge.id.from == GraphNodeId::Trunk || edge.id.to == GraphNodeId::Trunk {
+            continue;
+        }
         let Some(from_bounds) = scene
             .node(edge.id.from)
             .map(|node| node_bounds_in_window(scene, camera, node, canvas_bounds))
@@ -126,5 +132,20 @@ mod tests {
             hit_test(&scene, &camera, canvas, point),
             Some(GraphHit::Edge(edge.id))
         );
+    }
+
+    #[test]
+    fn hit_test_ignores_trunk_node_and_edges() {
+        let scene = GraphScene::demo();
+        let camera = GraphCamera::new(GraphCameraLimits::default());
+        let canvas = Bounds {
+            origin: gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            size: gpui::size(gpui::px(800.0), gpui::px(600.0)),
+        };
+
+        // The demo trunk is at (40, 40) and task nodes are offset to the right, so this point is
+        // safely inside the trunk column but outside task cards.
+        let point = gpui::point(gpui::px(60.0), gpui::px(60.0));
+        assert_eq!(hit_test(&scene, &camera, canvas, point), None);
     }
 }

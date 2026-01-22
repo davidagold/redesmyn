@@ -18,6 +18,11 @@ pub(crate) const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
         height: 560,
     };
 
+use crate::constants::{
+    GRAPH_PADDING, TRUNK_COMMIT_PADDING, TRUNK_COMMIT_ROW_HEIGHT, TRUNK_COMMIT_SPACING, TRUNK_GAP,
+    TRUNK_MARKER_WIDTH, TRUNK_SHA_WIDTH, TRUNK_TITLE_WIDTH,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GraphNodeId {
     Task(TaskId),
@@ -73,6 +78,48 @@ pub enum AgentStatus {
     Error,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrunkCommit {
+    pub sha: SharedString,
+    pub title: Option<SharedString>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrunkTimeline {
+    pub base_sha: SharedString,
+    pub base_commit: Option<TrunkCommit>,
+    pub commits_before: Vec<TrunkCommit>,
+    pub commits_after: Vec<TrunkCommit>,
+    pub has_more_before: bool,
+    pub has_more_after: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrunkMarkKind {
+    Commit,
+    Base,
+    Connector,
+    Ellipsis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrunkMark {
+    pub(crate) kind: TrunkMarkKind,
+    pub(crate) sha: Option<SharedString>,
+    pub(crate) title: Option<SharedString>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrunkLayout {
+    pub(crate) marks: Vec<TrunkMark>,
+    /// World-space Y offset (relative to the trunk node origin) for the trunk→graph connector.
+    pub(crate) base_offset: i32,
+    pub(crate) commit_spacing: i32,
+    pub(crate) commit_padding: i32,
+    pub(crate) row_height: i32,
+    pub(crate) span_height: i32,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct GraphSelection {
     pub selected_node: Option<GraphNodeId>,
@@ -90,6 +137,8 @@ pub struct GraphScene {
     node_sizes: BTreeMap<GraphNodeId, redesmyn_graph_layout::Size>,
     node_positions: BTreeMap<GraphNodeId, redesmyn_graph_layout::Point>,
     bounds: redesmyn_graph_layout::Rect,
+    trunk_timeline: Option<TrunkTimeline>,
+    trunk_layout: Option<TrunkLayout>,
     layout_nodes_scratch: Vec<LayoutNode<GraphNodeId>>,
 }
 
@@ -100,6 +149,7 @@ impl GraphScene {
         let _guard = span.enter();
 
         let mut scene = Self::empty_demo();
+        scene.trunk_timeline = Some(demo_trunk_timeline());
         let a = GraphNodeId::Task(TaskId::from_bytes([1; 16]));
         let b = GraphNodeId::Task(TaskId::from_bytes([2; 16]));
         let c = GraphNodeId::Task(TaskId::from_bytes([3; 16]));
@@ -150,6 +200,7 @@ impl GraphScene {
         scene.insert_edge(GraphEdgeId { from: a, to: c }, Some(3));
         scene.insert_edge(GraphEdgeId { from: b, to: d }, Some(27));
 
+        scene.sync_trunk_overlay();
         scene.relayout();
         scene
     }
@@ -169,8 +220,30 @@ impl GraphScene {
                     height: 0,
                 },
             },
+            trunk_timeline: None,
+            trunk_layout: None,
             layout_nodes_scratch: Vec::new(),
         }
+    }
+
+    pub fn set_trunk_timeline(&mut self, trunk: Option<TrunkTimeline>) {
+        if self.trunk_timeline == trunk {
+            return;
+        }
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.graph_scene.set_trunk_timeline",
+            enabled = trunk.is_some(),
+        );
+        let _guard = span.enter();
+
+        self.trunk_timeline = trunk;
+        self.sync_trunk_overlay();
+        self.relayout();
+    }
+
+    pub(crate) fn trunk_layout(&self) -> Option<&TrunkLayout> {
+        self.trunk_layout.as_ref()
     }
 
     #[cfg(test)]
@@ -277,6 +350,9 @@ impl GraphScene {
         let mut changed = false;
 
         for id in self.nodes.keys().copied() {
+            if id == GraphNodeId::Trunk {
+                continue;
+            }
             let desired = if Some(id) == expanded {
                 EXPANDED_TASK_NODE_SIZE
             } else {
@@ -427,6 +503,7 @@ impl GraphScene {
 
         self.nodes = nodes;
         self.edges = edges;
+        self.sync_trunk_overlay();
 
         self.selection
             .selected_nodes
@@ -505,7 +582,66 @@ impl GraphScene {
         );
     }
 
+    fn sync_trunk_overlay(&mut self) {
+        let trunk_id = GraphNodeId::Trunk;
+
+        self.nodes.remove(&trunk_id);
+        self.node_sizes.remove(&trunk_id);
+        self.node_positions.remove(&trunk_id);
+        self.trunk_layout = None;
+
+        self.edges
+            .retain(|edge_id, _| edge_id.from != trunk_id && edge_id.to != trunk_id);
+
+        if self.trunk_timeline.is_none() {
+            return;
+        }
+
+        self.nodes.insert(
+            trunk_id,
+            GraphSceneNode {
+                id: trunk_id,
+                task_slug: "trunk".into(),
+                title: "Trunk".into(),
+                parent_id: None,
+                state: TaskState::Unknown,
+                merge_readiness: MergeReadiness::Unknown,
+                agent_status: AgentStatus::Unknown,
+                branch_name: None,
+            },
+        );
+        self.node_sizes.insert(trunk_id, trunk_default_size());
+
+        let root_ids: Vec<GraphNodeId> = self
+            .nodes
+            .values()
+            .filter(|node| node.id != trunk_id && node.parent_id.is_none())
+            .map(|node| node.id)
+            .collect();
+
+        for root_id in root_ids {
+            self.insert_edge(
+                GraphEdgeId {
+                    from: trunk_id,
+                    to: root_id,
+                },
+                None,
+            );
+        }
+    }
+
     fn relayout(&mut self) {
+        let trunk_layout = self.trunk_timeline.as_ref().map(trunk_layout_for_timeline);
+        let x_offset = trunk_layout
+            .as_ref()
+            .map(|_| GRAPH_PADDING + trunk_column_width() + TRUNK_GAP)
+            .unwrap_or(GRAPH_PADDING);
+
+        let y_offset = trunk_layout
+            .as_ref()
+            .map(|layout| layout_anchor_y(layout.base_offset))
+            .unwrap_or(GRAPH_PADDING);
+
         self.layout_nodes_scratch.clear();
         self.layout_nodes_scratch.reserve(
             self.nodes
@@ -514,6 +650,9 @@ impl GraphScene {
         );
 
         for node in self.nodes.values() {
+            if node.id == GraphNodeId::Trunk {
+                continue;
+            }
             self.layout_nodes_scratch.push(LayoutNode {
                 id: node.id,
                 parent_id: node.parent_id,
@@ -526,7 +665,10 @@ impl GraphScene {
         }
 
         let config = LayoutConfig {
-            origin: redesmyn_graph_layout::Point { x: 40, y: 40 },
+            origin: redesmyn_graph_layout::Point {
+                x: x_offset,
+                y: y_offset,
+            },
             ..LayoutConfig::default()
         };
 
@@ -534,6 +676,36 @@ impl GraphScene {
             Ok(output) => {
                 self.node_positions = output.positions;
                 self.bounds = output.bounds;
+
+                if let Some(layout) = trunk_layout {
+                    let trunk_span_height = layout.span_height;
+                    self.trunk_layout = Some(layout);
+                    self.node_positions.insert(
+                        GraphNodeId::Trunk,
+                        redesmyn_graph_layout::Point {
+                            x: GRAPH_PADDING,
+                            y: GRAPH_PADDING,
+                        },
+                    );
+
+                    let trunk_height = trunk_height_for_scene(
+                        &self.node_positions,
+                        &self.node_sizes,
+                        trunk_span_height,
+                    );
+                    self.node_sizes.insert(
+                        GraphNodeId::Trunk,
+                        redesmyn_graph_layout::Size {
+                            width: trunk_column_width(),
+                            height: trunk_height,
+                        },
+                    );
+
+                    self.bounds =
+                        bounds_with_trunk(self.bounds, trunk_column_width(), trunk_height);
+                } else {
+                    self.trunk_layout = None;
+                }
             }
             Err(error) => {
                 redesmyn_logging::tracing::error!(
@@ -547,6 +719,160 @@ impl GraphScene {
 
 fn default_node_size() -> redesmyn_graph_layout::Size {
     COLLAPSED_TASK_NODE_SIZE
+}
+
+fn trunk_column_width() -> i32 {
+    TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH + TRUNK_SHA_WIDTH
+}
+
+fn trunk_default_size() -> redesmyn_graph_layout::Size {
+    redesmyn_graph_layout::Size {
+        width: trunk_column_width(),
+        height: trunk_layout_default_span_height(),
+    }
+}
+
+fn trunk_layout_default_span_height() -> i32 {
+    TRUNK_COMMIT_PADDING * 2 + TRUNK_COMMIT_ROW_HEIGHT
+}
+
+fn trunk_height_for_scene(
+    positions: &BTreeMap<GraphNodeId, redesmyn_graph_layout::Point>,
+    sizes: &BTreeMap<GraphNodeId, redesmyn_graph_layout::Size>,
+    trunk_span_height: i32,
+) -> i32 {
+    let mut graph_bottom = GRAPH_PADDING;
+    for (id, pos) in positions {
+        if *id == GraphNodeId::Trunk {
+            continue;
+        }
+        let size = sizes.get(id).copied().unwrap_or_else(default_node_size);
+        graph_bottom = graph_bottom.max(pos.y + size.height);
+    }
+    trunk_span_height.max(graph_bottom - GRAPH_PADDING)
+}
+
+fn bounds_with_trunk(
+    bounds: redesmyn_graph_layout::Rect,
+    trunk_width: i32,
+    trunk_height: i32,
+) -> redesmyn_graph_layout::Rect {
+    let left = bounds.origin.x.min(GRAPH_PADDING);
+    let top = bounds.origin.y.min(GRAPH_PADDING);
+    let right = bounds.right().max(GRAPH_PADDING + trunk_width);
+    let bottom = bounds.bottom().max(GRAPH_PADDING + trunk_height);
+    redesmyn_graph_layout::Rect {
+        origin: redesmyn_graph_layout::Point { x: left, y: top },
+        size: redesmyn_graph_layout::Size {
+            width: right - left,
+            height: bottom - top,
+        },
+    }
+}
+
+fn layout_anchor_y(trunk_base_offset: i32) -> i32 {
+    let root_center_y = GRAPH_PADDING + trunk_base_offset;
+    let desired = root_center_y - COLLAPSED_TASK_NODE_SIZE.height / 2;
+    GRAPH_PADDING.max(desired)
+}
+
+fn trunk_layout_for_timeline(timeline: &TrunkTimeline) -> TrunkLayout {
+    let mut marks: Vec<TrunkMark> = Vec::new();
+
+    if timeline.base_sha.is_empty() {
+        return TrunkLayout {
+            marks,
+            base_offset: TRUNK_COMMIT_PADDING + TRUNK_COMMIT_ROW_HEIGHT / 2,
+            commit_spacing: TRUNK_COMMIT_SPACING,
+            commit_padding: TRUNK_COMMIT_PADDING,
+            row_height: TRUNK_COMMIT_ROW_HEIGHT,
+            span_height: trunk_layout_default_span_height(),
+        };
+    }
+
+    if timeline.has_more_after {
+        marks.push(TrunkMark {
+            kind: TrunkMarkKind::Ellipsis,
+            sha: None,
+            title: None,
+        });
+    }
+
+    for commit in timeline.commits_after.iter().rev() {
+        marks.push(TrunkMark {
+            kind: TrunkMarkKind::Commit,
+            sha: Some(commit.sha.clone()),
+            title: commit.title.clone(),
+        });
+    }
+
+    let base_commit = timeline.base_commit.clone().unwrap_or_else(|| TrunkCommit {
+        sha: timeline.base_sha.clone(),
+        title: None,
+    });
+
+    marks.push(TrunkMark {
+        kind: TrunkMarkKind::Base,
+        sha: Some(base_commit.sha),
+        title: base_commit.title,
+    });
+
+    for commit in &timeline.commits_before {
+        marks.push(TrunkMark {
+            kind: TrunkMarkKind::Commit,
+            sha: Some(commit.sha.clone()),
+            title: commit.title.clone(),
+        });
+    }
+
+    if timeline.has_more_before {
+        marks.push(TrunkMark {
+            kind: TrunkMarkKind::Ellipsis,
+            sha: None,
+            title: None,
+        });
+    }
+
+    let base_index = marks
+        .iter()
+        .position(|mark| mark.kind == TrunkMarkKind::Base)
+        .unwrap_or_else(|| marks.len() / 2);
+
+    let connector_index = base_index;
+    marks.insert(
+        connector_index,
+        TrunkMark {
+            kind: TrunkMarkKind::Connector,
+            sha: None,
+            title: None,
+        },
+    );
+
+    let mark_count = marks.len() as i32;
+    let span_height = if mark_count > 1 {
+        TRUNK_COMMIT_PADDING * 2
+            + (mark_count - 1) * TRUNK_COMMIT_SPACING
+            + TRUNK_COMMIT_ROW_HEIGHT
+    } else {
+        trunk_layout_default_span_height()
+    };
+
+    let base_offset = if mark_count > 0 {
+        TRUNK_COMMIT_PADDING
+            + connector_index as i32 * TRUNK_COMMIT_SPACING
+            + TRUNK_COMMIT_ROW_HEIGHT / 2
+    } else {
+        TRUNK_COMMIT_PADDING + TRUNK_COMMIT_ROW_HEIGHT / 2
+    };
+
+    TrunkLayout {
+        marks,
+        base_offset,
+        commit_spacing: TRUNK_COMMIT_SPACING,
+        commit_padding: TRUNK_COMMIT_PADDING,
+        row_height: TRUNK_COMMIT_ROW_HEIGHT,
+        span_height,
+    }
 }
 
 fn agent_status_by_task_id(
@@ -617,6 +943,38 @@ fn stable_128bit_hash(input: &[u8]) -> [u8; 16] {
     out
 }
 
+fn demo_trunk_timeline() -> TrunkTimeline {
+    TrunkTimeline {
+        base_sha: SharedString::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
+        base_commit: Some(TrunkCommit {
+            sha: SharedString::new("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
+            title: Some("base".into()),
+        }),
+        commits_before: vec![
+            TrunkCommit {
+                sha: SharedString::new("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()),
+                title: Some("before".into()),
+            },
+            TrunkCommit {
+                sha: SharedString::new("ccccccccccccccccccccccccbbbbbbbbbbbbbbbb".to_string()),
+                title: Some("older".into()),
+            },
+        ],
+        commits_after: vec![
+            TrunkCommit {
+                sha: SharedString::new("dddddddddddddddddddddddddddddddddddddddd".to_string()),
+                title: Some("after".into()),
+            },
+            TrunkCommit {
+                sha: SharedString::new("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string()),
+                title: Some("head".into()),
+            },
+        ],
+        has_more_before: true,
+        has_more_after: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,7 +989,11 @@ mod tests {
     #[test]
     fn selection_expands_only_selected_node() {
         let mut scene = GraphScene::demo();
-        let ids: Vec<_> = scene.nodes().map(|node| node.id).collect();
+        let ids: Vec<_> = scene
+            .nodes()
+            .map(|node| node.id)
+            .filter(|id| *id != GraphNodeId::Trunk)
+            .collect();
         let first = ids[0];
 
         scene.select_node(first);
@@ -732,5 +1094,31 @@ mod tests {
         assert!(scene.selection().selected_nodes.is_empty());
         assert_eq!(scene.selection().selected_node, None);
         assert_eq!(scene.selection().selected_edge, Some(edge));
+    }
+
+    #[test]
+    fn trunk_layout_offsets_root_nodes() {
+        let mut scene = GraphScene::empty_demo();
+        let root_id = GraphNodeId::Task(TaskId::from_bytes([42; 16]));
+        scene.insert_demo_node(root_id);
+
+        scene.set_trunk_timeline(Some(demo_trunk_timeline()));
+
+        let root_pos = scene.node_positions.get(&root_id).copied().unwrap();
+        assert_eq!(root_pos.x, GRAPH_PADDING + trunk_column_width() + TRUNK_GAP);
+
+        let trunk_pos = scene
+            .node_positions
+            .get(&GraphNodeId::Trunk)
+            .copied()
+            .unwrap();
+        assert_eq!(trunk_pos.x, GRAPH_PADDING);
+        assert_eq!(trunk_pos.y, GRAPH_PADDING);
+
+        let trunk_layout = scene.trunk_layout().unwrap();
+        let root_size = scene.node_sizes.get(&root_id).copied().unwrap();
+        let root_center_y = root_pos.y + root_size.height / 2;
+        let trunk_base_anchor_y = trunk_pos.y + trunk_layout.base_offset;
+        assert_eq!(root_center_y, trunk_base_anchor_y);
     }
 }

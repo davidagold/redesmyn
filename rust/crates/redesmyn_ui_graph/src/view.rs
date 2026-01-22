@@ -20,11 +20,13 @@ use redesmyn_ui::utils::{
 };
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
+use crate::constants::{TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH};
 use crate::geometry::{
-    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band, edge_route_in_window,
+    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band, edge_route_between_points_in_window,
+    edge_route_in_window,
 };
 use crate::hit_test::{GraphHit, hit_test};
-use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene};
+use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
 use redesmyn_protocol::client::{MergeReadiness, TaskState};
 
@@ -1013,6 +1015,245 @@ impl GraphView {
         cx.notify();
     }
 
+    fn trunk_bounds_in_window_for_progress(
+        &self,
+        canvas_bounds: gpui::Bounds<gpui::Pixels>,
+        t: f32,
+    ) -> Option<gpui::Bounds<gpui::Pixels>> {
+        if self.scene.node(GraphNodeId::Trunk).is_none() {
+            return None;
+        }
+
+        Some(self.node_bounds_in_window_for_progress(
+            GraphNodeId::Trunk,
+            canvas_bounds,
+            t,
+        ))
+    }
+
+    fn trunk_base_anchor_in_window_for_progress(
+        &self,
+        canvas_bounds: gpui::Bounds<gpui::Pixels>,
+        t: f32,
+    ) -> Option<gpui::Point<gpui::Pixels>> {
+        let trunk_layout = self.scene.trunk_layout()?;
+        let trunk_bounds = self.trunk_bounds_in_window_for_progress(canvas_bounds, t)?;
+
+        let zoom = self.camera.zoom();
+        let line_x = (TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH / 2) as f32;
+
+        Some(gpui::point(
+            trunk_bounds.left() + px(line_x * zoom),
+            trunk_bounds.top() + px(trunk_layout.base_offset as f32 * zoom),
+        ))
+    }
+
+    fn paint_trunk_line_for_progress(
+        &self,
+        canvas_bounds: gpui::Bounds<gpui::Pixels>,
+        t: f32,
+        theme: &redesmyn_ui::styles::UiTheme,
+        window: &mut Window,
+    ) {
+        let Some(trunk_bounds) = self.trunk_bounds_in_window_for_progress(canvas_bounds, t) else {
+            return;
+        };
+
+        let zoom = self.camera.zoom();
+        let thickness = px(TRUNK_THICKNESS as f32).max(px(1.0));
+        let line_x = (TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH / 2) as f32;
+        let line_x_px = trunk_bounds.left() + px(line_x * zoom);
+
+        let line_bounds = gpui::Bounds {
+            origin: gpui::point(line_x_px - thickness / 2.0, trunk_bounds.top()),
+            size: gpui::size(thickness, trunk_bounds.size.height),
+        };
+
+        window.paint_quad(fill(line_bounds, theme.colors.border.opacity(0.6)));
+    }
+
+    fn paint_trunk_text_line_for_progress(
+        &self,
+        origin: gpui::Point<gpui::Pixels>,
+        line_height: gpui::Pixels,
+        text: gpui::SharedString,
+        font: gpui::Font,
+        font_size: gpui::Pixels,
+        color: gpui::Hsla,
+        window: &mut Window,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+
+        let run = TextRun {
+            len: text.len(),
+            font,
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let shaped = window
+            .text_system()
+            .shape_line(text, font_size, std::slice::from_ref(&run), None);
+        self.paint_shaped_line(origin, line_height, &shaped, color, window);
+    }
+
+    fn paint_trunk_marks_for_progress(
+        &self,
+        canvas_bounds: gpui::Bounds<gpui::Pixels>,
+        t: f32,
+        theme: &redesmyn_ui::styles::UiTheme,
+        window: &mut Window,
+    ) {
+        let Some(trunk_layout) = self.scene.trunk_layout() else {
+            return;
+        };
+        let Some(trunk_bounds) = self.trunk_bounds_in_window_for_progress(canvas_bounds, t) else {
+            return;
+        };
+
+        let zoom = self.camera.zoom();
+        let show_labels = zoom >= TRUNK_LABEL_LOD_ZOOM;
+
+        let marker_size = px((10.0 * zoom).clamp(4.0, 14.0));
+        let marker_radius = marker_size / 2.0;
+
+        let line_x = (TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH / 2) as f32;
+        let line_x_px = trunk_bounds.left() + px(line_x * zoom);
+
+        let title_x = trunk_bounds.left();
+        let sha_x = trunk_bounds.left()
+            + px((TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH + 10) as f32 * zoom);
+        let ellipsis_x = sha_x;
+
+        let font_size = px(11.0 * zoom);
+        let line_height = px(14.0 * zoom);
+
+        let mark_count = trunk_layout.marks.len();
+        let commit_sampling_step = if mark_count > 250 && zoom < TRUNK_LABEL_LOD_ZOOM {
+            (mark_count / 150).max(1)
+        } else {
+            1
+        };
+
+        for (index, mark) in trunk_layout.marks.iter().enumerate() {
+            let row_top = trunk_bounds.top()
+                + px(
+                    (trunk_layout.commit_padding + index as i32 * trunk_layout.commit_spacing) as f32
+                        * zoom,
+                );
+            let row_height = px(trunk_layout.row_height as f32 * zoom);
+            let row_bottom = row_top + row_height;
+
+            if row_bottom < canvas_bounds.top() || row_top > canvas_bounds.bottom() {
+                continue;
+            }
+
+            match mark.kind {
+                TrunkMarkKind::Connector => continue,
+                TrunkMarkKind::Ellipsis => {
+                    if show_labels {
+                        self.paint_trunk_text_line_for_progress(
+                            gpui::point(ellipsis_x, row_top),
+                            line_height,
+                            gpui::SharedString::new_static("···"),
+                            theme.typography.caption.font.clone(),
+                            font_size,
+                            theme.colors.foreground_muted.opacity(0.65),
+                            window,
+                        );
+                    }
+                    continue;
+                }
+                TrunkMarkKind::Commit => {
+                    if commit_sampling_step > 1
+                        && index % commit_sampling_step != 0
+                        && mark.title.is_some()
+                    {
+                        continue;
+                    }
+                }
+                TrunkMarkKind::Base => {}
+            }
+
+            let row_center_y = row_top + row_height / 2.0;
+            let marker_bounds = gpui::Bounds {
+                origin: gpui::point(
+                    line_x_px - marker_size / 2.0,
+                    row_center_y - marker_size / 2.0,
+                ),
+                size: gpui::size(marker_size, marker_size),
+            };
+
+            let is_base = mark.kind == TrunkMarkKind::Base;
+            let border_color = if is_base {
+                theme.colors.foreground.opacity(0.75)
+            } else {
+                theme.colors.foreground.opacity(0.6)
+            };
+
+            window.paint_quad(quad(
+                marker_bounds,
+                marker_radius,
+                theme.colors.background,
+                1.0,
+                border_color,
+                gpui::BorderStyle::Solid,
+            ));
+
+            if !show_labels {
+                continue;
+            }
+
+            let title = mark
+                .title
+                .as_ref()
+                .map(|title| truncate_shared_string(title, 34))
+                .unwrap_or_else(|| gpui::SharedString::new_static("—"));
+
+            if !title.is_empty() {
+                self.paint_trunk_text_line_for_progress(
+                    gpui::point(title_x, row_top),
+                    line_height,
+                    title,
+                    theme.typography.caption.font.clone(),
+                    font_size,
+                    if is_base {
+                        theme.colors.foreground.opacity(0.78)
+                    } else {
+                        theme.colors.foreground_muted.opacity(0.78)
+                    },
+                    window,
+                );
+            }
+
+            let sha = mark
+                .sha
+                .as_ref()
+                .map(|sha| truncate_shared_string(sha, 7))
+                .unwrap_or_default();
+
+            if !sha.is_empty() {
+                self.paint_trunk_text_line_for_progress(
+                    gpui::point(sha_x, row_top),
+                    line_height,
+                    sha,
+                    theme.typography.mono.font.clone(),
+                    font_size,
+                    if is_base {
+                        theme.colors.foreground.opacity(0.8)
+                    } else {
+                        theme.colors.foreground_muted.opacity(0.85)
+                    },
+                    window,
+                );
+            }
+        }
+    }
+
     fn paint_graph(
         &self,
         canvas_bounds: gpui::Bounds<gpui::Pixels>,
@@ -1023,7 +1264,37 @@ impl GraphView {
         let t = self.layout_animation_progress_for_paint();
         let lod = edge_lod_band(self.camera.zoom());
 
+        self.paint_trunk_line_for_progress(canvas_bounds, t, &theme, window);
+
         for edge in self.scene.edges() {
+            if edge.id.from == GraphNodeId::Trunk {
+                let Some(from_anchor) = self.trunk_base_anchor_in_window_for_progress(canvas_bounds, t)
+                else {
+                    continue;
+                };
+                let Some(to) = self.scene.node(edge.id.to) else {
+                    continue;
+                };
+
+                let to_bounds =
+                    self.node_bounds_in_window_for_progress(to.id, canvas_bounds, t);
+                let to_anchor = gpui::point(
+                    to_bounds.left(),
+                    to_bounds.top() + to_bounds.size.height / 2.0,
+                );
+
+                let route = edge_route_between_points_in_window(from_anchor, to_anchor);
+                let color = theme.colors.border.opacity(0.45);
+                for segment in route
+                    .segment_bounds(DEFAULT_EDGE_STROKE_PX)
+                    .iter()
+                    .flatten()
+                {
+                    window.paint_quad(fill(*segment, color));
+                }
+                continue;
+            }
+
             let Some(from) = self.scene.node(edge.id.from) else {
                 continue;
             };
@@ -1070,6 +1341,8 @@ impl GraphView {
                 self.paint_commit_count_label(route.label_center(), label, &theme, window);
             }
         }
+
+        self.paint_trunk_marks_for_progress(canvas_bounds, t, &theme, window);
     }
 }
 
@@ -1301,6 +1574,9 @@ impl Render for GraphView {
             let mut layer = div().absolute().inset_0();
 
             for node in self.scene.nodes() {
+                if node.id == GraphNodeId::Trunk {
+                    continue;
+                }
                 let bounds_in_window =
                     self.node_bounds_in_window_for_progress(node.id, canvas_bounds, t);
                 let local_origin = bounds_in_window.origin - canvas_bounds.origin;
@@ -1839,6 +2115,16 @@ fn lerp_world_rect(from: NodeWorldRect, to: NodeWorldRect, t: f32) -> NodeWorldR
 
 fn approx_eq_point(a: gpui::Point<f32>, b: gpui::Point<f32>) -> bool {
     (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+}
+
+fn truncate_shared_string(value: &gpui::SharedString, max_chars: usize) -> gpui::SharedString {
+    let value_str = value.as_ref();
+    for (index, (offset, _)) in value_str.char_indices().enumerate() {
+        if index == max_chars {
+            return gpui::SharedString::new(value_str[..offset].to_string());
+        }
+    }
+    value.clone()
 }
 
 fn should_defer_pan_to_scroll_view(

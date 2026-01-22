@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod camera;
+mod constants;
 mod geometry;
 mod hit_test;
 mod scene;
@@ -13,5 +14,5 @@ mod view;
 
 pub use camera::{GraphCamera, GraphCameraLimits};
 pub use hit_test::GraphHit;
-pub use scene::{GraphEdgeId, GraphNodeId, GraphScene, GraphSelection};
+pub use scene::{GraphEdgeId, GraphNodeId, GraphScene, GraphSelection, TrunkCommit, TrunkTimeline};
 pub use view::GraphView;

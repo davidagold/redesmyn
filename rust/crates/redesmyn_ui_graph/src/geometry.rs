@@ -81,7 +81,13 @@ pub(crate) fn edge_route_in_window(
 ) -> EdgeRoute {
     let from = anchor_right_center(from_bounds);
     let to = anchor_left_center(to_bounds);
+    edge_route_between_points_in_window(from, to)
+}
 
+pub(crate) fn edge_route_between_points_in_window(
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+) -> EdgeRoute {
     let mid_x = px((f32::from(from.x) + f32::from(to.x)) / 2.0);
 
     EdgeRoute {
