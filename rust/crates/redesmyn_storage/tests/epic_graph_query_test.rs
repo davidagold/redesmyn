@@ -431,6 +431,32 @@ async fn insert_session_event(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
+        INSERT OR IGNORE INTO agent_sessions (
+            session_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_workspace_id,
+            scope_repo_id,
+            scope_kind,
+            task_id,
+            agent_kind,
+            interface_mode,
+            status
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, 'task', ?6, 'shell', 'shell_tmux', 'stopped')
+        "#,
+    )
+    .bind(session_id)
+    .bind(created_at_ms)
+    .bind(created_at_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(task_id)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
         INSERT INTO session_events (
             id,
             session_id,
