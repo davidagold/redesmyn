@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -82,6 +83,7 @@ pub struct GraphView {
     demo_action: UserActionState,
     demo_action_task: Option<Task<()>>,
     layout_animation: Option<LayoutAnimation>,
+    edge_label_cache: RefCell<HashMap<gpui::SharedString, gpui::ShapedLine>>,
 }
 
 impl GraphView {
@@ -100,6 +102,7 @@ impl GraphView {
             demo_action: UserActionState::default(),
             demo_action_task: None,
             layout_animation: None,
+            edge_label_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -551,22 +554,34 @@ impl GraphView {
         let line_height = px(14.0);
         let padding_x = px(6.0);
         let padding_y = px(2.0);
+        let text_color = theme.colors.foreground.opacity(0.8);
 
-        let run = TextRun {
-            len: text.len(),
-            font: theme.typography.caption.font.clone(),
-            color: theme.colors.foreground.opacity(0.8),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
+        if self.edge_label_cache.borrow().get(text).is_none() {
+            let run = TextRun {
+                len: text.len(),
+                font: theme.typography.caption.font.clone(),
+                color: text_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+
+            let shaped = window.text_system().shape_line(
+                text.clone(),
+                font_size,
+                std::slice::from_ref(&run),
+                None,
+            );
+
+            self.edge_label_cache
+                .borrow_mut()
+                .insert(text.clone(), shaped);
+        }
+
+        let cache = self.edge_label_cache.borrow();
+        let Some(shaped) = cache.get(text) else {
+            return;
         };
-
-        let shaped = window.text_system().shape_line(
-            text.clone(),
-            font_size,
-            std::slice::from_ref(&run),
-            None,
-        );
 
         let bubble_size = gpui::size(
             shaped.width + padding_x * 2.0,
@@ -596,7 +611,7 @@ impl GraphView {
             bubble_bounds.origin.x + padding_x,
             bubble_bounds.origin.y + padding_y,
         );
-        self.paint_shaped_line(text_origin, line_height, &shaped, run.color, window);
+        self.paint_shaped_line(text_origin, line_height, shaped, text_color, window);
     }
 
     fn paint_shaped_line(
