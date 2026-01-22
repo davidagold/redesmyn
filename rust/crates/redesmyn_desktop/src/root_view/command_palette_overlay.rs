@@ -605,6 +605,9 @@ impl CommandPaletteOverlay {
 
         div()
             .size_full()
+            .absolute()
+            .top_0()
+            .left_0()
             .child(
                 div()
                     .size_full()
