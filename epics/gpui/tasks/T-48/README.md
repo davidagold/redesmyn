@@ -75,14 +75,60 @@ Integrate with waiting primitives (T-15) so tests can:
 - wait for command completion,
 - wait for a UI snapshot predicate.
 
-### 5) Failure artifacts (optional but recommended)
+### 5) Artifacts: semantic snapshots + screenshots (required)
 
-On test failure, allow capturing:
+Self-testing must produce **both**:
+
+- **Semantic UI snapshots** (machine-readable; stable) for assertions and debug diffs.
+- **Pixel screenshots** (PNG) for human / LLM visual inspection.
+
+On test failure (and optionally at each checkpoint), capture:
 
 - a UI snapshot dump,
-- and (optionally) a screenshot.
+- and a screenshot.
 
 Prefer semantic assertions for most tests.
+
+#### Screenshot capture surface
+
+Expose screenshot capture via the UI driver (transport per §1), e.g.:
+
+- `CaptureScreenshot { window?: primary|all, include_decorations?: bool } -> { png_path | png_bytes }`
+
+Notes:
+
+- Prefer writing to a caller-provided artifacts directory (see below) rather than returning large blobs over the driver transport.
+- Fixed window size is required for stability (see Determinism).
+
+#### Artifacts convention
+
+Define and document a stable artifacts convention so CI and agents can always find outputs.
+
+Minimum:
+
+- Support a single `REDESMYN_TEST_ARTIFACTS_DIR` (or equivalent) to route outputs.
+- For each checkpoint, write:
+  - `ui_snapshot_<label>.json`
+  - `screenshot_<label>.png`
+
+The convention must be deterministic and collision-resistant across parallel test runs.
+
+#### Determinism requirements (for stable screenshots)
+
+To keep screenshots useful and non-flaky, fixture/test mode must enforce:
+
+- deterministic window size (config-driven),
+- deterministic theme (e.g. dark/light pinned; no system theme),
+- no time-based animations affecting visual diffs (disable or freeze where feasible),
+- and stable text rendering inputs (font selection pinned where possible).
+
+### 6) Documentation (required)
+
+Add a short developer-facing guide that explains:
+
+- how to run UI-driver tests locally,
+- what artifacts are produced and where,
+- and how to reproduce a failing run from artifacts.
 
 ## Acceptance criteria
 
