@@ -96,6 +96,7 @@ pub struct EpicGraphData {
 pub struct EpicListItem {
     pub slug: String,
     pub title: String,
+    pub epic_id: EpicId,
 }
 
 pub async fn list_epics<'e, E>(
@@ -105,11 +106,11 @@ pub async fn list_epics<'e, E>(
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
-    let rows: Vec<(String, String)> = match scope {
+    let rows: Vec<(EpicId, String, String)> = match scope {
         Some(scope) => {
             sqlx::query_as(
                 r#"
-                SELECT e.slug, e.title
+                SELECT e.id, e.slug, e.title
                 FROM epics e
                 JOIN repositories r ON r.id = e.repo_id
                 WHERE r.id = ?1 AND r.workspace_id = ?2
@@ -124,7 +125,7 @@ where
         None => {
             sqlx::query_as(
                 r#"
-                SELECT slug, title
+                SELECT id, slug, title
                 FROM epics
                 ORDER BY slug
                 "#,
@@ -136,7 +137,11 @@ where
 
     Ok(rows
         .into_iter()
-        .map(|(slug, title)| EpicListItem { slug, title })
+        .map(|(epic_id, slug, title)| EpicListItem {
+            slug,
+            title,
+            epic_id,
+        })
         .collect())
 }
 
