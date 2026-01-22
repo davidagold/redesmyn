@@ -163,6 +163,8 @@ message ListEpicsRequest {}
 message EpicSummary {
   string slug = 1;
   string name = 2;
+  // EpicId (ULID bytes, length = 16). Empty => none.
+  bytes epic_id = 3;
 }
 
 message ListEpicsResponse {

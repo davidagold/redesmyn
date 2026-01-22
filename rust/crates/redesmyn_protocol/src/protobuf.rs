@@ -2506,7 +2506,7 @@ impl crate::client::Response {
                 crate::client::StatusResponse::try_from_protobuf(resp)?,
             ),
             pbv1::response::Result::ListEpics(resp) => crate::client::ResponseResult::ListEpics(
-                crate::client::ListEpicsResponse::from_protobuf(resp),
+                crate::client::ListEpicsResponse::try_from_protobuf(resp)?,
             ),
             pbv1::response::Result::GetEpicGraph(resp) => {
                 crate::client::ResponseResult::GetEpicGraph(
@@ -2652,15 +2652,20 @@ impl crate::client::EpicSummary {
         pbv1::EpicSummary {
             slug: self.slug.clone(),
             name: self.name.clone(),
+            epic_id: self
+                .epic_id
+                .as_ref()
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::EpicSummary) -> Self {
-        Self {
+    pub fn try_from_protobuf(proto: pbv1::EpicSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             slug: proto.slug,
             name: proto.name,
-        }
+            epic_id: decode_optional_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+        })
     }
 }
 
@@ -2676,15 +2681,14 @@ impl crate::client::ListEpicsResponse {
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::ListEpicsResponse) -> Self {
-        Self {
+    pub fn try_from_protobuf(proto: pbv1::ListEpicsResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             epics: proto
                 .epics
                 .into_iter()
-                .map(crate::client::EpicSummary::from_protobuf)
-                .collect(),
-        }
+                .map(crate::client::EpicSummary::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 }
 

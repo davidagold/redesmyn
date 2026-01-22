@@ -190,6 +190,8 @@ pub struct ListEpicsRequest {}
 pub struct EpicSummary {
     pub slug: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_id: Option<EpicId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
