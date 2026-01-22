@@ -1,11 +1,21 @@
 mod command_palette_overlay;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     App, AsyncApp, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle, SharedString,
-    Subscription, Task, Window, div, prelude::*, px,
+    Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
+use tokio::sync::{mpsc, watch};
+
+use redesmyn_protocol::ui_driver::{
+    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse, UiDriverRequestPayload,
+    UiDriverResponse, UiDriverResponseResult, UiErrorCallout, UiInFlightAction, UiLeftPaneState,
+    UiPrimaryView, UiSelectionState, UiSnapshot, UiSnapshotPredicate, WaitForUiIdleRequest,
+    WaitForUiIdleResponse, WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
+};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
 
@@ -31,6 +41,7 @@ pub struct DesktopModel {
     daemon_host_id: Option<redesmyn_ids::HostId>,
     session_control_plane_client: Option<ClientInProcEndpoint>,
     chrome_control_plane_client: Option<ControlPlaneClient>,
+    ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
 }
 
 impl DesktopModel {
@@ -41,6 +52,7 @@ impl DesktopModel {
         tokio_handle: tokio::runtime::Handle,
         session_control_plane_client: Option<ClientInProcEndpoint>,
         chrome_control_plane_client: Option<ClientInProcEndpoint>,
+        ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
     ) -> Self {
         Self {
             config,
@@ -48,11 +60,37 @@ impl DesktopModel {
             session_control_plane_client,
             chrome_control_plane_client: chrome_control_plane_client
                 .map(|conn| ControlPlaneClient::new(tokio_handle, conn)),
+            ui_driver_rx,
         }
     }
 
     pub fn take_control_plane_client(&mut self) -> Option<ClientInProcEndpoint> {
         self.session_control_plane_client.take()
+    }
+
+    pub fn take_ui_driver_rx(&mut self) -> Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>> {
+        self.ui_driver_rx.take()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UiUpdateCounter {
+    tx: watch::Sender<u64>,
+}
+
+impl UiUpdateCounter {
+    fn new() -> Self {
+        let (tx, _rx) = watch::channel(0_u64);
+        Self { tx }
+    }
+
+    fn bump(&self) {
+        let next = *self.tx.borrow() + 1;
+        let _ = self.tx.send(next);
+    }
+
+    fn subscribe(&self) -> watch::Receiver<u64> {
+        self.tx.subscribe()
     }
 }
 
@@ -63,12 +101,17 @@ pub struct RootView {
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
     chrome: ChromeState,
+    ui_updates: UiUpdateCounter,
+    ui_driver_action: UserActionState,
+    ui_driver_action_label: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl RootView {
     #[must_use]
     pub fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
+        let ui_driver_rx = model.update(cx, |model, _cx| model.take_ui_driver_rx());
+
         let initial_split_state = cx
             .try_global::<UiContext>()
             .map(|ui| ui.main_split_pane_state())
@@ -103,7 +146,7 @@ impl RootView {
         let palette_input = command_palette.input_entity();
 
         let mut subscriptions = Vec::new();
-        subscriptions.push(cx.observe_global::<UiContext>(|_, cx| cx.notify()));
+        subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
 
         subscriptions.push(cx.subscribe(&split_pane, |this, _, event, cx| match event {
             SplitPaneEvent::StateChanged(state) => {
@@ -111,23 +154,39 @@ impl RootView {
                     pane.set_sessions_collapsed(state.collapsed, cx)
                 });
                 this.persist_split_pane_state(*state, cx);
+                this.ui_updates.bump();
             }
         }));
 
         subscriptions.push(cx.subscribe(&palette_input, |this, _, event, cx| {
             this.command_palette
                 .handle_text_input_event(event.clone(), cx);
+            this.ui_updates.bump();
         }));
 
-        Self {
+        let mut this = Self {
             model,
             split_pane,
             workspace_pane,
             focus_handle,
             command_palette,
             chrome: ChromeState::new(),
+            ui_updates: UiUpdateCounter::new(),
+            ui_driver_action: UserActionState::default(),
+            ui_driver_action_label: None,
             _subscriptions: subscriptions,
+        };
+
+        if let Some(rx) = ui_driver_rx {
+            this.start_ui_driver(rx, cx);
         }
+
+        this
+    }
+
+    fn notify_ui_updated(&mut self, cx: &mut Context<Self>) {
+        self.ui_updates.bump();
+        cx.notify();
     }
 
     fn persist_split_pane_state(&mut self, state: SplitPaneState, cx: &mut Context<Self>) {
@@ -161,6 +220,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.toggle(window, cx);
+        self.ui_updates.bump();
     }
 
     fn close_command_palette(
@@ -170,6 +230,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.handle_close_action(window, cx);
+        self.ui_updates.bump();
     }
 
     fn select_previous_command(
@@ -179,6 +240,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.select_previous(cx);
+        self.ui_updates.bump();
     }
 
     fn select_next_command(
@@ -188,6 +250,41 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.command_palette.select_next(cx);
+        self.ui_updates.bump();
+    }
+
+    fn subscribe_ui_updates(&self) -> watch::Receiver<u64> {
+        self.ui_updates.subscribe()
+    }
+
+    fn start_ui_driver(
+        &mut self,
+        mut rx: mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(move |root: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                while let Some(cmd) = rx.recv().await {
+                    let request_id = cmd.request.request_id;
+                    let result = handle_ui_driver_request(&root, cmd.request.payload, &cx).await;
+                    let response = UiDriverResponse { request_id, result };
+                    let _ = cmd.respond_to.send(response);
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn set_left_pane_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
+        let state = self.split_pane.read(cx).state();
+        if state.collapsed == collapsed {
+            return;
+        }
+
+        self.split_pane
+            .update(cx, |pane, cx| pane.toggle_collapsed(cx));
+        self.ui_updates.bump();
     }
 
     fn toggle_sessions_pane(&mut self, cx: &mut Context<Self>) {
@@ -200,12 +297,12 @@ impl RootView {
             Some(open) if open == panel => None,
             _ => Some(panel),
         };
-        cx.notify();
+        self.notify_ui_updated(cx);
     }
 
     fn close_panel(&mut self, cx: &mut Context<Self>) {
         if self.chrome.panel.take().is_some() {
-            cx.notify();
+            self.notify_ui_updated(cx);
         }
     }
 
@@ -221,17 +318,17 @@ impl RootView {
 
         self.chrome.selected_epic_slug = Some(slug);
         self.chrome.panel = None;
-        cx.notify();
+        self.notify_ui_updated(cx);
     }
 
     fn clear_refresh_error(&mut self, cx: &mut Context<Self>) {
         self.chrome.refresh.clear_error();
-        cx.notify();
+        self.notify_ui_updated(cx);
     }
 
     fn clear_theme_error(&mut self, cx: &mut Context<Self>) {
         self.chrome.theme_error = None;
-        cx.notify();
+        self.notify_ui_updated(cx);
     }
 
     fn set_theme_preference(&mut self, preference: ThemePreference, cx: &mut Context<Self>) {
@@ -243,7 +340,7 @@ impl RootView {
 
         if cx.try_global::<UiContext>().is_none() {
             self.chrome.theme_error = Some("UI context unavailable; theme not saved.".into());
-            cx.notify();
+            self.notify_ui_updated(cx);
             return;
         }
 
@@ -264,7 +361,7 @@ impl RootView {
             }
         }
 
-        cx.notify();
+        self.notify_ui_updated(cx);
     }
 
     fn start_refresh(&mut self, reason: RefreshReason, cx: &mut Context<Self>) {
@@ -280,7 +377,7 @@ impl RootView {
         let client = self.model.read(cx).chrome_control_plane_client.clone();
         let tokio = client.as_ref().map(|client| client.tokio().clone());
 
-        cx.notify();
+        self.notify_ui_updated(cx);
 
         self.chrome.refresh_task = Some(cx.spawn(
             move |weak: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -298,7 +395,7 @@ impl RootView {
                                     this.chrome
                                         .refresh
                                         .fail("Control plane client unavailable (not embedded).");
-                                    cx.notify();
+                                    this.notify_ui_updated(cx);
                                 })
                             })
                             .is_err()
@@ -322,7 +419,7 @@ impl RootView {
                                 entity.update(cx, |this, cx| {
                                     this.chrome.refresh_task = None;
                                     this.chrome.refresh.fail(format!("Refresh failed: {error}"));
-                                    cx.notify();
+                                    this.notify_ui_updated(cx);
                                 })
                             });
                             return;
@@ -384,13 +481,845 @@ impl RootView {
                                 this.chrome.refresh.fail(errors.join(" · "));
                             }
 
-                            cx.notify();
+                            this.notify_ui_updated(cx);
                         })
                     });
                 }
             },
         ));
     }
+
+    fn ui_snapshot(&self, cx: &App) -> UiSnapshot {
+        let split_state = self.split_pane.read(cx).state();
+
+        let primary_view = if self.chrome.selected_epic_slug.is_some() {
+            UiPrimaryView::EpicWorkspace
+        } else {
+            UiPrimaryView::EpicSelector
+        };
+
+        let selection = UiSelectionState {
+            epic_id: None,
+            epic_slug: self
+                .chrome
+                .selected_epic_slug
+                .clone()
+                .unwrap_or_else(String::new),
+            task_id: None,
+            task_slug: String::new(),
+            edge_id: None,
+        };
+
+        let mut errors = Vec::new();
+        if let Some(err) = self.workspace_pane.read(cx).ui_settings_error.clone() {
+            errors.push(UiErrorCallout {
+                message: err.to_string(),
+            });
+        }
+        if let Some(err) = self.chrome.refresh.error.clone() {
+            errors.push(UiErrorCallout {
+                message: err.to_string(),
+            });
+        }
+        if let Some(err) = self.chrome.theme_error.clone() {
+            errors.push(UiErrorCallout {
+                message: err.to_string(),
+            });
+        }
+        if self.command_palette.is_open() {
+            if let Some(err) = self.command_palette.visible_error() {
+                errors.push(UiErrorCallout { message: err });
+            }
+        }
+        if let Some(err) = self.ui_driver_action.error.clone() {
+            errors.push(UiErrorCallout {
+                message: err.to_string(),
+            });
+        }
+
+        let mut in_flight = Vec::new();
+        if self.chrome.refresh.in_flight {
+            in_flight.push(UiInFlightAction {
+                label: "Refreshing…".to_string(),
+                command_id: None,
+            });
+        }
+        if self.command_palette.is_open() {
+            if let Some(label) = self.command_palette.visible_in_flight_label() {
+                in_flight.push(UiInFlightAction {
+                    label,
+                    command_id: None,
+                });
+            }
+        }
+        if self.ui_driver_action.in_flight {
+            let label = self
+                .ui_driver_action_label
+                .clone()
+                .map(|label| label.to_string())
+                .unwrap_or_else(|| "Working…".to_string());
+            in_flight.push(UiInFlightAction {
+                label,
+                command_id: None,
+            });
+        }
+
+        UiSnapshot {
+            captured_at: if redesmyn_ui::utils::ui_test_mode_enabled() {
+                Timestamp::from_offset_date_time(time::OffsetDateTime::UNIX_EPOCH)
+            } else {
+                Timestamp::now_utc()
+            },
+            primary_view,
+            left_pane: UiLeftPaneState {
+                visible: true,
+                collapsed: split_state.collapsed,
+                width: split_state.primary_size_px.round().max(0.0) as u32,
+            },
+            selection,
+            in_flight,
+            errors,
+        }
+    }
+}
+
+fn ui_unavailable_snapshot() -> UiSnapshot {
+    UiSnapshot {
+        captured_at: Timestamp::now_utc(),
+        primary_view: UiPrimaryView::EpicSelector,
+        left_pane: UiLeftPaneState {
+            visible: true,
+            collapsed: true,
+            width: 0,
+        },
+        selection: UiSelectionState {
+            epic_id: None,
+            epic_slug: String::new(),
+            task_id: None,
+            task_slug: String::new(),
+            edge_id: None,
+        },
+        in_flight: Vec::new(),
+        errors: vec![UiErrorCallout {
+            message: "UI unavailable.".to_string(),
+        }],
+    }
+}
+
+fn snapshot_matches_predicate(snapshot: &UiSnapshot, predicate: &UiSnapshotPredicate) -> bool {
+    if let Some(primary_view) = predicate.primary_view {
+        if snapshot.primary_view != primary_view {
+            return false;
+        }
+    }
+
+    if !predicate.epic_slug.trim().is_empty() && snapshot.selection.epic_slug != predicate.epic_slug
+    {
+        return false;
+    }
+
+    if let Some(expected_empty) = predicate.in_flight_empty {
+        if snapshot.in_flight.is_empty() != expected_empty {
+            return false;
+        }
+    }
+
+    true
+}
+
+async fn wait_for_snapshot(
+    root: &WeakEntity<RootView>,
+    req: WaitForUiSnapshotRequest,
+    cx: &AsyncApp,
+) -> Result<UiSnapshot, ErrorEnvelope> {
+    let timeout = if req.timeout_ms == 0 {
+        Duration::from_millis(2_000)
+    } else {
+        Duration::from_millis(req.timeout_ms)
+    };
+
+    let mut updates_rx = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(());
+            };
+            Ok::<_, ()>(root.read(cx).subscribe_ui_updates())
+        })
+        .ok()
+        .and_then(Result::ok)
+        .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
+
+    let timeout_timer = gpui::Timer::after(timeout);
+    tokio::pin!(timeout_timer);
+
+    loop {
+        let snapshot = cx
+            .update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(());
+                };
+                Ok::<_, ()>(root.read(cx).ui_snapshot(cx))
+            })
+            .ok()
+            .and_then(Result::ok)
+            .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
+
+        if snapshot_matches_predicate(&snapshot, &req.predicate) {
+            return Ok(snapshot);
+        }
+
+        tokio::select! {
+            changed = updates_rx.changed() => {
+                if changed.is_err() {
+                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                }
+            }
+            _ = &mut timeout_timer => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Timed out waiting for UI snapshot predicate.",
+                ));
+            }
+        }
+    }
+}
+
+async fn wait_for_idle(
+    root: &WeakEntity<RootView>,
+    req: WaitForUiIdleRequest,
+    cx: &AsyncApp,
+) -> Result<(), ErrorEnvelope> {
+    let timeout = if req.timeout_ms == 0 {
+        Duration::from_millis(2_000)
+    } else {
+        Duration::from_millis(req.timeout_ms)
+    };
+
+    let quiescence = if req.quiescence_ms == 0 {
+        Duration::from_millis(25)
+    } else {
+        Duration::from_millis(req.quiescence_ms)
+    };
+
+    let mut updates_rx = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(());
+            };
+            Ok::<_, ()>(root.read(cx).subscribe_ui_updates())
+        })
+        .ok()
+        .and_then(Result::ok)
+        .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
+
+    let timeout_timer = gpui::Timer::after(timeout);
+    tokio::pin!(timeout_timer);
+
+    loop {
+        let snapshot = cx
+            .update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(());
+                };
+                Ok::<_, ()>(root.read(cx).ui_snapshot(cx))
+            })
+            .ok()
+            .and_then(Result::ok)
+            .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
+
+        if snapshot.in_flight.is_empty() {
+            let quiescence_timer = gpui::Timer::after(quiescence);
+            tokio::pin!(quiescence_timer);
+
+            tokio::select! {
+                changed = updates_rx.changed() => {
+                    if changed.is_err() {
+                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                    }
+                    continue;
+                }
+                _ = &mut quiescence_timer => return Ok(()),
+                _ = &mut timeout_timer => {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "Timed out waiting for UI idle.",
+                    ));
+                }
+            }
+        }
+
+        tokio::select! {
+            changed = updates_rx.changed() => {
+                if changed.is_err() {
+                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                }
+            }
+            _ = &mut timeout_timer => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Timed out waiting for UI idle.",
+                ));
+            }
+        }
+    }
+}
+
+async fn handle_ui_driver_request(
+    root: &WeakEntity<RootView>,
+    payload: UiDriverRequestPayload,
+    cx: &AsyncApp,
+) -> UiDriverResponseResult {
+    match payload {
+        UiDriverRequestPayload::GetSnapshot(_) => {
+            let snapshot = cx
+                .update(|cx| {
+                    let Some(root) = root.upgrade() else {
+                        return Err(());
+                    };
+                    Ok::<_, ()>(root.read(cx).ui_snapshot(cx))
+                })
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_else(ui_unavailable_snapshot);
+
+            UiDriverResponseResult::GetSnapshot(redesmyn_protocol::ui_driver::GetUiSnapshotResponse {
+                snapshot,
+            })
+        }
+        UiDriverRequestPayload::OpenEpic(req) => {
+            let slug = req.epic_slug;
+            let ok = cx
+                .update(|cx| {
+                    let Some(root) = root.upgrade() else {
+                        return Err(());
+                    };
+                    root.update(cx, |this, cx| this.select_epic(slug.clone(), cx));
+                    Ok::<_, ()>(())
+                })
+                .ok()
+                .and_then(Result::ok)
+                .is_some();
+
+            if ok {
+                UiDriverResponseResult::OpenEpic(redesmyn_protocol::ui_driver::OpenEpicResponse {})
+            } else {
+                UiDriverResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ))
+            }
+        }
+        UiDriverRequestPayload::SetLeftPaneCollapsed(req) => {
+            let collapsed = req.collapsed;
+            let ok = cx
+                .update(|cx| {
+                    let Some(root) = root.upgrade() else {
+                        return Err(());
+                    };
+                    root.update(cx, |this, cx| this.set_left_pane_collapsed(collapsed, cx));
+                    Ok::<_, ()>(())
+                })
+                .ok()
+                .and_then(Result::ok)
+                .is_some();
+
+            if ok {
+                UiDriverResponseResult::SetLeftPaneCollapsed(
+                    redesmyn_protocol::ui_driver::SetLeftPaneCollapsedResponse {},
+                )
+            } else {
+                UiDriverResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ))
+            }
+        }
+        UiDriverRequestPayload::TriggerRefresh(_req) => {
+            let ok = cx
+                .update(|cx| {
+                    let Some(root) = root.upgrade() else {
+                        return Err(());
+                    };
+                    root.update(cx, |this, cx| this.start_refresh(RefreshReason::Manual, cx));
+                    Ok::<_, ()>(())
+                })
+                .ok()
+                .and_then(Result::ok)
+                .is_some();
+
+            if ok {
+                UiDriverResponseResult::TriggerRefresh(TriggerRefreshResponse { command_id: None })
+            } else {
+                UiDriverResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ))
+            }
+        }
+        UiDriverRequestPayload::CreateChatSession(req) => {
+            let result: Result<CreateChatSessionResponse, ErrorEnvelope> =
+                create_chat_session_via_control_plane(root, req.name_hint, cx).await;
+            match result {
+                Ok(resp) => UiDriverResponseResult::CreateChatSession(resp),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::CloseChatSession(req) => {
+            let result: Result<(), ErrorEnvelope> =
+                close_chat_session_via_control_plane(root, req.session_id, cx).await;
+            match result {
+                Ok(()) => UiDriverResponseResult::CloseChatSession(
+                    redesmyn_protocol::ui_driver::CloseChatSessionResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::PinChatSession(req) => {
+            let result: Result<(), ErrorEnvelope> =
+                pin_chat_session_via_control_plane(root, req.session_id, cx).await;
+            match result {
+                Ok(()) => UiDriverResponseResult::PinChatSession(
+                    redesmyn_protocol::ui_driver::PinChatSessionResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::UnpinChatSession(_req) => {
+            let result: Result<(), ErrorEnvelope> = unpin_chat_session_via_control_plane(root, cx).await;
+            match result {
+                Ok(()) => UiDriverResponseResult::UnpinChatSession(
+                    redesmyn_protocol::ui_driver::UnpinChatSessionResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::CaptureScreenshot(req) => {
+            let result: Result<CaptureScreenshotResponse, ErrorEnvelope> = async {
+                let label = crate::test_artifacts::sanitize_label(&req.name_hint);
+                let include_decorations = req.include_decorations.unwrap_or(false);
+                let window = req.window;
+
+                let snapshot = cx
+                    .update(|cx| {
+                        let Some(root) = root.upgrade() else {
+                            return Err(ErrorEnvelope::new(
+                                ErrorCategory::Unavailable,
+                                "UI is unavailable.",
+                            ));
+                        };
+                        Ok::<_, ErrorEnvelope>(root.read(cx).ui_snapshot(cx))
+                    })
+                    .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+                let target = cx
+                    .update(|cx| crate::screenshot::select_target(window, cx))
+                    .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+                let Some(artifacts) = crate::test_artifacts::ui_test_artifacts() else {
+                    let png_path = crate::test_artifacts::temp_png_path(&label);
+                    let task = gpui::background_executor().spawn(async move {
+                        crate::test_artifacts::ensure_parent_dir(&png_path).map_err(|err| {
+                            ErrorEnvelope::new(
+                                ErrorCategory::Unavailable,
+                                format!("Failed to create screenshot directory: {err}"),
+                            )
+                        })?;
+                        crate::screenshot::capture_png(target, include_decorations, &png_path)?;
+                        let bytes = std::fs::read(&png_path).map_err(|err| {
+                            ErrorEnvelope::new(
+                                ErrorCategory::Unavailable,
+                                format!("Failed to read screenshot data: {err}"),
+                            )
+                        })?;
+                        let _ = std::fs::remove_file(&png_path);
+                        Ok::<_, ErrorEnvelope>(bytes)
+                    });
+
+                    let png_data = task.await?;
+                    return Ok(CaptureScreenshotResponse {
+                        png_path: String::new(),
+                        png_data,
+                    });
+                };
+
+                let ui_snapshot_path = artifacts.ui_snapshot_path(&label);
+                let screenshot_path = artifacts.screenshot_path(&label);
+                let screenshot_path_str = screenshot_path.to_string_lossy().to_string();
+
+                let task = gpui::background_executor().spawn(async move {
+                    crate::test_artifacts::write_json_pretty(&ui_snapshot_path, &snapshot).map_err(
+                        |err| {
+                            ErrorEnvelope::new(
+                                ErrorCategory::Unavailable,
+                                format!("Failed to write UI snapshot: {err}"),
+                            )
+                        },
+                    )?;
+                    crate::test_artifacts::ensure_parent_dir(&screenshot_path).map_err(|err| {
+                        ErrorEnvelope::new(
+                            ErrorCategory::Unavailable,
+                            format!("Failed to create screenshot directory: {err}"),
+                        )
+                    })?;
+                    crate::screenshot::capture_png(target, include_decorations, &screenshot_path)?;
+                    Ok::<_, ErrorEnvelope>(())
+                });
+
+                task.await?;
+
+                Ok(CaptureScreenshotResponse {
+                    png_path: screenshot_path_str,
+                    png_data: Vec::new(),
+                })
+            }
+            .await;
+
+            match result {
+                Ok(resp) => UiDriverResponseResult::CaptureScreenshot(resp),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::WaitForSnapshot(req) => match wait_for_snapshot(root, req, cx).await {
+            Ok(snapshot) => UiDriverResponseResult::WaitForSnapshot(WaitForUiSnapshotResponse {
+                snapshot,
+            }),
+            Err(err) => UiDriverResponseResult::Error(err),
+        },
+        UiDriverRequestPayload::WaitForIdle(req) => match wait_for_idle(root, req, cx).await {
+            Ok(()) => UiDriverResponseResult::WaitForIdle(WaitForUiIdleResponse {}),
+            Err(err) => UiDriverResponseResult::Error(err),
+        },
+        other => UiDriverResponseResult::Error(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            format!("unimplemented ui driver request: {other:?}"),
+        )),
+    }
+}
+
+fn control_plane_error_to_envelope(err: crate::control_plane_client::ControlPlaneClientError) -> ErrorEnvelope {
+    ErrorEnvelope::new(
+        ErrorCategory::Unavailable,
+        format!("Control plane request failed: {err}"),
+    )
+}
+
+async fn create_chat_session_via_control_plane(
+    root: &WeakEntity<RootView>,
+    name_hint: String,
+    cx: &AsyncApp,
+) -> Result<CreateChatSessionResponse, ErrorEnvelope> {
+    let title = name_hint.trim();
+    let title = (!title.is_empty()).then_some(title.to_string());
+
+    let client = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+            };
+
+            let client = { root.read(cx).model.read(cx).chrome_control_plane_client.clone() };
+
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.start();
+                this.ui_driver_action_label = Some("Creating chat…".into());
+                this.notify_ui_updated(cx);
+            });
+
+            Ok::<_, ErrorEnvelope>(client)
+        })
+        .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+    let Some(client) = client else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Control plane client unavailable (not embedded).",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    let resp = client
+        .create_chat_session(title)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+
+    let _ = cx.update(|cx| {
+        if let Some(root) = root.upgrade() {
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.succeed();
+                this.ui_driver_action_label = None;
+                this.notify_ui_updated(cx);
+            });
+        }
+    });
+
+    Ok(CreateChatSessionResponse {
+        session_id: resp.session_id,
+    })
+}
+
+async fn close_chat_session_via_control_plane(
+    root: &WeakEntity<RootView>,
+    session_id: redesmyn_ids::SessionId,
+    cx: &AsyncApp,
+) -> Result<(), ErrorEnvelope> {
+    let client = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+            };
+
+            let client = { root.read(cx).model.read(cx).chrome_control_plane_client.clone() };
+
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.start();
+                this.ui_driver_action_label = Some("Closing chat…".into());
+                this.notify_ui_updated(cx);
+            });
+
+            Ok::<_, ErrorEnvelope>(client)
+        })
+        .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+    let Some(client) = client else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Control plane client unavailable (not embedded).",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    client
+        .close_chat_session(session_id)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+
+    let _ = cx.update(|cx| {
+        if let Some(root) = root.upgrade() {
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.succeed();
+                this.ui_driver_action_label = None;
+                this.notify_ui_updated(cx);
+            });
+        }
+    });
+
+    Ok(())
+}
+
+async fn pin_chat_session_via_control_plane(
+    root: &WeakEntity<RootView>,
+    session_id: redesmyn_ids::SessionId,
+    cx: &AsyncApp,
+) -> Result<(), ErrorEnvelope> {
+    let (client, epic_slug) = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+            };
+
+            let (client, epic_slug) = {
+                let this = root.read(cx);
+                (
+                    this.model.read(cx).chrome_control_plane_client.clone(),
+                    this.chrome.selected_epic_slug.clone(),
+                )
+            };
+
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.start();
+                this.ui_driver_action_label = Some("Pinning chat…".into());
+                this.notify_ui_updated(cx);
+            });
+
+            Ok::<_, ErrorEnvelope>((client, epic_slug))
+        })
+        .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+    let Some(client) = client else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Control plane client unavailable (not embedded).",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
+        let err = ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Select an epic before pinning.");
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    let graph = client
+        .get_epic_graph(epic_slug)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+    let Some(epic_id) = graph.epic_id else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Epic id unavailable for selected epic.",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    client
+        .pin_chat_session_to_epic(epic_id, session_id)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+
+    let _ = cx.update(|cx| {
+        if let Some(root) = root.upgrade() {
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.succeed();
+                this.ui_driver_action_label = None;
+                this.notify_ui_updated(cx);
+            });
+        }
+    });
+
+    Ok(())
+}
+
+async fn unpin_chat_session_via_control_plane(
+    root: &WeakEntity<RootView>,
+    cx: &AsyncApp,
+) -> Result<(), ErrorEnvelope> {
+    let (client, epic_slug) = cx
+        .update(|cx| {
+            let Some(root) = root.upgrade() else {
+                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+            };
+
+            let (client, epic_slug) = {
+                let this = root.read(cx);
+                (
+                    this.model.read(cx).chrome_control_plane_client.clone(),
+                    this.chrome.selected_epic_slug.clone(),
+                )
+            };
+
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.start();
+                this.ui_driver_action_label = Some("Unpinning chat…".into());
+                this.notify_ui_updated(cx);
+            });
+
+            Ok::<_, ErrorEnvelope>((client, epic_slug))
+        })
+        .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+
+    let Some(client) = client else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Control plane client unavailable (not embedded).",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
+        let err =
+            ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Select an epic before unpinning.");
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    let graph = client
+        .get_epic_graph(epic_slug)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+    let Some(epic_id) = graph.epic_id else {
+        let err = ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Epic id unavailable for selected epic.",
+        );
+        let _ = cx.update(|cx| {
+            if let Some(root) = root.upgrade() {
+                root.update(cx, |this, cx| {
+                    this.ui_driver_action.fail(err.message.clone());
+                    this.ui_driver_action_label = None;
+                    this.notify_ui_updated(cx);
+                });
+            }
+        });
+        return Err(err);
+    };
+
+    client
+        .unpin_chat_session_from_epic(epic_id)
+        .await
+        .map_err(control_plane_error_to_envelope)?;
+
+    let _ = cx.update(|cx| {
+        if let Some(root) = root.upgrade() {
+            root.update(cx, |this, cx| {
+                this.ui_driver_action.succeed();
+                this.ui_driver_action_label = None;
+                this.notify_ui_updated(cx);
+            });
+        }
+    });
+
+    Ok(())
 }
 
 impl Focusable for RootView {

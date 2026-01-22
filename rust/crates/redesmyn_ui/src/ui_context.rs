@@ -3,6 +3,7 @@ use gpui::{App, Global, Window};
 use crate::components::SplitPaneState;
 use crate::settings::{ThemePreference, UiSettingsError, UiSettingsStore};
 use crate::styles::{UiDensity, UiScale, UiTheme};
+use crate::utils::ui_test_theme_override;
 
 #[derive(Debug)]
 pub struct UiContext {
@@ -46,8 +47,9 @@ impl UiContext {
     }
 
     pub fn theme_for_window(&self, window: &Window) -> UiTheme {
+        let preference = ui_test_theme_override().unwrap_or(self.settings.settings().theme);
         UiTheme::for_window(
-            self.settings.settings().theme,
+            preference,
             window.appearance(),
             self.density,
             self.scale,

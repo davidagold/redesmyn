@@ -4,7 +4,7 @@ use gpui::{
     App, AsyncApp, Context, Render, RenderOnce, SharedString, Task, Window, div, prelude::*,
 };
 
-use crate::utils::theme_for_window;
+use crate::utils::{theme_for_window, ui_test_mode_enabled};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressPillKind {
@@ -77,6 +77,10 @@ impl ProgressDots {
 
 impl Render for ProgressDots {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if ui_test_mode_enabled() {
+            return div().child("...");
+        }
+
         if self.task.is_none() {
             self.task = Some(cx.spawn(
                 |weak: gpui::WeakEntity<ProgressDots>, cx: &mut AsyncApp| {

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use redesmyn_ids::RequestId;
+use redesmyn_ids::{EpicId, RequestId, SessionId};
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, ListEpicsRequest, Request, RequestPayload, ResponseResult,
-    StatusRequest, StatusResponse,
+    ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
+    CreateChatSessionResponse, GetEpicGraphRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
+    Request, RequestPayload, ResponseResult, StatusRequest, StatusResponse,
+    UnpinChatSessionFromEpicRequest,
 };
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 use tokio::runtime::Handle;
@@ -58,6 +60,89 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::ListEpics(resp) => Ok(resp.epics),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn get_epic_graph(
+        &self,
+        epic_slug: String,
+    ) -> Result<redesmyn_protocol::client::EpicGraph, ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest { epic_slug }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => Ok(resp.graph),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn create_chat_session(
+        &self,
+        title: Option<String>,
+    ) -> Result<CreateChatSessionResponse, ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::CreateChatSession(CreateChatSessionRequest { title }))
+            .await?
+        {
+            ResponseResult::CreateChatSession(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn close_chat_session(&self, session_id: SessionId) -> Result<(), ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::CloseChatSession(CloseChatSessionRequest { session_id }))
+            .await?
+        {
+            ResponseResult::CloseChatSession(_) => Ok(()),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn pin_chat_session_to_epic(
+        &self,
+        epic_id: EpicId,
+        session_id: SessionId,
+    ) -> Result<(), ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
+                epic_id,
+                session_id,
+            }))
+            .await?
+        {
+            ResponseResult::PinChatSessionToEpic(_) => Ok(()),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn unpin_chat_session_from_epic(
+        &self,
+        epic_id: EpicId,
+    ) -> Result<(), ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest {
+                epic_id,
+            }))
+            .await?
+        {
+            ResponseResult::UnpinChatSessionFromEpic(_) => Ok(()),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),

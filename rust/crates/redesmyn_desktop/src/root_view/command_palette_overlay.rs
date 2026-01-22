@@ -74,6 +74,26 @@ impl CommandPaletteOverlay {
         self.open
     }
 
+    pub fn visible_error(&self) -> Option<String> {
+        if !self.open {
+            return None;
+        }
+
+        self.action.error.as_ref().map(|err| err.to_string())
+    }
+
+    pub fn visible_in_flight_label(&self) -> Option<String> {
+        if !self.open || !self.action.in_flight {
+            return None;
+        }
+
+        Some(
+            self.running_command
+                .map(|command| command.title().to_string())
+                .unwrap_or_else(|| "Running…".to_string()),
+        )
+    }
+
     pub fn handle_text_input_event(&mut self, event: TextInputEvent, cx: &mut Context<RootView>) {
         match event {
             TextInputEvent::Changed(_) => {
@@ -319,7 +339,7 @@ impl CommandPaletteOverlay {
                                         .update(cx, |pane, cx| pane.refresh_graph(cx));
                                     this.command_palette.action.succeed();
                                     this.command_palette.running_command = None;
-                                    cx.notify();
+                                    this.notify_ui_updated(cx);
                                 });
                             });
                         }
@@ -422,7 +442,10 @@ impl CommandPaletteOverlay {
                     let root = root.clone();
                     move |_, window, cx| {
                         let focus = root.read(cx).focus_handle.clone();
-                        root.update(cx, |this, cx| this.command_palette.dismiss_overlay(cx));
+                        root.update(cx, |this, cx| {
+                            this.command_palette.dismiss_overlay(cx);
+                            this.ui_updates.bump();
+                        });
                         window.focus(&focus);
                     }
                 }),
@@ -452,6 +475,7 @@ impl CommandPaletteOverlay {
                                 move |_, _, cx| {
                                     root.update(cx, |this, cx| {
                                         this.command_palette.dismiss_command_error(cx);
+                                        this.ui_updates.bump();
                                     });
                                 }
                             }),
@@ -557,6 +581,7 @@ impl CommandPaletteOverlay {
                                 move |_, _, cx| {
                                     root.update(cx, |this, cx| {
                                         this.command_palette.execute_command(command, cx);
+                                        this.ui_updates.bump();
                                     });
                                 }
                             });
@@ -624,7 +649,10 @@ impl CommandPaletteOverlay {
                         let root = root.clone();
                         move |_, window, cx| {
                             let focus = root.read(cx).focus_handle.clone();
-                            root.update(cx, |this, cx| this.command_palette.dismiss_overlay(cx));
+                            root.update(cx, |this, cx| {
+                                this.command_palette.dismiss_overlay(cx);
+                                this.ui_updates.bump();
+                            });
                             window.focus(&focus);
                         }
                     }),

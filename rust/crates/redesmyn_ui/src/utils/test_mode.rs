@@ -1,0 +1,43 @@
+use std::sync::OnceLock;
+
+use crate::settings::ThemePreference;
+
+#[derive(Debug, Clone, Copy)]
+struct UiTestMode {
+    enabled: bool,
+    theme: ThemePreference,
+}
+
+static UI_TEST_MODE: OnceLock<UiTestMode> = OnceLock::new();
+
+pub fn ui_test_mode_enabled() -> bool {
+    ui_test_mode().enabled
+}
+
+pub fn ui_test_theme_override() -> Option<ThemePreference> {
+    let mode = ui_test_mode();
+    mode.enabled.then_some(mode.theme)
+}
+
+fn ui_test_mode() -> UiTestMode {
+    *UI_TEST_MODE.get_or_init(|| {
+        let enabled = std::env::var_os("REDESMYN_UI_TEST_MODE").is_some();
+        let theme = if enabled {
+            match std::env::var("REDESMYN_UI_TEST_THEME")
+                .ok()
+                .as_deref()
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
+                Some("light") => ThemePreference::Light,
+                Some("dark") => ThemePreference::Dark,
+                _ => ThemePreference::Dark,
+            }
+        } else {
+            ThemePreference::System
+        };
+
+        UiTestMode { enabled, theme }
+    })
+}
+

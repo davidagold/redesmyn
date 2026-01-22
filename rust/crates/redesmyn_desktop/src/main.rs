@@ -3,6 +3,9 @@ mod command_palette;
 mod control_plane_client;
 mod foundations_demo;
 mod root_view;
+mod screenshot;
+mod test_artifacts;
+mod ui_driver;
 
 use gpui::{AppContext as _, Focusable as _};
 
@@ -44,6 +47,30 @@ fn main() {
     let tokio_handle = desktop.tokio_handle();
     let session_control_plane_client = desktop.take_control_plane_client();
     let chrome_control_plane_client = desktop.connect_control_plane_client(64);
+    let (ui_driver_rx, _ui_driver_server) = match std::env::var_os("REDESMYN_UI_DRIVER_SOCKET_PATH")
+    {
+        Some(path) => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let socket_path = std::path::PathBuf::from(path);
+
+            let server = match crate::ui_driver::start_ui_driver_server(
+                crate::ui_driver::UiDriverServerConfig {
+                    socket_path,
+                    max_frame_len: crate::ui_driver::DEFAULT_MAX_FRAME_LEN,
+                },
+                tx,
+            ) {
+                Ok(server) => Some(server),
+                Err(err) => {
+                    redesmyn_logging::tracing::error!(error = %err, "failed to start ui driver server");
+                    std::process::exit(2);
+                }
+            };
+
+            (Some(rx), server)
+        }
+        None => (None, None),
+    };
 
     gpui::Application::new().run(move |cx| {
         cx.on_window_closed(|cx| {
@@ -79,6 +106,7 @@ fn main() {
                         tokio_handle.clone(),
                         session_control_plane_client,
                         chrome_control_plane_client,
+                        ui_driver_rx,
                     )
                 });
                 cx.new(|cx| crate::root_view::RootView::new(model, cx))
