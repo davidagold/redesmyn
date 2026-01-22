@@ -19,11 +19,24 @@ impl Default for ButtonKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextButtonLayout {
+    Default,
+    MenuItem,
+}
+
+impl Default for TextButtonLayout {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
 #[derive(IntoElement)]
 pub struct TextButton {
     id: ElementId,
     label: SharedString,
     kind: ButtonKind,
+    layout: TextButtonLayout,
     disabled: bool,
     disabled_reason: Option<SharedString>,
     tooltip: Option<SharedString>,
@@ -37,6 +50,7 @@ impl TextButton {
             id: id.into(),
             label: label.into(),
             kind: ButtonKind::default(),
+            layout: TextButtonLayout::default(),
             disabled: false,
             disabled_reason: None,
             tooltip: None,
@@ -77,6 +91,11 @@ impl TextButton {
         self.trailing = Some(element.into_any_element());
         self
     }
+
+    pub fn menu_item(mut self) -> Self {
+        self.layout = TextButtonLayout::MenuItem;
+        self
+    }
 }
 
 impl RenderOnce for TextButton {
@@ -108,7 +127,6 @@ impl RenderOnce for TextButton {
             .flex_row()
             .gap(theme.spacing.sm)
             .items_center()
-            .justify_center()
             .px(theme.spacing.md)
             .py(theme.spacing.sm)
             .rounded(theme.radius.md)
@@ -122,6 +140,18 @@ impl RenderOnce for TextButton {
                 style.border_color = Some(theme.colors.ring);
                 style
             });
+
+        match self.layout {
+            TextButtonLayout::Default => {
+                button = button.justify_center();
+            }
+            TextButtonLayout::MenuItem => {
+                button = button.justify_start().w_full();
+                if !self.disabled {
+                    button = button.hover(|this| this.bg(theme.colors.accent));
+                }
+            }
+        }
 
         if let Some(tooltip) = tooltip_text(self.disabled, &self.disabled_reason, &self.tooltip) {
             button = button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
@@ -138,7 +168,17 @@ impl RenderOnce for TextButton {
             });
         }
 
-        button = button.child(self.label);
+        button = match self.layout {
+            TextButtonLayout::Default => button.child(self.label),
+            TextButtonLayout::MenuItem => button.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_left()
+                    .truncate()
+                    .child(self.label),
+            ),
+        };
         if let Some(trailing) = self.trailing {
             button = button.child(trailing);
         }
