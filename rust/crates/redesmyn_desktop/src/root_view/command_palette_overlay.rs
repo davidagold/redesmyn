@@ -611,7 +611,7 @@ impl CommandPaletteOverlay {
             .child(
                 div()
                     .size_full()
-                    .bg(theme.colors.background.opacity(0.6))
+                    .bg(theme.colors.background.opacity(0.0))
                     .absolute()
                     .top_0()
                     .left_0()
