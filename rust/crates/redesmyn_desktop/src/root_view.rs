@@ -181,7 +181,12 @@ impl RootView {
         self.command_palette.select_previous(cx);
     }
 
-    fn select_next_command(&mut self, _: &SelectNextCommand, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_next_command(
+        &mut self,
+        _: &SelectNextCommand,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.command_palette.select_next(cx);
     }
 
@@ -469,7 +474,8 @@ impl Render for RootView {
             "Control plane: running"
         } else if self.chrome.refresh.in_flight {
             "Control plane: checking…"
-        } else if model.chrome_control_plane_client.is_some() || model.config.desktop.embed_control_plane
+        } else if model.chrome_control_plane_client.is_some()
+            || model.config.desktop.embed_control_plane
         {
             "Control plane: unavailable"
         } else {
@@ -496,14 +502,15 @@ impl Render for RootView {
                 }
             });
 
-        let settings_button = IconButton::new(("chrome_settings", cx.entity_id()), div().child("⚙"))
-            .tooltip("Settings")
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| this.toggle_panel(ChromePanel::Settings, cx));
-                }
-            });
+        let settings_button =
+            IconButton::new(("chrome_settings", cx.entity_id()), div().child("⚙"))
+                .tooltip("Settings")
+                .on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| this.toggle_panel(ChromePanel::Settings, cx));
+                    }
+                });
 
         let theme_toggle_button =
             IconButton::new(("chrome_theme_toggle", cx.entity_id()), div().child("◐"))
@@ -520,17 +527,18 @@ impl Render for RootView {
                     }
                 });
 
-        let epic_button = TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
-            .kind(ButtonKind::Ghost)
-            .disabled(epic_button_disabled)
-            .disabled_reason(epic_button_disabled_reason)
-            .trailing(div().child("▾"))
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| this.toggle_panel(ChromePanel::EpicMenu, cx));
-                }
-            });
+        let epic_button =
+            TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
+                .kind(ButtonKind::Ghost)
+                .disabled(epic_button_disabled)
+                .disabled_reason(epic_button_disabled_reason)
+                .trailing(div().child("▾"))
+                .on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| this.toggle_panel(ChromePanel::EpicMenu, cx));
+                    }
+                });
 
         let header = div()
             .h(px(44.0))
@@ -592,7 +600,12 @@ impl Render for RootView {
                                     .child(control_plane_label),
                             ),
                     )
-                    .child(div().w(px(1.0)).h(px(18.0)).bg(theme.colors.border.opacity(0.6)))
+                    .child(
+                        div()
+                            .w(px(1.0))
+                            .h(px(18.0))
+                            .bg(theme.colors.border.opacity(0.6)),
+                    )
                     .child(
                         div()
                             .text_sm()
@@ -719,32 +732,24 @@ impl Render for RootView {
                             })),
                     );
 
-                menu_body = menu_body.child(
-                    div()
-                        .h(px(220.0))
-                        .w_full()
-                        .overflow_hidden()
-                        .child(list),
-                );
+                menu_body =
+                    menu_body.child(div().h(px(220.0)).w_full().overflow_hidden().child(list));
             }
 
             Some(
                 div()
                     .absolute()
                     .inset_0()
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .occlude()
-                            .on_mouse_down(gpui::MouseButton::Left, {
-                                let root = root.clone();
-                                move |_, _, cx| {
-                                    root.update(cx, |this, cx| this.close_panel(cx));
-                                    cx.stop_propagation();
-                                }
-                            }),
-                    )
+                    .child(div().absolute().inset_0().occlude().on_mouse_down(
+                        gpui::MouseButton::Left,
+                        {
+                            let root = root.clone();
+                            move |_, _, cx| {
+                                root.update(cx, |this, cx| this.close_panel(cx));
+                                cx.stop_propagation();
+                            }
+                        },
+                    ))
                     .child(
                         div()
                             .absolute()

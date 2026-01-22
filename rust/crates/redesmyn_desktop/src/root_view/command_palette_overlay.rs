@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use gpui::{
-    div, prelude::*, px, App, AsyncApp, Context, Entity, FocusHandle, Focusable, ScrollHandle,
-    SharedString, Task, Window,
+    App, AsyncApp, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Task,
+    Window, div, prelude::*, px,
 };
 
 use redesmyn_ui::UiContext;
@@ -287,7 +287,8 @@ impl CommandPaletteOverlay {
                 cx.notify();
             }
             CommandId::ToggleLeftSessionPane => {
-                self.split_pane.update(cx, |pane, cx| pane.toggle_collapsed(cx));
+                self.split_pane
+                    .update(cx, |pane, cx| pane.toggle_collapsed(cx));
                 self.action.succeed();
                 self.running_command = None;
                 cx.notify();
@@ -409,8 +410,8 @@ impl CommandPaletteOverlay {
                     ProgressPill::new(format!("Running: {running}")).kind(ProgressPillKind::Accent),
                 );
             } else {
-                right_header =
-                    right_header.child(ProgressPill::new("Running…").kind(ProgressPillKind::Accent));
+                right_header = right_header
+                    .child(ProgressPill::new("Running…").kind(ProgressPillKind::Accent));
             }
         }
 
@@ -512,7 +513,9 @@ impl CommandPaletteOverlay {
                                     .border_1()
                                     .border_color(theme.colors.ring)
                             })
-                            .when(!is_selected, |this| this.hover(|this| this.bg(theme.colors.accent)));
+                            .when(!is_selected, |this| {
+                                this.hover(|this| this.bg(theme.colors.accent))
+                            });
 
                         row = row.child(
                             div()
