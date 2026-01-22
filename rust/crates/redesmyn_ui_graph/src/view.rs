@@ -31,7 +31,7 @@ struct PanDrag {
     did_pan: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct NodeWorldRect {
     origin: gpui::Point<f32>,
     width: f32,
@@ -72,10 +72,33 @@ impl LayoutAnimation {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CameraAnimation {
+    start: Instant,
+    duration: Duration,
+    from_origin_world: gpui::Point<f32>,
+    to_origin_world: gpui::Point<f32>,
+    from_zoom: f32,
+    to_zoom: f32,
+}
+
+impl CameraAnimation {
+    fn progress(&self) -> f32 {
+        if self.duration == Duration::from_millis(0) {
+            return 1.0;
+        }
+
+        let elapsed = self.start.elapsed().as_secs_f32();
+        let total = self.duration.as_secs_f32();
+        ease_out_cubic((elapsed / total).clamp(0.0, 1.0))
+    }
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
     camera: GraphCamera,
+    camera_animation: Option<CameraAnimation>,
     pan_drag: Option<PanDrag>,
     last_canvas_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     expanded_session_scroll: ScrollHandle,
@@ -83,6 +106,9 @@ pub struct GraphView {
     demo_action: UserActionState,
     demo_action_task: Option<Task<()>>,
     layout_animation: Option<LayoutAnimation>,
+    pending_pan_to_selection: Option<GraphNodeId>,
+    did_initial_fit: bool,
+    fit_suppressed: bool,
     edge_label_cache: RefCell<HashMap<gpui::SharedString, gpui::ShapedLine>>,
 }
 
@@ -95,6 +121,7 @@ impl GraphView {
             focus_handle: cx.focus_handle(),
             scene: GraphScene::demo(),
             camera: GraphCamera::new(GraphCameraLimits::default()),
+            camera_animation: None,
             pan_drag: None,
             last_canvas_bounds: None,
             expanded_session_scroll: ScrollHandle::new(),
@@ -102,6 +129,9 @@ impl GraphView {
             demo_action: UserActionState::default(),
             demo_action_task: None,
             layout_animation: None,
+            pending_pan_to_selection: None,
+            did_initial_fit: false,
+            fit_suppressed: false,
             edge_label_cache: RefCell::new(HashMap::new()),
         }
     }
@@ -141,6 +171,12 @@ impl GraphView {
                 previous_selection.selected_node,
                 next_selection.selected_node,
             );
+
+            if !self.did_initial_fit {
+                self.fit_suppressed = true;
+            }
+
+            self.pending_pan_to_selection = next_selection.selected_node;
         }
 
         cx.notify();
@@ -264,6 +300,254 @@ impl GraphView {
             .unwrap_or(1.0)
     }
 
+    fn cancel_camera_animation(&mut self) -> bool {
+        let Some(animation) = self.camera_animation.take() else {
+            return false;
+        };
+
+        let t = animation.progress();
+        if t <= 0.0 {
+            return true;
+        }
+
+        self.camera.set_origin_world(lerp_point(
+            animation.from_origin_world,
+            animation.to_origin_world,
+            t,
+        ));
+        self.camera
+            .set_zoom(lerp_f32(animation.from_zoom, animation.to_zoom, t));
+        true
+    }
+
+    fn step_camera_animation_for_render(&mut self, window: &Window) {
+        let Some(animation) = self.camera_animation.as_ref() else {
+            return;
+        };
+
+        let t = animation.progress();
+        let origin = lerp_point(animation.from_origin_world, animation.to_origin_world, t);
+        let zoom = lerp_f32(animation.from_zoom, animation.to_zoom, t);
+
+        self.camera.set_origin_world(origin);
+        self.camera.set_zoom(zoom);
+
+        if t >= 1.0 {
+            self.camera_animation = None;
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    fn try_start_camera_animation(
+        &mut self,
+        to_origin_world: gpui::Point<f32>,
+        to_zoom: f32,
+        duration: Duration,
+    ) -> bool {
+        self.cancel_camera_animation();
+
+        let mut clamped_camera = self.camera;
+        clamped_camera.set_zoom(to_zoom);
+        let to_zoom = clamped_camera.zoom();
+
+        if approx_eq_point(self.camera.origin_world(), to_origin_world)
+            && (self.camera.zoom() - to_zoom).abs() < 1e-3
+        {
+            return false;
+        }
+
+        self.camera_animation = Some(CameraAnimation {
+            start: Instant::now(),
+            duration,
+            from_origin_world: self.camera.origin_world(),
+            to_origin_world,
+            from_zoom: self.camera.zoom(),
+            to_zoom,
+        });
+        true
+    }
+
+    fn viewport_margins_px(bounds: gpui::Bounds<gpui::Pixels>) -> (gpui::Pixels, gpui::Pixels) {
+        const DESIRED_MARGIN_PX: f32 = 72.0;
+
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+
+        let margin_x = DESIRED_MARGIN_PX.min(width * 0.25);
+        let margin_y = DESIRED_MARGIN_PX.min(height * 0.25);
+
+        (px(margin_x), px(margin_y))
+    }
+
+    fn try_initial_fit_for_render(&mut self) -> bool {
+        if self.did_initial_fit {
+            return false;
+        }
+
+        let selection = self.scene.selection();
+        if self.fit_suppressed
+            || selection.selected_node.is_some()
+            || selection.selected_edge.is_some()
+        {
+            if self.pending_pan_to_selection.is_none() {
+                self.pending_pan_to_selection = selection.selected_node;
+            }
+            self.did_initial_fit = true;
+            return false;
+        }
+
+        let Some(canvas_bounds) = self.last_canvas_bounds else {
+            return false;
+        };
+
+        let graph_bounds = self.scene.layout_bounds();
+        if graph_bounds.size.width <= 0 || graph_bounds.size.height <= 0 {
+            return false;
+        }
+
+        let (margin_x, margin_y) = Self::viewport_margins_px(canvas_bounds);
+
+        let available_width = f32::from(canvas_bounds.size.width - margin_x * 2.0);
+        let available_height = f32::from(canvas_bounds.size.height - margin_y * 2.0);
+        if available_width <= 0.0 || available_height <= 0.0 {
+            return false;
+        }
+
+        let graph_width = graph_bounds.size.width as f32;
+        let graph_height = graph_bounds.size.height as f32;
+        if graph_width <= 0.0 || graph_height <= 0.0 {
+            return false;
+        }
+
+        let mut target_zoom = (available_width / graph_width).min(available_height / graph_height);
+        let mut camera = self.camera;
+        camera.set_zoom(target_zoom);
+        target_zoom = camera.zoom();
+
+        let graph_center = gpui::point(
+            graph_bounds.origin.x as f32 + (graph_width / 2.0),
+            graph_bounds.origin.y as f32 + (graph_height / 2.0),
+        );
+
+        let viewport_center_screen = gpui::point(
+            canvas_bounds.size.width / 2.0,
+            canvas_bounds.size.height / 2.0,
+        );
+        let viewport_center_world = gpui::point(
+            f32::from(viewport_center_screen.x) / target_zoom,
+            f32::from(viewport_center_screen.y) / target_zoom,
+        );
+
+        let target_origin = gpui::point(
+            graph_center.x - viewport_center_world.x,
+            graph_center.y - viewport_center_world.y,
+        );
+
+        let did_start =
+            self.try_start_camera_animation(target_origin, target_zoom, Duration::from_millis(260));
+        if did_start {
+            redesmyn_logging::tracing::info!(
+                origin_world = ?target_origin,
+                zoom = target_zoom,
+                "graph initial fit-to-view"
+            );
+        }
+
+        self.did_initial_fit = true;
+        did_start
+    }
+
+    fn try_pan_to_selection_for_render(&mut self) -> bool {
+        let Some(node_id) = self.pending_pan_to_selection else {
+            return false;
+        };
+
+        if self.pan_drag.is_some() {
+            self.pending_pan_to_selection = None;
+            return false;
+        }
+
+        let Some(canvas_bounds) = self.last_canvas_bounds else {
+            return false;
+        };
+
+        if self.scene.node(node_id).is_none() {
+            self.pending_pan_to_selection = None;
+            return false;
+        }
+
+        let node_rect = NodeWorldRect::from_scene(&self.scene, node_id);
+        let zoom = self.camera.zoom();
+
+        let (margin_x, margin_y) = Self::viewport_margins_px(canvas_bounds);
+        let safe_min = gpui::point(margin_x, margin_y);
+        let safe_max = gpui::point(
+            canvas_bounds.size.width - margin_x,
+            canvas_bounds.size.height - margin_y,
+        );
+
+        let node_origin_screen = self.camera.world_to_screen(node_rect.origin);
+        let node_size_screen = gpui::size(px(node_rect.width * zoom), px(node_rect.height * zoom));
+        let node_max_screen = gpui::point(
+            node_origin_screen.x + node_size_screen.width,
+            node_origin_screen.y + node_size_screen.height,
+        );
+
+        let safe_width = safe_max.x - safe_min.x;
+        let safe_height = safe_max.y - safe_min.y;
+
+        let mut target_origin = self.camera.origin_world();
+
+        let epsilon = px(1.0);
+        let needs_center_x = node_size_screen.width + epsilon >= safe_width;
+        let needs_center_y = node_size_screen.height + epsilon >= safe_height;
+
+        if needs_center_x || needs_center_y {
+            let node_center_world = gpui::point(
+                node_rect.origin.x + node_rect.width / 2.0,
+                node_rect.origin.y + node_rect.height / 2.0,
+            );
+            let viewport_center_world = gpui::point(
+                f32::from(canvas_bounds.size.width / 2.0) / zoom,
+                f32::from(canvas_bounds.size.height / 2.0) / zoom,
+            );
+            target_origin = gpui::point(
+                node_center_world.x - viewport_center_world.x,
+                node_center_world.y - viewport_center_world.y,
+            );
+        } else {
+            if node_origin_screen.x < safe_min.x - epsilon {
+                target_origin.x -= f32::from(safe_min.x - node_origin_screen.x) / zoom;
+            } else if node_max_screen.x > safe_max.x + epsilon {
+                target_origin.x += f32::from(node_max_screen.x - safe_max.x) / zoom;
+            }
+
+            if node_origin_screen.y < safe_min.y - epsilon {
+                target_origin.y -= f32::from(safe_min.y - node_origin_screen.y) / zoom;
+            } else if node_max_screen.y > safe_max.y + epsilon {
+                target_origin.y += f32::from(node_max_screen.y - safe_max.y) / zoom;
+            }
+        }
+
+        self.pending_pan_to_selection = None;
+
+        if approx_eq_point(self.camera.origin_world(), target_origin) {
+            return false;
+        }
+
+        let did_start =
+            self.try_start_camera_animation(target_origin, zoom, Duration::from_millis(200));
+        if did_start {
+            redesmyn_logging::tracing::info!(
+                node_id = %node_id,
+                origin_world = ?target_origin,
+                "graph pan-to-selection"
+            );
+        }
+        did_start
+    }
+
     fn start_demo_action(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         if self.demo_action.in_flight {
             return;
@@ -309,6 +593,12 @@ impl GraphView {
     ) {
         if event.button != MouseButton::Left {
             return;
+        }
+
+        self.cancel_camera_animation();
+        self.pending_pan_to_selection = None;
+        if !self.did_initial_fit {
+            self.fit_suppressed = true;
         }
 
         let Some(canvas_bounds) = self.last_canvas_bounds else {
@@ -414,6 +704,12 @@ impl GraphView {
             return;
         }
 
+        self.cancel_camera_animation();
+        self.pending_pan_to_selection = None;
+        if !self.did_initial_fit {
+            self.fit_suppressed = true;
+        }
+
         let local_anchor = event.position - canvas_bounds.origin;
 
         if event.modifiers.secondary() {
@@ -491,6 +787,41 @@ impl GraphView {
                 self.paint_commit_count_label(route.label_center(), label, &theme, window);
             }
         }
+    }
+
+    fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        self.cancel_camera_animation();
+        self.pending_pan_to_selection = None;
+        if !self.did_initial_fit {
+            self.fit_suppressed = true;
+        }
+
+        let from_layout = self.snapshot_displayed_layout();
+        let selected_node = self.scene.selection().selected_node;
+
+        self.scene
+            .set_focus_mode_enabled(!self.scene.focus_mode_enabled());
+
+        redesmyn_logging::tracing::info!(
+            enabled = self.scene.focus_mode_enabled(),
+            "graph focus mode toggled"
+        );
+
+        let to_layout = self.snapshot_scene_layout();
+        if from_layout != to_layout {
+            self.start_layout_animation(
+                from_layout,
+                to_layout,
+                selected_node,
+                self.scene.selection().selected_node,
+            );
+        }
+
+        if let Some(node_id) = self.scene.selection().selected_node {
+            self.pending_pan_to_selection = Some(node_id);
+        }
+
+        cx.notify();
     }
 }
 
@@ -646,6 +977,13 @@ impl GraphView {
 
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.step_camera_animation_for_render(window);
+        let started_fit = self.try_initial_fit_for_render();
+        let started_pan = self.try_pan_to_selection_for_render();
+        if started_fit || started_pan {
+            window.request_animation_frame();
+        }
+
         let theme = theme_for_window(window, cx);
         let label = self.selection_label();
         let zoom = self.camera.zoom();
@@ -658,6 +996,18 @@ impl Render for GraphView {
         let graph = cx.entity();
         let graph_for_prepaint = graph.clone();
         let graph_for_paint = graph.clone();
+
+        let focus_label = if self.scene.focus_mode_enabled() {
+            "Focus: on"
+        } else {
+            "Focus: off"
+        };
+        let toggle_focus_mode = {
+            let graph = graph.clone();
+            move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                graph.update(cx, |this, cx| this.toggle_focus_mode(cx));
+            }
+        };
 
         let debug_bar = div()
             .h(px(30.0))
@@ -684,7 +1034,12 @@ impl Render for GraphView {
                     .text_sm()
                     .text_color(theme.colors.foreground_muted)
                     .child(controls_hint)
-                    .child(format!("Zoom: {:.2}", zoom)),
+                    .child(format!("Zoom: {:.2}", zoom))
+                    .child(
+                        TextButton::new(("graph_focus_mode_toggle", cx.entity_id()), focus_label)
+                            .kind(ButtonKind::Ghost)
+                            .on_click(toggle_focus_mode),
+                    ),
             );
 
         let canvas = canvas(
@@ -1071,6 +1426,10 @@ fn lerp_world_rect(from: NodeWorldRect, to: NodeWorldRect, t: f32) -> NodeWorldR
         width: lerp_f32(from.width, to.width, t),
         height: lerp_f32(from.height, to.height, t),
     }
+}
+
+fn approx_eq_point(a: gpui::Point<f32>, b: gpui::Point<f32>) -> bool {
+    (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
 }
 
 fn should_defer_pan_to_scroll_view(
