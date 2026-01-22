@@ -8,11 +8,13 @@ use gpui::{
     TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
 };
 
+use redesmyn_ids::CommandId;
+
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ScrollArea, TextButton,
+    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
+    TextButton,
 };
-use redesmyn_ui::utils::UserActionState;
-use redesmyn_ui::utils::theme_for_window;
+use redesmyn_ui::utils::{UserActionState, theme_for_window};
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
 use crate::geometry::{
@@ -94,6 +96,28 @@ impl CameraAnimation {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SelectionBarTransition {
+    started_at: Instant,
+    from: f32,
+    to: f32,
+    duration: Duration,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BulkProgress {
+    completed: usize,
+    total: usize,
+}
+
+#[derive(Debug, Default)]
+struct BulkCommandState {
+    action: UserActionState,
+    progress: Option<BulkProgress>,
+    command_id: Option<CommandId>,
+    task: Option<Task<()>>,
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
@@ -110,6 +134,9 @@ pub struct GraphView {
     did_initial_fit: bool,
     fit_suppressed: bool,
     edge_label_cache: RefCell<HashMap<gpui::SharedString, gpui::ShapedLine>>,
+    selection_bar_progress: f32,
+    selection_bar_transition: Option<SelectionBarTransition>,
+    bulk_start: BulkCommandState,
 }
 
 impl GraphView {
@@ -133,6 +160,9 @@ impl GraphView {
             did_initial_fit: false,
             fit_suppressed: false,
             edge_label_cache: RefCell::new(HashMap::new()),
+            selection_bar_progress: 0.0,
+            selection_bar_transition: None,
+            bulk_start: BulkCommandState::default(),
         }
     }
 
@@ -183,6 +213,7 @@ impl GraphView {
             self.pending_pan_to_selection = next_selection.selected_node;
         }
 
+        self.update_selection_bar_target();
         cx.notify();
     }
 
@@ -763,6 +794,175 @@ impl GraphView {
         cx.notify();
     }
 
+    fn selection_bar_target_visible(&self) -> bool {
+        self.scene.selection().selected_edge.is_none() && self.scene.selection().selected_nodes.len() > 1
+    }
+
+    fn update_selection_bar_target(&mut self) {
+        let target_visible = self.selection_bar_target_visible();
+        let target = if target_visible { 1.0 } else { 0.0 };
+        if (self.selection_bar_progress - target).abs() < f32::EPSILON {
+            return;
+        }
+
+        self.selection_bar_transition = Some(SelectionBarTransition {
+            started_at: Instant::now(),
+            from: self.selection_bar_progress,
+            to: target,
+            duration: Duration::from_millis(180),
+        });
+    }
+
+    fn tick_selection_bar_animation(&mut self, window: &mut Window) {
+        let Some(transition) = self.selection_bar_transition else {
+            return;
+        };
+
+        let elapsed = transition.started_at.elapsed();
+        let t = (elapsed.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - t).powi(3);
+        self.selection_bar_progress = transition.from + (transition.to - transition.from) * eased;
+
+        if t >= 1.0 {
+            self.selection_bar_progress = transition.to;
+            self.selection_bar_transition = None;
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    fn bulk_start_targets(&self) -> Vec<crate::GraphNodeId> {
+        self.scene
+            .selection()
+            .selected_nodes
+            .iter()
+            .copied()
+            .filter(|id| {
+                if !matches!(id, crate::GraphNodeId::Task(_)) {
+                    return false;
+                }
+                let Some(node) = self.scene.node(*id) else {
+                    return false;
+                };
+                matches!(
+                    node.state,
+                    redesmyn_protocol::client::TaskState::Todo
+                        | redesmyn_protocol::client::TaskState::InProgress
+                        | redesmyn_protocol::client::TaskState::Unknown
+                )
+            })
+            .collect()
+    }
+
+    fn bulk_start_disabled_reason(&self) -> Option<&'static str> {
+        if self.bulk_start.action.in_flight {
+            return Some("Starting agents…");
+        }
+
+        let selected_tasks = self
+            .scene
+            .selection()
+            .selected_nodes
+            .iter()
+            .filter(|id| matches!(id, crate::GraphNodeId::Task(_)))
+            .count();
+
+        if self.bulk_start_targets().is_empty() {
+            if selected_tasks == 0 {
+                return Some("Select at least one task node");
+            }
+            return Some("Only todo/in-progress tasks can start agents");
+        }
+        None
+    }
+
+    fn start_bulk_start(&mut self, cx: &mut Context<Self>) {
+        if let Some(reason) = self.bulk_start_disabled_reason() {
+            redesmyn_logging::tracing::debug!(
+                reason,
+                "ignoring bulk start click (disabled)"
+            );
+            return;
+        }
+
+        let targets = self.bulk_start_targets();
+        if targets.is_empty() {
+            return;
+        }
+
+        let command_id = CommandId::new();
+        let selected_count = self.scene.selection().selected_nodes.len();
+        let eligible_count = targets.len();
+
+        redesmyn_logging::tracing::info!(
+            command_id = %command_id,
+            selected_count,
+            eligible_count,
+            "dispatching bulk start (stub)"
+        );
+
+        self.bulk_start.action.start();
+        self.bulk_start.command_id = Some(command_id);
+        self.bulk_start.progress = Some(BulkProgress {
+            completed: 0,
+            total: eligible_count,
+        });
+
+        cx.notify();
+
+        self.bulk_start.task = Some(cx.spawn(
+            move |weak: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    for ix in 0..eligible_count {
+                        gpui::Timer::after(Duration::from_millis(220)).await;
+                        let Some(entity) = weak.upgrade() else {
+                            return;
+                        };
+                        if cx
+                            .update(|cx| {
+                                entity.update(cx, |this, cx| {
+                                    if let Some(progress) = &mut this.bulk_start.progress {
+                                        progress.completed = (ix + 1).min(progress.total);
+                                    }
+                                    cx.notify();
+                                })
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+
+                    gpui::Timer::after(Duration::from_millis(220)).await;
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
+                    let _ = cx.update(|cx| {
+                        entity.update(cx, |this, cx| {
+                            this.bulk_start.task = None;
+                            this.bulk_start.progress = None;
+                            this.bulk_start.command_id = None;
+                            this.bulk_start.action.succeed();
+                            cx.notify();
+                        })
+                    });
+                    redesmyn_logging::tracing::info!(
+                        command_id = %command_id,
+                        "bulk start completed (stub)"
+                    );
+                }
+            },
+        ));
+
+        // Keep the selection while the command runs; bulk actions should not implicitly clear it.
+    }
+
+    fn clear_bulk_start_error(&mut self, cx: &mut Context<Self>) {
+        self.bulk_start.action.clear_error();
+        cx.notify();
+    }
+
     fn paint_graph(
         &self,
         canvas_bounds: gpui::Bounds<gpui::Pixels>,
@@ -1339,6 +1539,117 @@ impl Render for GraphView {
             div().absolute().inset_0()
         };
 
+        self.tick_selection_bar_animation(window);
+
+        let selected_count = self.scene.selection().selected_nodes.len();
+        let bar_progress = self.selection_bar_progress.clamp(0.0, 1.0);
+        let show_selection_bar = bar_progress > 0.001;
+        let selection_bar_top = theme.spacing.md - px((1.0 - bar_progress) * 56.0);
+
+        let selection_bar = if show_selection_bar {
+            let disabled_reason = self.bulk_start_disabled_reason();
+            let eligible = self.bulk_start_targets().len();
+
+            let start_label = if let Some(progress) = self.bulk_start.progress {
+                format!("Start {}/{}", progress.completed, progress.total)
+            } else {
+                "Start agents".to_string()
+            };
+
+            Some(
+                div()
+                    .id(("selection_bar", cx.entity_id()))
+                    .absolute()
+                    .top(selection_bar_top)
+                    .left(px(0.0))
+                    .right(px(0.0))
+                    .opacity(bar_progress)
+                    .flex()
+                    .justify_center()
+                    .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.md)
+                            .px(theme.spacing.md)
+                            .py(theme.spacing.sm)
+                            .rounded(theme.radius.lg)
+                            .bg(theme.colors.background.opacity(0.88))
+                            .border_1()
+                            .border_color(theme.colors.border.opacity(0.6))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(format!("{selected_count} selected")),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(theme.spacing.sm)
+                                    .child(
+                                        TextButton::new(("bulk_start", cx.entity_id()), start_label)
+                                            .kind(ButtonKind::Secondary)
+                                            .disabled(disabled_reason.is_some())
+                                            .when_some(disabled_reason, |this, reason| {
+                                                this.disabled_reason(reason)
+                                            })
+                                            .tooltip(format!(
+                                                "Starts agents for {eligible} of {selected_count} selected task(s)."
+                                            ))
+                                            .on_click({
+                                                let graph = graph.clone();
+                                                move |_, _, cx| {
+                                                    graph.update(cx, |this, cx| {
+                                                        this.start_bulk_start(cx);
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        TextButton::new(("bulk_clear", cx.entity_id()), "Clear")
+                                            .kind(ButtonKind::Ghost)
+                                            .on_click({
+                                                let graph = graph.clone();
+                                                move |_, _, cx| {
+                                                    graph.update(cx, |this, cx| {
+                                                        this.clear_selection(cx);
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .when(self.bulk_start.action.in_flight, |this| {
+                                        let label = "Starting";
+                                        this.child(
+                                            ProgressPill::new(label).kind(ProgressPillKind::Accent),
+                                        )
+                                    })
+                                    .when_some(self.bulk_start.action.error.clone(), |this, error| {
+                                        this.child(
+                                            TextButton::new(("bulk_error", cx.entity_id()), error)
+                                                .kind(ButtonKind::Danger)
+                                                .tooltip("Dismiss error")
+                                                .on_click({
+                                                    let graph = graph.clone();
+                                                    move |_, _, cx| {
+                                                        graph.update(cx, |this, cx| {
+                                                            this.clear_bulk_start_error(cx);
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                    }),
+                            ),
+                    ),
+            )
+        } else {
+            None
+        };
+
         div()
             .id(("graph_view", cx.entity_id()))
             .flex()
@@ -1373,6 +1684,7 @@ impl Render for GraphView {
             .child(debug_bar)
             .child(
                 div()
+                    .id(("graph_canvas", cx.entity_id()))
                     .flex_1()
                     .overflow_hidden()
                     .relative()
@@ -1385,13 +1697,17 @@ impl Render for GraphView {
                     } else {
                         CursorStyle::Arrow
                     })
+                    .focusable()
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
                     .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
                     .child(canvas)
-                    .child(nodes_layer),
+                    .child(nodes_layer)
+                    .when_some(selection_bar, |this, selection_bar| {
+                        this.child(selection_bar)
+                    }),
             )
             .track_focus(&self.focus_handle(cx))
     }
