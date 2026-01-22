@@ -48,10 +48,7 @@ impl From<ControlPlaneError> for ErrorEnvelope {
             }
             ControlPlaneError::Storage(err) => {
                 ErrorEnvelope::new(ErrorCategory::Internal, "Storage error.")
-                    .with_detail(ErrorDetail::from([(
-                        "error".to_string(),
-                        err.to_string(),
-                    )]))
+                    .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
             }
         }
     }

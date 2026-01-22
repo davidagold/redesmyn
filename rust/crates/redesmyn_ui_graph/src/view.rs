@@ -1,13 +1,13 @@
 use gpui::{
-    canvas, div, fill, prelude::*, px, quad, App, Context, CursorStyle, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollWheelEvent, Window,
+    App, Context, CursorStyle, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
+    ScrollWheelEvent, Window, canvas, div, fill, prelude::*, px, quad,
 };
 
 use redesmyn_ui::utils::theme_for_window;
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
-use crate::geometry::{edge_segments_in_window, node_bounds_in_window, DEFAULT_EDGE_THICKNESS_PX};
-use crate::hit_test::{hit_test, GraphHit};
+use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window, node_bounds_in_window};
+use crate::hit_test::{GraphHit, hit_test};
 use crate::scene::GraphScene;
 
 #[derive(Debug, Clone, Copy)]

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use gpui::SharedString;
-use redesmyn_graph_layout::{layout_forest, LayoutConfig, LayoutNode};
+use redesmyn_graph_layout::{LayoutConfig, LayoutNode, layout_forest};
 use redesmyn_ids::TaskId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -200,7 +200,9 @@ impl GraphScene {
                 None => node_id_by_slug
                     .get(&edge.to_task_slug)
                     .copied()
-                    .unwrap_or_else(|| GraphNodeId::Task(temporary_task_id_for_slug(&edge.to_task_slug))),
+                    .unwrap_or_else(|| {
+                        GraphNodeId::Task(temporary_task_id_for_slug(&edge.to_task_slug))
+                    }),
             };
             let edge_id = GraphEdgeId { from, to };
             edges.insert(edge_id, GraphSceneEdge { id: edge_id });

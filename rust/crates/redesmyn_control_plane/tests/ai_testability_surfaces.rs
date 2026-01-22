@@ -4,19 +4,18 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::ControlPlane;
+use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_ids::{CommandId, RequestId};
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CommandState, CreateCommandRequest, GetCommandRequest,
-    Request, RequestPayload, ResponseResult, WaitForCommandRequest, WaitForEventRequest,
-    WaitForIdleRequest,
+    ClientFrame, ClientMessage, CommandState, CreateCommandRequest, GetCommandRequest, Request,
+    RequestPayload, ResponseResult, WaitForCommandRequest, WaitForEventRequest, WaitForIdleRequest,
 };
 use redesmyn_protocol::ui_driver::{
     GetUiSnapshotRequest, GetUiSnapshotResponse, OpenEpicRequest, TriggerMergeRequest,
-    UiDriverRequest, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiInFlightAction,
-    UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    UiDriverRequest, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
+    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
 };
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
@@ -43,7 +42,10 @@ async fn control_plane_request(socket_path: &Path, payload: RequestPayload) -> R
     let request_id = RequestId::new();
     conn.send(ClientFrame::new(
         ProtocolEnvelope::new(),
-        ClientMessage::Request(Request { request_id, payload }),
+        ClientMessage::Request(Request {
+            request_id,
+            payload,
+        }),
     ))
     .await
     .expect("send control plane request");
@@ -257,7 +259,9 @@ impl UiDriverHarness {
 
                 UiDriverResponse {
                     request_id,
-                    result: UiDriverResponseResult::OpenEpic(redesmyn_protocol::ui_driver::OpenEpicResponse {}),
+                    result: UiDriverResponseResult::OpenEpic(
+                        redesmyn_protocol::ui_driver::OpenEpicResponse {},
+                    ),
                 }
             }
             UiDriverRequestPayload::TriggerMerge(_req) => {

@@ -384,10 +384,19 @@ async fn epic_graph_query_returns_compact_projection() {
     assert_eq!(graph.epic.epic_id, epic_id);
     assert_eq!(graph.epic.slug, "gpui");
     assert_eq!(graph.tasks.len(), 2);
-    assert!(graph.tasks.iter().any(|task| task.task_id == parent_task_id));
+    assert!(
+        graph
+            .tasks
+            .iter()
+            .any(|task| task.task_id == parent_task_id)
+    );
     assert!(graph.tasks.iter().any(|task| task.task_id == child_task_id));
 
-    assert_eq!(graph.commands.len(), 1, "should filter commands by epic tasks");
+    assert_eq!(
+        graph.commands.len(),
+        1,
+        "should filter commands by epic tasks"
+    );
     assert_eq!(graph.commands[0].command_id, command_id);
 
     let last_update = graph
@@ -400,7 +409,10 @@ async fn epic_graph_query_returns_compact_projection() {
     assert_eq!(graph.daemon_presences[0].host_instance_id, host_instance_id);
 
     assert_eq!(graph.session_summaries.len(), 1);
-    assert_eq!(graph.session_summaries[0].session_event_id, session_event_id_new);
+    assert_eq!(
+        graph.session_summaries[0].session_event_id,
+        session_event_id_new
+    );
 
     assert_eq!(graph.as_of_event_id, Some(event_id));
 }

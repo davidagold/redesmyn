@@ -165,7 +165,10 @@ async fn collect_until_session_ended(
     }
 }
 
-async fn wait_for_session_cleanup(supervisor: &AppServerSupervisor, session_id: redesmyn_ids::SessionId) {
+async fn wait_for_session_cleanup(
+    supervisor: &AppServerSupervisor,
+    session_id: redesmyn_ids::SessionId,
+) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match supervisor.stop_session(session_id).await {
@@ -419,7 +422,10 @@ async fn connect_failure_triggers_shutdown() {
         .unwrap_err();
 
     assert!(
-        matches!(err, StartSessionError::Process(AppServerProcessError::ConnectFailed { .. })),
+        matches!(
+            err,
+            StartSessionError::Process(AppServerProcessError::ConnectFailed { .. })
+        ),
         "unexpected error: {err:?}"
     );
     assert_eq!(shutdown_calls.load(Ordering::Relaxed), 1);

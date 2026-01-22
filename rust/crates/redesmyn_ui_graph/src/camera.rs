@@ -1,4 +1,4 @@
-use gpui::{point, px, Pixels, Point};
+use gpui::{Pixels, Point, point, px};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GraphCameraLimits {

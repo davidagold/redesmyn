@@ -7,12 +7,12 @@ use redesmyn_ids::{CommandId, EventId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CommandState, CommandSummary, CommandUpdateSummary,
-    DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent, GetEpicGraphResponse,
-    GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse, GetSessionEventsResponse,
-    HealthResponse, ListEpicsResponse, MergeReadiness, Response, ResponseResult, SessionSummary,
-    StatusResponse, Subscribed, SubscriptionEvent, TaskState,
-    CreateCommandResponse, EventWaitFilter, GetCommandResponse, WaitForCommandResponse,
-    WaitForEventResponse, WaitForIdleResponse,
+    CreateCommandResponse, DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent,
+    EventWaitFilter, GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
+    GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse, ListEpicsResponse,
+    MergeReadiness, Response, ResponseResult, SessionSummary, StatusResponse, Subscribed,
+    SubscriptionEvent, TaskState, WaitForCommandResponse, WaitForEventResponse,
+    WaitForIdleResponse,
 };
 use redesmyn_protocol::{
     ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, Timestamp,
@@ -20,7 +20,7 @@ use redesmyn_protocol::{
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
-use tokio::sync::{broadcast, Mutex, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 
 use crate::ControlPlane;
 use crate::error::ControlPlaneError;
@@ -130,9 +130,13 @@ impl ClientApiState {
         let state = Arc::clone(self);
         tokio::spawn(async move {
             tokio::task::yield_now().await;
-            state.set_command_state(command_id, CommandState::Running).await;
+            state
+                .set_command_state(command_id, CommandState::Running)
+                .await;
             tokio::time::sleep(Duration::from_millis(25)).await;
-            state.set_command_state(command_id, CommandState::Succeeded).await;
+            state
+                .set_command_state(command_id, CommandState::Succeeded)
+                .await;
         });
 
         CommandSummary {
@@ -197,7 +201,8 @@ impl ClientApiState {
             let record = commands.get(&command_id).ok_or_else(|| {
                 let detail =
                     ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.").with_detail(detail)
+                ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
+                    .with_detail(detail)
             })?;
             (
                 record.kind.clone(),
@@ -848,7 +853,8 @@ async fn handle_request_result(
         }
         redesmyn_protocol::client::RequestPayload::ListEpics(_) => {
             let scope = repo_scope_from_envelope(envelope);
-            let epics = redesmyn_storage::epic_graph::list_epics(control_plane.pool(), scope).await?;
+            let epics =
+                redesmyn_storage::epic_graph::list_epics(control_plane.pool(), scope).await?;
             Ok(ResponseResult::ListEpics(ListEpicsResponse {
                 epics: epics
                     .into_iter()
@@ -866,10 +872,16 @@ async fn handle_request_result(
             }
 
             let scope = repo_scope_from_envelope(envelope);
-            let load_span = tracing::debug_span!("client.api.load_epic_graph", epic_slug = %epic_slug);
+            let load_span =
+                tracing::debug_span!("client.api.load_epic_graph", epic_slug = %epic_slug);
             let Some(graph) = ({
                 let _enter = load_span.enter();
-                redesmyn_storage::epic_graph::load_epic_graph(control_plane.pool(), &epic_slug, scope).await?
+                redesmyn_storage::epic_graph::load_epic_graph(
+                    control_plane.pool(),
+                    &epic_slug,
+                    scope,
+                )
+                .await?
             }) else {
                 return Err(ControlPlaneError::EpicNotFound { epic_slug });
             };
@@ -907,12 +919,12 @@ async fn handle_request_result(
                     .get_session_events(get.session_id, get.before, get.limit, &get.kinds)
                     .await
                 {
-                    Ok((events, next_cursor)) => Ok(ResponseResult::GetSessionEvents(
-                        GetSessionEventsResponse {
+                    Ok((events, next_cursor)) => {
+                        Ok(ResponseResult::GetSessionEvents(GetSessionEventsResponse {
                             events,
                             next_cursor,
-                        },
-                    )),
+                        }))
+                    }
                     Err(err) => {
                         tracing::warn!(error = %err, "GetSessionEvents failed");
                         Ok(ResponseResult::Error(ErrorEnvelope::new(
@@ -923,24 +935,22 @@ async fn handle_request_result(
                 }
             }
         }
-        redesmyn_protocol::client::RequestPayload::GetLatestTaskSession(get) => {
-            match control_plane
-                .session_events()
-                .get_latest_task_session(get.task_id)
-                .await
-            {
-                Ok(session_id) => Ok(ResponseResult::GetLatestTaskSession(
-                    GetLatestTaskSessionResponse { session_id },
-                )),
-                Err(err) => {
-                    tracing::warn!(error = %err, "GetLatestTaskSession failed");
-                    Ok(ResponseResult::Error(ErrorEnvelope::new(
-                        ErrorCategory::Internal,
-                        "Failed to query latest task session.",
-                    )))
-                }
+        redesmyn_protocol::client::RequestPayload::GetLatestTaskSession(get) => match control_plane
+            .session_events()
+            .get_latest_task_session(get.task_id)
+            .await
+        {
+            Ok(session_id) => Ok(ResponseResult::GetLatestTaskSession(
+                GetLatestTaskSessionResponse { session_id },
+            )),
+            Err(err) => {
+                tracing::warn!(error = %err, "GetLatestTaskSession failed");
+                Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "Failed to query latest task session.",
+                )))
             }
-        }
+        },
         redesmyn_protocol::client::RequestPayload::GetEpicPinnedChatSession(get) => {
             match control_plane
                 .session_events()
@@ -961,7 +971,9 @@ async fn handle_request_result(
         }
         redesmyn_protocol::client::RequestPayload::CreateCommand(req) => {
             let command = state.create_command(req.kind, req.target_task_id).await;
-            Ok(ResponseResult::CreateCommand(CreateCommandResponse { command }))
+            Ok(ResponseResult::CreateCommand(CreateCommandResponse {
+                command,
+            }))
         }
         redesmyn_protocol::client::RequestPayload::GetCommand(req) => {
             match state.get_command(req.command_id).await {

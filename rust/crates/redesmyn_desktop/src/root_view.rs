@@ -3,8 +3,8 @@ mod command_palette_overlay;
 use std::sync::Arc;
 
 use gpui::{
-    div, prelude::*, px, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Render, SharedString, Subscription, Window,
+    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString,
+    Subscription, Window, div, prelude::*, px,
 };
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;

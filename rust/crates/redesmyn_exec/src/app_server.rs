@@ -564,41 +564,39 @@ async fn run_session(
                 let response = client.request(AppServerRequest::Interrupt).await;
                 let _ = reply.send(response);
             }
-            SessionCommand::Reconnect { reply } => {
-                match process.connect().await {
-                    Ok(AppServerConnection {
-                        client: new_client,
-                        events: new_events,
-                    }) => {
-                        event_forwarder.abort();
-                        client = new_client;
-                        event_forwarder = spawn_event_forwarder(
-                            frames_tx.clone(),
-                            artifact_store.clone(),
-                            config.clone(),
-                            session_id,
-                            scope,
-                            new_events,
-                        );
-                        try_emit_status_update(
-                            &frames_tx,
-                            session_id,
-                            scope,
-                            "app_server_reconnected".to_owned(),
-                        );
-                        let _ = reply.send(Ok(()));
-                    }
-                    Err(err) => {
-                        try_emit_status_update(
-                            &frames_tx,
-                            session_id,
-                            scope,
-                            format!("app_server_reconnect_failed: {err}"),
-                        );
-                        let _ = reply.send(Err(err));
-                    }
+            SessionCommand::Reconnect { reply } => match process.connect().await {
+                Ok(AppServerConnection {
+                    client: new_client,
+                    events: new_events,
+                }) => {
+                    event_forwarder.abort();
+                    client = new_client;
+                    event_forwarder = spawn_event_forwarder(
+                        frames_tx.clone(),
+                        artifact_store.clone(),
+                        config.clone(),
+                        session_id,
+                        scope,
+                        new_events,
+                    );
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        "app_server_reconnected".to_owned(),
+                    );
+                    let _ = reply.send(Ok(()));
                 }
-            }
+                Err(err) => {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("app_server_reconnect_failed: {err}"),
+                    );
+                    let _ = reply.send(Err(err));
+                }
+            },
             SessionCommand::Stop => {
                 try_emit_status_update(&frames_tx, session_id, scope, "stop_requested".to_owned());
                 break;
@@ -654,16 +652,7 @@ fn spawn_event_forwarder(
     rx: mpsc::Receiver<AppServerEvent>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        match run_event_forwarder(
-            frames_tx,
-            artifact_store,
-            config,
-            session_id,
-            scope,
-            rx,
-        )
-        .await
-        {
+        match run_event_forwarder(frames_tx, artifact_store, config, session_id, scope, rx).await {
             Ok(()) => {
                 tracing::debug!(%session_id, "app-server event forwarder exited");
             }

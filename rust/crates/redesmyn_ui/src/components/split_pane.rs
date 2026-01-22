@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use gpui::{
     ClickEvent, Context, CursorStyle, DragMoveEvent, EventEmitter, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Window, div, px, prelude::*,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Window, div, prelude::*, px,
 };
 
 use crate::utils::theme_for_window;

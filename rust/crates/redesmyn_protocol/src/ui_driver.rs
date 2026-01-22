@@ -232,4 +232,3 @@ pub enum UiDriverMessage {
     Request(UiDriverRequest),
     Response(UiDriverResponse),
 }
-

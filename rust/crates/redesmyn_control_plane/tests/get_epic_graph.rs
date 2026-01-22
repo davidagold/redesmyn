@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::ControlPlane;
+use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_ids::{
     CommandId, CommandUpdateId, EpicId, EventId, HostId, HostInstanceId, RepoId, RequestId,
     SessionEventId, SessionId, TaskId, WorkspaceId,
@@ -279,7 +279,10 @@ async fn get_epic_graph_returns_typed_projection() {
 
     assert_eq!(payload.graph.command_summaries.len(), 1);
     assert_eq!(payload.graph.command_summaries[0].command_id, command_id);
-    assert_eq!(payload.graph.command_summaries[0].state, CommandState::Running);
+    assert_eq!(
+        payload.graph.command_summaries[0].state,
+        CommandState::Running
+    );
     assert!(
         payload.graph.command_summaries[0].last_update.is_some(),
         "expected last_update"

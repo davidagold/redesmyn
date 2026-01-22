@@ -11,8 +11,8 @@ use redesmyn_ids::{
 };
 use sqlx::{Executor, Sqlite};
 
-use crate::schema::{CommandState, MergeReadiness, TaskState};
 use crate::StorageError;
+use crate::schema::{CommandState, MergeReadiness, TaskState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RepoScope {
@@ -284,16 +284,18 @@ where
         .collect()
 }
 
-async fn load_commands<'e, E>(executor: E, scope: RepoScope) -> Result<Vec<CommandRecord>, StorageError>
+async fn load_commands<'e, E>(
+    executor: E,
+    scope: RepoScope,
+) -> Result<Vec<CommandRecord>, StorageError>
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
     const INFLIGHT_LIMIT: i64 = 50;
     const RECENT_LIMIT: i64 = 25;
 
-    let inflight_rows: Vec<(CommandId, i64, i64, String, String, Option<TaskId>)> =
-        sqlx::query_as(
-            r#"
+    let inflight_rows: Vec<(CommandId, i64, i64, String, String, Option<TaskId>)> = sqlx::query_as(
+        r#"
             SELECT
                 id,
                 created_at_ms,
@@ -310,12 +312,12 @@ where
             ORDER BY created_at_ms DESC
             LIMIT ?3
             "#,
-        )
-        .bind(scope.workspace_id)
-        .bind(scope.repo_id)
-        .bind(INFLIGHT_LIMIT)
-        .fetch_all(executor)
-        .await?;
+    )
+    .bind(scope.workspace_id)
+    .bind(scope.repo_id)
+    .bind(INFLIGHT_LIMIT)
+    .fetch_all(executor)
+    .await?;
 
     let recent_rows: Vec<(CommandId, i64, i64, String, String, Option<TaskId>)> = sqlx::query_as(
         r#"
@@ -418,10 +420,7 @@ where
         Option<String>,
         Option<i64>,
         Option<i64>,
-    )> = builder
-        .build_query_as()
-        .fetch_all(executor)
-        .await?;
+    )> = builder.build_query_as().fetch_all(executor).await?;
 
     let mut out = HashMap::with_capacity(rows.len());
     for (update_id, command_id, created_at_ms, state, message, progress_current, progress_total) in
@@ -444,15 +443,23 @@ where
     Ok(out)
 }
 
-async fn load_daemon_presences<'e, E>(executor: E) -> Result<Vec<DaemonPresenceRecord>, StorageError>
+async fn load_daemon_presences<'e, E>(
+    executor: E,
+) -> Result<Vec<DaemonPresenceRecord>, StorageError>
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
     const PRESENCE_LIMIT: i64 = 10;
 
-    let rows: Vec<(HostInstanceId, HostId, Option<String>, i64, i64, Option<i64>)> =
-        sqlx::query_as(
-            r#"
+    let rows: Vec<(
+        HostInstanceId,
+        HostId,
+        Option<String>,
+        i64,
+        i64,
+        Option<i64>,
+    )> = sqlx::query_as(
+        r#"
             SELECT
                 dp.host_instance_id,
                 dp.host_id,
@@ -465,10 +472,10 @@ where
             ORDER BY (dp.disconnected_at_ms IS NULL) DESC, dp.last_heartbeat_at_ms DESC
             LIMIT ?1
             "#,
-        )
-        .bind(PRESENCE_LIMIT)
-        .fetch_all(executor)
-        .await?;
+    )
+    .bind(PRESENCE_LIMIT)
+    .fetch_all(executor)
+    .await?;
 
     Ok(rows
         .into_iter()
@@ -527,7 +534,15 @@ where
     Ok(rows
         .into_iter()
         .map(
-            |(task_id, session_id, session_event_id, created_at_ms, kind, turn_id, message_preview)| {
+            |(
+                task_id,
+                session_id,
+                session_event_id,
+                created_at_ms,
+                kind,
+                turn_id,
+                message_preview,
+            )| {
                 SessionSummaryRecord {
                     session_id,
                     session_event_id,

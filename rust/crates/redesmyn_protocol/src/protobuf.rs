@@ -7,10 +7,10 @@ use redesmyn_ids::{
 
 use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 use crate::daemon::{
-    AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate, ControlPlaneHelloAck,
-    DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent, RepoAttach, RepoDetach,
-    ResyncRequest, TelemetryEvent, TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot,
-    SessionEventBatch, UnknownEvent, WorktreeEvent,
+    AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate,
+    ControlPlaneHelloAck, DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent,
+    RepoAttach, RepoDetach, ResyncRequest, SessionEventBatch, TelemetryEvent, TelemetryEventBatch,
+    TelemetryFreshness, TelemetrySnapshot, UnknownEvent, WorktreeEvent,
 };
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
@@ -849,9 +849,9 @@ impl DaemonFrame {
             pbv1::daemon_frame::Message::CommandUpdate(update) => {
                 DaemonMessage::CommandUpdate(CommandUpdate::try_from_protobuf(update)?)
             }
-            pbv1::daemon_frame::Message::SessionEventBatch(batch) => DaemonMessage::SessionEventBatch(
-                SessionEventBatch::try_from_protobuf(batch)?,
-            ),
+            pbv1::daemon_frame::Message::SessionEventBatch(batch) => {
+                DaemonMessage::SessionEventBatch(SessionEventBatch::try_from_protobuf(batch)?)
+            }
             pbv1::daemon_frame::Message::Error(error) => {
                 DaemonMessage::Error(ErrorEnvelope::from_protobuf(error))
             }
@@ -1414,7 +1414,9 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::Status => pbv1::ClientMethod::Status as i32,
         crate::client::ClientMethod::ListEpics => pbv1::ClientMethod::ListEpics as i32,
         crate::client::ClientMethod::GetEpicGraph => pbv1::ClientMethod::GetEpicGraph as i32,
-        crate::client::ClientMethod::GetSessionEvents => pbv1::ClientMethod::GetSessionEvents as i32,
+        crate::client::ClientMethod::GetSessionEvents => {
+            pbv1::ClientMethod::GetSessionEvents as i32
+        }
         crate::client::ClientMethod::GetLatestTaskSession => {
             pbv1::ClientMethod::GetLatestTaskSession as i32
         }
@@ -1435,7 +1437,9 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::Status) => Ok(crate::client::ClientMethod::Status),
         Ok(pbv1::ClientMethod::ListEpics) => Ok(crate::client::ClientMethod::ListEpics),
         Ok(pbv1::ClientMethod::GetEpicGraph) => Ok(crate::client::ClientMethod::GetEpicGraph),
-        Ok(pbv1::ClientMethod::GetSessionEvents) => Ok(crate::client::ClientMethod::GetSessionEvents),
+        Ok(pbv1::ClientMethod::GetSessionEvents) => {
+            Ok(crate::client::ClientMethod::GetSessionEvents)
+        }
         Ok(pbv1::ClientMethod::GetLatestTaskSession) => {
             Ok(crate::client::ClientMethod::GetLatestTaskSession)
         }
@@ -1528,9 +1532,9 @@ fn decode_merge_readiness(value: i32) -> crate::client::MergeReadiness {
     match pbv1::MergeReadiness::try_from(value) {
         Ok(pbv1::MergeReadiness::Ready) => crate::client::MergeReadiness::Ready,
         Ok(pbv1::MergeReadiness::Blocked) => crate::client::MergeReadiness::Blocked,
-        Ok(pbv1::MergeReadiness::Unspecified)
-        | Ok(pbv1::MergeReadiness::Unknown)
-        | Err(_) => crate::client::MergeReadiness::Unknown,
+        Ok(pbv1::MergeReadiness::Unspecified) | Ok(pbv1::MergeReadiness::Unknown) | Err(_) => {
+            crate::client::MergeReadiness::Unknown
+        }
     }
 }
 
@@ -1556,9 +1560,9 @@ fn decode_client_command_state(value: i32) -> crate::client::CommandState {
         Ok(pbv1::CommandState::Succeeded) => crate::client::CommandState::Succeeded,
         Ok(pbv1::CommandState::Failed) => crate::client::CommandState::Failed,
         Ok(pbv1::CommandState::Canceled) => crate::client::CommandState::Canceled,
-        Ok(pbv1::CommandState::Rejected)
-        | Ok(pbv1::CommandState::Unspecified)
-        | Err(_) => crate::client::CommandState::Unknown,
+        Ok(pbv1::CommandState::Rejected) | Ok(pbv1::CommandState::Unspecified) | Err(_) => {
+            crate::client::CommandState::Unknown
+        }
     }
 }
 
@@ -1697,18 +1701,24 @@ impl crate::client::Request {
                     crate::client::GetEpicPinnedChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
-            pbv1::request::Payload::CreateCommand(req) => crate::client::RequestPayload::CreateCommand(
-                crate::client::CreateCommandRequest::try_from_protobuf(req)?,
-            ),
+            pbv1::request::Payload::CreateCommand(req) => {
+                crate::client::RequestPayload::CreateCommand(
+                    crate::client::CreateCommandRequest::try_from_protobuf(req)?,
+                )
+            }
             pbv1::request::Payload::GetCommand(req) => crate::client::RequestPayload::GetCommand(
                 crate::client::GetCommandRequest::try_from_protobuf(req)?,
             ),
-            pbv1::request::Payload::WaitForCommand(req) => crate::client::RequestPayload::WaitForCommand(
-                crate::client::WaitForCommandRequest::try_from_protobuf(req)?,
-            ),
-            pbv1::request::Payload::WaitForEvent(req) => crate::client::RequestPayload::WaitForEvent(
-                crate::client::WaitForEventRequest::try_from_protobuf(req)?,
-            ),
+            pbv1::request::Payload::WaitForCommand(req) => {
+                crate::client::RequestPayload::WaitForCommand(
+                    crate::client::WaitForCommandRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::WaitForEvent(req) => {
+                crate::client::RequestPayload::WaitForEvent(
+                    crate::client::WaitForEventRequest::try_from_protobuf(req)?,
+                )
+            }
             pbv1::request::Payload::WaitForIdle(req) => crate::client::RequestPayload::WaitForIdle(
                 crate::client::WaitForIdleRequest::try_from_protobuf(req)?,
             ),
@@ -1931,7 +1941,10 @@ impl crate::client::CreateCommandRequest {
 
         Ok(Self {
             kind: proto.kind,
-            target_task_id: decode_optional_ulid::<TaskId>("target_task_id", &proto.target_task_id)?,
+            target_task_id: decode_optional_ulid::<TaskId>(
+                "target_task_id",
+                &proto.target_task_id,
+            )?,
         })
     }
 }
@@ -2116,7 +2129,9 @@ impl crate::client::WaitForEventResponse {
     pub fn try_from_protobuf(proto: pbv1::WaitForEventResponse) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             event_log: crate::client::EventLogEvent::try_from_protobuf(
-                proto.event_log.ok_or_else(|| missing_required("event_log"))?,
+                proto
+                    .event_log
+                    .ok_or_else(|| missing_required("event_log"))?,
             )?,
         })
     }
@@ -2237,21 +2252,29 @@ impl crate::client::Response {
                     crate::client::GetEpicPinnedChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
-            pbv1::response::Result::CreateCommand(resp) => crate::client::ResponseResult::CreateCommand(
-                crate::client::CreateCommandResponse::try_from_protobuf(resp)?,
-            ),
+            pbv1::response::Result::CreateCommand(resp) => {
+                crate::client::ResponseResult::CreateCommand(
+                    crate::client::CreateCommandResponse::try_from_protobuf(resp)?,
+                )
+            }
             pbv1::response::Result::GetCommand(resp) => crate::client::ResponseResult::GetCommand(
                 crate::client::GetCommandResponse::try_from_protobuf(resp)?,
             ),
-            pbv1::response::Result::WaitForCommand(resp) => crate::client::ResponseResult::WaitForCommand(
-                crate::client::WaitForCommandResponse::try_from_protobuf(resp)?,
-            ),
-            pbv1::response::Result::WaitForEvent(resp) => crate::client::ResponseResult::WaitForEvent(
-                crate::client::WaitForEventResponse::try_from_protobuf(resp)?,
-            ),
-            pbv1::response::Result::WaitForIdle(resp) => crate::client::ResponseResult::WaitForIdle(
-                crate::client::WaitForIdleResponse::from_protobuf(resp),
-            ),
+            pbv1::response::Result::WaitForCommand(resp) => {
+                crate::client::ResponseResult::WaitForCommand(
+                    crate::client::WaitForCommandResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::WaitForEvent(resp) => {
+                crate::client::ResponseResult::WaitForEvent(
+                    crate::client::WaitForEventResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::WaitForIdle(resp) => {
+                crate::client::ResponseResult::WaitForIdle(
+                    crate::client::WaitForIdleResponse::from_protobuf(resp),
+                )
+            }
             pbv1::response::Result::Error(err) => {
                 crate::client::ResponseResult::Error(ErrorEnvelope::from_protobuf(err))
             }
@@ -2379,7 +2402,10 @@ impl crate::client::EpicTaskNode {
             task_slug: proto.task_slug,
             title: proto.title,
             task_id: decode_optional_ulid::<TaskId>("task_id", &proto.task_id)?,
-            parent_task_id: decode_optional_ulid::<TaskId>("parent_task_id", &proto.parent_task_id)?,
+            parent_task_id: decode_optional_ulid::<TaskId>(
+                "parent_task_id",
+                &proto.parent_task_id,
+            )?,
             state: decode_task_state(proto.state),
             branch_name: if proto.branch_name.is_empty() {
                 None
@@ -2471,7 +2497,10 @@ impl crate::client::CommandSummary {
             updated_at: decode_required_timestamp("updated_at", proto.updated_at)?,
             kind: proto.kind,
             state: decode_client_command_state(proto.state),
-            target_task_id: decode_optional_ulid::<TaskId>("target_task_id", &proto.target_task_id)?,
+            target_task_id: decode_optional_ulid::<TaskId>(
+                "target_task_id",
+                &proto.target_task_id,
+            )?,
             last_update: proto
                 .last_update
                 .map(crate::client::CommandUpdateSummary::try_from_protobuf)
@@ -2642,7 +2671,10 @@ impl crate::client::EpicGraph {
                 .into_iter()
                 .map(crate::client::SessionSummary::try_from_protobuf)
                 .collect::<Result<Vec<_>, _>>()?,
-            as_of_event_id: decode_optional_ulid::<EventId>("as_of_event_id", &proto.as_of_event_id)?,
+            as_of_event_id: decode_optional_ulid::<EventId>(
+                "as_of_event_id",
+                &proto.as_of_event_id,
+            )?,
         })
     }
 }
@@ -2945,11 +2977,15 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::GetSnapshot) => Ok(crate::ui_driver::UiDriverMethod::GetSnapshot),
         Ok(pbv1::UiDriverMethod::OpenEpic) => Ok(crate::ui_driver::UiDriverMethod::OpenEpic),
         Ok(pbv1::UiDriverMethod::SelectTask) => Ok(crate::ui_driver::UiDriverMethod::SelectTask),
-        Ok(pbv1::UiDriverMethod::TriggerMerge) => Ok(crate::ui_driver::UiDriverMethod::TriggerMerge),
+        Ok(pbv1::UiDriverMethod::TriggerMerge) => {
+            Ok(crate::ui_driver::UiDriverMethod::TriggerMerge)
+        }
         Ok(pbv1::UiDriverMethod::OpenSessionView) => {
             Ok(crate::ui_driver::UiDriverMethod::OpenSessionView)
         }
-        Ok(pbv1::UiDriverMethod::OpenDiffView) => Ok(crate::ui_driver::UiDriverMethod::OpenDiffView),
+        Ok(pbv1::UiDriverMethod::OpenDiffView) => {
+            Ok(crate::ui_driver::UiDriverMethod::OpenDiffView)
+        }
         Ok(pbv1::UiDriverMethod::CaptureScreenshot) => {
             Ok(crate::ui_driver::UiDriverMethod::CaptureScreenshot)
         }
@@ -2994,7 +3030,9 @@ fn encode_ui_primary_view(value: crate::ui_driver::UiPrimaryView) -> i32 {
 fn decode_ui_primary_view(value: i32) -> Result<crate::ui_driver::UiPrimaryView, ErrorEnvelope> {
     match pbv1::UiPrimaryView::try_from(value) {
         Ok(pbv1::UiPrimaryView::EpicSelector) => Ok(crate::ui_driver::UiPrimaryView::EpicSelector),
-        Ok(pbv1::UiPrimaryView::EpicWorkspace) => Ok(crate::ui_driver::UiPrimaryView::EpicWorkspace),
+        Ok(pbv1::UiPrimaryView::EpicWorkspace) => {
+            Ok(crate::ui_driver::UiPrimaryView::EpicWorkspace)
+        }
         Ok(pbv1::UiPrimaryView::Unspecified) | Err(_) => Err(invalid_field(
             "primary_view",
             format!("unknown enum value for UiPrimaryView: {value}"),
@@ -3122,7 +3160,10 @@ impl crate::ui_driver::UiDriverRequest {
             ));
         }
 
-        Ok(Self { request_id, payload })
+        Ok(Self {
+            request_id,
+            payload,
+        })
     }
 }
 
@@ -3537,10 +3578,14 @@ impl crate::ui_driver::UiSnapshot {
             captured_at: decode_required_timestamp("captured_at", proto.captured_at)?,
             primary_view: decode_ui_primary_view(proto.primary_view)?,
             left_pane: crate::ui_driver::UiLeftPaneState::from_protobuf(
-                proto.left_pane.ok_or_else(|| missing_required("left_pane"))?,
+                proto
+                    .left_pane
+                    .ok_or_else(|| missing_required("left_pane"))?,
             ),
             selection: crate::ui_driver::UiSelectionState::try_from_protobuf(
-                proto.selection.ok_or_else(|| missing_required("selection"))?,
+                proto
+                    .selection
+                    .ok_or_else(|| missing_required("selection"))?,
             )?,
             in_flight: proto
                 .in_flight

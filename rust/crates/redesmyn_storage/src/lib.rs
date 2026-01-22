@@ -19,8 +19,8 @@
 
 mod error;
 
-pub mod events;
 pub mod epic_graph;
+pub mod events;
 pub mod schema;
 pub mod sqlite;
 

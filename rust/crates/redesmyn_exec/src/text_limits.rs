@@ -17,4 +17,3 @@ pub(crate) fn truncate_chars(text: &str, max_chars: usize) -> String {
     }
     out
 }
-

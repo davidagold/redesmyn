@@ -1,6 +1,6 @@
-use gpui::{px, Bounds, Pixels, Point};
+use gpui::{Bounds, Pixels, Point, px};
 
-use crate::geometry::{edge_segments_in_window, node_bounds_in_window, DEFAULT_EDGE_THICKNESS_PX};
+use crate::geometry::{DEFAULT_EDGE_THICKNESS_PX, edge_segments_in_window, node_bounds_in_window};
 use crate::{GraphCamera, GraphEdgeId, GraphNodeId, GraphScene};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

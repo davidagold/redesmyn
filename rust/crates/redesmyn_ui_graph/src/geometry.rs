@@ -1,4 +1,4 @@
-use gpui::{px, size, Bounds, Pixels, Point};
+use gpui::{Bounds, Pixels, Point, px, size};
 
 use crate::scene::GraphSceneNode;
 use crate::{GraphCamera, GraphScene};
