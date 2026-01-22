@@ -130,6 +130,8 @@ Add a short developer-facing guide that explains:
 - what artifacts are produced and where,
 - and how to reproduce a failing run from artifacts.
 
+Guide: `epics/gpui/tasks/T-48/DEV_GUIDE.md`.
+
 ## Acceptance criteria
 
 - A test can:
