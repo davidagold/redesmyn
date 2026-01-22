@@ -559,8 +559,10 @@ impl Render for GraphView {
                     .overflow_hidden()
                     .block_mouse_except_scroll()
                     .on_mouse_down(MouseButton::Left, {
+                        let focus_handle = self.focus_handle.clone();
                         let graph = graph.clone();
-                        move |_, _, cx| {
+                        move |_, window, cx| {
+                            focus_handle.focus(window);
                             graph.update(cx, |this, cx| this.select_node(node_id, cx));
                             cx.stop_propagation();
                         }
