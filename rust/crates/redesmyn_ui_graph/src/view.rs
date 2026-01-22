@@ -147,11 +147,15 @@ impl GraphView {
     }
 
     fn selection_label(&self) -> String {
-        if let Some(node) = self.visual_selected_node() {
-            return format!("Selected node: {node}");
-        }
         if let Some(edge) = self.scene.selection().selected_edge {
             return format!("Selected edge: {edge}");
+        }
+        let count = self.scene.selection().selected_nodes.len();
+        if count > 1 {
+            return format!("Selected nodes: {count}");
+        }
+        if let Some(node) = self.visual_selected_node() {
+            return format!("Selected node: {node}");
         }
         "Selected: <none>".to_string()
     }
@@ -184,6 +188,10 @@ impl GraphView {
 
     fn select_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.select_node(node_id), cx);
+    }
+
+    fn toggle_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
+        self.update_selection(|scene| scene.toggle_node(node_id), cx);
     }
 
     fn select_edge(&mut self, edge_id: GraphEdgeId, cx: &mut Context<Self>) {
@@ -629,7 +637,11 @@ impl GraphView {
         match hit_test(&self.scene, &self.camera, canvas_bounds, event.position) {
             Some(GraphHit::Node(id)) => {
                 redesmyn_logging::tracing::trace!(node_id = %id, "graph selection changed");
-                self.select_node(id, cx);
+                if event.modifiers.secondary() {
+                    self.toggle_node(id, cx);
+                } else {
+                    self.select_node(id, cx);
+                }
             }
             Some(GraphHit::Edge(id)) => {
                 redesmyn_logging::tracing::trace!(edge_id = %id, "graph selection changed");
@@ -1028,7 +1040,8 @@ impl Render for GraphView {
 
         let nodes_layer = if let Some(canvas_bounds) = self.last_canvas_bounds {
             let entity_id = cx.entity_id();
-            let selected = self.visual_selected_node();
+            let primary_selected = self.visual_selected_node();
+            let selected_nodes = &self.scene.selection().selected_nodes;
 
             let mut layer = div().absolute().inset_0();
 
@@ -1038,8 +1051,9 @@ impl Render for GraphView {
                 let local_origin = bounds_in_window.origin - canvas_bounds.origin;
                 let node_id = node.id;
                 let node_key: gpui::SharedString = node_id.to_string().into();
-                let is_selected = selected == Some(node_id);
-                let is_expanded = is_selected;
+                let is_primary_selected = primary_selected == Some(node_id);
+                let is_selected = is_primary_selected || selected_nodes.contains(&node_id);
+                let is_expanded = is_primary_selected;
 
                 let bg = if is_selected {
                     theme.colors.ring.opacity(0.10)
@@ -1073,9 +1087,15 @@ impl Render for GraphView {
                     .on_mouse_down(MouseButton::Left, {
                         let focus_handle = self.focus_handle.clone();
                         let graph = graph.clone();
-                        move |_, window, cx| {
+                        move |event, window, cx| {
                             focus_handle.focus(window);
-                            graph.update(cx, |this, cx| this.select_node(node_id, cx));
+                            graph.update(cx, |this, cx| {
+                                if event.modifiers.secondary() {
+                                    this.toggle_node(node_id, cx);
+                                } else {
+                                    this.select_node(node_id, cx);
+                                }
+                            });
                             cx.stop_propagation();
                         }
                     });

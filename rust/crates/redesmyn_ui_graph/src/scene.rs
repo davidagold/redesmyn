@@ -76,6 +76,7 @@ pub enum AgentStatus {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct GraphSelection {
     pub selected_node: Option<GraphNodeId>,
+    pub selected_nodes: BTreeSet<GraphNodeId>,
     pub selected_edge: Option<GraphEdgeId>,
     pub hovered_node: Option<GraphNodeId>,
     pub hovered_edge: Option<GraphEdgeId>,
@@ -213,6 +214,30 @@ impl GraphScene {
         self.set_selection(None, Some(id));
     }
 
+    pub fn toggle_node(&mut self, id: GraphNodeId) {
+        let previous_selected_node = self.selection.selected_node;
+
+        self.selection.selected_edge = None;
+
+        let removed = self.selection.selected_nodes.remove(&id);
+        if removed {
+            if self.selection.selected_node == Some(id) {
+                self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
+            }
+            if self.selection.selected_nodes.is_empty() {
+                self.selection.selected_node = None;
+            }
+        } else {
+            self.selection.selected_nodes.insert(id);
+            self.selection.selected_node = Some(id);
+        }
+
+        let sizes_changed = self.apply_expandedness_policy();
+        if previous_selected_node != self.selection.selected_node || sizes_changed {
+            self.relayout();
+        }
+    }
+
     pub fn clear_selection(&mut self) {
         self.set_selection(None, None);
     }
@@ -227,6 +252,12 @@ impl GraphScene {
 
         self.selection.selected_node = selected_node;
         self.selection.selected_edge = selected_edge;
+        self.selection.selected_nodes.clear();
+        if let Some(selected_node) = selected_node
+            && selected_edge.is_none()
+        {
+            self.selection.selected_nodes.insert(selected_node);
+        }
 
         let sizes_changed = self.apply_expandedness_policy();
 
@@ -398,10 +429,18 @@ impl GraphScene {
         self.nodes = nodes;
         self.edges = edges;
 
+        self.selection
+            .selected_nodes
+            .retain(|selected| self.nodes.contains_key(selected));
+
         if let Some(selected) = self.selection.selected_node
-            && !self.nodes.contains_key(&selected)
+            && !self.selection.selected_nodes.contains(&selected)
         {
-            self.selection.selected_node = None;
+            self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
+        }
+
+        if self.selection.selected_node.is_none() && !self.selection.selected_nodes.is_empty() {
+            self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
         }
 
         if let Some(selected) = self.selection.selected_edge
@@ -606,5 +645,52 @@ mod tests {
         for id in ids {
             assert_eq!(scene.node_world_size(id), COLLAPSED_TASK_NODE_SIZE);
         }
+    }
+
+    #[test]
+    fn toggle_selection_adds_and_removes_nodes() {
+        let mut scene = GraphScene::empty_demo();
+        let a = GraphNodeId::Task(TaskId::from_bytes([1; 16]));
+        let b = GraphNodeId::Task(TaskId::from_bytes([2; 16]));
+        scene.insert_demo_node(a);
+        scene.insert_demo_node(b);
+
+        scene.toggle_node(a);
+        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(scene.selection().selected_node, Some(a));
+
+        scene.toggle_node(b);
+        assert_eq!(
+            scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(),
+            vec![a, b]
+        );
+        assert_eq!(scene.selection().selected_node, Some(b));
+
+        scene.toggle_node(b);
+        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(scene.selection().selected_node, Some(a));
+
+        scene.toggle_node(a);
+        assert!(scene.selection().selected_nodes.is_empty());
+        assert_eq!(scene.selection().selected_node, None);
+    }
+
+    #[test]
+    fn selecting_edge_clears_node_selection() {
+        let mut scene = GraphScene::empty_demo();
+        let a = GraphNodeId::Task(TaskId::from_bytes([1; 16]));
+        let b = GraphNodeId::Task(TaskId::from_bytes([2; 16]));
+        scene.insert_demo_node(a);
+        scene.insert_demo_node(b);
+
+        scene.toggle_node(a);
+        scene.toggle_node(b);
+        assert_eq!(scene.selection().selected_nodes.len(), 2);
+
+        let edge = GraphEdgeId { from: a, to: b };
+        scene.select_edge(edge);
+        assert!(scene.selection().selected_nodes.is_empty());
+        assert_eq!(scene.selection().selected_node, None);
+        assert_eq!(scene.selection().selected_edge, Some(edge));
     }
 }
