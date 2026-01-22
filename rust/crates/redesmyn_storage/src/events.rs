@@ -38,6 +38,12 @@ impl EventScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventRow {
+    pub rowid: i64,
+    pub record: EventRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventRecord {
     pub id: EventId,
     pub created_at_ms: i64,
@@ -73,6 +79,28 @@ impl EventRecord {
             kind: kind.into(),
             payload,
         }
+    }
+}
+
+fn scope_from_columns(
+    scope_kind: &str,
+    scope_workspace_id: Option<WorkspaceId>,
+    scope_repo_id: Option<RepoId>,
+) -> Result<EventScope, StorageError> {
+    match (scope_kind, scope_workspace_id, scope_repo_id) {
+        ("none", None, None) => Ok(EventScope::None),
+        ("repo", Some(workspace_id), Some(repo_id)) => Ok(EventScope::Repo {
+            workspace_id,
+            repo_id,
+        }),
+        ("none" | "repo", _, _) => Err(StorageError::InvalidData {
+            message: format!(
+                "invalid events scope columns: scope_kind={scope_kind} scope_workspace_id={scope_workspace_id:?} scope_repo_id={scope_repo_id:?}"
+            ),
+        }),
+        _ => Err(StorageError::InvalidData {
+            message: format!("unknown events scope_kind={scope_kind}"),
+        }),
     }
 }
 
@@ -130,36 +158,207 @@ where
         .fetch_optional(executor)
         .await?;
 
-    Ok(row.map(
-        |(id, created_at_ms, scope_kind, scope_workspace_id, scope_repo_id, kind, payload)| {
-            let scope = match (scope_kind.as_str(), scope_workspace_id, scope_repo_id) {
-                ("none", None, None) => EventScope::None,
-                ("repo", Some(workspace_id), Some(repo_id)) => EventScope::Repo {
-                    workspace_id,
-                    repo_id,
-                },
-                ("none" | "repo", _, _) => {
-                    return Err(StorageError::InvalidData {
-                        message: format!(
-                            "invalid events scope columns: scope_kind={scope_kind} scope_workspace_id={scope_workspace_id:?} scope_repo_id={scope_repo_id:?}"
-                        ),
-                    });
-                }
-                _ => {
-                    return Err(StorageError::InvalidData {
-                        message: format!("unknown events scope_kind={scope_kind}"),
-                    });
-                }
-            };
+    Ok(row
+        .map(
+            |(id, created_at_ms, scope_kind, scope_workspace_id, scope_repo_id, kind, payload)| {
+                Ok::<EventRecord, StorageError>(EventRecord {
+                    id,
+                    created_at_ms,
+                    scope: scope_from_columns(
+                        scope_kind.as_str(),
+                        scope_workspace_id,
+                        scope_repo_id,
+                    )?,
+                    kind,
+                    payload,
+                })
+            },
+        )
+        .transpose()?)
+}
 
-            Ok(EventRecord {
+pub async fn get_event_rowid_and_scope<'e, E>(
+    executor: E,
+    id: EventId,
+) -> Result<Option<(i64, EventScope)>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(i64, String, Option<WorkspaceId>, Option<RepoId>)> = sqlx::query_as(
+        r#"
+        SELECT
+            rowid,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id
+        FROM events
+        WHERE id = ?1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row
+        .map(|(rowid, scope_kind, scope_workspace_id, scope_repo_id)| {
+            Ok::<(i64, EventScope), StorageError>((
+                rowid,
+                scope_from_columns(scope_kind.as_str(), scope_workspace_id, scope_repo_id)?,
+            ))
+        })
+        .transpose()?)
+}
+
+pub async fn list_event_rows_in_scope_after_rowid<'e, E>(
+    executor: E,
+    scope: EventScope,
+    after_rowid: Option<i64>,
+    limit: usize,
+) -> Result<Vec<EventRow>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let rows: Vec<(i64, EventId, i64, String, Option<WorkspaceId>, Option<RepoId>, String, Vec<u8>)> =
+        match (scope, after_rowid) {
+            (EventScope::None, Some(after_rowid)) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT
+                        rowid,
+                        id,
+                        created_at_ms,
+                        scope_kind,
+                        scope_workspace_id,
+                        scope_repo_id,
+                        kind,
+                        payload
+                    FROM events
+                    WHERE scope_kind = 'none'
+                      AND scope_workspace_id IS NULL
+                      AND scope_repo_id IS NULL
+                      AND rowid > ?1
+                    ORDER BY rowid
+                    LIMIT ?2
+                    "#,
+                )
+                .bind(after_rowid)
+                .bind(limit as i64)
+                .fetch_all(executor)
+                .await?
+            }
+            (EventScope::Repo {
+                workspace_id,
+                repo_id,
+            }, Some(after_rowid)) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT
+                        rowid,
+                        id,
+                        created_at_ms,
+                        scope_kind,
+                        scope_workspace_id,
+                        scope_repo_id,
+                        kind,
+                        payload
+                    FROM events
+                    WHERE scope_kind = 'repo'
+                      AND scope_workspace_id = ?1
+                      AND scope_repo_id = ?2
+                      AND rowid > ?3
+                    ORDER BY rowid
+                    LIMIT ?4
+                    "#,
+                )
+                .bind(workspace_id)
+                .bind(repo_id)
+                .bind(after_rowid)
+                .bind(limit as i64)
+                .fetch_all(executor)
+                .await?
+            }
+            (EventScope::None, None) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT
+                        rowid,
+                        id,
+                        created_at_ms,
+                        scope_kind,
+                        scope_workspace_id,
+                        scope_repo_id,
+                        kind,
+                        payload
+                    FROM events
+                    WHERE scope_kind = 'none'
+                      AND scope_workspace_id IS NULL
+                      AND scope_repo_id IS NULL
+                    ORDER BY rowid
+                    LIMIT ?1
+                    "#,
+                )
+                .bind(limit as i64)
+                .fetch_all(executor)
+                .await?
+            }
+            (EventScope::Repo {
+                workspace_id,
+                repo_id,
+            }, None) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT
+                        rowid,
+                        id,
+                        created_at_ms,
+                        scope_kind,
+                        scope_workspace_id,
+                        scope_repo_id,
+                        kind,
+                        payload
+                    FROM events
+                    WHERE scope_kind = 'repo'
+                      AND scope_workspace_id = ?1
+                      AND scope_repo_id = ?2
+                    ORDER BY rowid
+                    LIMIT ?3
+                    "#,
+                )
+                .bind(workspace_id)
+                .bind(repo_id)
+                .bind(limit as i64)
+                .fetch_all(executor)
+                .await?
+            }
+        };
+
+    rows.into_iter()
+        .map(
+            |(
+                rowid,
                 id,
                 created_at_ms,
-                scope,
+                scope_kind,
+                scope_workspace_id,
+                scope_repo_id,
                 kind,
                 payload,
-            })
-        },
-    )
-    .transpose()?)
+            )| {
+                Ok(EventRow {
+                    rowid,
+                    record: EventRecord {
+                        id,
+                        created_at_ms,
+                        scope: scope_from_columns(
+                            scope_kind.as_str(),
+                            scope_workspace_id,
+                            scope_repo_id,
+                        )?,
+                        kind,
+                        payload,
+                    },
+                })
+            },
+        )
+        .collect()
 }

@@ -2,10 +2,13 @@ syntax = "proto3";
 
 package redesmyn.protocol.v1;
 
+import "envelope.proto";
+import "google/protobuf/timestamp.proto";
+
 // Artifact references and session event contracts (T-14).
 //
-// This file starts minimal in T-10 and will be expanded as the artifact/session
-// event contract is implemented.
+// Key rule: do NOT embed large blobs in durable events. Durable session events
+// must be compact and link to out-of-band content via `ArtifactRef`.
 
 // Small, stable artifact kind enum. Additive changes are allowed.
 enum ArtifactKind {
@@ -37,9 +40,166 @@ message ArtifactRef {
   bytes artifact_id = 1;
   ArtifactKind kind = 2;
   Hash content_hash = 3;
-  uint64 byte_len = 4;
-  string mime = 5;
+  optional uint64 byte_len = 4;
+  optional string mime = 5;
   StorageHint storage_hint = 6;
+}
+
+// Session events are durable, structured records for session viewer UX.
+//
+// Session semantics: session == conversation; turns are events.
+// A structured "send message" should produce new turn events, not a new session.
+
+// Session scope for querying: task-scoped sessions and user-managed chats.
+message SessionScope {
+  oneof kind {
+    TaskScope task = 1;
+    ChatScope chat = 2;
+  }
+}
+
+message TaskScope {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+// User-managed chat session scope. Pinned-to-epic relationships live elsewhere.
+message ChatScope {}
+
+// Session interface mode (structured vs interactive/tmux).
+enum InterfaceMode {
+  INTERFACE_MODE_UNSPECIFIED = 0;
+  INTERFACE_MODE_INTERACTIVE = 1;
+  INTERFACE_MODE_STRUCTURED = 2;
+}
+
+// Best-effort external conversation handle for structured agents.
+message ExternalSessionRef {
+  oneof ref {
+    ExternalSessionNone none = 1;
+    CodexThreadRef codex_thread = 2;
+    ClaudeSessionRef claude_session = 3;
+    UnknownExternalSessionRef unknown = 100;
+  }
+}
+
+message ExternalSessionNone {}
+
+message CodexThreadRef {
+  // Stable external conversation id.
+  string thread_id = 1;
+  // Best-effort external turn id.
+  optional string turn_id = 2;
+}
+
+message ClaudeSessionRef {
+  // Stable external conversation id.
+  string session_id = 1;
+}
+
+message UnknownExternalSessionRef {
+  string type = 1;
+  bytes json_payload = 2;
+}
+
+// Durable session event record.
+message SessionEvent {
+  // SessionEventId (ULID bytes, length = 16).
+  bytes session_event_id = 1;
+  // Wall-clock timestamp for ordering/pagination.
+  google.protobuf.Timestamp created_at = 2;
+
+  SessionScope scope = 3;
+
+  // SessionId (ULID bytes, length = 16): conversation id.
+  bytes session_id = 4;
+
+  // Best-effort turn identifier; stable within an external harness when available.
+  optional string turn_id = 5;
+
+  oneof kind {
+    SessionStarted session_started = 10;
+    SessionEnded session_ended = 11;
+    TurnStarted turn_started = 12;
+    TurnCompleted turn_completed = 13;
+    UserMessage user_message = 14;
+    AssistantMessage assistant_message = 15;
+    ToolInvocation tool_invocation = 16;
+    ToolResult tool_result = 17;
+    StatusUpdate status_update = 18;
+    ArtifactEmitted artifact_emitted = 19;
+    UnknownSessionEvent unknown = 100;
+  }
+}
+
+message SessionStarted {}
+
+message SessionEnded {}
+
+message TurnStarted {
+  InterfaceMode interface_mode = 1;
+  ExternalSessionRef external_session_ref = 2;
+  optional string idempotency_key = 3;
+  optional uint64 log_offset_bytes = 4;
+}
+
+message TurnCompleted {
+  InterfaceMode interface_mode = 1;
+  ExternalSessionRef external_session_ref = 2;
+  optional int32 exit_code = 3;
+  ErrorEnvelope error = 4;
+}
+
+// User message text is bounded; use `full_text_artifact` for large content.
+message UserMessage {
+  string text = 1;
+  string preview = 2;
+  ArtifactRef full_text_artifact = 3;
+}
+
+// Assistant message text is bounded; use `full_text_artifact` for large content.
+message AssistantMessage {
+  string text = 1;
+  string preview = 2;
+  ArtifactRef full_text_artifact = 3;
+}
+
+// Tool invocation parameters are bounded; use artifacts for large inputs.
+message ToolInvocation {
+  string tool_name = 1;
+  optional string tool_call_id = 2;
+  string input_preview = 3;
+  ArtifactRef input_artifact = 4;
+}
+
+// Tool results are bounded; use artifacts for large outputs.
+message ToolResult {
+  string tool_name = 1;
+  optional string tool_call_id = 2;
+  string output_preview = 3;
+  ArtifactRef output_artifact = 4;
+  ErrorEnvelope error = 5;
+}
+
+enum TurnState {
+  TURN_STATE_UNSPECIFIED = 0;
+  TURN_STATE_RUNNING = 1;
+  TURN_STATE_BLOCKED = 2;
+  TURN_STATE_COMPLETED = 3;
+}
+
+// Status updates are compact; do not embed full logs or diffs.
+message StatusUpdate {
+  TurnState turn_state = 1;
+  optional bool blocking = 2;
+  optional uint32 progress_percent = 3;
+  optional string message = 4;
+}
+
+// Tie an out-of-band artifact to a session and (optionally) a turn.
+message ArtifactEmitted {
+  ArtifactRef artifact = 1;
+  optional string label = 2;
 }
 
 // Forward-compatible placeholder for session event union fallbacks (T-14).
@@ -49,4 +209,3 @@ message UnknownSessionEvent {
   // Best-effort JSON payload for diagnostics/legacy rendering.
   bytes json_payload = 2;
 }
-

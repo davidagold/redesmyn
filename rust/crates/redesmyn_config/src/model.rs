@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::ffi::OsStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,19 @@ impl RustConfig {
         }
         if self.control_plane.db.path.as_os_str().is_empty() {
             return Err(ValidationError::EmptyDbPath);
+        }
+        if self.control_plane.db.path.file_name() == Some(OsStr::new("redesmyn.sqlite3"))
+            && self
+                .control_plane
+                .db
+                .path
+                .parent()
+                .and_then(|p| p.file_name())
+                == Some(OsStr::new(crate::paths::DEFAULT_STATE_DIR_NAME))
+        {
+            return Err(ValidationError::LegacyDbPathNotAllowed {
+                path: self.control_plane.db.path.clone(),
+            });
         }
         if self
             .control_plane

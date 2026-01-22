@@ -18,6 +18,11 @@ pub enum ValidationError {
     #[error("control_plane.db.path must not be empty")]
     EmptyDbPath,
 
+    #[error(
+        "control_plane.db.path must not point at the legacy Alembic DB ({path:?}); use `.redesmyn/redesmyn_rust.sqlite3` instead"
+    )]
+    LegacyDbPathNotAllowed { path: PathBuf },
+
     #[error("control_plane.api.client_socket_path must not be empty")]
     EmptyClientSocketPath,
 

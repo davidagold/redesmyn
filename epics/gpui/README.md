@@ -295,6 +295,7 @@ Layout direction:
 - A graph-first right pane.
 - “Overseer” is developer shorthand only; the UI does not introduce a new user-facing construct.
 - Zed is the primary reference implementation for GPUI ergonomics/perf; implement patterns from scratch (see T-44).
+- GPUI engineering notes/gotchas: `epics/gpui/GPUI_ENGINEERING_NOTES.md`.
 
 Tasks:
 
@@ -331,6 +332,7 @@ Tasks:
 - `epics/gpui/tasks/T-51/README.md`: Deterministic layout engine v1 (variable node sizes; expand/collapse relayout).
 - `epics/gpui/tasks/T-52/README.md`: Task node view (compact/expanded; measurement; selection affordances).
 - `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
+- `epics/gpui/tasks/T-69/README.md`: Graph node virtualization + LOD (viewport culling; node render modes).
 - `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection, focus mode path).
 - `epics/gpui/tasks/T-55/README.md`: Expanded task card: details + selection integration (no sidebar drawer).
 - `epics/gpui/tasks/T-56/README.md`: Bulk selection + action bar (multi-select UX).
@@ -341,6 +343,7 @@ Sequencing intent:
 
 - Land renderer + layout foundations early (T-50, T-51).
 - Build node/edge rendering and viewport behaviors in parallel (T-52..T-54).
+- Add node virtualization/LOD once the node view/measurement loop is stable (T-69).
 - Integrate details and bulk actions after selection/interaction are stable (T-55, T-56).
 - Keep trunk timeline optional so it doesn’t block core graph parity (T-57).
 
@@ -369,3 +372,4 @@ Tasks:
 - `epics/gpui/tasks/T-64/README.md`: Expanded task card: latest session view (latest session only).
 - `epics/gpui/tasks/T-65/README.md`: Interactive (tmux) session placeholder UX (attach/copy; no terminal emulator in port).
 - `epics/gpui/tasks/T-66/README.md`: Session viewer AI-testability (UI driver actions + semantic snapshot + tests).
+- `epics/gpui/tasks/T-70/README.md`: Desktop fixture mode for SessionView (seeded DB + demo events).

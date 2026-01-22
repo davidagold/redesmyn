@@ -4,7 +4,10 @@
 //! - out-of-proc clients over UDS/TCP (framed + Protobuf by default), and
 //! - embedded in-proc clients (typed messages; optional codec loopback in tests).
 
-use redesmyn_ids::{EventId, RequestId, SubscriptionId};
+use redesmyn_ids::{
+    CommandId, CommandUpdateId, EpicId, EventId, HostId, HostInstanceId, RepoId, RequestId,
+    SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
+};
 
 use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Timestamp};
 
@@ -140,16 +143,130 @@ pub struct GetEpicGraphRequest {
     pub epic_slug: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Unknown,
+    Todo,
+    InProgress,
+    Blocked,
+    Done,
+}
+
+impl Default for TaskState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeReadiness {
+    Unknown,
+    Ready,
+    Blocked,
+}
+
+impl Default for MergeReadiness {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EpicTaskNode {
     pub task_slug: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<TaskId>,
+    #[serde(default)]
+    pub state: TaskState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_name: Option<String>,
+    #[serde(default)]
+    pub merge_readiness: MergeReadiness,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EpicTaskEdge {
     pub from_task_slug: String,
     pub to_task_slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_task_id: Option<TaskId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandState {
+    Unknown,
+    Accepted,
+    Running,
+    Blocked,
+    Resumable,
+    Succeeded,
+    Failed,
+    Canceled,
+}
+
+impl Default for CommandState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommandUpdateSummary {
+    pub update_id: CommandUpdateId,
+    pub created_at: Timestamp,
+    pub state: CommandState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_current: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_total: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommandSummary {
+    pub command_id: CommandId,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub kind: String,
+    pub state: CommandState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_update: Option<CommandUpdateSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DaemonPresenceSummary {
+    pub host_instance_id: HostInstanceId,
+    pub host_id: HostId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    pub connected_at: Timestamp,
+    pub last_heartbeat_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disconnected_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSummary {
+    pub session_id: SessionId,
+    pub session_event_id: SessionEventId,
+    pub task_id: TaskId,
+    pub last_event_at: Timestamp,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -159,6 +276,22 @@ pub struct EpicGraph {
     pub nodes: Vec<EpicTaskNode>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<EpicTaskEdge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_id: Option<EpicId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_id: Option<RepoId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command_summaries: Vec<CommandSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub daemon_presences: Vec<DaemonPresenceSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_summaries: Vec<SessionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_of_event_id: Option<EventId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

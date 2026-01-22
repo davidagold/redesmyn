@@ -3,6 +3,7 @@ syntax = "proto3";
 package redesmyn.protocol.v1;
 
 import "envelope.proto";
+import "daemon.proto";
 import "google/protobuf/timestamp.proto";
 
 // Client ↔ control plane API messages (T-12).
@@ -106,14 +107,89 @@ message GetEpicGraphRequest {
   string epic_slug = 1;
 }
 
+// Task state for graph rendering. Additive changes are allowed.
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_TODO = 1;
+  TASK_STATE_IN_PROGRESS = 2;
+  TASK_STATE_BLOCKED = 3;
+  TASK_STATE_DONE = 4;
+}
+
+// Merge readiness for a task branch. Additive changes are allowed.
+enum MergeReadiness {
+  MERGE_READINESS_UNSPECIFIED = 0;
+  MERGE_READINESS_UNKNOWN = 1;
+  MERGE_READINESS_READY = 2;
+  MERGE_READINESS_BLOCKED = 3;
+}
+
 message EpicTaskNode {
   string task_slug = 1;
   string title = 2;
+
+  // Stable identifiers (ULID bytes, length = 16).
+  bytes task_id = 10;
+  bytes parent_task_id = 11;
+
+  TaskState state = 12;
+  string branch_name = 13;
+  MergeReadiness merge_readiness = 14;
 }
 
 message EpicTaskEdge {
   string from_task_slug = 1;
   string to_task_slug = 2;
+
+  // Stable identifiers (ULID bytes, length = 16).
+  bytes from_task_id = 10;
+  bytes to_task_id = 11;
+}
+
+message CommandUpdateSummary {
+  // CommandUpdateId (ULID bytes, length = 16).
+  bytes update_id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  CommandState state = 3;
+  string message = 4;
+  optional uint64 progress_current = 5;
+  optional uint64 progress_total = 6;
+}
+
+message CommandSummary {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  string kind = 4;
+  CommandState state = 5;
+  // TaskId (ULID bytes, length = 16).
+  bytes target_task_id = 6;
+  CommandUpdateSummary last_update = 7;
+}
+
+message DaemonPresenceSummary {
+  // HostInstanceId (ULID bytes, length = 16).
+  bytes host_instance_id = 1;
+  // HostId (ULID bytes, length = 16).
+  bytes host_id = 2;
+  string hostname = 3;
+  google.protobuf.Timestamp connected_at = 4;
+  google.protobuf.Timestamp last_heartbeat_at = 5;
+  google.protobuf.Timestamp disconnected_at = 6;
+}
+
+message SessionSummary {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // SessionEventId (ULID bytes, length = 16).
+  bytes session_event_id = 2;
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 3;
+  google.protobuf.Timestamp last_event_at = 4;
+  string kind = 5;
+  string turn_id = 6;
+  string message_preview = 7;
 }
 
 // Minimal, typed graph representation (schema will evolve; additive changes only).
@@ -121,6 +197,20 @@ message EpicGraph {
   string epic_slug = 1;
   repeated EpicTaskNode nodes = 2;
   repeated EpicTaskEdge edges = 3;
+
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 10;
+  string epic_title = 11;
+  // RepoScope identifiers (ULID bytes, length = 16).
+  bytes workspace_id = 12;
+  bytes repo_id = 13;
+
+  repeated CommandSummary command_summaries = 20;
+  repeated DaemonPresenceSummary daemon_presences = 21;
+  repeated SessionSummary session_summaries = 22;
+
+  // EventId (ULID bytes, length = 16). Snapshot cursor for subscriptions.
+  bytes as_of_event_id = 30;
 }
 
 message GetEpicGraphResponse {

@@ -8,10 +8,13 @@ publish = false
 
 [dependencies]
 redesmyn_config.workspace = true
-redesmyn_domain.workspace = true
-redesmyn_exec.workspace = true
-redesmyn_git.workspace = true
 redesmyn_ids.workspace = true
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_transport.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }

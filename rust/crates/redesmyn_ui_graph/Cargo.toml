@@ -1,0 +1,18 @@
+[package]
+name = "redesmyn_ui_graph"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+gpui.workspace = true
+redesmyn_graph_layout.workspace = true
+redesmyn_ids.workspace = true
+redesmyn_logging.workspace = true
+redesmyn_protocol.workspace = true
+redesmyn_ui.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui = { workspace = true, features = ["wayland", "x11"] }

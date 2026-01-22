@@ -247,3 +247,62 @@ Implement a shared pattern for UI-triggered actions:
   - `dashboard/src/index.css` (color tokens).
 - Widget conventions (web today):
   - `dashboard/src/components/ui/` (button/tooltip/panels; includes “disabledReason” UX).
+
+## Inventory (as of T-44)
+
+See also: `epics/gpui/GPUI_ENGINEERING_NOTES.md`.
+
+### GPUI core primitives we rely on
+
+- **Element tree + layout**: `div()` + style chaining (flex/gap/padding/borders/rounded/shadows), plus units like `px(...)`, `relative(...)`, `Pixels`, `AbsoluteLength`.
+- **Entities/state**: `cx.new(...)`, `Entity<T>`, `Context<T>::notify()`, `Context<T>::subscribe(...)`, and global state via `App::set_global(...)` + `Context<T>::observe_global::<G>(...)`.
+- **Actions + key dispatch**:
+  - Typed actions via `actions!(...)`.
+  - Key binding via `KeyBinding` + `App::bind_keys(...)`.
+  - View-local scoping via `.key_context("...")`.
+  - Handling via `.on_action(...)`.
+- **Focus**: `FocusHandle`, `Focusable`, `.track_focus(...)`, and `Window::focus(...)`.
+- **Text input + IME plumbing**:
+  - `EntityInputHandler` + `ElementInputHandler` wired via `Window::handle_input(...)`.
+  - UTF-16 selection/range contracts via `UTF16Selection` plus `bounds_for_range` / `character_index_for_point` for IME candidate window placement.
+- **Scrolling**:
+  - `ScrollHandle`, `div().overflow_y_scroll()`, `.track_scroll(...)`, `.scrollbar_width(...)`, `.block_mouse_except_scroll()`.
+  - Virtualized list primitives: `UniformList` (uniform row height) and `list` (variable height).
+- **Async**: `Context<T>::spawn(...)` + `AsyncApp`, `Task`, and `Timer::after(...)`.
+- **Animation**: `with_animation(...)`, `Animation`, and easing functions.
+- **Tooltips**: `Div::tooltip(...)` / `hoverable_tooltip(...)`.
+
+### `redesmyn_ui` (what we built)
+
+Location: `rust/crates/redesmyn_ui`.
+
+- **Theme + tokens**
+  - `settings::ThemePreference` (`dark` / `light` / `system`) persisted to `ui_settings.json` adjacent to `redesmyn_config::global_config_path()`.
+  - `styles::UiTheme` derived from preference + `WindowAppearance`, with typed tokens:
+    - `ColorTokens` (Rose Pine / Rose Pine Dawn)
+    - `SpacingTokens` (density + scale)
+    - `RadiusTokens`, `TypographyTokens`, `AnimationDurations`
+  - Global wiring via `UiContext` + `utils::theme_for_window(...)`.
+- **No silent actions**
+  - `utils::UserActionState`: minimal shared state for in-flight actions (`in_flight`, `error`, `start/succeed/fail`) to drive progress + disable triggers.
+- **Shared widgets**
+  - `components::TextButton` / `components::IconButton` (+ `ButtonKind`) with disabled reason tooltips.
+  - `components::Tooltip` (content view used by `Div::tooltip`).
+  - `components::Callout` (`Info|Warning|Danger`) for in-place actionable errors.
+  - `components::ProgressPill` with text-based “…” animation (no spinner wheels).
+  - `components::ScrollArea` (thin wrapper over GPUI scroll primitives).
+  - `components::SplitPane` (resizable + collapsible; `SplitPaneState` is `serde`-serializable for persistence).
+  - `components::TextInput` / `components::TextArea` with shared key bindings via `components::bind_text_input_keys(...)`.
+
+### Demo surface (end-to-end)
+
+- `rust/crates/redesmyn_desktop/src/foundations_demo.rs`: `FoundationsDemo` uses theme toggles, buttons/tooltips, callouts, progress, split pane, scroll area, and text input/area.
+
+### GPUI gaps / follow-ups
+
+- **Widget gaps**: GPUI core intentionally does not ship a “full widget kit” (buttons, text fields, toasts, etc.). `redesmyn_ui` is our merge-friendly layer for these primitives.
+- **Text editing depth**: current `TextArea` is intentionally minimal (no wrapping, no up/down navigation, limited editor semantics); harden before session/diff viewers.
+- **Scrollbars**: current `ScrollArea` is minimal; follow up with consistent scrollbar UX (show/hide, reserved thumb space, theming).
+- **Build quirks**
+  - `gpui` is configured with the `runtime_shaders` feature to avoid requiring a local Metal toolchain at build time on macOS.
+  - `core-text` is pinned in `rust/Cargo.lock` to avoid a `core-graphics` type mismatch in transitive font dependencies.

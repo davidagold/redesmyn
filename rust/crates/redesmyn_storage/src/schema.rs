@@ -87,6 +87,32 @@ impl fmt::Display for MergeReadiness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskState {
+    Todo,
+    InProgress,
+    Blocked,
+    Done,
+}
+
+impl TaskState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Todo => "todo",
+            Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+        }
+    }
+}
+
+impl fmt::Display for TaskState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskRelationKind {
     After,
 }
@@ -132,4 +158,3 @@ impl fmt::Display for SessionScopeKind {
         f.write_str(self.as_str())
     }
 }
-

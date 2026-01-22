@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::{fmt, str::FromStr};
 
-use redesmyn_ids::{HostId, HostInstanceId, MsgId, RepoId, WorkspaceId};
+use redesmyn_ids::{MsgId, RepoId, WorkspaceId};
 
 #[doc(hidden)]
 pub mod pb {
@@ -18,8 +18,19 @@ pub mod pb {
 
 pub use redesmyn_errors::ErrorCategory;
 
+pub mod artifacts;
 pub mod client;
 pub mod daemon;
+pub mod session;
+
+pub use artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
+pub use session::{
+    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
+    SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
+    ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+};
+
+pub use daemon::DaemonHello;
 
 /// Optional structured detail for debugging/UX (no stack traces).
 ///
@@ -417,26 +428,18 @@ impl ProtocolEnvelope {
     }
 }
 
-/// Daemon → control plane handshake payload (T-11).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct DaemonHello {
-    pub host_id: HostId,
-    pub host_instance_id: HostInstanceId,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    pub supported_protocol: ProtocolVersion,
-}
-
 mod protobuf;
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DaemonHello, ErrorCategory, ErrorEnvelope, HostId, HostInstanceId, MsgId, PROTOCOL_MAJOR,
-        PROTOCOL_MINOR, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
+        DaemonHello, ErrorCategory, ErrorEnvelope, MsgId, PROTOCOL_MAJOR, PROTOCOL_MINOR,
+        ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
     };
 
-    use redesmyn_ids::{EventId, RequestId, SubscriptionId};
+    use redesmyn_ids::{
+        CommandId, EventId, HostId, HostInstanceId, RepoId, RequestId, SubscriptionId, WorkspaceId,
+    };
 
     use prost::Message;
 
@@ -446,6 +449,10 @@ mod tests {
         HealthResponse, ListEpicsRequest, ListEpicsResponse, Request, RequestPayload, Response,
         ResponseResult, Subscribe, Subscribed, SubscriptionEvent, SubscriptionFilter,
         SubscriptionTopic, Unsubscribe,
+    };
+    use crate::daemon::{
+        CommandProgress, CommandState, CommandUpdate, DaemonCapabilities, DaemonFrame,
+        DaemonMessage, GitEvent, TelemetryEvent, TelemetryEventBatch,
     };
     use crate::pb::redesmyn::protocol::v1 as pbv1;
 
@@ -518,6 +525,42 @@ mod tests {
     }
 
     #[test]
+    fn daemon_capabilities_accepts_legacy_and_canonical_wire_strings() {
+        let daemon_emitted = DaemonCapabilities::from_wire_strings([
+            "repo_execution",
+            "worktrees",
+            "git_observation",
+            "session_exec",
+            "session_attach_tmux",
+            "artifacts",
+        ]);
+
+        assert!(daemon_emitted.supports_repo_execution);
+        assert!(daemon_emitted.supports_worktrees);
+        assert!(daemon_emitted.supports_git_observation);
+        assert!(daemon_emitted.supports_session_exec);
+        assert!(daemon_emitted.supports_session_attach_tmux);
+        assert!(daemon_emitted.supports_artifacts);
+
+        let wire = daemon_emitted.to_wire_strings();
+        assert!(wire.contains(&"repo_execution".to_string()));
+        assert!(!wire.contains(&"supports_repo_execution".to_string()));
+
+        let round_tripped = DaemonCapabilities::from_wire_strings(wire.iter().map(String::as_str));
+        assert_eq!(round_tripped, daemon_emitted);
+
+        let legacy = DaemonCapabilities::from_wire_strings([
+            "supports_repo_execution",
+            "supports_worktrees",
+            "supports_git_observation",
+            "supports_session_exec",
+            "supports_session_attach_tmux",
+            "supports_artifacts",
+        ]);
+        assert_eq!(legacy, daemon_emitted);
+    }
+
+    #[test]
     fn protocol_envelope_includes_repo_scope_and_optional_ids() {
         let msg_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
         let correlation_id: MsgId = "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap();
@@ -555,6 +598,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(scope, Scope::Unknown);
+    }
+
+    #[test]
+    fn session_scope_deserializes_unknown_variant() {
+        let scope: crate::SessionScope = serde_json::from_str(
+            r#"{"type":"epic","epic_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","extra":{"nested":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(scope, crate::SessionScope::Unknown);
     }
 
     #[test]
@@ -644,6 +696,48 @@ mod tests {
     }
 
     #[test]
+    fn protobuf_roundtrips_for_daemon_frames() {
+        let repo_scope = RepoScope::new(WorkspaceId::new(), RepoId::new());
+
+        let batch = TelemetryEventBatch {
+            scope: repo_scope,
+            events: vec![TelemetryEvent::Git(GitEvent {
+                event_type: "git.commit".to_string(),
+                json_payload: br#"{"sha":"deadbeef"}"#.to_vec(),
+            })],
+        };
+
+        let frame = DaemonFrame::new(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            DaemonMessage::TelemetryEventBatch(batch),
+        );
+
+        let bytes = frame.to_protobuf().encode_to_vec();
+        let pb = pbv1::DaemonFrame::decode(bytes.as_slice()).unwrap();
+        let decoded = DaemonFrame::try_from_protobuf(pb).unwrap();
+        assert_eq!(decoded, frame);
+
+        let update = CommandUpdate {
+            command_id: CommandId::new(),
+            state: CommandState::Running,
+            message: Some("working".to_string()),
+            progress: Some(CommandProgress { percent: 42 }),
+            detail: None,
+            error: None,
+        };
+
+        let frame = DaemonFrame::new(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            DaemonMessage::CommandUpdate(update),
+        );
+
+        let bytes = frame.to_protobuf().encode_to_vec();
+        let pb = pbv1::DaemonFrame::decode(bytes.as_slice()).unwrap();
+        let decoded = DaemonFrame::try_from_protobuf(pb).unwrap();
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
     fn protobuf_and_json_roundtrip_for_client_frames() {
         let request_id = RequestId::new();
         let subscription_id = SubscriptionId::new();
@@ -701,11 +795,26 @@ mod tests {
                             nodes: vec![EpicTaskNode {
                                 task_slug: "T-12".to_string(),
                                 title: "Client API over UDS".to_string(),
+                                task_id: None,
+                                parent_task_id: None,
+                                state: crate::client::TaskState::Unknown,
+                                branch_name: None,
+                                merge_readiness: crate::client::MergeReadiness::Unknown,
                             }],
                             edges: vec![EpicTaskEdge {
                                 from_task_slug: "T-10".to_string(),
                                 to_task_slug: "T-12".to_string(),
+                                from_task_id: None,
+                                to_task_id: None,
                             }],
+                            epic_id: None,
+                            epic_title: None,
+                            workspace_id: None,
+                            repo_id: None,
+                            command_summaries: Vec::new(),
+                            daemon_presences: Vec::new(),
+                            session_summaries: Vec::new(),
+                            as_of_event_id: None,
                         },
                     }),
                 }),
@@ -758,6 +867,181 @@ mod tests {
             let decoded_pb = pbv1::ClientFrame::decode(bytes.as_slice()).unwrap();
             let decoded = ClientFrame::try_from_protobuf(decoded_pb).unwrap();
             assert_eq!(decoded, frame);
+        }
+    }
+
+    #[test]
+    fn protobuf_and_json_roundtrip_for_artifacts_and_session_events() {
+        use crate::{
+            ArtifactEmitted, ArtifactKind, ArtifactRef, ExternalSessionRef, Hash, InterfaceMode,
+            SessionEnded, SessionEvent, SessionEventKind, SessionScope, SessionStarted,
+            StatusUpdate, StorageHint, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
+            TurnState, UnknownSessionEvent, UserMessage,
+        };
+
+        let artifact_ref = ArtifactRef {
+            artifact_id: redesmyn_ids::ArtifactId::new(),
+            kind: ArtifactKind::Log,
+            content_hash: Some(Hash {
+                algorithm: "sha256".to_string(),
+                digest: vec![1, 2, 3],
+            }),
+            byte_len: Some(123),
+            mime: Some("text/plain".to_string()),
+            storage_hint: Some(StorageHint::LocalPath {
+                local_path: "/tmp/demo.log".to_string(),
+            }),
+        };
+
+        let json = serde_json::to_string(&artifact_ref).unwrap();
+        let decoded_json: ArtifactRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded_json, artifact_ref);
+
+        let pb = artifact_ref.to_protobuf();
+        let bytes = pb.encode_to_vec();
+        let decoded_pb = pbv1::ArtifactRef::decode(bytes.as_slice()).unwrap();
+        let decoded = ArtifactRef::try_from_protobuf(decoded_pb).unwrap();
+        assert_eq!(decoded, artifact_ref);
+
+        let created_at: Timestamp = serde_json::from_str(r#""2026-01-19T00:00:00Z""#).unwrap();
+
+        let events = vec![
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Task {
+                    task_id: redesmyn_ids::TaskId::new(),
+                },
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::SessionStarted(SessionStarted {}),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::TurnStarted(TurnStarted {
+                    interface_mode: InterfaceMode::Structured,
+                    external_session_ref: Some(ExternalSessionRef::CodexThread {
+                        thread_id: "thread-1".to_string(),
+                        turn_id: Some("ext-turn-1".to_string()),
+                    }),
+                    idempotency_key: Some("idem-1".to_string()),
+                    log_offset_bytes: Some(42),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::UserMessage(UserMessage {
+                    text: "hello".to_string(),
+                    preview: "hello".to_string(),
+                    full_text_artifact: Some(artifact_ref.clone()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ToolInvocation(ToolInvocation {
+                    tool_name: "read_file".to_string(),
+                    tool_call_id: Some("call-1".to_string()),
+                    input_preview: "{\"path\":\"README.md\"}".to_string(),
+                    input_artifact: Some(artifact_ref.clone()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ToolResult(ToolResult {
+                    tool_name: "read_file".to_string(),
+                    tool_call_id: Some("call-1".to_string()),
+                    output_preview: "ok".to_string(),
+                    output_artifact: Some(artifact_ref.clone()),
+                    error: None,
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::StatusUpdate(StatusUpdate {
+                    turn_state: TurnState::Running,
+                    blocking: Some(false),
+                    progress_percent: Some(25),
+                    message: Some("working".to_string()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::ArtifactEmitted(ArtifactEmitted {
+                    artifact: artifact_ref.clone(),
+                    label: Some("turn log".to_string()),
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: Some("turn-1".to_string()),
+                kind: SessionEventKind::TurnCompleted(TurnCompleted {
+                    interface_mode: InterfaceMode::Structured,
+                    external_session_ref: Some(ExternalSessionRef::CodexThread {
+                        thread_id: "thread-1".to_string(),
+                        turn_id: Some("ext-turn-1".to_string()),
+                    }),
+                    exit_code: Some(0),
+                    error: None,
+                }),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::SessionEnded(SessionEnded {}),
+            },
+            SessionEvent {
+                session_event_id: redesmyn_ids::SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Chat,
+                session_id: redesmyn_ids::SessionId::new(),
+                turn_id: None,
+                kind: SessionEventKind::Unknown(UnknownSessionEvent {
+                    event_type: "demo.unknown".to_string(),
+                    json_payload: vec![9, 8, 7],
+                }),
+            },
+        ];
+
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            let decoded_json: SessionEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded_json, event);
+
+            let pb = event.to_protobuf();
+            let bytes = pb.encode_to_vec();
+            let decoded_pb = pbv1::SessionEvent::decode(bytes.as_slice()).unwrap();
+            let decoded = SessionEvent::try_from_protobuf(decoded_pb).unwrap();
+            assert_eq!(decoded, event);
         }
     }
 }

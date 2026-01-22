@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.88"
 version = "0.1.0"
 
 [workspace.dependencies]
@@ -23,11 +23,16 @@ redesmyn_logging = { path = "crates/redesmyn_logging" }
 redesmyn_protocol = { path = "crates/redesmyn_protocol" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
 redesmyn_transport = { path = "crates/redesmyn_transport" }
+redesmyn_ui = { path = "crates/redesmyn_ui" }
+redesmyn_ui_graph = { path = "crates/redesmyn_ui_graph" }
 
 # External dependencies (pinned versions; member crates should use `workspace = true`).
 clap = { version = "4.5.54", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 config = "0.14.1"
 dotenvy = "0.15.7"
+# `runtime_shaders` avoids requiring the Metal toolchain at build time on macOS.
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "macos-blade", "runtime_shaders"] }
+libc = "0.2.180"
 prost = "0.14.3"
 prost-build = "0.14.3"
 prost-types = "0.14.3"
@@ -42,3 +47,8 @@ tokio = { version = "1.49.0", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = "1.2.1"
+
+[patch.crates-io]
+# Temporary: zune-jpeg 0.5.x fails to compile on aarch64 due to missing `unsafe`
+# around NEON intrinsics. We vendor a tiny fix so GPUI can build on Apple Silicon.
+zune-jpeg = { path = "vendor/zune-jpeg" }

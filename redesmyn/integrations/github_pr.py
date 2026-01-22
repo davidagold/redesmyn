@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import cast
 
 import httpx
 
@@ -95,10 +96,11 @@ def _parse_pr_payload(
     base_sha: str | None = None
     base = payload.get("base")
     if isinstance(base, dict):
-        ref = base.get("ref")
+        base_dict = cast(dict[str, object], base)
+        ref = base_dict.get("ref")
         if isinstance(ref, str) and ref:
             base_branch = ref
-        sha = base.get("sha")
+        sha = base_dict.get("sha")
         if isinstance(sha, str) and sha:
             base_sha = sha
 
@@ -106,10 +108,11 @@ def _parse_pr_payload(
     head_sha: str | None = None
     head = payload.get("head")
     if isinstance(head, dict):
-        ref = head.get("ref")
+        head_dict = cast(dict[str, object], head)
+        ref = head_dict.get("ref")
         if isinstance(ref, str) and ref:
             head_branch = ref
-        sha = head.get("sha")
+        sha = head_dict.get("sha")
         if isinstance(sha, str) and sha:
             head_sha = sha
 

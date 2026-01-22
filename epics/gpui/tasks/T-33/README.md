@@ -67,6 +67,16 @@ Define a small typed surface returned by the parser (exact type shape is up to i
 - capabilities (e.g., can_resume_by_id, can_detect_turn_complete, can_stream_semantic_events),
 - external session reference updates (thread_id/turn_id).
 
+Implementation note:
+
+- The current Rust implementation emits `CodexParserEvent` (turn started/completed + assistant message)
+  plus `CodexTurnStatus`/capabilities and the current `ExternalSessionRef`.
+- It does **not** emit `redesmyn_protocol::session::SessionEvent` directly; the daemon/supervisor layer
+  (e.g. T-35) should perform:
+  - mapping into `SessionEventKind`/`SessionEvent`,
+  - T-14 size bounding (avoid large blobs; use artifacts when needed),
+  - and propagation of `external_session_ref` into `TurnStarted` / `TurnCompleted` (best-effort).
+
 ### 4) Performance
 
 - Avoid unbounded buffers; keep bounded tail buffers for prompt heuristics.
@@ -101,4 +111,3 @@ Add unit tests equivalent to:
   - `redesmyn/agent_interface/codex.py` (`CodexAgent`).
 - Tests (Python today):
   - `tests/test_codex_agent_interface.py`
-

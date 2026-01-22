@@ -1,60 +1,67 @@
-use redesmyn_ids::MsgId;
-use redesmyn_protocol::daemon::{
-    DaemonFrame, DaemonMessage, HelloRequest, HelloResponse, MessageEnvelope,
-};
+use redesmyn_ids::{HostId, HostInstanceId};
+use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion};
+use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonHello, DaemonMessage};
 use redesmyn_transport::DaemonConnection;
 use redesmyn_transport::codec::{JsonCodec, ProtobufCodec};
 use redesmyn_transport::framed::FramedEndpoint;
 use redesmyn_transport::in_proc::InProcEndpoint;
 
-async fn hello_roundtrip<C, D>(mut control_plane: C, mut daemon: D)
+async fn handshake_roundtrip<C, D>(mut control_plane: C, mut daemon: D)
 where
     C: DaemonConnection + Send + 'static,
     D: DaemonConnection + Send + 'static,
 {
-    let request_id = MsgId::new();
-    let request = DaemonFrame::new(
-        MessageEnvelope::new(request_id),
-        DaemonMessage::HelloRequest(HelloRequest {
-            client_name: "control-plane".to_string(),
-        }),
-    );
+    let hello = DaemonHello {
+        host_id: HostId::new(),
+        host_instance_id: HostInstanceId::new(),
+        capabilities: vec!["git".to_string()],
+        supported_protocol: ProtocolVersion::CURRENT,
+    };
 
-    let daemon_task = tokio::spawn(async move {
-        let received = daemon.recv().await.unwrap();
-        let request_envelope = received.envelope;
+    let request_envelope = ProtocolEnvelope::new();
+    let request_id = request_envelope.msg_id;
 
-        let DaemonMessage::HelloRequest(request) = received.message else {
-            panic!("expected HelloRequest, got {:?}", received.message);
+    let request = DaemonFrame::new(request_envelope, DaemonMessage::DaemonHello(hello.clone()));
+
+    let control_plane_task = tokio::spawn(async move {
+        let received = control_plane.recv().await.unwrap();
+
+        let DaemonMessage::DaemonHello(received_hello) = received.message else {
+            panic!("expected DaemonHello, got {:?}", received.message);
         };
-        assert_eq!(request.client_name, "control-plane");
+        assert_eq!(received_hello, hello);
+
+        let ack = ControlPlaneHelloAck {
+            accepted_protocol: ProtocolVersion::CURRENT,
+            capabilities: vec!["server".to_string()],
+        };
 
         let response = DaemonFrame::new(
-            MessageEnvelope::reply(MsgId::new(), &request_envelope),
-            DaemonMessage::HelloResponse(HelloResponse {
-                daemon_name: "daemon".to_string(),
-            }),
+            ProtocolEnvelope::new().with_correlation_id(received.envelope.msg_id),
+            DaemonMessage::ControlPlaneHelloAck(ack),
         );
 
-        daemon.send(response).await.unwrap();
+        control_plane.send(response).await.unwrap();
     });
 
-    control_plane.send(request).await.unwrap();
-    let response_frame = control_plane.recv().await.unwrap();
-    daemon_task.await.unwrap();
+    daemon.send(request).await.unwrap();
+    let response_frame = daemon.recv().await.unwrap();
+    control_plane_task.await.unwrap();
 
     let response_envelope = response_frame.envelope;
-    let DaemonMessage::HelloResponse(response) = response_frame.message else {
-        panic!("expected HelloResponse, got {:?}", response_frame.message);
+    let DaemonMessage::ControlPlaneHelloAck(_response) = response_frame.message else {
+        panic!(
+            "expected ControlPlaneHelloAck, got {:?}",
+            response_frame.message
+        );
     };
-    assert_eq!(response.daemon_name, "daemon");
-    assert_eq!(response_envelope.in_reply_to, Some(request_id));
+    assert_eq!(response_envelope.correlation_id, Some(request_id));
 }
 
 #[tokio::test]
 async fn loopback_in_proc_hello_roundtrip() {
     let (control_plane, daemon) = InProcEndpoint::pair(8);
-    hello_roundtrip(control_plane, daemon).await;
+    handshake_roundtrip(control_plane, daemon).await;
 }
 
 #[tokio::test]
@@ -62,7 +69,7 @@ async fn loopback_framed_json_hello_roundtrip() {
     let (cp_stream, daemon_stream) = tokio::io::duplex(8 * 1024);
     let control_plane = FramedEndpoint::new(cp_stream, JsonCodec::new());
     let daemon = FramedEndpoint::new(daemon_stream, JsonCodec::new());
-    hello_roundtrip(control_plane, daemon).await;
+    handshake_roundtrip(control_plane, daemon).await;
 }
 
 #[tokio::test]
@@ -70,5 +77,5 @@ async fn loopback_framed_protobuf_hello_roundtrip() {
     let (cp_stream, daemon_stream) = tokio::io::duplex(8 * 1024);
     let control_plane = FramedEndpoint::new(cp_stream, ProtobufCodec::new());
     let daemon = FramedEndpoint::new(daemon_stream, ProtobufCodec::new());
-    hello_roundtrip(control_plane, daemon).await;
+    handshake_roundtrip(control_plane, daemon).await;
 }
