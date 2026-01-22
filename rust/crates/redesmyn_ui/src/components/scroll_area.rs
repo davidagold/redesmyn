@@ -49,4 +49,3 @@ impl RenderOnce for ScrollArea {
         root
     }
 }
-

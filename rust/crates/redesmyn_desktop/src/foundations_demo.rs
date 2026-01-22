@@ -8,7 +8,7 @@ use gpui::{
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
-    SplitPane, SplitPaneAxis, SplitPaneState, TextArea, TextInput, TextInputEvent, TextButton,
+    SplitPane, SplitPaneAxis, SplitPaneState, TextArea, TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::utils::{UserActionState, theme_for_window};
@@ -85,7 +85,10 @@ impl FoundationsDemo {
         );
         let _guard = span.enter();
 
-        match cx.global_mut::<UiContext>().set_theme_preference(preference) {
+        match cx
+            .global_mut::<UiContext>()
+            .set_theme_preference(preference)
+        {
             Ok(()) => {
                 self.theme_error = None;
                 redesmyn_logging::tracing::info!("saved theme preference");
@@ -114,43 +117,40 @@ impl FoundationsDemo {
         let attempt = self.demo_action_attempts;
         let draft_len = self.text_input.read(cx).text().len();
 
-        redesmyn_logging::tracing::info!(
-            attempt,
-            draft_len,
-            "starting demo action (simulated)"
-        );
+        redesmyn_logging::tracing::info!(attempt, draft_len, "starting demo action (simulated)");
 
         cx.notify();
 
-        self.demo_action_task =
-            Some(cx.spawn(move |weak: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                gpui::Timer::after(Duration::from_millis(900)).await;
-                let Some(entity) = weak.upgrade() else {
-                    return;
-                };
+        self.demo_action_task = Some(cx.spawn(
+            move |weak: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    gpui::Timer::after(Duration::from_millis(900)).await;
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
 
-                let success = attempt % 2 == 0;
-                if cx
-                    .update(|cx| {
-                        entity.update(cx, |this, cx| {
-                            this.demo_action_task = None;
-                            if success {
-                                this.demo_action.succeed();
-                            } else {
-                                this.demo_action
-                                    .fail(format!("Simulated error (attempt {attempt})."));
-                            }
-                            cx.notify();
+                    let success = attempt % 2 == 0;
+                    if cx
+                        .update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                this.demo_action_task = None;
+                                if success {
+                                    this.demo_action.succeed();
+                                } else {
+                                    this.demo_action
+                                        .fail(format!("Simulated error (attempt {attempt})."));
+                                }
+                                cx.notify();
+                            })
                         })
-                    })
-                    .is_err()
-                {
-                    return;
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
-            }
-            }));
+            },
+        ));
     }
 
     fn clear_demo_error(&mut self, cx: &mut Context<Self>) {
@@ -201,7 +201,12 @@ impl Render for FoundationsDemo {
                     .flex()
                     .gap(theme.spacing.sm)
                     .items_center()
-                    .child(div().text_sm().text_color(theme.colors.foreground).child("UI Foundations"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .child("UI Foundations"),
+                    )
                     .child(
                         IconButton::new(("header_info", cx.entity_id()), div().child("i"))
                             .tooltip("A small survey surface for `redesmyn_ui`."),
@@ -215,7 +220,11 @@ impl Render for FoundationsDemo {
                     .gap(theme.spacing.xs)
                     .child(theme_button("theme_light", "Light", ThemePreference::Light))
                     .child(theme_button("theme_dark", "Dark", ThemePreference::Dark))
-                    .child(theme_button("theme_system", "System", ThemePreference::System)),
+                    .child(theme_button(
+                        "theme_system",
+                        "System",
+                        ThemePreference::System,
+                    )),
             );
 
         let mut content = div()
@@ -248,7 +257,12 @@ impl Render for FoundationsDemo {
                 .flex()
                 .flex_col()
                 .gap(theme.spacing.sm)
-                .child(div().text_sm().text_color(theme.colors.foreground).child("Buttons"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("Buttons"),
+                )
                 .child(
                     div()
                         .flex()
@@ -260,9 +274,18 @@ impl Render for FoundationsDemo {
                                 .kind(ButtonKind::Primary)
                                 .tooltip("Primary action"),
                         )
-                        .child(TextButton::new(("btn_secondary", cx.entity_id()), "Secondary"))
-                        .child(TextButton::new(("btn_ghost", cx.entity_id()), "Ghost").kind(ButtonKind::Ghost))
-                        .child(TextButton::new(("btn_danger", cx.entity_id()), "Danger").kind(ButtonKind::Danger))
+                        .child(TextButton::new(
+                            ("btn_secondary", cx.entity_id()),
+                            "Secondary",
+                        ))
+                        .child(
+                            TextButton::new(("btn_ghost", cx.entity_id()), "Ghost")
+                                .kind(ButtonKind::Ghost),
+                        )
+                        .child(
+                            TextButton::new(("btn_danger", cx.entity_id()), "Danger")
+                                .kind(ButtonKind::Danger),
+                        )
                         .child(
                             TextButton::new(("btn_disabled", cx.entity_id()), "Disabled")
                                 .disabled(true)
@@ -276,7 +299,12 @@ impl Render for FoundationsDemo {
                 .flex()
                 .flex_col()
                 .gap(theme.spacing.sm)
-                .child(div().text_sm().text_color(theme.colors.foreground).child("Text Input"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("Text Input"),
+                )
                 .child(self.text_input.clone())
                 .when_some(self.last_submitted.clone(), |this, submitted| {
                     this.child(
@@ -306,7 +334,8 @@ impl Render for FoundationsDemo {
                     }),
             );
         if self.demo_action.in_flight {
-            action_row = action_row.child(ProgressPill::new("Running").kind(ProgressPillKind::Accent));
+            action_row =
+                action_row.child(ProgressPill::new("Running").kind(ProgressPillKind::Accent));
         }
 
         content = content.child(
@@ -314,7 +343,12 @@ impl Render for FoundationsDemo {
                 .flex()
                 .flex_col()
                 .gap(theme.spacing.sm)
-                .child(div().text_sm().text_color(theme.colors.foreground).child("No Silent Actions"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("No Silent Actions"),
+                )
                 .child(action_row)
                 .when_some(self.demo_action.error.clone(), |this, error| {
                     let demo = demo.clone();
@@ -341,7 +375,12 @@ impl Render for FoundationsDemo {
                 .flex()
                 .flex_col()
                 .gap(theme.spacing.sm)
-                .child(div().text_sm().text_color(theme.colors.foreground).child("Text Area"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("Text Area"),
+                )
                 .child(self.text_area.clone()),
         );
 
@@ -350,7 +389,12 @@ impl Render for FoundationsDemo {
                 .flex()
                 .flex_col()
                 .gap(theme.spacing.sm)
-                .child(div().text_sm().text_color(theme.colors.foreground).child("SplitPane"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("SplitPane"),
+                )
                 .child(
                     div()
                         .h(px(220.0))
@@ -361,9 +405,12 @@ impl Render for FoundationsDemo {
                 ),
         );
 
-        let body = ScrollArea::new(("foundations_scroll", cx.entity_id()), self.scroll_handle.clone())
-            .scrollbar_width(px(10.0))
-            .child(content);
+        let body = ScrollArea::new(
+            ("foundations_scroll", cx.entity_id()),
+            self.scroll_handle.clone(),
+        )
+        .scrollbar_width(px(10.0))
+        .child(content);
 
         div()
             .flex()

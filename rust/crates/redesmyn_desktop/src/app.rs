@@ -76,7 +76,8 @@ impl DesktopApp {
                 control_plane_conn,
             ));
 
-            let daemon = runtime.block_on(async { redesmyn_daemon::Daemon::start(daemon_config, connector) });
+            let daemon = runtime
+                .block_on(async { redesmyn_daemon::Daemon::start(daemon_config, connector) });
 
             (Some(daemon), daemon_link, Some(daemon_host_id))
         } else {

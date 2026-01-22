@@ -74,7 +74,8 @@ impl RepoAttachmentManager {
 
         let repo_root = self.registry.resolve_repo_root(scope)?;
         let tasks = spawn_repo_placeholder_tasks(scope, repo_root.clone(), shutdown_rx);
-        self.attached.insert(scope, AttachedRepo { repo_root, tasks });
+        self.attached
+            .insert(scope, AttachedRepo { repo_root, tasks });
         Ok(())
     }
 

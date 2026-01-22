@@ -1,4 +1,4 @@
-use gpui::{Context, Render, SharedString, Window, div, px, prelude::*};
+use gpui::{Context, Render, SharedString, Window, div, prelude::*, px};
 
 use crate::utils::theme_for_window;
 

@@ -428,7 +428,9 @@ impl CodexOutputParser {
 
         let text_value = event.text.or(event.message).or(event.content);
         match text_value {
-            Some(text) if !text.trim().is_empty() => vec![CodexParserEvent::AssistantMessage { text }],
+            Some(text) if !text.trim().is_empty() => {
+                vec![CodexParserEvent::AssistantMessage { text }]
+            }
             _ => Vec::new(),
         }
     }
@@ -464,7 +466,8 @@ impl CodexOutputParser {
     }
 
     fn set_external_session_ref(&mut self, external_session_ref: ExternalSessionRef) {
-        let can_resume_by_id = matches!(external_session_ref, ExternalSessionRef::CodexThread { .. });
+        let can_resume_by_id =
+            matches!(external_session_ref, ExternalSessionRef::CodexThread { .. });
         if self.capabilities.can_resume_by_id != can_resume_by_id {
             self.capabilities.can_resume_by_id = can_resume_by_id;
         }
@@ -778,7 +781,11 @@ mod tests {
         );
 
         let out = parser.consume_output("{\"type\":\"turn.started\",\"turn_id\":\"tu_1\"}\n");
-        assert!(out.events.iter().any(|e| matches!(e, CodexParserEvent::TurnStarted)));
+        assert!(
+            out.events
+                .iter()
+                .any(|e| matches!(e, CodexParserEvent::TurnStarted))
+        );
         assert!(out.capabilities.can_detect_turn_complete);
         assert_eq!(out.status.turn_state, CodexTurnState::Busy);
         assert_eq!(
@@ -790,7 +797,11 @@ mod tests {
         );
 
         let out = parser.consume_output("{\"type\":\"turn.completed\",\"turn_id\":\"tu_1\"}\n");
-        assert!(out.events.iter().any(|e| matches!(e, CodexParserEvent::TurnCompleted)));
+        assert!(
+            out.events
+                .iter()
+                .any(|e| matches!(e, CodexParserEvent::TurnCompleted))
+        );
         assert_eq!(out.status.turn_state, CodexTurnState::Completed);
         assert_eq!(
             out.external_session_ref,
@@ -842,10 +853,11 @@ mod tests {
         let out = parser.consume_output(
             "{\"type\":\"assistant.message\",\"role\":\"assistant\",\"text\":\"Hello there\"}\n",
         );
-        assert!(out
-            .events
-            .iter()
-            .any(|e| matches!(e, CodexParserEvent::AssistantMessage { .. })));
+        assert!(
+            out.events
+                .iter()
+                .any(|e| matches!(e, CodexParserEvent::AssistantMessage { .. }))
+        );
     }
 
     #[test]
@@ -854,10 +866,11 @@ mod tests {
         let out = parser.consume_output(
             "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_88\",\"type\":\"reasoning\",\"text\":\"Hello world\"}}\n",
         );
-        assert!(out
-            .events
-            .iter()
-            .any(|e| matches!(e, CodexParserEvent::AssistantMessage { .. })));
+        assert!(
+            out.events
+                .iter()
+                .any(|e| matches!(e, CodexParserEvent::AssistantMessage { .. }))
+        );
         assert!(out.capabilities.can_stream_semantic_events);
         assert!(!out.capabilities.can_detect_turn_complete);
     }
@@ -868,7 +881,11 @@ mod tests {
         let out = parser.consume_output(
             "{\"type\":\"item.started\",\"item\":{\"id\":\"item_90\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc \\\"echo hi\\\"\"}}\n",
         );
-        assert!(out.events.iter().any(|e| matches!(e, CodexParserEvent::TurnStarted)));
+        assert!(
+            out.events
+                .iter()
+                .any(|e| matches!(e, CodexParserEvent::TurnStarted))
+        );
         assert_eq!(out.status.turn_state, CodexTurnState::Busy);
         assert!(out.status.detail.is_some());
         assert!(!out.capabilities.can_detect_turn_complete);

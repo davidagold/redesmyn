@@ -1,6 +1,6 @@
+use std::ffi::OsStr;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
-use std::ffi::OsStr;
 
 use serde::{Deserialize, Serialize};
 

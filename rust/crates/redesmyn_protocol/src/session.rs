@@ -12,7 +12,9 @@ use crate::{ErrorEnvelope, Timestamp};
 #[non_exhaustive]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionScope {
-    Task { task_id: TaskId },
+    Task {
+        task_id: TaskId,
+    },
     /// User-managed chat session (pinned-to-epic relationships live elsewhere).
     Chat,
     /// A scope kind not understood by this binary (forward compatible).
@@ -41,7 +43,9 @@ pub enum ExternalSessionRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
-    ClaudeSession { session_id: String },
+    ClaudeSession {
+        session_id: String,
+    },
     /// Placeholder for future providers / ref types.
     Unknown {
         unknown_type: String,
@@ -188,4 +192,3 @@ pub struct SessionEvent {
     #[serde(flatten)]
     pub kind: SessionEventKind,
 }
-

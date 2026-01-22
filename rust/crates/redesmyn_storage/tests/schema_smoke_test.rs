@@ -3,10 +3,10 @@ use redesmyn_ids::{
     SessionEventId, SessionId, TaskId, TaskRelationId, WorkspaceId,
 };
 use redesmyn_storage::{
-    events::{EventRecord, EventScope, get_event, insert_event},
-    schema::{CommandState, MergeReadiness, RepoScopeKind, SessionScopeKind, TaskRelationKind},
-    in_transaction, open_test_sqlite_pool,
     StorageError,
+    events::{EventRecord, EventScope, get_event, insert_event},
+    in_transaction, open_test_sqlite_pool,
+    schema::{CommandState, MergeReadiness, RepoScopeKind, SessionScopeKind, TaskRelationKind},
 };
 use sqlx::SqliteConnection;
 
@@ -508,8 +508,7 @@ async fn can_insert_and_query_core_schema() {
             .await?;
 
             insert_host(&mut *conn, host_id, t0_ms, Some("localhost")).await?;
-            insert_daemon_presence(&mut *conn, host_instance_id, host_id, t0_ms, t0_ms + 5)
-                .await?;
+            insert_daemon_presence(&mut *conn, host_instance_id, host_id, t0_ms, t0_ms + 5).await?;
 
             let event = EventRecord {
                 id: EventId::new(),
@@ -614,7 +613,13 @@ async fn can_insert_and_query_core_schema() {
     .unwrap();
 
     let loaded_event = get_event(&pool, event_id).await.unwrap().unwrap();
-    assert_eq!(loaded_event.scope, EventScope::Repo { workspace_id, repo_id });
+    assert_eq!(
+        loaded_event.scope,
+        EventScope::Repo {
+            workspace_id,
+            repo_id
+        }
+    );
     assert_eq!(loaded_event.created_at_ms, t0_ms);
     assert_eq!(loaded_event.kind, "test.event");
     assert_eq!(loaded_event.payload, vec![1, 2, 3]);
@@ -702,12 +707,11 @@ async fn can_insert_and_query_core_schema() {
             .unwrap();
     assert_eq!(remaining_child_parent_id, None);
 
-    let (child_still_exists,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE id = ?1")
-            .bind(child_task_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let (child_still_exists,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE id = ?1")
+        .bind(child_task_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(child_still_exists, 1);
 
     // Session scope chains must be consistent: repo -> epic, epic -> task.

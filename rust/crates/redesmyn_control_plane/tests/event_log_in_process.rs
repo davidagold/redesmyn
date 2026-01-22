@@ -114,4 +114,3 @@ async fn event_log_subscription_emits_resync_when_lagging() {
         }
     }
 }
-

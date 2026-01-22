@@ -63,7 +63,8 @@ fn run_demo_in_proc(buffer: usize) {
             }
         });
 
-        let connector_endpoint: Arc<Mutex<Option<InProcEndpoint>>> = Arc::new(Mutex::new(Some(daemon)));
+        let connector_endpoint: Arc<Mutex<Option<InProcEndpoint>>> =
+            Arc::new(Mutex::new(Some(daemon)));
         let connector: Arc<dyn redesmyn_daemon::ControlPlaneConnector> = Arc::new(move || {
             let endpoint = Arc::clone(&connector_endpoint);
             async move {
@@ -123,7 +124,9 @@ async fn run_stub_control_plane(mut conn: InProcEndpoint) -> Result<(), Transpor
     }
 }
 
-async fn log_connection_state(mut rx: tokio::sync::watch::Receiver<redesmyn_daemon::ConnectionState>) {
+async fn log_connection_state(
+    mut rx: tokio::sync::watch::Receiver<redesmyn_daemon::ConnectionState>,
+) {
     tracing::info!(state = ?*rx.borrow(), "connection state");
     while rx.changed().await.is_ok() {
         tracing::info!(state = ?*rx.borrow(), "connection state");

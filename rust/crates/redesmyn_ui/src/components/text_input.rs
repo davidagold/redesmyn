@@ -3,9 +3,9 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, IntoElement,
-    KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point, Render, SharedString, ShapedLine,
-    Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point, px,
-    relative, size, prelude::*,
+    KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point, Render, ShapedLine, SharedString,
+    Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, point, prelude::*,
+    px, relative, size,
 };
 
 use crate::utils::theme_for_window;
@@ -243,7 +243,12 @@ impl TextInput {
         cx.emit(TextInputEvent::Submitted(self.content.clone()));
     }
 
-    fn on_mouse_down(&mut self, event: &gpui::MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_down(
+        &mut self,
+        event: &gpui::MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.is_selecting = true;
         window.focus(&self.focus_handle);
 
@@ -447,8 +452,14 @@ impl EntityInputHandler for TextInput {
 
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
-            point(bounds.left() + last_layout.x_for_index(range.start), bounds.top()),
-            point(bounds.left() + last_layout.x_for_index(range.end), bounds.bottom()),
+            point(
+                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.top(),
+            ),
+            point(
+                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.bottom(),
+            ),
         ))
     }
 
@@ -534,7 +545,10 @@ impl Element for TextInputElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), theme.colors.foreground_muted.opacity(0.8))
+            (
+                input.placeholder.clone(),
+                theme.colors.foreground_muted.opacity(0.8),
+            )
         } else {
             (content, theme.colors.foreground)
         };
@@ -596,8 +610,14 @@ impl Element for TextInputElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(bounds.left() + line.x_for_index(selected_range.start), bounds.top()),
-                        point(bounds.left() + line.x_for_index(selected_range.end), bounds.bottom()),
+                        point(
+                            bounds.left() + line.x_for_index(selected_range.start),
+                            bounds.top(),
+                        ),
+                        point(
+                            bounds.left() + line.x_for_index(selected_range.end),
+                            bounds.bottom(),
+                        ),
                     ),
                     theme.colors.ring.opacity(0.2),
                 )),
@@ -910,7 +930,12 @@ impl TextArea {
         cx.emit(TextInputEvent::Submitted(self.content.clone()));
     }
 
-    fn on_mouse_down(&mut self, event: &gpui::MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_down(
+        &mut self,
+        event: &gpui::MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.is_selecting = true;
         window.focus(&self.focus_handle);
         let offset = self.index_for_mouse_position(event.position, window);
@@ -1321,7 +1346,10 @@ impl Element for TextAreaElement {
         let line_height = window.line_height();
         let lines = std::mem::take(&mut prepaint.lines);
         for (ix, line) in lines.iter().enumerate() {
-            let origin = point(bounds.left(), bounds.top() + px(f32::from(line_height) * ix as f32));
+            let origin = point(
+                bounds.left(),
+                bounds.top() + px(f32::from(line_height) * ix as f32),
+            );
             line.paint(origin, line_height, window, cx).unwrap();
         }
 

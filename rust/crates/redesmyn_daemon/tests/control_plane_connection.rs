@@ -2,13 +2,15 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use redesmyn_config::{
+    DaemonConfig, ExecutorConfig, SandboxConfig, SandboxNetworkMode, SandboxType,
+};
 use redesmyn_daemon::{ConnectionState, Daemon, DaemonRuntimeConfig, HostIdentity};
-use redesmyn_config::{DaemonConfig, ExecutorConfig, SandboxConfig, SandboxNetworkMode, SandboxType};
 use redesmyn_protocol::ErrorEnvelope;
 use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
 use redesmyn_protocol::{ErrorCategory, ProtocolEnvelope, ProtocolVersion};
-use redesmyn_transport::{DaemonConnection, TransportError};
 use redesmyn_transport::in_proc::InProcEndpoint;
+use redesmyn_transport::{DaemonConnection, TransportError};
 
 #[derive(Debug, Clone)]
 enum StubPlan {
@@ -19,7 +21,10 @@ enum StubPlan {
     Reject(ErrorEnvelope),
 }
 
-fn spawn_stub_control_plane(mut conn: InProcEndpoint, plan: StubPlan) -> tokio::task::JoinHandle<()> {
+fn spawn_stub_control_plane(
+    mut conn: InProcEndpoint,
+    plan: StubPlan,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let frame = conn.recv().await.expect("recv hello");
         let DaemonMessage::DaemonHello(_hello) = frame.message else {
@@ -191,8 +196,13 @@ async fn reconnects_with_backoff_after_disconnect() {
 
 #[tokio::test]
 async fn fatal_on_invalid_request_handshake_error() {
-    let err = ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Protocol major version mismatch.");
-    let connector = connector_from_plans(Arc::new(Mutex::new(VecDeque::from([StubPlan::Reject(err.clone())]))));
+    let err = ErrorEnvelope::new(
+        ErrorCategory::InvalidRequest,
+        "Protocol major version mismatch.",
+    );
+    let connector = connector_from_plans(Arc::new(Mutex::new(VecDeque::from([StubPlan::Reject(
+        err.clone(),
+    )]))));
 
     let identity = HostIdentity::new(redesmyn_ids::HostId::new());
     let (_dir, daemon_config) = test_daemon_config();

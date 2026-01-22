@@ -71,7 +71,10 @@ impl UiSettingsStore {
     }
 
     pub fn save(&self) -> Result<(), UiSettingsError> {
-        let path = self.path.as_deref().ok_or(UiSettingsError::PathUnavailable)?;
+        let path = self
+            .path
+            .as_deref()
+            .ok_or(UiSettingsError::PathUnavailable)?;
         save_file(path, &self.settings)
     }
 }

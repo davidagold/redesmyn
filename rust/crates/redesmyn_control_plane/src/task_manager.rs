@@ -24,11 +24,7 @@ impl TaskManager {
         }
     }
 
-    pub fn spawn(
-        &mut self,
-        task_name: &'static str,
-        f: impl Future<Output = ()> + Send + 'static,
-    ) {
+    pub fn spawn(&mut self, task_name: &'static str, f: impl Future<Output = ()> + Send + 'static) {
         self.tasks.spawn_on(
             async move {
                 let span = tracing::info_span!("control_plane.task", task = task_name);

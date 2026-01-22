@@ -1,8 +1,8 @@
 use gpui::{App, Window};
 
+use crate::UiContext;
 use crate::settings::ThemePreference;
 use crate::styles::{UiDensity, UiScale, UiTheme};
-use crate::UiContext;
 
 pub fn theme_for_window(window: &Window, cx: &App) -> UiTheme {
     cx.try_global::<UiContext>()
@@ -16,4 +16,3 @@ pub fn theme_for_window(window: &Window, cx: &App) -> UiTheme {
             )
         })
 }
-

@@ -97,11 +97,8 @@ fn run_foundations_demo() {
         }
         redesmyn_ui::components::bind_text_input_keys(cx);
 
-        let bounds = gpui::Bounds::centered(
-            None,
-            gpui::size(gpui::px(1120.0), gpui::px(760.0)),
-            cx,
-        );
+        let bounds =
+            gpui::Bounds::centered(None, gpui::size(gpui::px(1120.0), gpui::px(760.0)), cx);
         let window = cx
             .open_window(
                 gpui::WindowOptions {

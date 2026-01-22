@@ -115,9 +115,7 @@ impl RenderOnce for TextButton {
             .text_sm()
             .text_color(fg)
             .when_some(bg, |this, bg| this.bg(bg))
-            .when_some(border, |this, border| {
-                this.border_1().border_color(border)
-            })
+            .when_some(border, |this, border| this.border_1().border_color(border))
             .cursor_pointer()
             .focusable()
             .focus(|mut style| {
@@ -126,8 +124,7 @@ impl RenderOnce for TextButton {
             });
 
         if let Some(tooltip) = tooltip_text(self.disabled, &self.disabled_reason, &self.tooltip) {
-            button =
-                button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
+            button = button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
         }
 
         if self.disabled {
@@ -218,8 +215,7 @@ impl RenderOnce for IconButton {
             .child(self.icon);
 
         if let Some(tooltip) = tooltip_text(self.disabled, &self.disabled_reason, &self.tooltip) {
-            button =
-                button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
+            button = button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
         }
 
         if self.disabled {

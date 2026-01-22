@@ -69,7 +69,12 @@ impl Render for SplitPaneResizeDragGhost {
 impl EventEmitter<SplitPaneEvent> for SplitPane {}
 
 impl SplitPane {
-    pub fn new(axis: SplitPaneAxis, state: SplitPaneState, primary: gpui::AnyView, secondary: gpui::AnyView) -> Self {
+    pub fn new(
+        axis: SplitPaneAxis,
+        state: SplitPaneState,
+        primary: gpui::AnyView,
+        secondary: gpui::AnyView,
+    ) -> Self {
         Self {
             axis,
             state,
@@ -167,7 +172,12 @@ impl SplitPane {
         cx.notify();
     }
 
-    fn on_divider_click(&mut self, event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_divider_click(
+        &mut self,
+        event: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if event.click_count() >= 2 {
             self.toggle_collapsed(cx);
         }
@@ -212,12 +222,17 @@ impl Render for SplitPane {
         };
 
         let primary = div()
-            .when(axis == SplitPaneAxis::Horizontal, |this| this.w(primary_size))
+            .when(axis == SplitPaneAxis::Horizontal, |this| {
+                this.w(primary_size)
+            })
             .when(axis == SplitPaneAxis::Vertical, |this| this.h(primary_size))
             .overflow_hidden()
             .child(self.primary.clone());
 
-        let secondary = div().flex_1().overflow_hidden().child(self.secondary.clone());
+        let secondary = div()
+            .flex_1()
+            .overflow_hidden()
+            .child(self.secondary.clone());
 
         div()
             .id(("split_pane_root", cx.entity_id()))

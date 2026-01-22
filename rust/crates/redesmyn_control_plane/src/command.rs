@@ -41,7 +41,8 @@ impl CommandRegistry {
 
     pub async fn create(&self, message: Option<String>) -> CommandId {
         let command_id = CommandId::new();
-        self.set_state(command_id, CommandState::Accepted, message).await;
+        self.set_state(command_id, CommandState::Accepted, message)
+            .await;
         command_id
     }
 

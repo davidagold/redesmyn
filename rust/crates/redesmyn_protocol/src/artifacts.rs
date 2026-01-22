@@ -31,8 +31,12 @@ pub struct Hash {
 #[non_exhaustive]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StorageHint {
-    LocalPath { local_path: String },
-    BlobKey { blob_key: String },
+    LocalPath {
+        local_path: String,
+    },
+    BlobKey {
+        blob_key: String,
+    },
     /// A storage hint not understood by this binary (forward compatible).
     #[serde(other)]
     Unknown,
@@ -52,4 +56,3 @@ pub struct ArtifactRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_hint: Option<StorageHint>,
 }
-

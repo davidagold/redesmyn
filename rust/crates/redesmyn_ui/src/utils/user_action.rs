@@ -31,4 +31,3 @@ impl UserActionState {
         self.error = None;
     }
 }
-

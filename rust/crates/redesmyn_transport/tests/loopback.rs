@@ -1,6 +1,6 @@
 use redesmyn_ids::{HostId, HostInstanceId};
-use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion};
 use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonHello, DaemonMessage};
+use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion};
 use redesmyn_transport::DaemonConnection;
 use redesmyn_transport::codec::{JsonCodec, ProtobufCodec};
 use redesmyn_transport::framed::FramedEndpoint;

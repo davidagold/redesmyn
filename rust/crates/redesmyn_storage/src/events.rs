@@ -8,7 +8,10 @@ use crate::StorageError;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventScope {
     None,
-    Repo { workspace_id: WorkspaceId, repo_id: RepoId },
+    Repo {
+        workspace_id: WorkspaceId,
+        repo_id: RepoId,
+    },
 }
 
 impl EventScope {
@@ -139,8 +142,15 @@ pub async fn get_event<'e, E>(executor: E, id: EventId) -> Result<Option<EventRe
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    let row: Option<(EventId, i64, String, Option<WorkspaceId>, Option<RepoId>, String, Vec<u8>)> =
-        sqlx::query_as(
+    let row: Option<(
+        EventId,
+        i64,
+        String,
+        Option<WorkspaceId>,
+        Option<RepoId>,
+        String,
+        Vec<u8>,
+    )> = sqlx::query_as(
         r#"
         SELECT
             id,
@@ -153,10 +163,10 @@ where
         FROM events
         WHERE id = ?1
         "#,
-        )
-        .bind(id)
-        .fetch_optional(executor)
-        .await?;
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await?;
 
     Ok(row
         .map(
@@ -218,11 +228,19 @@ pub async fn list_event_rows_in_scope_after_rowid<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    let rows: Vec<(i64, EventId, i64, String, Option<WorkspaceId>, Option<RepoId>, String, Vec<u8>)> =
-        match (scope, after_rowid) {
-            (EventScope::None, Some(after_rowid)) => {
-                sqlx::query_as(
-                    r#"
+    let rows: Vec<(
+        i64,
+        EventId,
+        i64,
+        String,
+        Option<WorkspaceId>,
+        Option<RepoId>,
+        String,
+        Vec<u8>,
+    )> = match (scope, after_rowid) {
+        (EventScope::None, Some(after_rowid)) => {
+            sqlx::query_as(
+                r#"
                     SELECT
                         rowid,
                         id,
@@ -240,18 +258,21 @@ where
                     ORDER BY rowid
                     LIMIT ?2
                     "#,
-                )
-                .bind(after_rowid)
-                .bind(limit as i64)
-                .fetch_all(executor)
-                .await?
-            }
-            (EventScope::Repo {
+            )
+            .bind(after_rowid)
+            .bind(limit as i64)
+            .fetch_all(executor)
+            .await?
+        }
+        (
+            EventScope::Repo {
                 workspace_id,
                 repo_id,
-            }, Some(after_rowid)) => {
-                sqlx::query_as(
-                    r#"
+            },
+            Some(after_rowid),
+        ) => {
+            sqlx::query_as(
+                r#"
                     SELECT
                         rowid,
                         id,
@@ -269,17 +290,17 @@ where
                     ORDER BY rowid
                     LIMIT ?4
                     "#,
-                )
-                .bind(workspace_id)
-                .bind(repo_id)
-                .bind(after_rowid)
-                .bind(limit as i64)
-                .fetch_all(executor)
-                .await?
-            }
-            (EventScope::None, None) => {
-                sqlx::query_as(
-                    r#"
+            )
+            .bind(workspace_id)
+            .bind(repo_id)
+            .bind(after_rowid)
+            .bind(limit as i64)
+            .fetch_all(executor)
+            .await?
+        }
+        (EventScope::None, None) => {
+            sqlx::query_as(
+                r#"
                     SELECT
                         rowid,
                         id,
@@ -296,17 +317,20 @@ where
                     ORDER BY rowid
                     LIMIT ?1
                     "#,
-                )
-                .bind(limit as i64)
-                .fetch_all(executor)
-                .await?
-            }
-            (EventScope::Repo {
+            )
+            .bind(limit as i64)
+            .fetch_all(executor)
+            .await?
+        }
+        (
+            EventScope::Repo {
                 workspace_id,
                 repo_id,
-            }, None) => {
-                sqlx::query_as(
-                    r#"
+            },
+            None,
+        ) => {
+            sqlx::query_as(
+                r#"
                     SELECT
                         rowid,
                         id,
@@ -323,14 +347,14 @@ where
                     ORDER BY rowid
                     LIMIT ?3
                     "#,
-                )
-                .bind(workspace_id)
-                .bind(repo_id)
-                .bind(limit as i64)
-                .fetch_all(executor)
-                .await?
-            }
-        };
+            )
+            .bind(workspace_id)
+            .bind(repo_id)
+            .bind(limit as i64)
+            .fetch_all(executor)
+            .await?
+        }
+    };
 
     rows.into_iter()
         .map(

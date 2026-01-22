@@ -8,13 +8,13 @@ use std::path::PathBuf;
 use clap::ValueEnum;
 
 #[cfg(unix)]
+use redesmyn_control_plane::ControlPlane;
+#[cfg(unix)]
 use redesmyn_control_plane::ControlPlaneDb;
 #[cfg(unix)]
 use redesmyn_control_plane::ControlPlaneStartOptions;
 #[cfg(unix)]
 use redesmyn_control_plane::client_api::ClientApiCodec;
-#[cfg(unix)]
-use redesmyn_control_plane::ControlPlane;
 
 #[derive(Debug, Parser)]
 #[command(name = "redesmyn-server")]
@@ -114,18 +114,19 @@ fn run_serve(codec: ClientApiCodecArg, socket_path: Option<PathBuf>, db_path: Op
         .build()
         .expect("tokio runtime");
 
-    let result: Result<(), redesmyn_control_plane::ControlPlaneStartError> = runtime.block_on(async move {
-        let handle = ControlPlane::start(ControlPlaneStartOptions {
-            db: ControlPlaneDb::Path(db_path),
-            client_api_socket_path: Some(socket_path),
-            client_api_codec: codec,
-        })
-        .await?;
+    let result: Result<(), redesmyn_control_plane::ControlPlaneStartError> =
+        runtime.block_on(async move {
+            let handle = ControlPlane::start(ControlPlaneStartOptions {
+                db: ControlPlaneDb::Path(db_path),
+                client_api_socket_path: Some(socket_path),
+                client_api_codec: codec,
+            })
+            .await?;
 
-        wait_for_shutdown_signal().await;
-        handle.shutdown().await;
-        Ok(())
-    });
+            wait_for_shutdown_signal().await;
+            handle.shutdown().await;
+            Ok(())
+        });
 
     if let Err(err) = result {
         redesmyn_logging::tracing::error!(error = %err, "control plane service exited");

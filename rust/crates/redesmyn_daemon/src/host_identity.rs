@@ -49,4 +49,3 @@ pub fn load_or_create_host_id(state_dir: &Path) -> Result<HostId, HostIdentityEr
     std::fs::write(&path, format!("{host_id}\n"))?;
     Ok(host_id)
 }
-

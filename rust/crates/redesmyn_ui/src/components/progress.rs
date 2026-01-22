@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use gpui::{App, AsyncApp, Context, Render, RenderOnce, SharedString, Task, Window, div, prelude::*};
+use gpui::{
+    App, AsyncApp, Context, Render, RenderOnce, SharedString, Task, Window, div, prelude::*,
+};
 
 use crate::utils::theme_for_window;
 

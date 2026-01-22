@@ -37,7 +37,10 @@ impl UiContext {
         self.settings.settings().main_split_pane
     }
 
-    pub fn set_main_split_pane_state(&mut self, state: SplitPaneState) -> Result<(), UiSettingsError> {
+    pub fn set_main_split_pane_state(
+        &mut self,
+        state: SplitPaneState,
+    ) -> Result<(), UiSettingsError> {
         self.settings.settings_mut().main_split_pane = state;
         self.settings.save()
     }

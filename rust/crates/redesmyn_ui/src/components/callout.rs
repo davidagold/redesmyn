@@ -92,4 +92,3 @@ impl RenderOnce for Callout {
             .child(body)
     }
 }
-
