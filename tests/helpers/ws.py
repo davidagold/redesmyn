@@ -72,6 +72,10 @@ class InProcessWebSocket:
         json.dumps(payload)
         self._outgoing.put_nowait(payload)
 
+    @property
+    def outgoing_queue(self) -> asyncio.Queue[dict[str, Any]]:
+        return self._outgoing
+
     def send_to_server(self, payload: dict[str, Any]) -> None:
         self._incoming.put_nowait(payload)
 

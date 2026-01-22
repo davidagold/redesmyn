@@ -6,7 +6,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import httpx
@@ -234,6 +234,14 @@ class ControlPlaneClient:
         return None
 
 
+class ControlPlaneApi(Protocol):
+    async def list_epics(self) -> list[EpicResponse]: ...
+
+    async def epic_graph(self, epic_slug: str) -> EpicGraphResponse: ...
+
+    async def find_merge_run(self, run_id: str) -> MergeRunSummaryResponse | None: ...
+
+
 class DaemonRuntime:
     def __init__(
         self,
@@ -272,6 +280,22 @@ class DaemonRuntime:
         self._last_stack_in_sync_by_task_id: dict[int, bool | None] = {}
         self._blocked_merge_runs: dict[str, _BlockedMergeRun] = {}
 
+    @property
+    def host_key(self) -> str:
+        return self._daemon_id
+
+    @property
+    def attached_repos(self) -> list[RepoKey]:
+        return list(self._attached_repos)
+
+    def build_hello(self) -> DaemonHello:
+        return DaemonHello(
+            host_key=self._daemon_id,
+            display_name=self._host,
+            capabilities=self._capabilities,
+            attached_repos=self._attached_repos,
+        )
+
     async def run_forever(self) -> None:
         backoff = Backoff()
         while True:
@@ -300,13 +324,7 @@ class DaemonRuntime:
                 self._observer_state = RepoObserverState()
                 self._last_stack_in_sync_by_task_id = {}
 
-                hello = DaemonHello(
-                    host_key=self._daemon_id,
-                    display_name=self._host,
-                    capabilities=self._capabilities,
-                    attached_repos=self._attached_repos,
-                )
-                await websocket.send(hello.model_dump_json())
+                await websocket.send(self.build_hello().model_dump_json())
 
                 send_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=256)
                 command_queue: asyncio.Queue[ServerCommand] = asyncio.Queue(maxsize=128)
@@ -425,30 +443,36 @@ class DaemonRuntime:
                 except asyncio.QueueFull:
                     pass
 
+    async def heartbeat_tick(self, send_queue: asyncio.Queue[dict[str, Any]]) -> None:
+        heartbeat = DaemonHeartbeat(attached_repos=self._attached_repos)
+        await self._enqueue(send_queue, heartbeat.model_dump(mode="python"))
+
     async def _heartbeat_loop(self, send_queue: asyncio.Queue[dict[str, Any]]) -> None:
         while True:
-            heartbeat = DaemonHeartbeat(attached_repos=self._attached_repos)
-            await self._enqueue(send_queue, heartbeat.model_dump(mode="python"))
+            await self.heartbeat_tick(send_queue)
             await asyncio.sleep(self._config.heartbeat_interval_s)
 
+    async def telemetry_tick(
+        self, api: ControlPlaneApi, send_queue: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        emit_baseline = not self._observer_state.initialized
+        await self._emit_repo_telemetry(api, send_queue, emit_baseline=emit_baseline)
+        await self._emit_resumable_merge_runs(send_queue)
+        self._observer_state.initialized = True
+
     async def _telemetry_loop(
-        self, api: ControlPlaneClient, send_queue: asyncio.Queue[dict[str, Any]]
+        self, api: ControlPlaneApi, send_queue: asyncio.Queue[dict[str, Any]]
     ) -> None:
         while True:
             try:
-                emit_baseline = not self._observer_state.initialized
-                await self._emit_repo_telemetry(
-                    api, send_queue, emit_baseline=emit_baseline
-                )
-                await self._emit_resumable_merge_runs(send_queue)
-                self._observer_state.initialized = True
+                await self.telemetry_tick(api, send_queue)
             except Exception:
                 pass
             await asyncio.sleep(self._config.poll_interval_s)
 
     async def _emit_repo_telemetry(
         self,
-        api: ControlPlaneClient,
+        api: ControlPlaneApi,
         send_queue: asyncio.Queue[dict[str, Any]],
         *,
         emit_baseline: bool,
@@ -671,7 +695,7 @@ class DaemonRuntime:
 
     async def _handle_merge_run_start(
         self,
-        api: ControlPlaneClient,
+        api: ControlPlaneApi,
         send_queue: asyncio.Queue[dict[str, Any]],
         *,
         payload: MergeRunStartCommand,
@@ -738,7 +762,7 @@ class DaemonRuntime:
 
     async def _handle_merge_run_resume(
         self,
-        api: ControlPlaneClient,
+        api: ControlPlaneApi,
         send_queue: asyncio.Queue[dict[str, Any]],
         *,
         payload: MergeRunResumeCommand,
@@ -813,7 +837,7 @@ class DaemonRuntime:
 
     async def _command_loop(
         self,
-        api: ControlPlaneClient,
+        api: ControlPlaneApi,
         command_queue: asyncio.Queue[ServerCommand],
         send_queue: asyncio.Queue[dict[str, Any]],
         *,
@@ -852,7 +876,7 @@ class DaemonRuntime:
     async def _execute_command(
         self,
         cmd: ServerCommand,
-        api: ControlPlaneClient,
+        api: ControlPlaneApi,
         send_queue: asyncio.Queue[dict[str, Any]],
         *,
         background: BackgroundTaskManager,
