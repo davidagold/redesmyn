@@ -94,9 +94,7 @@ async fn persists_session_events_with_pagination_and_kind_filter() {
     pin_chat_session_to_epic(&pool, epic_id, session_id)
         .await
         .unwrap();
-    unpin_chat_session_from_epic(&pool, epic_id)
-        .await
-        .unwrap();
+    unpin_chat_session_from_epic(&pool, epic_id).await.unwrap();
 
     let payload_a = pbv1::UnknownSessionEvent {
         event_type: "assistant_message".to_owned(),
@@ -196,4 +194,3 @@ async fn persists_session_events_with_pagination_and_kind_filter() {
 
     assert_eq!(filtered, vec![event_a, event_c]);
 }
-

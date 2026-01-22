@@ -21,10 +21,10 @@ mod error;
 
 pub mod epic_graph;
 pub mod events;
-pub mod sessions;
 pub mod schema;
+pub mod sessions;
 pub mod sqlite;
 
 pub use error::StorageError;
-pub use sqlx::SqlitePool;
 pub use sqlite::{apply_migrations, in_transaction, open_sqlite_pool, open_test_sqlite_pool};
+pub use sqlx::SqlitePool;

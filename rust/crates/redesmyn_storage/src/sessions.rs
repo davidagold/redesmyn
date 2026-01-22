@@ -457,7 +457,10 @@ where
     rows.into_iter().map(decode_agent_session_row).collect()
 }
 
-pub async fn close_chat_session<'e, E>(executor: E, session_id: SessionId) -> Result<(), StorageError>
+pub async fn close_chat_session<'e, E>(
+    executor: E,
+    session_id: SessionId,
+) -> Result<(), StorageError>
 where
     E: Executor<'e, Database = Sqlite>,
 {
@@ -514,7 +517,10 @@ where
     Ok(())
 }
 
-pub async fn unpin_chat_session_from_epic<'e, E>(executor: E, epic_id: EpicId) -> Result<(), StorageError>
+pub async fn unpin_chat_session_from_epic<'e, E>(
+    executor: E,
+    epic_id: EpicId,
+) -> Result<(), StorageError>
 where
     E: Executor<'e, Database = Sqlite>,
 {
@@ -562,9 +568,13 @@ where
     let created_at_ms = event.created_at_ms.unwrap_or_else(now_ms);
 
     async {
-        let (workspace_id, repo_id, scope_kind, task_id): (WorkspaceId, RepoId, String, Option<TaskId>) =
-            sqlx::query_as(
-                r#"
+        let (workspace_id, repo_id, scope_kind, task_id): (
+            WorkspaceId,
+            RepoId,
+            String,
+            Option<TaskId>,
+        ) = sqlx::query_as(
+            r#"
                 SELECT
                     scope_workspace_id,
                     scope_repo_id,
@@ -573,13 +583,13 @@ where
                 FROM agent_sessions
                 WHERE session_id = ?1
                 "#,
-            )
-            .bind(session_id)
-            .fetch_optional(executor)
-            .await?
-            .ok_or_else(|| StorageError::InvalidData {
-                message: format!("session not found: {session_id}"),
-            })?;
+        )
+        .bind(session_id)
+        .fetch_optional(executor)
+        .await?
+        .ok_or_else(|| StorageError::InvalidData {
+            message: format!("session not found: {session_id}"),
+        })?;
 
         let (scope_kind, epic_id, task_id) = match scope_kind.as_str() {
             "chat" => ("repo", None::<EpicId>, None::<TaskId>),

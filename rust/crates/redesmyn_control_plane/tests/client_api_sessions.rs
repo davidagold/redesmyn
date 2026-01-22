@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use redesmyn_control_plane::ControlPlane;
 use redesmyn_control_plane::client_api::ClientApiCodec;
-use redesmyn_ids::{EpicId, RepoId, RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId};
+use redesmyn_ids::{
+    EpicId, RepoId, RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
+};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
     GetEpicPinnedChatSessionRequest, GetSessionEventsRequest, ListChatSessionsRequest,
@@ -43,7 +45,11 @@ fn user_event(session_id: SessionId, id: SessionEventId, created_at: Timestamp) 
     }
 }
 
-fn assistant_event(session_id: SessionId, id: SessionEventId, created_at: Timestamp) -> SessionEvent {
+fn assistant_event(
+    session_id: SessionId,
+    id: SessionEventId,
+    created_at: Timestamp,
+) -> SessionEvent {
     SessionEvent {
         session_event_id: id,
         created_at,
@@ -75,7 +81,11 @@ async fn insert_workspace(pool: &redesmyn_storage::SqlitePool, workspace_id: Wor
     .unwrap();
 }
 
-async fn insert_repo(pool: &redesmyn_storage::SqlitePool, workspace_id: WorkspaceId, repo_id: RepoId) {
+async fn insert_repo(
+    pool: &redesmyn_storage::SqlitePool,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+) {
     let now_ms = 2_i64;
     sqlx::query(
         r#"
@@ -220,7 +230,10 @@ async fn uds_server_supports_session_query_surfaces() {
         ProtocolEnvelope::new().with_scope(scope.into()),
         ClientMessage::Request(Request {
             request_id: list_task_sessions_request_id,
-            payload: RequestPayload::ListTaskSessions(ListTaskSessionsRequest { task_id, limit: 10 }),
+            payload: RequestPayload::ListTaskSessions(ListTaskSessionsRequest {
+                task_id,
+                limit: 10,
+            }),
         }),
     ))
     .await
@@ -322,7 +335,9 @@ async fn uds_server_supports_session_query_surfaces() {
         ProtocolEnvelope::new().with_scope(scope.into()),
         ClientMessage::Request(Request {
             request_id: get_pinned_request_id,
-            payload: RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest { epic_id }),
+            payload: RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+                epic_id,
+            }),
         }),
     ))
     .await

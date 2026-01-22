@@ -157,7 +157,9 @@ impl Timestamp {
 
     pub fn from_unix_millis(ms: i64) -> Result<Self, time::error::ComponentRange> {
         let nanos = i128::from(ms).saturating_mul(1_000_000);
-        Ok(Self(time::OffsetDateTime::from_unix_timestamp_nanos(nanos)?))
+        Ok(Self(time::OffsetDateTime::from_unix_timestamp_nanos(
+            nanos,
+        )?))
     }
 
     #[must_use]

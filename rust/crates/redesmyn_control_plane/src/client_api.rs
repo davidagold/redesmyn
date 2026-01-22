@@ -12,8 +12,8 @@ use redesmyn_protocol::client::{
     EpicGraph, EpicSummary, Event, EventLogEvent, EventWaitFilter, GetCommandResponse,
     GetEpicGraphResponse, GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse,
     GetSessionEventsResponse, HealthResponse, ListChatSessionsResponse, ListEpicsResponse,
-    ListTaskSessionsResponse, MergeReadiness, PinChatSessionToEpicResponse, Response, ResponseResult,
-    SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
+    ListTaskSessionsResponse, MergeReadiness, PinChatSessionToEpicResponse, Response,
+    ResponseResult, SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
     UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
     WaitForIdleResponse,
 };
@@ -1156,9 +1156,9 @@ async fn handle_request_result(
             )
             .await?;
 
-            Ok(ResponseResult::CreateChatSession(CreateChatSessionResponse {
-                session_id,
-            }))
+            Ok(ResponseResult::CreateChatSession(
+                CreateChatSessionResponse { session_id },
+            ))
         }
         redesmyn_protocol::client::RequestPayload::CloseChatSession(close) => {
             let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
@@ -1172,10 +1172,8 @@ async fn handle_request_result(
             )
             .await?;
             let Some(session) = session else {
-                let detail = ErrorDetail::from([(
-                    "session_id".to_string(),
-                    close.session_id.to_string(),
-                )]);
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), close.session_id.to_string())]);
                 return Ok(ResponseResult::Error(
                     ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
                         .with_detail(detail),
@@ -1198,7 +1196,9 @@ async fn handle_request_result(
             redesmyn_storage::sessions::close_chat_session(control_plane.pool(), close.session_id)
                 .await?;
 
-            Ok(ResponseResult::CloseChatSession(CloseChatSessionResponse {}))
+            Ok(ResponseResult::CloseChatSession(
+                CloseChatSessionResponse {},
+            ))
         }
         redesmyn_protocol::client::RequestPayload::ListChatSessions(list) => {
             const MAX_LIMIT: u32 = 512;
@@ -1265,16 +1265,12 @@ async fn handle_request_result(
                 ));
             }
 
-            let session = redesmyn_storage::sessions::get_agent_session(
-                control_plane.pool(),
-                pin.session_id,
-            )
-            .await?;
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), pin.session_id)
+                    .await?;
             let Some(session) = session else {
-                let detail = ErrorDetail::from([(
-                    "session_id".to_string(),
-                    pin.session_id.to_string(),
-                )]);
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), pin.session_id.to_string())]);
                 return Ok(ResponseResult::Error(
                     ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
                         .with_detail(detail),

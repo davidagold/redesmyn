@@ -129,6 +129,67 @@ CREATE INDEX idx_session_events_task_created_at ON session_events (task_id, crea
 CREATE INDEX idx_session_events_session_kind_created_at ON session_events (session_id, kind, created_at_ms, id);
 CREATE INDEX idx_session_events_turn_id ON session_events (turn_id);
 
+-- Safe migration path: older DBs may contain `session_events` rows that cannot be associated with a
+-- repo-scoped `agent_sessions` row (e.g. `scope_kind = 'none'` events that predate repo scoping).
+-- Rather than failing the migration due to the new `session_events.session_id` foreign key, we
+-- preserve those rows in a separate table.
+CREATE TABLE session_events_orphaned (
+    id BLOB(16) PRIMARY KEY NOT NULL,
+    session_id BLOB(16) NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_workspace_id BLOB(16),
+    scope_repo_id BLOB(16),
+    epic_id BLOB(16),
+    task_id BLOB(16),
+    kind TEXT NOT NULL,
+    turn_id TEXT,
+    message_preview TEXT,
+    artifact_id BLOB(16),
+    payload BLOB NOT NULL DEFAULT X'',
+    orphaned_reason TEXT NOT NULL
+);
+
+CREATE INDEX idx_session_events_orphaned_session_created_at ON session_events_orphaned (
+    session_id,
+    created_at_ms,
+    id
+);
+
+INSERT INTO session_events_orphaned (
+    id,
+    session_id,
+    created_at_ms,
+    scope_kind,
+    scope_workspace_id,
+    scope_repo_id,
+    epic_id,
+    task_id,
+    kind,
+    turn_id,
+    message_preview,
+    artifact_id,
+    payload,
+    orphaned_reason
+)
+SELECT
+    id,
+    session_id,
+    created_at_ms,
+    scope_kind,
+    scope_workspace_id,
+    scope_repo_id,
+    epic_id,
+    task_id,
+    kind,
+    turn_id,
+    message_preview,
+    artifact_id,
+    payload,
+    'missing_agent_session' AS orphaned_reason
+FROM session_events_old
+WHERE session_id NOT IN (SELECT session_id FROM agent_sessions);
+
 INSERT INTO session_events (
     id,
     session_id,
@@ -158,6 +219,7 @@ SELECT
     message_preview,
     artifact_id,
     payload
-FROM session_events_old;
+FROM session_events_old
+WHERE session_id IN (SELECT session_id FROM agent_sessions);
 
 DROP TABLE session_events_old;
