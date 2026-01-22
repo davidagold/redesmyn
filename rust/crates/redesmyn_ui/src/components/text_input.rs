@@ -679,6 +679,7 @@ impl Render for TextInput {
             .bg(theme.colors.surface_elevated)
             .border_1()
             .border_color(theme.colors.border)
+            .overflow_hidden()
             .rounded(theme.radius.md)
             .line_height(window.line_height())
             .text_size(window.text_style().font_size)

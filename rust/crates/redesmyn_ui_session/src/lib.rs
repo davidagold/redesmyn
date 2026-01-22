@@ -604,7 +604,13 @@ impl Render for SessionView {
         let view = cx.entity();
         let load_view = view.clone();
 
-        let mut content = div().flex().flex_col().gap(theme.spacing.sm);
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .gap(theme.spacing.sm);
 
         if let Some(error) = self.error.clone() {
             content = content.child(
@@ -627,7 +633,13 @@ impl Render for SessionView {
             .flex_row()
             .gap(theme.spacing.sm)
             .items_center()
-            .child(self.session_id_input.clone())
+            .w_full()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(self.session_id_input.clone()),
+            )
             .child(
                 TextButton::new(("session_load", cx.entity_id()), "Load").on_click(
                     move |_, _, cx| {
