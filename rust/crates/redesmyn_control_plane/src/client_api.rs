@@ -177,6 +177,7 @@ impl ClientApiState {
         };
 
         let event_type = match state {
+            CommandState::Unknown => "command.unknown",
             CommandState::Accepted => "command.accepted",
             CommandState::Running => "command.running",
             CommandState::Blocked => "command.blocked",
