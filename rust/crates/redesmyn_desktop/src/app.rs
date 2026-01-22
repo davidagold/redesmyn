@@ -116,6 +116,21 @@ impl DesktopHandle {
         self.control_plane_client.take()
     }
 
+    #[must_use]
+    pub fn connect_control_plane_client(
+        &mut self,
+        buffer: usize,
+    ) -> Option<redesmyn_transport::client::in_proc::InProcEndpoint> {
+        self.control_plane
+            .as_mut()
+            .map(|control_plane| control_plane.connect_in_proc_client(buffer))
+    }
+
+    #[must_use]
+    pub fn tokio_handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
     pub fn shutdown(mut self) {
         let span = tracing::info_span!("desktop.shutdown");
         let _enter = span.enter();

@@ -1,5 +1,6 @@
 mod app;
 mod command_palette;
+mod control_plane_client;
 mod foundations_demo;
 mod root_view;
 
@@ -40,7 +41,9 @@ fn main() {
 
     let ui_config = desktop.config().clone();
     let daemon_host_id = desktop.daemon_host_id();
-    let control_plane_client = desktop.take_control_plane_client();
+    let tokio_handle = desktop.tokio_handle();
+    let session_control_plane_client = desktop.take_control_plane_client();
+    let chrome_control_plane_client = desktop.connect_control_plane_client(64);
 
     gpui::Application::new().run(move |cx| {
         cx.on_window_closed(|cx| {
@@ -73,7 +76,9 @@ fn main() {
                     crate::root_view::DesktopModel::new(
                         ui_config.clone(),
                         daemon_host_id,
-                        control_plane_client,
+                        tokio_handle.clone(),
+                        session_control_plane_client,
+                        chrome_control_plane_client,
                     )
                 });
                 cx.new(|cx| crate::root_view::RootView::new(model, cx))
