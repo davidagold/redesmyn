@@ -22,6 +22,8 @@ use crate::scene::{GraphEdgeId, GraphNodeId, GraphScene};
 struct PanDrag {
     start_mouse: gpui::Point<gpui::Pixels>,
     start_origin_world: gpui::Point<f32>,
+    pending_clear_selection: bool,
+    did_pan: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -316,11 +318,14 @@ impl GraphView {
                 self.select_edge(id, cx);
             }
             None => {
+                let had_selection = self.scene.selection().selected_node.is_some()
+                    || self.scene.selection().selected_edge.is_some();
                 self.pan_drag = Some(PanDrag {
                     start_mouse: event.position,
                     start_origin_world: self.camera.origin_world(),
+                    pending_clear_selection: had_selection,
+                    did_pan: false,
                 });
-                self.clear_selection(cx);
             }
         }
     }
@@ -331,7 +336,7 @@ impl GraphView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(drag) = self.pan_drag else {
+        let Some(mut drag) = self.pan_drag else {
             return;
         };
 
@@ -341,16 +346,33 @@ impl GraphView {
         }
 
         let delta = event.position - drag.start_mouse;
+
+        if drag.pending_clear_selection && !drag.did_pan {
+            let threshold = px(3.0);
+            if delta.x.abs() < threshold && delta.y.abs() < threshold {
+                return;
+            }
+            drag.pending_clear_selection = false;
+            drag.did_pan = true;
+        }
+
         let mut camera = self.camera;
         camera.set_origin_world(drag.start_origin_world);
         camera.pan_by_screen_delta(delta);
         self.camera = camera;
+        self.pan_drag = Some(drag);
 
         cx.notify();
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.pan_drag.take().is_some() {
+        let Some(drag) = self.pan_drag.take() else {
+            return;
+        };
+
+        if drag.pending_clear_selection && !drag.did_pan {
+            self.clear_selection(cx);
+        } else {
             cx.notify();
         }
     }
@@ -533,7 +555,7 @@ impl Render for GraphView {
                     .border_1()
                     .border_color(border)
                     .overflow_hidden()
-                    .occlude()
+                    .block_mouse_except_scroll()
                     .on_mouse_down(MouseButton::Left, {
                         let graph = graph.clone();
                         move |_, _, cx| {
