@@ -3,7 +3,7 @@
 //! This module defines the canonical typed message model used by local-only
 //! deterministic UI automation surfaces.
 
-use redesmyn_ids::{CommandId, EpicId, RequestId, TaskId, TaskRelationId};
+use redesmyn_ids::{CommandId, EpicId, RequestId, SessionId, TaskId, TaskRelationId};
 
 use crate::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 
@@ -32,6 +32,14 @@ pub enum UiDriverMethod {
     OpenSessionView,
     OpenDiffView,
     CaptureScreenshot,
+    SetLeftPaneCollapsed,
+    CreateChatSession,
+    CloseChatSession,
+    PinChatSession,
+    UnpinChatSession,
+    TriggerRefresh,
+    WaitForSnapshot,
+    WaitForIdle,
 }
 
 /// A request issued to the UI driver.
@@ -58,6 +66,14 @@ pub enum UiDriverRequestPayload {
     OpenSessionView(OpenSessionViewRequest),
     OpenDiffView(OpenDiffViewRequest),
     CaptureScreenshot(CaptureScreenshotRequest),
+    SetLeftPaneCollapsed(SetLeftPaneCollapsedRequest),
+    CreateChatSession(CreateChatSessionRequest),
+    CloseChatSession(CloseChatSessionRequest),
+    PinChatSession(PinChatSessionRequest),
+    UnpinChatSession(UnpinChatSessionRequest),
+    TriggerRefresh(TriggerRefreshRequest),
+    WaitForSnapshot(WaitForUiSnapshotRequest),
+    WaitForIdle(WaitForUiIdleRequest),
 }
 
 impl UiDriverRequestPayload {
@@ -71,6 +87,14 @@ impl UiDriverRequestPayload {
             Self::OpenSessionView(_) => UiDriverMethod::OpenSessionView,
             Self::OpenDiffView(_) => UiDriverMethod::OpenDiffView,
             Self::CaptureScreenshot(_) => UiDriverMethod::CaptureScreenshot,
+            Self::SetLeftPaneCollapsed(_) => UiDriverMethod::SetLeftPaneCollapsed,
+            Self::CreateChatSession(_) => UiDriverMethod::CreateChatSession,
+            Self::CloseChatSession(_) => UiDriverMethod::CloseChatSession,
+            Self::PinChatSession(_) => UiDriverMethod::PinChatSession,
+            Self::UnpinChatSession(_) => UiDriverMethod::UnpinChatSession,
+            Self::TriggerRefresh(_) => UiDriverMethod::TriggerRefresh,
+            Self::WaitForSnapshot(_) => UiDriverMethod::WaitForSnapshot,
+            Self::WaitForIdle(_) => UiDriverMethod::WaitForIdle,
         }
     }
 }
@@ -109,6 +133,14 @@ pub enum UiDriverResponseResult {
     OpenSessionView(OpenSessionViewResponse),
     OpenDiffView(OpenDiffViewResponse),
     CaptureScreenshot(CaptureScreenshotResponse),
+    SetLeftPaneCollapsed(SetLeftPaneCollapsedResponse),
+    CreateChatSession(CreateChatSessionResponse),
+    CloseChatSession(CloseChatSessionResponse),
+    PinChatSession(PinChatSessionResponse),
+    UnpinChatSession(UnpinChatSessionResponse),
+    TriggerRefresh(TriggerRefreshResponse),
+    WaitForSnapshot(WaitForUiSnapshotResponse),
+    WaitForIdle(WaitForUiIdleResponse),
     Error(ErrorEnvelope),
 }
 
@@ -161,13 +193,111 @@ pub struct OpenDiffViewRequest {}
 pub struct OpenDiffViewResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CaptureScreenshotRequest {
+pub struct SetLeftPaneCollapsedRequest {
+    pub collapsed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetLeftPaneCollapsedResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateChatSessionRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name_hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CreateChatSessionResponse {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CloseChatSessionRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CloseChatSessionResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinChatSessionRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinChatSessionResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnpinChatSessionRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnpinChatSessionResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TriggerRefreshRequest {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epic_slug: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TriggerRefreshResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<CommandId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForUiSnapshotRequest {
+    pub timeout_ms: u64,
+    pub predicate: UiSnapshotPredicate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiSnapshotPredicate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_view: Option<UiPrimaryView>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub epic_slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_flight_empty: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForUiSnapshotResponse {
+    pub snapshot: UiSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForUiIdleRequest {
+    pub timeout_ms: u64,
+    pub quiescence_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WaitForUiIdleResponse {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiScreenshotWindow {
+    Primary,
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CaptureScreenshotRequest {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name_hint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<UiScreenshotWindow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_decorations: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CaptureScreenshotResponse {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub png_path: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub png_data: Vec<u8>,
 }

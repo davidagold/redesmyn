@@ -35,6 +35,18 @@ enum UiDriverMethod {
   UI_DRIVER_METHOD_OPEN_DIFF_VIEW = 6;
   // Secondary/debugging surface.
   UI_DRIVER_METHOD_CAPTURE_SCREENSHOT = 7;
+  // Desktop layout actions (Domain 5).
+  UI_DRIVER_METHOD_SET_LEFT_PANE_COLLAPSED = 8;
+  // User-managed chats (Domain 5).
+  UI_DRIVER_METHOD_CREATE_CHAT_SESSION = 9;
+  UI_DRIVER_METHOD_CLOSE_CHAT_SESSION = 10;
+  UI_DRIVER_METHOD_PIN_CHAT_SESSION = 11;
+  UI_DRIVER_METHOD_UNPIN_CHAT_SESSION = 12;
+  // Refresh the current view/graph (Domain 5).
+  UI_DRIVER_METHOD_TRIGGER_REFRESH = 13;
+  // Deterministic waiting primitives (T-15/T-48).
+  UI_DRIVER_METHOD_WAIT_FOR_SNAPSHOT = 14;
+  UI_DRIVER_METHOD_WAIT_FOR_IDLE = 15;
 }
 
 message UiDriverRequest {
@@ -50,6 +62,14 @@ message UiDriverRequest {
     OpenSessionViewRequest open_session_view = 14;
     OpenDiffViewRequest open_diff_view = 15;
     CaptureScreenshotRequest capture_screenshot = 16;
+    SetLeftPaneCollapsedRequest set_left_pane_collapsed = 17;
+    CreateChatSessionRequest create_chat_session = 18;
+    CloseChatSessionRequest close_chat_session = 19;
+    PinChatSessionRequest pin_chat_session = 20;
+    UnpinChatSessionRequest unpin_chat_session = 21;
+    TriggerRefreshRequest trigger_refresh = 22;
+    WaitForUiSnapshotRequest wait_for_snapshot = 23;
+    WaitForUiIdleRequest wait_for_idle = 24;
   }
 }
 
@@ -72,6 +92,14 @@ message UiDriverResponse {
     OpenSessionViewResponse open_session_view = 14;
     OpenDiffViewResponse open_diff_view = 15;
     CaptureScreenshotResponse capture_screenshot = 16;
+    SetLeftPaneCollapsedResponse set_left_pane_collapsed = 17;
+    CreateChatSessionResponse create_chat_session = 18;
+    CloseChatSessionResponse close_chat_session = 19;
+    PinChatSessionResponse pin_chat_session = 20;
+    UnpinChatSessionResponse unpin_chat_session = 21;
+    TriggerRefreshResponse trigger_refresh = 22;
+    WaitForUiSnapshotResponse wait_for_snapshot = 23;
+    WaitForUiIdleResponse wait_for_idle = 24;
     ErrorEnvelope error = 100;
   }
 }
@@ -114,14 +142,99 @@ message OpenDiffViewRequest {}
 
 message OpenDiffViewResponse {}
 
-message CaptureScreenshotRequest {
-  // Best-effort label used for artifact naming.
+message SetLeftPaneCollapsedRequest {
+  bool collapsed = 1;
+}
+
+message SetLeftPaneCollapsedResponse {}
+
+message CreateChatSessionRequest {
+  // Best-effort label used for UI + artifacts.
   string name_hint = 1;
 }
 
+message CreateChatSessionResponse {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionResponse {}
+
+message PinChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message PinChatSessionResponse {}
+
+message UnpinChatSessionRequest {}
+
+message UnpinChatSessionResponse {}
+
+message TriggerRefreshRequest {
+  // Optional; if empty, refresh is inferred from current selection.
+  string epic_slug = 1;
+  // Best-effort label used for artifacts naming.
+  string name_hint = 2;
+}
+
+message TriggerRefreshResponse {
+  // Optional: the command id issued by the UI (if any).
+  bytes command_id = 1;
+}
+
+message WaitForUiSnapshotRequest {
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 1;
+  UiSnapshotPredicate predicate = 2;
+}
+
+message UiSnapshotPredicate {
+  // If unspecified, treated as "don't care".
+  UiPrimaryView primary_view = 1;
+  // If empty, treated as "don't care".
+  string epic_slug = 2;
+  // If set, require in_flight to be empty/non-empty.
+  optional bool in_flight_empty = 3;
+}
+
+message WaitForUiSnapshotResponse {
+  UiSnapshot snapshot = 1;
+}
+
+message WaitForUiIdleRequest {
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 1;
+  // Quiescence window in milliseconds; if 0, a server default is used.
+  uint64 quiescence_ms = 2;
+}
+
+message WaitForUiIdleResponse {}
+
+enum UiScreenshotWindow {
+  UI_SCREENSHOT_WINDOW_UNSPECIFIED = 0;
+  UI_SCREENSHOT_WINDOW_PRIMARY = 1;
+  UI_SCREENSHOT_WINDOW_ALL = 2;
+}
+
+message CaptureScreenshotRequest {
+  // Best-effort label used for artifact naming.
+  string name_hint = 1;
+  UiScreenshotWindow window = 2;
+  // Best-effort; may be ignored on some platforms.
+  optional bool include_decorations = 3;
+}
+
 message CaptureScreenshotResponse {
-  // PNG bytes (may be empty if unsupported in the current fixture mode).
-  bytes png_data = 1;
+  // Preferred: write to artifacts dir and return a path.
+  string png_path = 1;
+  // Optional fallback: PNG bytes (may be empty if unsupported).
+  bytes png_data = 2;
 }
 
 enum UiPrimaryView {
@@ -167,4 +280,3 @@ message UiSnapshot {
   repeated UiInFlightAction in_flight = 5;
   repeated UiErrorCallout errors = 6;
 }
-

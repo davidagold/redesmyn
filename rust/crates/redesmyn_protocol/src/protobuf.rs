@@ -3450,6 +3450,28 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::CaptureScreenshot => {
             pbv1::UiDriverMethod::CaptureScreenshot as i32
         }
+        crate::ui_driver::UiDriverMethod::SetLeftPaneCollapsed => {
+            pbv1::UiDriverMethod::SetLeftPaneCollapsed as i32
+        }
+        crate::ui_driver::UiDriverMethod::CreateChatSession => {
+            pbv1::UiDriverMethod::CreateChatSession as i32
+        }
+        crate::ui_driver::UiDriverMethod::CloseChatSession => {
+            pbv1::UiDriverMethod::CloseChatSession as i32
+        }
+        crate::ui_driver::UiDriverMethod::PinChatSession => {
+            pbv1::UiDriverMethod::PinChatSession as i32
+        }
+        crate::ui_driver::UiDriverMethod::UnpinChatSession => {
+            pbv1::UiDriverMethod::UnpinChatSession as i32
+        }
+        crate::ui_driver::UiDriverMethod::TriggerRefresh => {
+            pbv1::UiDriverMethod::TriggerRefresh as i32
+        }
+        crate::ui_driver::UiDriverMethod::WaitForSnapshot => {
+            pbv1::UiDriverMethod::WaitForSnapshot as i32
+        }
+        crate::ui_driver::UiDriverMethod::WaitForIdle => pbv1::UiDriverMethod::WaitForIdle as i32,
     }
 }
 
@@ -3470,10 +3492,33 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::CaptureScreenshot) => {
             Ok(crate::ui_driver::UiDriverMethod::CaptureScreenshot)
         }
+        Ok(pbv1::UiDriverMethod::SetLeftPaneCollapsed) => {
+            Ok(crate::ui_driver::UiDriverMethod::SetLeftPaneCollapsed)
+        }
+        Ok(pbv1::UiDriverMethod::CreateChatSession) => {
+            Ok(crate::ui_driver::UiDriverMethod::CreateChatSession)
+        }
+        Ok(pbv1::UiDriverMethod::CloseChatSession) => {
+            Ok(crate::ui_driver::UiDriverMethod::CloseChatSession)
+        }
+        Ok(pbv1::UiDriverMethod::PinChatSession) => Ok(crate::ui_driver::UiDriverMethod::PinChatSession),
+        Ok(pbv1::UiDriverMethod::UnpinChatSession) => {
+            Ok(crate::ui_driver::UiDriverMethod::UnpinChatSession)
+        }
+        Ok(pbv1::UiDriverMethod::TriggerRefresh) => Ok(crate::ui_driver::UiDriverMethod::TriggerRefresh),
+        Ok(pbv1::UiDriverMethod::WaitForSnapshot) => Ok(crate::ui_driver::UiDriverMethod::WaitForSnapshot),
+        Ok(pbv1::UiDriverMethod::WaitForIdle) => Ok(crate::ui_driver::UiDriverMethod::WaitForIdle),
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
             format!("unknown enum value for UiDriverMethod: {value}"),
         )),
+    }
+}
+
+fn encode_ui_screenshot_window(value: crate::ui_driver::UiScreenshotWindow) -> i32 {
+    match value {
+        crate::ui_driver::UiScreenshotWindow::Primary => pbv1::UiScreenshotWindow::Primary as i32,
+        crate::ui_driver::UiScreenshotWindow::All => pbv1::UiScreenshotWindow::All as i32,
     }
 }
 
@@ -3587,6 +3632,30 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::CaptureScreenshot(req) => {
                     pbv1::ui_driver_request::Payload::CaptureScreenshot(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::SetLeftPaneCollapsed(req) => {
+                    pbv1::ui_driver_request::Payload::SetLeftPaneCollapsed(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::CreateChatSession(req) => {
+                    pbv1::ui_driver_request::Payload::CreateChatSession(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::CloseChatSession(req) => {
+                    pbv1::ui_driver_request::Payload::CloseChatSession(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::PinChatSession(req) => {
+                    pbv1::ui_driver_request::Payload::PinChatSession(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::UnpinChatSession(req) => {
+                    pbv1::ui_driver_request::Payload::UnpinChatSession(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::TriggerRefresh(req) => {
+                    pbv1::ui_driver_request::Payload::TriggerRefresh(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::WaitForSnapshot(req) => {
+                    pbv1::ui_driver_request::Payload::WaitForSnapshot(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::WaitForIdle(req) => {
+                    pbv1::ui_driver_request::Payload::WaitForIdle(req.to_protobuf())
+                }
             }),
         }
     }
@@ -3628,7 +3697,47 @@ impl crate::ui_driver::UiDriverRequest {
             }
             pbv1::ui_driver_request::Payload::CaptureScreenshot(req) => {
                 crate::ui_driver::UiDriverRequestPayload::CaptureScreenshot(
-                    crate::ui_driver::CaptureScreenshotRequest::from_protobuf(req),
+                    crate::ui_driver::CaptureScreenshotRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::SetLeftPaneCollapsed(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SetLeftPaneCollapsed(
+                    crate::ui_driver::SetLeftPaneCollapsedRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::CreateChatSession(req) => {
+                crate::ui_driver::UiDriverRequestPayload::CreateChatSession(
+                    crate::ui_driver::CreateChatSessionRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::CloseChatSession(req) => {
+                crate::ui_driver::UiDriverRequestPayload::CloseChatSession(
+                    crate::ui_driver::CloseChatSessionRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::PinChatSession(req) => {
+                crate::ui_driver::UiDriverRequestPayload::PinChatSession(
+                    crate::ui_driver::PinChatSessionRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::UnpinChatSession(req) => {
+                crate::ui_driver::UiDriverRequestPayload::UnpinChatSession(
+                    crate::ui_driver::UnpinChatSessionRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::TriggerRefresh(req) => {
+                crate::ui_driver::UiDriverRequestPayload::TriggerRefresh(
+                    crate::ui_driver::TriggerRefreshRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::WaitForSnapshot(req) => {
+                crate::ui_driver::UiDriverRequestPayload::WaitForSnapshot(
+                    crate::ui_driver::WaitForUiSnapshotRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::WaitForIdle(req) => {
+                crate::ui_driver::UiDriverRequestPayload::WaitForIdle(
+                    crate::ui_driver::WaitForUiIdleRequest::from_protobuf(req),
                 )
             }
         };
@@ -3676,6 +3785,30 @@ impl crate::ui_driver::UiDriverResponse {
                 crate::ui_driver::UiDriverResponseResult::CaptureScreenshot(resp) => {
                     pbv1::ui_driver_response::Result::CaptureScreenshot(resp.to_protobuf())
                 }
+                crate::ui_driver::UiDriverResponseResult::SetLeftPaneCollapsed(resp) => {
+                    pbv1::ui_driver_response::Result::SetLeftPaneCollapsed(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::CreateChatSession(resp) => {
+                    pbv1::ui_driver_response::Result::CreateChatSession(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::CloseChatSession(resp) => {
+                    pbv1::ui_driver_response::Result::CloseChatSession(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::PinChatSession(resp) => {
+                    pbv1::ui_driver_response::Result::PinChatSession(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::UnpinChatSession(resp) => {
+                    pbv1::ui_driver_response::Result::UnpinChatSession(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::TriggerRefresh(resp) => {
+                    pbv1::ui_driver_response::Result::TriggerRefresh(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::WaitForSnapshot(resp) => {
+                    pbv1::ui_driver_response::Result::WaitForSnapshot(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::WaitForIdle(resp) => {
+                    pbv1::ui_driver_response::Result::WaitForIdle(resp.to_protobuf())
+                }
                 crate::ui_driver::UiDriverResponseResult::Error(err) => {
                     pbv1::ui_driver_response::Result::Error(err.to_protobuf())
                 }
@@ -3721,6 +3854,46 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::CaptureScreenshot(resp) => {
                 crate::ui_driver::UiDriverResponseResult::CaptureScreenshot(
                     crate::ui_driver::CaptureScreenshotResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SetLeftPaneCollapsed(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SetLeftPaneCollapsed(
+                    crate::ui_driver::SetLeftPaneCollapsedResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::CreateChatSession(resp) => {
+                crate::ui_driver::UiDriverResponseResult::CreateChatSession(
+                    crate::ui_driver::CreateChatSessionResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::ui_driver_response::Result::CloseChatSession(resp) => {
+                crate::ui_driver::UiDriverResponseResult::CloseChatSession(
+                    crate::ui_driver::CloseChatSessionResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::PinChatSession(resp) => {
+                crate::ui_driver::UiDriverResponseResult::PinChatSession(
+                    crate::ui_driver::PinChatSessionResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::UnpinChatSession(resp) => {
+                crate::ui_driver::UiDriverResponseResult::UnpinChatSession(
+                    crate::ui_driver::UnpinChatSessionResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::TriggerRefresh(resp) => {
+                crate::ui_driver::UiDriverResponseResult::TriggerRefresh(
+                    crate::ui_driver::TriggerRefreshResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::ui_driver_response::Result::WaitForSnapshot(resp) => {
+                crate::ui_driver::UiDriverResponseResult::WaitForSnapshot(
+                    crate::ui_driver::WaitForUiSnapshotResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::ui_driver_response::Result::WaitForIdle(resp) => {
+                crate::ui_driver::UiDriverResponseResult::WaitForIdle(
+                    crate::ui_driver::WaitForUiIdleResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::Error(err) => {
@@ -3913,19 +4086,308 @@ impl crate::ui_driver::OpenDiffViewResponse {
     }
 }
 
-impl crate::ui_driver::CaptureScreenshotRequest {
+impl crate::ui_driver::SetLeftPaneCollapsedRequest {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CaptureScreenshotRequest {
-        pbv1::CaptureScreenshotRequest {
+    pub fn to_protobuf(&self) -> pbv1::SetLeftPaneCollapsedRequest {
+        pbv1::SetLeftPaneCollapsedRequest {
+            collapsed: self.collapsed,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SetLeftPaneCollapsedRequest) -> Self {
+        Self {
+            collapsed: proto.collapsed,
+        }
+    }
+}
+
+impl crate::ui_driver::SetLeftPaneCollapsedResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetLeftPaneCollapsedResponse {
+        pbv1::SetLeftPaneCollapsedResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SetLeftPaneCollapsedResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::CreateChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionRequest {
+        pbv1::CreateChatSessionRequest {
             name_hint: self.name_hint.clone(),
         }
     }
 
     #[must_use]
-    pub fn from_protobuf(proto: pbv1::CaptureScreenshotRequest) -> Self {
+    pub fn from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Self {
         Self {
             name_hint: proto.name_hint,
         }
+    }
+}
+
+impl crate::ui_driver::CreateChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionResponse {
+        pbv1::CreateChatSessionResponse {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CreateChatSessionResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::CloseChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionRequest {
+        pbv1::CloseChatSessionRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CloseChatSessionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::CloseChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionResponse {
+        pbv1::CloseChatSessionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::CloseChatSessionResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::PinChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PinChatSessionRequest {
+        pbv1::PinChatSessionRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::PinChatSessionRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::PinChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PinChatSessionResponse {
+        pbv1::PinChatSessionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::PinChatSessionResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::UnpinChatSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnpinChatSessionRequest {
+        pbv1::UnpinChatSessionRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::UnpinChatSessionRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::UnpinChatSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnpinChatSessionResponse {
+        pbv1::UnpinChatSessionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::UnpinChatSessionResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::TriggerRefreshRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TriggerRefreshRequest {
+        pbv1::TriggerRefreshRequest {
+            epic_slug: self.epic_slug.clone(),
+            name_hint: self.name_hint.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::TriggerRefreshRequest) -> Self {
+        Self {
+            epic_slug: proto.epic_slug,
+            name_hint: proto.name_hint,
+        }
+    }
+}
+
+impl crate::ui_driver::TriggerRefreshResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TriggerRefreshResponse {
+        pbv1::TriggerRefreshResponse {
+            command_id: self
+                .command_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TriggerRefreshResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command_id: decode_optional_ulid("command_id", &proto.command_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::UiSnapshotPredicate {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiSnapshotPredicate {
+        pbv1::UiSnapshotPredicate {
+            primary_view: self
+                .primary_view
+                .map(encode_ui_primary_view)
+                .unwrap_or(pbv1::UiPrimaryView::Unspecified as i32),
+            epic_slug: self.epic_slug.clone(),
+            in_flight_empty: self.in_flight_empty,
+        }
+    }
+
+    pub fn from_protobuf(proto: pbv1::UiSnapshotPredicate) -> Result<Self, ErrorEnvelope> {
+        let primary_view = match pbv1::UiPrimaryView::try_from(proto.primary_view) {
+            Ok(pbv1::UiPrimaryView::EpicSelector) => Some(crate::ui_driver::UiPrimaryView::EpicSelector),
+            Ok(pbv1::UiPrimaryView::EpicWorkspace) => Some(crate::ui_driver::UiPrimaryView::EpicWorkspace),
+            Ok(pbv1::UiPrimaryView::Unspecified) | Err(_) => None,
+        };
+
+        Ok(Self {
+            primary_view,
+            epic_slug: proto.epic_slug,
+            in_flight_empty: proto.in_flight_empty,
+        })
+    }
+}
+
+impl crate::ui_driver::WaitForUiSnapshotRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForUiSnapshotRequest {
+        pbv1::WaitForUiSnapshotRequest {
+            timeout_ms: self.timeout_ms,
+            predicate: Some(self.predicate.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::WaitForUiSnapshotRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            timeout_ms: proto.timeout_ms,
+            predicate: crate::ui_driver::UiSnapshotPredicate::from_protobuf(
+                proto
+                    .predicate
+                    .ok_or_else(|| missing_required("predicate"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::ui_driver::WaitForUiSnapshotResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForUiSnapshotResponse {
+        pbv1::WaitForUiSnapshotResponse {
+            snapshot: Some(self.snapshot.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::WaitForUiSnapshotResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            snapshot: crate::ui_driver::UiSnapshot::try_from_protobuf(
+                proto.snapshot.ok_or_else(|| missing_required("snapshot"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::ui_driver::WaitForUiIdleRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForUiIdleRequest {
+        pbv1::WaitForUiIdleRequest {
+            timeout_ms: self.timeout_ms,
+            quiescence_ms: self.quiescence_ms,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::WaitForUiIdleRequest) -> Self {
+        Self {
+            timeout_ms: proto.timeout_ms,
+            quiescence_ms: proto.quiescence_ms,
+        }
+    }
+}
+
+impl crate::ui_driver::WaitForUiIdleResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::WaitForUiIdleResponse {
+        pbv1::WaitForUiIdleResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::WaitForUiIdleResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::CaptureScreenshotRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CaptureScreenshotRequest {
+        pbv1::CaptureScreenshotRequest {
+            name_hint: self.name_hint.clone(),
+            window: self
+                .window
+                .map(encode_ui_screenshot_window)
+                .unwrap_or(pbv1::UiScreenshotWindow::Unspecified as i32),
+            include_decorations: self.include_decorations,
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CaptureScreenshotRequest) -> Result<Self, ErrorEnvelope> {
+        let window = match pbv1::UiScreenshotWindow::try_from(proto.window) {
+            Ok(pbv1::UiScreenshotWindow::Primary) => Some(crate::ui_driver::UiScreenshotWindow::Primary),
+            Ok(pbv1::UiScreenshotWindow::All) => Some(crate::ui_driver::UiScreenshotWindow::All),
+            Ok(pbv1::UiScreenshotWindow::Unspecified) | Err(_) => None,
+        };
+
+        Ok(Self {
+            name_hint: proto.name_hint,
+            window,
+            include_decorations: proto.include_decorations,
+        })
     }
 }
 
@@ -3933,6 +4395,7 @@ impl crate::ui_driver::CaptureScreenshotResponse {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::CaptureScreenshotResponse {
         pbv1::CaptureScreenshotResponse {
+            png_path: self.png_path.clone(),
             png_data: self.png_data.clone(),
         }
     }
@@ -3940,6 +4403,7 @@ impl crate::ui_driver::CaptureScreenshotResponse {
     #[must_use]
     pub fn from_protobuf(proto: pbv1::CaptureScreenshotResponse) -> Self {
         Self {
+            png_path: proto.png_path,
             png_data: proto.png_data,
         }
     }
