@@ -2967,7 +2967,7 @@ impl crate::client::AgentSessionSummary {
             agent_kind: decode_agent_kind(proto.agent_kind)?,
             interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
             status: decode_agent_session_status(proto.status)?,
-            title: normalize_optional_string(proto.title),
+            title: normalize_nonempty_string(proto.title),
             closed_at: proto
                 .closed_at
                 .map(|ts| decode_timestamp("closed_at", ts))
@@ -3049,7 +3049,7 @@ impl crate::client::CreateChatSessionRequest {
     #[must_use]
     pub fn from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Self {
         Self {
-            title: normalize_optional_string(proto.title),
+            title: normalize_nonempty_string(proto.title),
         }
     }
 }
