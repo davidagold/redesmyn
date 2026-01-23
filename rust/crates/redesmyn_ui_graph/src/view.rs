@@ -798,7 +798,8 @@ impl GraphView {
     }
 
     fn selection_bar_target_visible(&self) -> bool {
-        self.scene.selection().selected_edge.is_none() && self.scene.selection().selected_nodes.len() > 1
+        self.scene.selection().selected_edge.is_none()
+            && self.scene.selection().selected_nodes.len() > 1
     }
 
     fn update_selection_bar_target(&mut self) {
@@ -881,10 +882,7 @@ impl GraphView {
 
     fn start_bulk_start(&mut self, cx: &mut Context<Self>) {
         if let Some(reason) = self.bulk_start_disabled_reason() {
-            redesmyn_logging::tracing::debug!(
-                reason,
-                "ignoring bulk start click (disabled)"
-            );
+            redesmyn_logging::tracing::debug!(reason, "ignoring bulk start click (disabled)");
             return;
         }
 
@@ -2163,9 +2161,9 @@ mod tests {
         scene.insert_demo_node(a);
         scene.insert_demo_node(b);
 
-        let selection_bar_visible =
-            |scene: &GraphScene| scene.selection().selected_edge.is_none()
-                && scene.selection().selected_nodes.len() > 1;
+        let selection_bar_visible = |scene: &GraphScene| {
+            scene.selection().selected_edge.is_none() && scene.selection().selected_nodes.len() > 1
+        };
 
         assert!(!selection_bar_visible(&scene));
 

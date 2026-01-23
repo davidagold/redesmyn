@@ -663,22 +663,51 @@ mod tests {
         scene.insert_demo_node(b);
 
         scene.toggle_node(a);
-        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(
+            scene
+                .selection()
+                .selected_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![a]
+        );
         assert_eq!(scene.selection().selected_node, None);
 
         scene.select_node(a);
         assert_eq!(scene.selection().selected_node, Some(a));
-        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(
+            scene
+                .selection()
+                .selected_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![a]
+        );
 
         scene.toggle_node(b);
         assert_eq!(
-            scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(),
+            scene
+                .selection()
+                .selected_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
             vec![a, b]
         );
         assert_eq!(scene.selection().selected_node, Some(a));
 
         scene.toggle_node(a);
-        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![b]);
+        assert_eq!(
+            scene
+                .selection()
+                .selected_nodes
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![b]
+        );
         assert_eq!(scene.selection().selected_node, None);
 
         scene.toggle_node(b);
