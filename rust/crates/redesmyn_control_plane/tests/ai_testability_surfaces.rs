@@ -76,7 +76,11 @@ async fn seed_repo_scope(control_plane: &ControlPlane) -> RepoScope {
     RepoScope::new(workspace_id, repo_id)
 }
 
-async fn run_mock_daemon(mut conn: InProcEndpoint, repo_scope: RepoScope) {
+async fn run_mock_daemon(
+    mut conn: InProcEndpoint,
+    repo_scope: RepoScope,
+    expected_dispatch_payload: Vec<u8>,
+) {
     let host_id = HostId::new();
     let host_instance_id = HostInstanceId::new();
 
@@ -122,6 +126,11 @@ async fn run_mock_daemon(mut conn: InProcEndpoint, repo_scope: RepoScope) {
         let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
             continue;
         };
+
+        assert_eq!(
+            dispatch.json_payload, expected_dispatch_payload,
+            "expected command payload bytes to be delivered to the daemon"
+        );
 
         for state in [
             DaemonCommandState::Accepted,
@@ -206,6 +215,7 @@ async fn create_noop_command(socket_path: &Path, scope: Scope) -> CommandId {
             target_task_id: None,
             idempotency_key: None,
             created_by: None,
+            json_payload: Vec::new(),
         }),
     )
     .await;
@@ -481,7 +491,7 @@ async fn ai_testability_surfaces_cover_actions_model_and_ui_snapshot() {
         control_plane.clone(),
         control_plane_conn,
     );
-    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope));
+    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope, Vec::new()));
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let server_socket_path = socket_path.clone();
@@ -581,7 +591,7 @@ async fn wait_primitives_support_events_and_idle() {
         control_plane.clone(),
         control_plane_conn,
     );
-    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope));
+    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope, Vec::new()));
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let server_socket_path = socket_path.clone();
@@ -622,6 +632,106 @@ async fn wait_primitives_support_events_and_idle() {
     assert_eq!(terminal_state, ClientCommandState::Succeeded);
 
     wait_for_idle(&socket_path, scope).await;
+
+    let _ = shutdown_tx.send(());
+    server.await.expect("server task").expect("server exit");
+    daemon_link.shutdown().await;
+    daemon_task.await.expect("daemon task");
+}
+
+#[tokio::test]
+async fn create_command_payload_is_dispatched_and_idempotency_payload_mismatch_conflicts() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let socket_path = tmp.path().join("control_plane.sock");
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let repo_scope = seed_repo_scope(&control_plane).await;
+    let scope = Scope::from(repo_scope);
+
+    let expected_payload = br#"{"hello":"world"}"#.to_vec();
+
+    let (control_plane_conn, daemon_conn) = InProcEndpoint::pair(64);
+    let daemon_link = DaemonLinkHandle::start(
+        &tokio::runtime::Handle::current(),
+        control_plane.clone(),
+        control_plane_conn,
+    );
+    let daemon_task = tokio::spawn(run_mock_daemon(
+        daemon_conn,
+        repo_scope,
+        expected_payload.clone(),
+    ));
+
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let server_socket_path = socket_path.clone();
+    let server_control_plane = control_plane.clone();
+    let server_shutdown_tx = shutdown_tx.clone();
+    let server = tokio::spawn(async move {
+        let mut shutdown = server_shutdown_tx.subscribe();
+        redesmyn_control_plane::client_api::serve_client_api_uds(
+            server_control_plane,
+            server_socket_path,
+            ClientApiCodec::Protobuf,
+            &mut shutdown,
+        )
+        .await
+    });
+
+    wait_for_socket(&socket_path).await;
+
+    let idempotency_key = Some("test-key".to_string());
+
+    let command_id = match control_plane_request(
+        &socket_path,
+        scope,
+        RequestPayload::CreateCommand(CreateCommandRequest {
+            kind: "noop".to_string(),
+            target_task_id: None,
+            idempotency_key: idempotency_key.clone(),
+            created_by: None,
+            json_payload: expected_payload,
+        }),
+    )
+    .await
+    {
+        ResponseResult::CreateCommand(resp) => resp.command.command_id,
+        other => panic!("unexpected CreateCommand result: {other:?}"),
+    };
+
+    let terminal_state = wait_for_command(&socket_path, scope, command_id).await;
+    assert_eq!(terminal_state, ClientCommandState::Succeeded);
+
+    let result = control_plane_request(
+        &socket_path,
+        scope,
+        RequestPayload::CreateCommand(CreateCommandRequest {
+            kind: "noop".to_string(),
+            target_task_id: None,
+            idempotency_key,
+            created_by: None,
+            json_payload: br#"{"hello":"different"}"#.to_vec(),
+        }),
+    )
+    .await;
+
+    let error = match result {
+        ResponseResult::Error(err) => err,
+        other => panic!("expected Conflict error, got {other:?}"),
+    };
+
+    assert_eq!(error.category, redesmyn_protocol::ErrorCategory::Conflict);
+    let detail = error.detail.expect("conflict detail");
+    let command_id_str = command_id.to_string();
+
+    assert_eq!(
+        detail.get("conflict_code").map(String::as_str),
+        Some("command_idempotency_payload_mismatch")
+    );
+    assert_eq!(detail.get("idempotency_key").map(String::as_str), Some("test-key"));
+    assert_eq!(
+        detail.get("existing_command_id").map(String::as_str),
+        Some(command_id_str.as_str())
+    );
 
     let _ = shutdown_tx.send(());
     server.await.expect("server task").expect("server exit");
