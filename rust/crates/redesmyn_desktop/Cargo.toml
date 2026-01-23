@@ -23,6 +23,7 @@ redesmyn_ui_graph.workspace = true
 redesmyn_ui_session.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio"] }
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }

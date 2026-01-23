@@ -25,6 +25,10 @@ pub struct DesktopApp;
 #[cfg(debug_assertions)]
 const SESSION_VIEWER_FIXTURE_SESSION_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 #[cfg(debug_assertions)]
+const SESSION_VIEWER_FIXTURE_WORKSPACE_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+#[cfg(debug_assertions)]
+const SESSION_VIEWER_FIXTURE_REPO_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+#[cfg(debug_assertions)]
 const SESSION_VIEWER_FIXTURE_BASE_MS: i64 = 1_700_000_000_000;
 #[cfg(debug_assertions)]
 const SESSION_VIEWER_FIXTURE_TURN_COUNT: u64 = 30;
@@ -292,6 +296,18 @@ fn session_viewer_fixture_session_id() -> redesmyn_ids::SessionId {
 }
 
 #[cfg(debug_assertions)]
+fn session_viewer_fixture_workspace_id() -> redesmyn_ids::WorkspaceId {
+    redesmyn_ids::WorkspaceId::from_str(SESSION_VIEWER_FIXTURE_WORKSPACE_ID)
+        .expect("fixture workspace id should parse")
+}
+
+#[cfg(debug_assertions)]
+fn session_viewer_fixture_repo_id() -> redesmyn_ids::RepoId {
+    redesmyn_ids::RepoId::from_str(SESSION_VIEWER_FIXTURE_REPO_ID)
+        .expect("fixture repo id should parse")
+}
+
+#[cfg(debug_assertions)]
 fn session_viewer_fixture_db_path(base_db_path: &Path) -> PathBuf {
     let Some(state_dir) = base_db_path.parent() else {
         return PathBuf::from(".redesmyn/fixtures/session_viewer/redesmyn_rust.sqlite3");
@@ -355,6 +371,8 @@ async fn seed_session_viewer_fixture(
     session_events: &SessionEvents,
     session_id: redesmyn_ids::SessionId,
 ) -> Result<usize, StorageError> {
+    ensure_session_viewer_fixture_agent_session(session_events.pool(), session_id).await?;
+
     let mut seeded = 0_usize;
     let mut ix = 0_u64;
 
@@ -487,6 +505,75 @@ async fn seed_session_viewer_fixture(
     }
 
     Ok(seeded)
+}
+
+#[cfg(debug_assertions)]
+async fn ensure_session_viewer_fixture_agent_session(
+    pool: &sqlx::SqlitePool,
+    session_id: redesmyn_ids::SessionId,
+) -> Result<(), StorageError> {
+    use redesmyn_storage::schema::{
+        AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus,
+    };
+    use redesmyn_storage::sessions::{AgentSessionRecord, get_agent_session, insert_agent_session};
+
+    if get_agent_session(pool, session_id).await?.is_some() {
+        return Ok(());
+    }
+
+    let workspace_id = session_viewer_fixture_workspace_id();
+    let repo_id = session_viewer_fixture_repo_id();
+    let now_ms = SESSION_VIEWER_FIXTURE_BASE_MS;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("fixture")
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("fixture")
+    .bind("Fixture repo")
+    .execute(pool)
+    .await?;
+
+    let session = AgentSessionRecord {
+        session_id,
+        created_at_ms: now_ms,
+        updated_at_ms: now_ms,
+        scope_workspace_id: workspace_id,
+        scope_repo_id: repo_id,
+        scope_kind: AgentSessionScopeKind::Chat,
+        task_id: None,
+        agent_kind: AgentKind::Codex,
+        interface_mode: AgentInterfaceMode::StructuredExec,
+        status: AgentSessionStatus::Stopped,
+        external_session_ref: r#"{"type":"none"}"#.to_owned(),
+        title: Some("Fixture session".to_owned()),
+        started_at_ms: Some(now_ms),
+        ended_at_ms: None,
+        closed_at_ms: None,
+    };
+
+    insert_agent_session(pool, &session).await?;
+
+    Ok(())
 }
 
 impl DesktopHandle {
