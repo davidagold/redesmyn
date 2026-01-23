@@ -280,7 +280,11 @@ impl Focusable for SessionView {
 }
 
 impl SessionView {
-    pub fn new(control_plane_client: Option<ClientInProcEndpoint>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        control_plane_client: Option<ClientInProcEndpoint>,
+        initial_session_id: Option<SessionId>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = ScrollHandle::new();
         let session_id_input = cx.new(|cx| TextInput::new(cx).placeholder("Session id…"));
@@ -300,7 +304,9 @@ impl SessionView {
             None => (None, None),
         };
 
-        let initial_id = std::env::var("REDESMYN_SESSION_VIEWER_SESSION_ID").ok();
+        let initial_id = initial_session_id
+            .map(|id| id.to_string())
+            .or_else(|| std::env::var("REDESMYN_SESSION_VIEWER_SESSION_ID").ok());
         if let Some(id) = initial_id {
             session_id_input.update(cx, move |input, cx| input.set_text(id, cx));
         }

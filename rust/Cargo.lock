@@ -4773,6 +4773,7 @@ dependencies = [
  "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
+ "redesmyn_storage",
  "redesmyn_transport",
  "redesmyn_ui",
  "redesmyn_ui_graph",

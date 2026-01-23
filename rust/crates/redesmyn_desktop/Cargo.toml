@@ -16,6 +16,7 @@ redesmyn_daemon.workspace = true
 redesmyn_ids.workspace = true
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
+redesmyn_storage.workspace = true
 redesmyn_transport.workspace = true
 redesmyn_ui.workspace = true
 redesmyn_ui_graph.workspace = true

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, AsyncApp, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle, SharedString,
-    Subscription, Task, WeakEntity, Window, div, prelude::*, px,
+    App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
+    SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -29,6 +29,7 @@ use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::utils::{UserActionState, theme_for_window};
 use redesmyn_ui_graph::GraphView;
 
+use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
     CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
@@ -42,6 +43,7 @@ pub struct DesktopModel {
     daemon_host_id: Option<redesmyn_ids::HostId>,
     session_control_plane_client: Option<ClientInProcEndpoint>,
     chrome_control_plane_client: Option<ControlPlaneClient>,
+    session_viewer_fixture: Option<SessionViewerFixtureEmitter>,
     ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
 }
 
@@ -53,6 +55,7 @@ impl DesktopModel {
         tokio_handle: tokio::runtime::Handle,
         session_control_plane_client: Option<ClientInProcEndpoint>,
         chrome_control_plane_client: Option<ClientInProcEndpoint>,
+        session_viewer_fixture: Option<SessionViewerFixtureEmitter>,
         ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
     ) -> Self {
         Self {
@@ -61,6 +64,7 @@ impl DesktopModel {
             session_control_plane_client,
             chrome_control_plane_client: chrome_control_plane_client
                 .map(|conn| ControlPlaneClient::new(tokio_handle, conn)),
+            session_viewer_fixture,
             ui_driver_rx,
         }
     }
@@ -73,6 +77,10 @@ impl DesktopModel {
         &mut self,
     ) -> Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>> {
         self.ui_driver_rx.take()
+    }
+
+    pub fn take_session_viewer_fixture(&mut self) -> Option<SessionViewerFixtureEmitter> {
+        self.session_viewer_fixture.take()
     }
 }
 
@@ -1915,13 +1923,86 @@ impl Render for RootView {
 
 struct EpicSessionPaneHost {
     session_view: Entity<SessionView>,
+    fixture: Option<SessionViewerFixtureEmitter>,
+    emit_demo_task: Option<Task<()>>,
+    emit_demo_in_flight: bool,
+    emit_demo_error: Option<SharedString>,
 }
 
 impl EpicSessionPaneHost {
     fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        let client = model.update(cx, |model, _cx| model.take_control_plane_client());
-        let session_view = cx.new(|cx| SessionView::new(client, cx));
-        Self { session_view }
+        let (client, fixture) = model.update(cx, |model, _cx| {
+            (
+                model.take_control_plane_client(),
+                model.take_session_viewer_fixture(),
+            )
+        });
+        let initial_session_id = fixture.as_ref().map(|fixture| fixture.session_id());
+        let session_view = cx.new(|cx| SessionView::new(client, initial_session_id, cx));
+        Self {
+            session_view,
+            fixture,
+            emit_demo_task: None,
+            emit_demo_in_flight: false,
+            emit_demo_error: None,
+        }
+    }
+
+    fn emit_demo_message(
+        &mut self,
+        _event: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.emit_demo_in_flight {
+            return;
+        }
+
+        let Some(fixture) = self.fixture.clone() else {
+            return;
+        };
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_viewer_fixture.emit_demo_message",
+            session_id = %fixture.session_id()
+        );
+        let _guard = span.enter();
+
+        self.emit_demo_in_flight = true;
+        self.emit_demo_error = None;
+        cx.notify();
+
+        self.emit_demo_task = Some(cx.spawn(
+            move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
+
+                    let tokio = fixture.tokio();
+                    let task = tokio.spawn({
+                        let fixture = fixture.clone();
+                        async move { fixture.emit_demo_message().await }
+                    });
+
+                    let error = match task.await {
+                        Ok(Ok(())) => None,
+                        Ok(Err(error)) => Some(error.to_string()),
+                        Err(error) => Some(format!("Demo event task failed: {error}")),
+                    };
+
+                    let _ = cx.update(|cx| {
+                        entity.update(cx, |this, cx| {
+                            this.emit_demo_task = None;
+                            this.emit_demo_in_flight = false;
+                            this.emit_demo_error = error.map(Into::into);
+                            cx.notify();
+                        })
+                    });
+                }
+            },
+        ));
     }
 }
 
@@ -1929,7 +2010,7 @@ impl Render for EpicSessionPaneHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
 
-        div()
+        let content = div()
             .flex()
             .flex_col()
             .size_full()
@@ -1941,21 +2022,49 @@ impl Render for EpicSessionPaneHost {
                     .flex()
                     .items_center()
                     .bg(theme.colors.surface_elevated)
+                    .justify_between()
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.colors.foreground)
                             .child("Sessions"),
-                    ),
+                    )
+                    .child({
+                        let mut controls = div().flex().flex_row().gap(theme.spacing.sm);
+                        if self.fixture.is_some() {
+                            let label = if self.emit_demo_in_flight {
+                                "Emitting…"
+                            } else {
+                                "Emit demo message"
+                            };
+                            controls = controls.child(
+                                TextButton::new(("session_fixture_emit_demo", cx.entity_id()), label)
+                                    .disabled(self.emit_demo_in_flight)
+                                    .on_click(cx.listener(Self::emit_demo_message)),
+                            );
+                        }
+                        controls
+                    }),
             )
-            .child(
-                div()
+            .child({
+                let mut body = div()
                     .flex_1()
                     .min_h(px(0.0))
                     .px(theme.spacing.md)
-                    .py(theme.spacing.md)
-                    .child(self.session_view.clone()),
-            )
+                    .py(theme.spacing.md);
+
+                if let Some(error) = self.emit_demo_error.clone() {
+                    body = body.child(
+                        Callout::new(error)
+                            .kind(CalloutKind::Warning)
+                            .title("Session viewer fixture"),
+                    );
+                }
+
+                body.child(self.session_view.clone())
+            });
+
+        content
     }
 }
 
