@@ -1,3 +1,4 @@
+use redesmyn_ids::CommandId;
 use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope};
 use thiserror::Error;
 
@@ -13,6 +14,12 @@ pub enum ControlPlaneError {
     EpicNotFound { epic_slug: String },
     #[error("Invalid timestamp.")]
     InvalidTimestamp { unix_ms: i64 },
+    #[error("Invalid command kind.")]
+    InvalidCommandKind { kind: String },
+    #[error("Invalid idempotency key.")]
+    InvalidIdempotencyKey { idempotency_key: String },
+    #[error("Command not found.")]
+    CommandNotFound { command_id: CommandId },
     #[error("Storage error.")]
     Storage(#[from] redesmyn_storage::StorageError),
 }
@@ -45,6 +52,25 @@ impl From<ControlPlaneError> for ErrorEnvelope {
                     "Invalid timestamp in persisted data.",
                 )
                 .with_detail(detail)
+            }
+            ControlPlaneError::InvalidCommandKind { kind } => {
+                let detail = ErrorDetail::from([("kind".to_string(), kind)]);
+                ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Invalid command kind.")
+                    .with_detail(detail)
+            }
+            ControlPlaneError::InvalidIdempotencyKey { idempotency_key } => {
+                let detail = ErrorDetail::from([("idempotency_key".to_string(), idempotency_key)]);
+                ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Invalid idempotency key.",
+                )
+                .with_detail(detail)
+            }
+            ControlPlaneError::CommandNotFound { command_id } => {
+                let detail =
+                    ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
+                ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
+                    .with_detail(detail)
             }
             ControlPlaneError::Storage(err) => {
                 ErrorEnvelope::new(ErrorCategory::Internal, "Storage error.")

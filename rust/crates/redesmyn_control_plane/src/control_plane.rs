@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 use tokio::runtime::Handle;
 
 use crate::client_api::{ClientApiCodec, ClientApiServeError};
-use crate::command::{CommandRegistry, CommandState};
+use crate::command::Commands;
 use crate::event_log::{EventLog, EventLogConfig};
 use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
@@ -56,6 +56,7 @@ pub struct ControlPlane {
     pool: SqlitePool,
     event_log: EventLog,
     session_events: SessionEvents,
+    commands: Commands,
 }
 
 impl ControlPlane {
@@ -95,10 +96,12 @@ impl ControlPlane {
         let event_log = EventLog::new_with_config(pool.clone(), config);
         let session_events =
             SessionEvents::new_with_config(pool.clone(), SessionEventsConfig::default());
+        let commands = Commands::new(pool.clone(), event_log.clone());
         Self {
             pool,
             event_log,
             session_events,
+            commands,
         }
     }
 
@@ -117,6 +120,11 @@ impl ControlPlane {
         &self.session_events
     }
 
+    #[must_use]
+    pub fn commands(&self) -> &Commands {
+        &self.commands
+    }
+
     pub async fn start(
         options: ControlPlaneStartOptions,
     ) -> Result<ControlPlaneHandle, ControlPlaneStartError> {
@@ -126,20 +134,8 @@ impl ControlPlane {
         let db_pool = open_db(options.db).await?;
         let control_plane = Self::new(db_pool);
 
-        let commands = CommandRegistry::new(control_plane.event_log().clone());
-        commands
-            .set_state(
-                commands
-                    .create(Some("control_plane.startup".to_string()))
-                    .await,
-                CommandState::Succeeded,
-                None,
-            )
-            .await;
-
         let state = std::sync::Arc::new(ControlPlaneState {
             control_plane: control_plane.clone(),
-            commands,
         });
 
         let mut tasks = TaskManager::new(Handle::current());
@@ -180,8 +176,6 @@ impl ControlPlane {
 struct ControlPlaneState {
     #[allow(dead_code)]
     control_plane: ControlPlane,
-    #[allow(dead_code)]
-    commands: CommandRegistry,
 }
 
 pub struct ControlPlaneHandle {

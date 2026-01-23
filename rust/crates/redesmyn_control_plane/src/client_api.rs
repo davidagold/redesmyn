@@ -1,9 +1,8 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
-use redesmyn_ids::{CommandId, EventId, RepoId, WorkspaceId};
+use redesmyn_ids::{RepoId, WorkspaceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus, AgentSessionSummary,
@@ -23,8 +22,6 @@ use redesmyn_protocol::{
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
-use tokio::sync::{Mutex, broadcast, watch};
-
 use crate::ControlPlane;
 use crate::error::ControlPlaneError;
 use crate::session_events::{
@@ -40,349 +37,6 @@ use redesmyn_storage::sessions::AgentSessionRecord;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
-const EVENT_LOG_BUFFER_CAPACITY: usize = 256;
-
-#[derive(Debug)]
-struct CommandRecord {
-    kind: String,
-    target_task_id: Option<redesmyn_ids::TaskId>,
-    created_at: Timestamp,
-    updated_at: Timestamp,
-    state: CommandState,
-    state_tx: watch::Sender<CommandState>,
-}
-
-#[derive(Debug)]
-struct ClientApiState {
-    commands: Mutex<HashMap<CommandId, CommandRecord>>,
-    event_log_tx: broadcast::Sender<EventLogEvent>,
-    event_log_buf: Mutex<VecDeque<EventLogEvent>>,
-    activity_tx: watch::Sender<u64>,
-}
-
-impl ClientApiState {
-    fn new() -> Arc<Self> {
-        let (event_log_tx, _event_log_rx) = broadcast::channel(256);
-        let (activity_tx, _activity_rx) = watch::channel(0_u64);
-
-        Arc::new(Self {
-            commands: Mutex::new(HashMap::new()),
-            event_log_tx,
-            event_log_buf: Mutex::new(VecDeque::new()),
-            activity_tx,
-        })
-    }
-
-    fn touch_activity(&self) {
-        let next = *self.activity_tx.borrow() + 1;
-        let _ = self.activity_tx.send(next);
-    }
-
-    async fn emit_event_log(&self, event_type: impl Into<String>) -> EventLogEvent {
-        let event = EventLogEvent {
-            event_id: EventId::new(),
-            occurred_at: Timestamp::now_utc(),
-            event_type: event_type.into(),
-            json_payload: Vec::new(),
-        };
-
-        {
-            let mut buf = self.event_log_buf.lock().await;
-            if buf.len() >= EVENT_LOG_BUFFER_CAPACITY {
-                buf.pop_front();
-            }
-            buf.push_back(event.clone());
-        }
-
-        self.touch_activity();
-        let _ = self.event_log_tx.send(event.clone());
-        event
-    }
-
-    async fn snapshot_event_log(&self, after_event_id: Option<EventId>) -> Vec<EventLogEvent> {
-        let buf = self.event_log_buf.lock().await;
-        let start = after_event_id
-            .and_then(|after| {
-                buf.iter()
-                    .position(|event| event.event_id == after)
-                    .map(|idx| idx + 1)
-            })
-            .unwrap_or(0);
-        buf.iter().skip(start).cloned().collect()
-    }
-
-    async fn create_command(
-        self: &Arc<Self>,
-        kind: String,
-        target_task_id: Option<redesmyn_ids::TaskId>,
-    ) -> CommandSummary {
-        let command_id = CommandId::new();
-        let (state_tx, _state_rx) = watch::channel(CommandState::Accepted);
-        let created_at = Timestamp::now_utc();
-
-        {
-            let mut commands = self.commands.lock().await;
-            commands.insert(
-                command_id,
-                CommandRecord {
-                    kind: kind.clone(),
-                    target_task_id,
-                    created_at,
-                    updated_at: created_at,
-                    state: CommandState::Accepted,
-                    state_tx,
-                },
-            );
-        }
-
-        self.emit_event_log("command.accepted").await;
-
-        let state = Arc::clone(self);
-        tokio::spawn(async move {
-            tokio::task::yield_now().await;
-            state
-                .set_command_state(command_id, CommandState::Running)
-                .await;
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            state
-                .set_command_state(command_id, CommandState::Succeeded)
-                .await;
-        });
-
-        CommandSummary {
-            command_id,
-            created_at,
-            updated_at: created_at,
-            kind,
-            state: CommandState::Accepted,
-            target_task_id,
-            last_update: None,
-        }
-    }
-
-    async fn get_command(&self, command_id: CommandId) -> Option<CommandSummary> {
-        let commands = self.commands.lock().await;
-        let record = commands.get(&command_id)?;
-        Some(CommandSummary {
-            command_id,
-            created_at: record.created_at,
-            updated_at: record.updated_at,
-            kind: record.kind.clone(),
-            state: record.state,
-            target_task_id: record.target_task_id,
-            last_update: None,
-        })
-    }
-
-    async fn set_command_state(&self, command_id: CommandId, state: CommandState) {
-        let kind = {
-            let mut commands = self.commands.lock().await;
-            let Some(record) = commands.get_mut(&command_id) else {
-                return;
-            };
-            record.state = state;
-            record.updated_at = Timestamp::now_utc();
-            let _ = record.state_tx.send(state);
-            record.kind.clone()
-        };
-
-        let event_type = match state {
-            CommandState::Unknown => "command.unknown",
-            CommandState::Accepted => "command.accepted",
-            CommandState::Running => "command.running",
-            CommandState::Blocked => "command.blocked",
-            CommandState::Resumable => "command.resumable",
-            CommandState::Succeeded => "command.succeeded",
-            CommandState::Failed => "command.failed",
-            CommandState::Canceled => "command.canceled",
-        };
-
-        tracing::debug!(command_id = %command_id, kind = %kind, state = ?state, "command state updated");
-        self.emit_event_log(event_type).await;
-    }
-
-    async fn wait_for_command(
-        &self,
-        command_id: CommandId,
-        terminal_states: &[CommandState],
-        timeout: Duration,
-    ) -> Result<CommandSummary, ErrorEnvelope> {
-        let (kind, target_task_id, created_at, updated_at, current_state, mut rx) = {
-            let commands = self.commands.lock().await;
-            let record = commands.get(&command_id).ok_or_else(|| {
-                let detail =
-                    ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
-                    .with_detail(detail)
-            })?;
-            (
-                record.kind.clone(),
-                record.target_task_id,
-                record.created_at,
-                record.updated_at,
-                record.state,
-                record.state_tx.subscribe(),
-            )
-        };
-
-        let terminal_states: Vec<CommandState> = if terminal_states.is_empty() {
-            vec![
-                CommandState::Succeeded,
-                CommandState::Failed,
-                CommandState::Canceled,
-            ]
-        } else {
-            terminal_states.to_vec()
-        };
-
-        if terminal_states.contains(&current_state) {
-            return Ok(CommandSummary {
-                command_id,
-                created_at,
-                updated_at,
-                kind,
-                state: current_state,
-                target_task_id,
-                last_update: None,
-            });
-        }
-
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            let state = *rx.borrow();
-            if terminal_states.contains(&state) {
-                return self.get_command(command_id).await.ok_or_else(|| {
-                    let detail =
-                        ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                    ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
-                        .with_detail(detail)
-                });
-            }
-
-            tokio::select! {
-                changed = rx.changed() => {
-                    if changed.is_err() {
-                        let detail = ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Command wait channel closed.").with_detail(detail));
-                    }
-                }
-                _ = tokio::time::sleep_until(deadline) => {
-                    let detail = ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Timed out waiting for command.").with_detail(detail));
-                }
-            }
-        }
-    }
-
-    async fn wait_for_event_log(
-        &self,
-        filter: &EventWaitFilter,
-        timeout: Duration,
-    ) -> Result<EventLogEvent, ErrorEnvelope> {
-        {
-            let buf = self.event_log_buf.lock().await;
-            let start = match filter.after_event_id {
-                None => 0,
-                Some(after) => match buf.iter().position(|event| event.event_id == after) {
-                    Some(idx) => idx + 1,
-                    None => buf.len(),
-                },
-            };
-
-            for event in buf.iter().skip(start) {
-                if filter.event_type_prefix.is_empty()
-                    || event.event_type.starts_with(&filter.event_type_prefix)
-                {
-                    return Ok(event.clone());
-                }
-            }
-        }
-
-        let mut rx = self.event_log_tx.subscribe();
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        loop {
-            tokio::select! {
-                recv = rx.recv() => match recv {
-                    Ok(event) => {
-                        if filter.event_type_prefix.is_empty() || event.event_type.starts_with(&filter.event_type_prefix) {
-                            return Ok(event);
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => {
-                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Event log channel closed."));
-                    }
-                },
-                _ = tokio::time::sleep_until(deadline) => {
-                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Timed out waiting for event."));
-                }
-            }
-        }
-    }
-
-    async fn inflight_command_count(&self) -> usize {
-        let commands = self.commands.lock().await;
-        commands
-            .values()
-            .filter(|record| {
-                !matches!(
-                    record.state,
-                    CommandState::Succeeded | CommandState::Failed | CommandState::Canceled
-                )
-            })
-            .count()
-    }
-
-    async fn wait_for_idle(
-        &self,
-        timeout: Duration,
-        quiescence: Duration,
-    ) -> Result<(), ErrorEnvelope> {
-        let mut activity_rx = self.activity_tx.subscribe();
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        loop {
-            if tokio::time::Instant::now() >= deadline {
-                return Err(ErrorEnvelope::new(
-                    ErrorCategory::Unavailable,
-                    "Timed out waiting for idle.",
-                ));
-            }
-
-            if self.inflight_command_count().await == 0 {
-                let quiescence_deadline = tokio::time::Instant::now() + quiescence;
-                tokio::select! {
-                    _ = tokio::time::sleep_until(quiescence_deadline) => {
-                        if self.inflight_command_count().await == 0 {
-                            return Ok(());
-                        }
-                    }
-                    changed = activity_rx.changed() => {
-                        if changed.is_err() {
-                            return Ok(());
-                        }
-                    }
-                    _ = tokio::time::sleep_until(deadline) => {
-                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Timed out waiting for idle."));
-                    }
-                }
-            } else {
-                tokio::select! {
-                    changed = activity_rx.changed() => {
-                        if changed.is_err() {
-                            return Ok(());
-                        }
-                    }
-                    _ = tokio::time::sleep_until(deadline) => {
-                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "Timed out waiting for idle."));
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
     Json,
@@ -449,9 +103,6 @@ pub async fn serve_client_api_listener(
         "client API UDS server listening"
     );
 
-    let state = ClientApiState::new();
-    state.emit_event_log("control_plane.started").await;
-
     let mut connections = tokio::task::JoinSet::new();
 
     loop {
@@ -461,13 +112,12 @@ pub async fn serve_client_api_listener(
                 let (stream, _addr) = accept?;
                 let task_codec = codec;
                 let task_control_plane = control_plane.clone();
-                let task_state = Arc::clone(&state);
                 let mut task_shutdown = shutdown.resubscribe();
 
                 connections.spawn(async move {
                     let result = match task_codec {
-                        ClientApiCodec::Json => handle_connection(stream, JsonCodec::new(), task_control_plane, task_state, &mut task_shutdown).await,
-                        ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new(), task_control_plane, task_state, &mut task_shutdown).await,
+                        ClientApiCodec::Json => handle_connection(stream, JsonCodec::new(), task_control_plane, &mut task_shutdown).await,
+                        ClientApiCodec::Protobuf => handle_connection(stream, ProtobufCodec::new(), task_control_plane, &mut task_shutdown).await,
                     };
 
                     if let Err(err) = result {
@@ -501,7 +151,6 @@ async fn handle_connection<C>(
     stream: tokio::net::UnixStream,
     codec: C,
     control_plane: ControlPlane,
-    state: Arc<ClientApiState>,
     shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError>
 where
@@ -519,20 +168,8 @@ where
     let _enter = span.enter();
 
     let mut conn = FramedEndpoint::new(stream, codec);
-    serve_connection_with_state(&mut conn, control_plane, state, shutdown).await?;
+    serve_connection(&mut conn, control_plane, shutdown).await?;
     Ok(())
-}
-
-async fn serve_connection_with_state<C>(
-    conn: &mut C,
-    control_plane: ControlPlane,
-    state: Arc<ClientApiState>,
-    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
-) -> Result<(), ClientApiServeError>
-where
-    C: ClientConnection + Send + 'static,
-{
-    run_session(conn, control_plane, state, shutdown).await
 }
 
 /// Serve a single client ↔ control plane connection (T-12).
@@ -548,14 +185,12 @@ pub async fn serve_connection<C>(
 where
     C: ClientConnection + Send + 'static,
 {
-    let state = ClientApiState::new();
-    serve_connection_with_state(conn, control_plane, state, shutdown).await
+    run_session(conn, control_plane, shutdown).await
 }
 
 async fn run_session<C>(
     conn: &mut C,
     control_plane: ControlPlane,
-    state: Arc<ClientApiState>,
     shutdown: &mut tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), ClientApiServeError>
 where
@@ -624,8 +259,7 @@ where
                 match frame.message {
                     ClientMessage::Request(req) => {
                         let response =
-                            handle_request(req, accepted, &frame.envelope, &control_plane, &state)
-                                .await;
+                            handle_request(req, accepted, &frame.envelope, &control_plane).await;
                         let response_frame = ClientFrame::new(
                             response_envelope(&frame.envelope, accepted),
                             ClientMessage::Response(response),
@@ -823,7 +457,6 @@ async fn handle_request(
     accepted: ProtocolVersion,
     envelope: &ProtocolEnvelope,
     control_plane: &ControlPlane,
-    state: &Arc<ClientApiState>,
 ) -> Response {
     let request_id = req.request_id;
     let span = tracing::debug_span!(
@@ -833,11 +466,10 @@ async fn handle_request(
     );
     let _enter = span.enter();
 
-    let result =
-        match handle_request_result(req.payload, accepted, envelope, control_plane, state).await {
-            Ok(result) => result,
-            Err(err) => ResponseResult::Error(err.into()),
-        };
+    let result = match handle_request_result(req.payload, accepted, envelope, control_plane).await {
+        Ok(result) => result,
+        Err(err) => ResponseResult::Error(err.into()),
+    };
 
     Response { request_id, result }
 }
@@ -847,7 +479,6 @@ async fn handle_request_result(
     accepted: ProtocolVersion,
     envelope: &ProtocolEnvelope,
     control_plane: &ControlPlane,
-    state: &Arc<ClientApiState>,
 ) -> Result<ResponseResult, ControlPlaneError> {
     let default_timeout = || DEFAULT_WAIT_TIMEOUT;
 
@@ -994,22 +625,35 @@ async fn handle_request_result(
             ))
         }
         redesmyn_protocol::client::RequestPayload::CreateCommand(req) => {
-            let command = state.create_command(req.kind, req.target_task_id).await;
-            Ok(ResponseResult::CreateCommand(CreateCommandResponse {
-                command,
-            }))
+            let scope = match command_scope_from_envelope(envelope) {
+                Ok(scope) => scope,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .commands()
+                .create_command(
+                    scope,
+                    req.kind,
+                    req.target_task_id,
+                    req.idempotency_key,
+                    req.created_by,
+                )
+                .await?;
+
+            Ok(ResponseResult::CreateCommand(CreateCommandResponse { command }))
         }
         redesmyn_protocol::client::RequestPayload::GetCommand(req) => {
-            match state.get_command(req.command_id).await {
+            match control_plane.commands().get_command(req.command_id).await? {
                 Some(command) => Ok(ResponseResult::GetCommand(GetCommandResponse { command })),
-                None => {
-                    let detail =
-                        ErrorDetail::from([("command_id".to_string(), req.command_id.to_string())]);
-                    Ok(ResponseResult::Error(
-                        ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
-                            .with_detail(detail),
-                    ))
-                }
+                None => Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "Command not found.",
+                )
+                .with_detail(ErrorDetail::from([(
+                    "command_id".to_string(),
+                    req.command_id.to_string(),
+                )])))),
             }
         }
         redesmyn_protocol::client::RequestPayload::WaitForCommand(req) => {
@@ -1026,10 +670,10 @@ async fn handle_request_result(
                 Duration::from_millis(req.timeout_ms)
             };
 
-            match state
+            match control_plane
+                .commands()
                 .wait_for_command(req.command_id, &req.terminal_states, timeout)
-                .await
-            {
+                .await {
                 Ok(command) => Ok(ResponseResult::WaitForCommand(WaitForCommandResponse {
                     command,
                 })),
@@ -1043,7 +687,12 @@ async fn handle_request_result(
                 Duration::from_millis(req.timeout_ms)
             };
 
-            match state.wait_for_event_log(&req.filter, timeout).await {
+            let scope = match storage_scope_from_envelope(envelope) {
+                Ok(scope) => scope,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match wait_for_event_log(control_plane, scope, &req.filter, timeout).await {
                 Ok(event_log) => Ok(ResponseResult::WaitForEvent(WaitForEventResponse {
                     event_log,
                 })),
@@ -1062,14 +711,17 @@ async fn handle_request_result(
                 Duration::from_millis(req.quiescence_ms)
             };
 
-            if let Some(scope) = req.scope {
-                tracing::debug!(
-                    scope = ?scope,
-                    "WaitForIdle scope filtering is not yet implemented; treating as global"
-                );
-            }
+            let scope = req.scope.or(envelope.scope);
+            let event_scope = match storage_scope_from_scope(scope) {
+                Ok(scope) => scope,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+            let command_scope = match command_scope_from_scope(scope) {
+                Ok(scope) => scope,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
 
-            match state.wait_for_idle(timeout, quiescence).await {
+            match wait_for_idle(control_plane, command_scope, event_scope, timeout, quiescence).await {
                 Ok(()) => Ok(ResponseResult::WaitForIdle(WaitForIdleResponse {})),
                 Err(err) => Ok(ResponseResult::Error(err)),
             }
@@ -1420,9 +1072,41 @@ fn error_response_envelope(request_envelope: &ProtocolEnvelope) -> ProtocolEnvel
 fn storage_scope_from_envelope(
     envelope: &ProtocolEnvelope,
 ) -> Result<redesmyn_storage::events::EventScope, ErrorEnvelope> {
-    match envelope.scope {
+    storage_scope_from_scope(envelope.scope)
+}
+
+fn storage_scope_from_scope(
+    scope: Option<Scope>,
+) -> Result<redesmyn_storage::events::EventScope, ErrorEnvelope> {
+    match scope {
         None => Ok(redesmyn_storage::events::EventScope::None),
         Some(Scope::Repo { repo }) => Ok(redesmyn_storage::events::EventScope::Repo {
+            workspace_id: repo.workspace_id,
+            repo_id: repo.repo_id,
+        }),
+        Some(Scope::Unknown) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unknown scope kind.",
+        )),
+        Some(_) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unsupported scope kind.",
+        )),
+    }
+}
+
+fn command_scope_from_envelope(
+    envelope: &ProtocolEnvelope,
+) -> Result<redesmyn_storage::commands::CommandScope, ErrorEnvelope> {
+    command_scope_from_scope(envelope.scope)
+}
+
+fn command_scope_from_scope(
+    scope: Option<Scope>,
+) -> Result<redesmyn_storage::commands::CommandScope, ErrorEnvelope> {
+    match scope {
+        None => Ok(redesmyn_storage::commands::CommandScope::None),
+        Some(Scope::Repo { repo }) => Ok(redesmyn_storage::commands::CommandScope::Repo {
             workspace_id: repo.workspace_id,
             repo_id: repo.repo_id,
         }),
@@ -1495,6 +1179,136 @@ fn session_events_resync_error_envelope(resync: SessionEventsResync) -> ErrorEnv
         "Session event subscription requires resync.",
     )
     .with_detail(detail)
+}
+
+async fn wait_for_event_log(
+    control_plane: &ControlPlane,
+    scope: redesmyn_storage::events::EventScope,
+    filter: &EventWaitFilter,
+    timeout: Duration,
+) -> Result<EventLogEvent, ErrorEnvelope> {
+    let mut sub = control_plane
+        .event_log()
+        .subscribe(scope, filter.after_event_id);
+
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+
+        let item = match tokio::time::timeout(remaining, sub.recv()).await {
+            Ok(Some(item)) => item,
+            Ok(None) => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Event log subscription closed.",
+                ));
+            }
+            Err(_) => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Timed out waiting for event.",
+                ));
+            }
+        };
+
+        match item {
+            crate::event_log::EventLogSubscriptionItem::Event(record) => {
+                if filter.event_type_prefix.is_empty()
+                    || record.kind.starts_with(&filter.event_type_prefix)
+                {
+                    return Ok(EventLogEvent {
+                        event_id: record.id,
+                        occurred_at: timestamp_from_ms(record.created_at_ms),
+                        event_type: record.kind,
+                        json_payload: record.payload,
+                    });
+                }
+            }
+            crate::event_log::EventLogSubscriptionItem::ResyncRequired(resync) => {
+                return Err(resync_error_envelope(resync));
+            }
+        }
+    }
+}
+
+async fn wait_for_idle(
+    control_plane: &ControlPlane,
+    command_scope: redesmyn_storage::commands::CommandScope,
+    event_scope: redesmyn_storage::events::EventScope,
+    timeout: Duration,
+    quiescence: Duration,
+) -> Result<(), ErrorEnvelope> {
+    let mut sub = control_plane.event_log().subscribe(event_scope, None);
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Timed out waiting for idle.",
+            ));
+        }
+
+        let inflight = control_plane
+            .commands()
+            .inflight_count(command_scope)
+            .await
+            .map_err(|err| ErrorEnvelope::from(err))?;
+
+        if inflight == 0 {
+            let quiescence_deadline = tokio::time::Instant::now() + quiescence;
+
+            tokio::select! {
+                _ = tokio::time::sleep_until(quiescence_deadline) => {
+                    let inflight = control_plane
+                        .commands()
+                        .inflight_count(command_scope)
+                        .await
+                        .map_err(|err| ErrorEnvelope::from(err))?;
+
+                    if inflight == 0 {
+                        return Ok(());
+                    }
+                }
+                item = sub.recv() => {
+                    let Some(item) = item else {
+                        return Ok(());
+                    };
+
+                    match item {
+                        crate::event_log::EventLogSubscriptionItem::Event(_) => {}
+                        crate::event_log::EventLogSubscriptionItem::ResyncRequired(_) => {}
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "Timed out waiting for idle.",
+                    ));
+                }
+            }
+        } else {
+            tokio::select! {
+                item = sub.recv() => {
+                    let Some(item) = item else {
+                        return Ok(());
+                    };
+
+                    match item {
+                        crate::event_log::EventLogSubscriptionItem::Event(_) => {}
+                        crate::event_log::EventLogSubscriptionItem::ResyncRequired(_) => {}
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "Timed out waiting for idle.",
+                    ));
+                }
+            }
+        }
+    }
 }
 
 fn timestamp_from_ms(ms: i64) -> Timestamp {
@@ -1684,6 +1498,7 @@ fn build_epic_graph(
 
 fn map_command_state(state: redesmyn_storage::schema::CommandState) -> CommandState {
     match state {
+        redesmyn_storage::schema::CommandState::Queued => CommandState::Queued,
         redesmyn_storage::schema::CommandState::Accepted => CommandState::Accepted,
         redesmyn_storage::schema::CommandState::Running => CommandState::Running,
         redesmyn_storage::schema::CommandState::Blocked => CommandState::Blocked,
