@@ -166,7 +166,8 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
                 Err(err) => return CommandOutcome::Failure(err),
             }
 
-            if let Err(err) = wait_for_path(&socket_path, Duration::from_millis(args.startup_timeout_ms))
+            if let Err(err) =
+                wait_for_path(&socket_path, Duration::from_millis(args.startup_timeout_ms))
             {
                 if let Some(mut child) = desktop_child.take() {
                     let _ = child.kill();
@@ -185,7 +186,10 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
                 }
                 return CommandOutcome::Failure(ErrorEnvelope::new(
                     ErrorCategory::Unavailable,
-                    format!("Failed to connect to UI driver socket {}: {err}", socket_path.display()),
+                    format!(
+                        "Failed to connect to UI driver socket {}: {err}",
+                        socket_path.display()
+                    ),
                 ));
             }
         };
@@ -410,7 +414,10 @@ fn spawn_desktop_app(
     socket_path: &Path,
     artifacts_dir: &Path,
 ) -> Result<Child, ErrorEnvelope> {
-    let bin_path = workspace_root.join("target").join("debug").join("redesmyn_desktop");
+    let bin_path = workspace_root
+        .join("target")
+        .join("debug")
+        .join("redesmyn_desktop");
     if !bin_path.exists() {
         return Err(ErrorEnvelope::new(
             ErrorCategory::Unavailable,
@@ -491,7 +498,10 @@ fn send_ui_driver_request(
     let _ = stream.set_read_timeout(Some(read_timeout));
 
     let request_id = RequestId::new();
-    let request = UiDriverRequest { request_id, payload };
+    let request = UiDriverRequest {
+        request_id,
+        payload,
+    };
     let frame = UiDriverFrame::new(ProtocolEnvelope::new(), UiDriverMessage::Request(request));
     let out = frame.to_protobuf().encode_to_vec();
 
@@ -507,7 +517,8 @@ fn send_ui_driver_request(
             ErrorCategory::Unavailable,
             format!("Failed to read ui driver frame: {err}"),
         )
-    })? else {
+    })?
+    else {
         return Err(ErrorEnvelope::new(
             ErrorCategory::Unavailable,
             "UI driver connection closed.",

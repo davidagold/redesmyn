@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use redesmyn_ids::{EpicId, RequestId, SessionId};
-use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
     CreateChatSessionResponse, GetEpicGraphRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
     Request, RequestPayload, ResponseResult, StatusRequest, StatusResponse,
     UnpinChatSessionFromEpicRequest,
 };
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 use tokio::runtime::Handle;
 use tokio::sync::Mutex;
@@ -158,7 +158,9 @@ impl ControlPlaneClient {
         match self
             .request_scoped(
                 scope,
-                RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest { epic_id }),
+                RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest {
+                    epic_id,
+                }),
             )
             .await?
         {
@@ -183,7 +185,8 @@ impl ControlPlaneClient {
         &self,
         payload: RequestPayload,
     ) -> Result<ResponseResult, ControlPlaneClientError> {
-        self.request_with_envelope(ProtocolEnvelope::new(), payload).await
+        self.request_with_envelope(ProtocolEnvelope::new(), payload)
+            .await
     }
 
     async fn request_with_envelope(
@@ -192,7 +195,13 @@ impl ControlPlaneClient {
         payload: RequestPayload,
     ) -> Result<ResponseResult, ControlPlaneClientError> {
         let request_id = RequestId::new();
-        let frame = ClientFrame::new(envelope, ClientMessage::Request(Request { request_id, payload }));
+        let frame = ClientFrame::new(
+            envelope,
+            ClientMessage::Request(Request {
+                request_id,
+                payload,
+            }),
+        );
 
         let mut conn = self.conn.lock().await;
         conn.send(frame).await?;

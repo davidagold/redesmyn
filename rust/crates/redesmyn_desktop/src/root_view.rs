@@ -1068,7 +1068,10 @@ fn repo_scope_from_graph_or_fail(
         return ui_driver_fail(
             root,
             cx,
-            ErrorEnvelope::new(ErrorCategory::Unavailable, "Repo id unavailable for selected epic."),
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Repo id unavailable for selected epic.",
+            ),
         );
     };
     Ok(RepoScope::new(workspace_id, repo_id))
@@ -1297,7 +1300,10 @@ async fn pin_chat_session_via_control_plane(
     let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
     let epic_id = epic_id_from_graph_or_fail(root, cx, &graph)?;
 
-    if let Err(err) = client.pin_chat_session_to_epic(scope, epic_id, session_id).await {
+    if let Err(err) = client
+        .pin_chat_session_to_epic(scope, epic_id, session_id)
+        .await
+    {
         return ui_driver_fail(root, cx, control_plane_error_to_envelope(err));
     }
 
