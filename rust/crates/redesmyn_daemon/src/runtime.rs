@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use redesmyn_config::DaemonConfig;
+use redesmyn_git::{GitBackend, GitCliBackend};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::ProtocolVersion;
 use redesmyn_protocol::RepoScope;
@@ -45,6 +46,7 @@ pub struct DaemonRuntimeConfig {
     pub supported_protocol: ProtocolVersion,
     pub backoff: BackoffConfig,
     pub repo_registry: Arc<dyn RepoRegistry>,
+    pub git_backend: Arc<dyn GitBackend>,
 }
 
 impl DaemonRuntimeConfig {
@@ -64,6 +66,7 @@ impl DaemonRuntimeConfig {
             supported_protocol: ProtocolVersion::CURRENT,
             backoff: BackoffConfig::default(),
             repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            git_backend: Arc::new(GitCliBackend::new()),
         }
     }
 
@@ -76,6 +79,12 @@ impl DaemonRuntimeConfig {
     #[must_use]
     pub fn with_host_identity(mut self, identity: HostIdentity) -> Self {
         self.host_identity = Some(identity);
+        self
+    }
+
+    #[must_use]
+    pub fn with_git_backend(mut self, git_backend: Arc<dyn GitBackend>) -> Self {
+        self.git_backend = git_backend;
         self
     }
 }
@@ -140,6 +149,7 @@ impl Daemon {
         let repo_manager_task = tokio::spawn(run_repo_manager(
             host_identity,
             config.repo_registry,
+            config.git_backend,
             repo_cmd_rx,
             shutdown_rx,
         ));
@@ -205,6 +215,7 @@ enum RepoCommand {
 async fn run_repo_manager(
     identity: HostIdentity,
     registry: Arc<dyn RepoRegistry>,
+    git_backend: Arc<dyn GitBackend>,
     mut rx: mpsc::Receiver<RepoCommand>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -213,7 +224,7 @@ async fn run_repo_manager(
     redesmyn_logging::span::record_host_instance_id(&span, identity.host_instance_id);
     let _enter = span.enter();
 
-    let mut manager = RepoAttachmentManager::new(registry);
+    let mut manager = RepoAttachmentManager::new(registry, git_backend);
 
     loop {
         if *shutdown_rx.borrow() {

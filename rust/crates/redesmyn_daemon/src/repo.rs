@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use redesmyn_git::GitBackend;
 use redesmyn_logging::tracing;
 use redesmyn_protocol::RepoScope;
 use tokio::sync::watch;
@@ -51,14 +52,17 @@ struct AttachedRepo {
 
 pub struct RepoAttachmentManager {
     registry: Arc<dyn RepoRegistry>,
+    #[allow(dead_code)]
+    git_backend: Arc<dyn GitBackend>,
     attached: HashMap<RepoScope, AttachedRepo>,
 }
 
 impl RepoAttachmentManager {
     #[must_use]
-    pub fn new(registry: Arc<dyn RepoRegistry>) -> Self {
+    pub fn new(registry: Arc<dyn RepoRegistry>, git_backend: Arc<dyn GitBackend>) -> Self {
         Self {
             registry,
+            git_backend,
             attached: HashMap::new(),
         }
     }
