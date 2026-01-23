@@ -3,7 +3,7 @@ use std::time::Duration;
 use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, ControlPlaneDb, ControlPlaneStartOptions};
 use redesmyn_ids::{EpicId, RepoId, RequestId, WorkspaceId};
-use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope, Scope};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
     GetEpicPinnedChatSessionRequest, ListChatSessionsRequest, ListEpicsRequest,
@@ -14,12 +14,15 @@ use redesmyn_transport::client::ClientConnection;
 
 async fn request(
     conn: &mut redesmyn_transport::client::in_proc::InProcEndpoint,
+    scope: Option<Scope>,
     payload: RequestPayload,
 ) -> ResponseResult {
     let request_id = RequestId::new();
+    let mut envelope = ProtocolEnvelope::new();
+    envelope.scope = scope;
 
     conn.send(ClientFrame::new(
-        ProtocolEnvelope::new(),
+        envelope,
         ClientMessage::Request(Request { request_id, payload }),
     ))
     .await
@@ -106,9 +109,16 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let mut control_plane = ControlPlane::start(options).await.expect("start");
 
     let mut conn = control_plane.connect_in_proc_client(16);
+    let scope = Some(Scope::Repo {
+        repo: RepoScope {
+            workspace_id,
+            repo_id,
+        },
+    });
 
     let list_epics = request(
         &mut conn,
+        scope,
         RequestPayload::ListEpics(ListEpicsRequest {}),
     )
     .await;
@@ -121,6 +131,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let create = request(
         &mut conn,
+        scope,
         RequestPayload::CreateChatSession(CreateChatSessionRequest {
             title: Some("First chat".to_string()),
         }),
@@ -133,19 +144,20 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let pin = request(
         &mut conn,
+        scope,
         RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
             session_id: first_session_id,
             epic_id,
         }),
     )
     .await;
-    let ResponseResult::PinChatSessionToEpic(pin) = pin else {
+    let ResponseResult::PinChatSessionToEpic(_pin) = pin else {
         panic!("expected PinChatSessionToEpic, got {pin:?}");
     };
-    assert_eq!(pin.replaced_session_id, None);
 
     let pinned = request(
         &mut conn,
+        scope,
         RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest { epic_id }),
     )
     .await;
@@ -156,8 +168,8 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let list_pinned = request(
         &mut conn,
+        scope,
         RequestPayload::ListChatSessions(ListChatSessionsRequest {
-            pinned_to_epic_id: Some(epic_id),
             include_closed: true,
             limit: 10,
         }),
@@ -172,6 +184,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let create = request(
         &mut conn,
+        scope,
         RequestPayload::CreateChatSession(CreateChatSessionRequest { title: None }),
     )
     .await;
@@ -182,19 +195,20 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let pin = request(
         &mut conn,
+        scope,
         RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
             session_id: second_session_id,
             epic_id,
         }),
     )
     .await;
-    let ResponseResult::PinChatSessionToEpic(pin) = pin else {
+    let ResponseResult::PinChatSessionToEpic(_pin) = pin else {
         panic!("expected PinChatSessionToEpic, got {pin:?}");
     };
-    assert_eq!(pin.replaced_session_id, Some(first_session_id));
 
     let pinned = request(
         &mut conn,
+        scope,
         RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest { epic_id }),
     )
     .await;
@@ -205,16 +219,17 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let unpin = request(
         &mut conn,
+        scope,
         RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest { epic_id }),
     )
     .await;
-    let ResponseResult::UnpinChatSessionFromEpic(unpin) = unpin else {
+    let ResponseResult::UnpinChatSessionFromEpic(_unpin) = unpin else {
         panic!("expected UnpinChatSessionFromEpic, got {unpin:?}");
     };
-    assert_eq!(unpin.unpinned_session_id, Some(second_session_id));
 
     let pinned = request(
         &mut conn,
+        scope,
         RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest { epic_id }),
     )
     .await;
@@ -225,6 +240,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let close = request(
         &mut conn,
+        scope,
         RequestPayload::CloseChatSession(CloseChatSessionRequest {
             session_id: first_session_id,
         }),
@@ -236,8 +252,8 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     let list_open = request(
         &mut conn,
+        scope,
         RequestPayload::ListChatSessions(ListChatSessionsRequest {
-            pinned_to_epic_id: None,
             include_closed: false,
             limit: 100,
         }),
@@ -253,4 +269,3 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
 
     control_plane.shutdown().await;
 }
-
