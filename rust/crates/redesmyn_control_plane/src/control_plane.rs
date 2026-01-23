@@ -147,14 +147,23 @@ impl ControlPlane {
         target_task_id: Option<TaskId>,
         idempotency_key: Option<String>,
         created_by: Option<String>,
+        payload: Vec<u8>,
     ) -> Result<redesmyn_protocol::client::CommandSummary, crate::error::ControlPlaneError> {
+        let payload_for_create = payload.clone();
         let result = self
             .commands()
-            .create_command(scope, kind.clone(), target_task_id, idempotency_key, created_by)
+            .create_command(
+                scope,
+                kind.clone(),
+                target_task_id,
+                idempotency_key,
+                created_by,
+                payload_for_create,
+            )
             .await?;
 
         if result.created_new {
-            self.dispatch_repo_command_if_needed(scope, result.command.command_id, kind)
+            self.dispatch_repo_command_if_needed(scope, result.command.command_id, kind, payload)
                 .await?;
 
             return self
@@ -174,6 +183,7 @@ impl ControlPlane {
         scope: CommandScope,
         command_id: CommandId,
         kind: String,
+        json_payload: Vec<u8>,
     ) -> Result<(), crate::error::ControlPlaneError> {
         let CommandScope::Repo {
             workspace_id,
@@ -190,7 +200,7 @@ impl ControlPlane {
 
         let dispatch_result = self
             .daemons()
-            .dispatch_command(repo_scope, command_id, kind, Vec::new())
+            .dispatch_command(repo_scope, command_id, kind, json_payload)
             .await;
 
         if let Err(err) = dispatch_result {

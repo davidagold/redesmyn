@@ -61,6 +61,7 @@ impl Commands {
         target_task_id: Option<TaskId>,
         idempotency_key: Option<String>,
         created_by: Option<String>,
+        payload: Vec<u8>,
     ) -> Result<CreateCommandResult, ControlPlaneError> {
         if kind.trim().is_empty() {
             return Err(ControlPlaneError::InvalidCommandKind { kind });
@@ -76,6 +77,9 @@ impl Commands {
             Existing {
                 command: CommandRecord,
                 last_update: Option<CommandUpdateRecord>,
+            },
+            IdempotencyConflict {
+                existing_command_id: CommandId,
             },
             New {
                 command: CommandRecord,
@@ -115,6 +119,12 @@ impl Commands {
                             )
                             .await?;
 
+                        if existing.payload != payload {
+                            return Ok(CreateResult::IdempotencyConflict {
+                                existing_command_id: existing_id,
+                            });
+                        }
+
                         return Ok(CreateResult::Existing {
                             command: existing,
                             last_update,
@@ -131,7 +141,7 @@ impl Commands {
                     target_task_id,
                     idempotency_key_clone,
                     created_by,
-                    Vec::new(),
+                    payload,
                 );
 
                 redesmyn_storage::commands::insert_command(&mut *conn, &command).await?;
@@ -172,6 +182,12 @@ impl Commands {
                     created_new: false,
                 })
             }
+            CreateResult::IdempotencyConflict {
+                existing_command_id,
+            } => Err(ControlPlaneError::CommandIdempotencyPayloadMismatch {
+                idempotency_key: idempotency_key.unwrap_or_default(),
+                existing_command_id,
+            }),
             CreateResult::New { command, update } => {
                 self.publish_update(&command, &update).await;
                 let last_update = Some(command_update_summary_from_record(update)?);

@@ -637,6 +637,7 @@ async fn handle_request_result(
                     req.target_task_id,
                     req.idempotency_key,
                     req.created_by,
+                    req.json_payload,
                 )
                 .await?;
 

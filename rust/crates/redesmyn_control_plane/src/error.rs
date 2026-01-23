@@ -18,6 +18,11 @@ pub enum ControlPlaneError {
     InvalidCommandKind { kind: String },
     #[error("Invalid idempotency key.")]
     InvalidIdempotencyKey { idempotency_key: String },
+    #[error("Command idempotency key payload mismatch.")]
+    CommandIdempotencyPayloadMismatch {
+        idempotency_key: String,
+        existing_command_id: CommandId,
+    },
     #[error("Command not found.")]
     CommandNotFound { command_id: CommandId },
     #[error("Storage error.")]
@@ -63,6 +68,28 @@ impl From<ControlPlaneError> for ErrorEnvelope {
                 ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
                     "Invalid idempotency key.",
+                )
+                .with_detail(detail)
+            }
+            ControlPlaneError::CommandIdempotencyPayloadMismatch {
+                idempotency_key,
+                existing_command_id,
+            } => {
+                let detail = ErrorDetail::from([
+                    (
+                        "conflict_code".to_string(),
+                        "command_idempotency_payload_mismatch".to_string(),
+                    ),
+                    ("idempotency_key".to_string(), idempotency_key),
+                    (
+                        "existing_command_id".to_string(),
+                        existing_command_id.to_string(),
+                    ),
+                ]);
+
+                ErrorEnvelope::new(
+                    ErrorCategory::Conflict,
+                    "Idempotency key already used with a different command payload.",
                 )
                 .with_detail(detail)
             }
