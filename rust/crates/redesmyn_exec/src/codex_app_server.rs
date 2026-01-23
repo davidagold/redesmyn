@@ -807,6 +807,7 @@ impl CodexAppServerProcessConfig {
 pub struct CodexAppServerProcess {
     config: CodexAppServerProcessConfig,
     child: Mutex<Option<tokio::process::Child>>,
+    conn: Mutex<Option<Arc<JsonRpcConnection>>>,
 }
 
 impl CodexAppServerProcess {
@@ -815,6 +816,7 @@ impl CodexAppServerProcess {
         Self {
             config,
             child: Mutex::new(None),
+            conn: Mutex::new(None),
         }
     }
 
@@ -828,6 +830,7 @@ impl CodexAppServerProcess {
 
         let state = Arc::new(CodexAppServerState::new());
         let conn = Arc::new(JsonRpcConnection::new(writer));
+        *self.conn.lock().await = Some(Arc::clone(&conn));
 
         let (events_tx, events_rx) = mpsc::channel::<AppServerEvent>(256);
         spawn_reader_loop(reader, Arc::clone(&conn), Arc::clone(&state), events_tx);
@@ -921,6 +924,10 @@ impl AppServerProcess for CodexAppServerProcess {
 
     fn shutdown(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
         Box::pin(async move {
+            if let Some(conn) = self.conn.lock().await.take() {
+                let _ = conn.notify("exit", None).await;
+            }
+
             let mut child_guard = self.child.lock().await;
             let mut child = child_guard.take();
             let Some(child) = child.as_mut() else {
