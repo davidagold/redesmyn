@@ -1,9 +1,12 @@
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use gpui::{AnyWindowHandle, App};
 use redesmyn_protocol::ui_driver::UiScreenshotWindow;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
+
+const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy)]
 pub enum ScreenshotTarget {
@@ -64,48 +67,72 @@ pub fn capture_png(
             cmd.arg(window_number.to_string());
             cmd.arg(output_path);
 
-            let status = cmd.status().map_err(|err| {
-                ErrorEnvelope::new(
-                    ErrorCategory::Unavailable,
-                    format!("Failed to run screencapture: {err}"),
-                )
-            })?;
-
-            if !status.success() {
-                return Err(ErrorEnvelope::new(
-                    ErrorCategory::Unavailable,
-                    format!("screencapture exited with status {status}"),
-                ));
-            }
-
-            Ok(())
+            run_screencapture(&mut cmd)
         }
         #[cfg(target_os = "macos")]
         ScreenshotTarget::MacosScreen => {
-            let status = Command::new("screencapture")
-                .arg("-x")
-                .arg(output_path)
-                .status()
-                .map_err(|err| {
-                    ErrorEnvelope::new(
-                        ErrorCategory::Unavailable,
-                        format!("Failed to run screencapture: {err}"),
-                    )
-                })?;
-
-            if !status.success() {
-                return Err(ErrorEnvelope::new(
-                    ErrorCategory::Unavailable,
-                    format!("screencapture exited with status {status}"),
-                ));
-            }
-
-            Ok(())
+            let mut cmd = Command::new("screencapture");
+            cmd.arg("-x").arg(output_path);
+            run_screencapture(&mut cmd)
         }
         ScreenshotTarget::Unsupported => Err(ErrorEnvelope::new(
             ErrorCategory::Unavailable,
             "Screenshot capture is unsupported on this platform.",
         )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_screencapture(cmd: &mut Command) -> Result<(), ErrorEnvelope> {
+    use std::time::Instant;
+
+    let mut child = cmd.spawn().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            return ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Screenshot capture requires the macOS `screencapture` tool (not found).",
+            );
+        }
+        ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            format!("Failed to spawn screencapture: {err}"),
+        )
+    })?;
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!("screencapture exited with status {status}"),
+                ));
+            }
+            Ok(None) => {}
+            Err(err) => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!("Failed to wait for screencapture: {err}"),
+                ));
+            }
+        }
+
+        if start.elapsed() > SCREENSHOT_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                format!(
+                    "Screenshot capture timed out after {}ms (screencapture hung).",
+                    SCREENSHOT_TIMEOUT.as_millis()
+                ),
+            ));
+        }
+
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
