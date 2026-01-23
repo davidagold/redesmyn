@@ -28,8 +28,7 @@ CREATE TABLE commands (
     idempotency_key TEXT,
     created_by TEXT,
     payload BLOB NOT NULL,
-    FOREIGN KEY (scope_workspace_id) REFERENCES workspaces (id) ON DELETE CASCADE,
-    FOREIGN KEY (scope_repo_id) REFERENCES repositories (id) ON DELETE CASCADE,
+    FOREIGN KEY (scope_workspace_id, scope_repo_id) REFERENCES repositories (workspace_id, id) ON DELETE CASCADE,
     FOREIGN KEY (target_task_id) REFERENCES tasks (id) ON DELETE SET NULL,
     CHECK (scope_kind IN ('none', 'repo')),
     CHECK (
