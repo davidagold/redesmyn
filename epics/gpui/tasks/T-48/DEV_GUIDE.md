@@ -36,6 +36,18 @@ cd rust
 cargo run -p redesmyn_desktop
 ```
 
+## Smoke path (one command)
+
+If you want a single end-to-end "smoke" flow (launch app → select epic → create chat → wait-for-idle → capture artifacts),
+run:
+
+```bash
+cd rust
+cargo run -p rn -- ui-driver smoke --launch --epic gpui --label smoke --artifacts-dir /tmp/redesmyn-artifacts
+```
+
+Use `--keep-open` to leave the desktop app running after the smoke flow.
+
 ## Driver transport
 
 The UI driver is a **local-only** Unix domain socket server with a 4-byte big-endian length prefix
@@ -72,4 +84,3 @@ Given a failing run directory under `REDESMYN_TEST_ARTIFACTS_DIR`:
    - primary view,
    - visible in-flight actions,
    - visible error callouts.
-
