@@ -9,9 +9,7 @@ use redesmyn_exec::app_server::{
     AppServerSupervisor, AppServerSupervisorConfig, BoxFuture,
 };
 use redesmyn_exec::artifact_store::LocalArtifactStore;
-use redesmyn_exec::codex_app_server::{
-    CodexAppServerProcess, CodexAppServerProcessConfig, JsonRpcWireFormat,
-};
+use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_ids::TaskId;
 use redesmyn_protocol::daemon::DaemonMessage;
 use redesmyn_protocol::session::{
@@ -20,30 +18,151 @@ use redesmyn_protocol::session::{
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::{Mutex, mpsc};
 
-#[derive(Default)]
-struct FakeCodexCounters {
-    thread_start_calls: AtomicUsize,
-    thread_resume_calls: AtomicUsize,
-    turn_interrupt_calls: AtomicUsize,
+#[derive(Debug, Default)]
+struct ContentLengthDecoder {
+    buffer: Vec<u8>,
+    expected_len: Option<usize>,
 }
 
-struct FakeCodexState {
-    counters: Arc<FakeCodexCounters>,
-    inflight: Mutex<Option<InflightTurn>>,
+impl ContentLengthDecoder {
+    fn push(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        self.buffer.extend_from_slice(chunk);
+        let mut out = Vec::new();
+
+        loop {
+            if self.expected_len.is_none() {
+                let Some((header_end, consumed)) = find_header_terminator(&self.buffer) else {
+                    break;
+                };
+                let header = std::str::from_utf8(&self.buffer[..header_end]).expect("ascii header");
+                let len = parse_content_length(header);
+                self.expected_len = Some(len);
+                self.buffer.drain(..consumed);
+            }
+
+            let Some(expected) = self.expected_len else {
+                break;
+            };
+            if self.buffer.len() < expected {
+                break;
+            }
+
+            let payload = self.buffer.drain(..expected).collect::<Vec<u8>>();
+            self.expected_len = None;
+            out.push(payload);
+        }
+
+        out
+    }
+}
+
+fn find_header_terminator(buf: &[u8]) -> Option<(usize, usize)> {
+    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+        return Some((pos, pos + 4));
+    }
+    if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
+        return Some((pos, pos + 2));
+    }
+    None
+}
+
+fn parse_content_length(headers: &str) -> usize {
+    for line in headers.lines() {
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        if k.trim().eq_ignore_ascii_case("Content-Length") {
+            return v.trim().parse::<usize>().expect("Content-Length int");
+        }
+    }
+    panic!("missing Content-Length header");
+}
+
+type Writer = Arc<Mutex<tokio::io::WriteHalf<tokio::io::DuplexStream>>>;
+
+async fn send_frame(writer: &Writer, value: serde_json::Value, chunk_size: usize) {
+    let json = serde_json::to_vec(&value).expect("json");
+    let header = format!("Content-Length: {}\r\n\r\n", json.len());
+
+    let mut bytes = header.into_bytes();
+    bytes.extend_from_slice(&json);
+
+    let mut w = writer.lock().await;
+    if chunk_size == 0 {
+        let _ = w.write_all(&bytes).await;
+    } else {
+        for chunk in bytes.chunks(chunk_size) {
+            let _ = w.write_all(chunk).await;
+        }
+    }
+    let _ = w.flush().await;
+}
+
+async fn send_notification(writer: &Writer, method: &str, params: serde_json::Value) {
+    send_frame(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }),
+        3, // force chunked writes for framing robustness
+    )
+    .await;
+}
+
+async fn send_response(writer: &Writer, id: serde_json::Value, result: serde_json::Value) {
+    send_frame(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }),
+        0,
+    )
+    .await;
+}
+
+async fn send_error(writer: &Writer, id: serde_json::Value, code: i64, message: &str) {
+    send_frame(
+        writer,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": code, "message": message },
+        }),
+        0,
+    )
+    .await;
+}
+
+#[derive(Default)]
+struct FakeV2Counters {
+    initialize_calls: AtomicUsize,
+    new_conversation_calls: AtomicUsize,
+    user_message_calls: AtomicUsize,
+    cancel_calls: AtomicUsize,
+}
+
+struct FakeV2State {
+    counters: Arc<FakeV2Counters>,
     next_turn: AtomicUsize,
+    inflight: Mutex<Option<InflightTurn>>,
+    observed_user_message_resumes: Mutex<Vec<Option<String>>>,
 }
 
 struct InflightTurn {
-    turn_id: String,
-    interrupt: Arc<tokio::sync::Notify>,
+    cancel: Arc<tokio::sync::Notify>,
 }
 
-impl FakeCodexState {
-    fn new(counters: Arc<FakeCodexCounters>) -> Arc<Self> {
+impl FakeV2State {
+    fn new(counters: Arc<FakeV2Counters>) -> Arc<Self> {
         Arc::new(Self {
             counters,
-            inflight: Mutex::new(None),
             next_turn: AtomicUsize::new(1),
+            inflight: Mutex::new(None),
+            observed_user_message_resumes: Mutex::new(Vec::new()),
         })
     }
 
@@ -53,33 +172,26 @@ impl FakeCodexState {
     }
 }
 
-async fn fake_codex_server(stream: tokio::io::DuplexStream, state: Arc<FakeCodexState>) {
-    let thread_id: &str = "thr_test";
+async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2State>) {
+    let conversation_id: &str = "conv_test";
+
     let (mut reader, writer) = tokio::io::split(stream);
     let writer: Writer = Arc::new(Mutex::new(writer));
 
-    let mut buf = Vec::<u8>::new();
+    let mut decoder = ContentLengthDecoder::default();
+    let mut buf = vec![0u8; 4096];
+
     loop {
-        let mut chunk = [0u8; 4096];
-        let read = match reader.read(&mut chunk).await {
+        let read = match reader.read(&mut buf).await {
             Ok(0) => return,
             Ok(n) => n,
             Err(_) => return,
         };
-        buf.extend_from_slice(&chunk[..read]);
 
-        while let Some(pos) = buf.iter().position(|b| *b == b'\n') {
-            let line = buf.drain(..pos + 1).collect::<Vec<u8>>();
-            let line = String::from_utf8_lossy(&line);
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let msg: serde_json::Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+        let frames = decoder.push(&buf[..read]);
+        for frame in frames {
+            let msg: serde_json::Value =
+                serde_json::from_slice(&frame).unwrap_or(serde_json::Value::Null);
 
             let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
                 continue;
@@ -92,134 +204,98 @@ async fn fake_codex_server(stream: tokio::io::DuplexStream, state: Arc<FakeCodex
 
             match (method, id) {
                 ("initialize", Some(id)) => {
-                    send_response(&writer, id, serde_json::json!({"userAgent": "fake"})).await;
-                }
-                ("thread/start", Some(id)) => {
                     state
                         .counters
-                        .thread_start_calls
+                        .initialize_calls
+                        .fetch_add(1, Ordering::Relaxed);
+                    send_response(&writer, id, serde_json::json!({ "ok": true })).await;
+                }
+                ("newConversation", Some(id)) => {
+                    state
+                        .counters
+                        .new_conversation_calls
                         .fetch_add(1, Ordering::Relaxed);
                     send_response(
                         &writer,
-                        id.clone(),
-                        serde_json::json!({"thread": { "id": thread_id }}),
-                    )
-                    .await;
-                    send_notification(
-                        &writer,
-                        "thread/started",
-                        serde_json::json!({"thread": { "id": thread_id }}),
+                        id,
+                        serde_json::json!({ "conversationId": conversation_id }),
                     )
                     .await;
                 }
-                ("thread/resume", Some(id)) => {
+                ("userMessage", Some(id)) => {
                     state
                         .counters
-                        .thread_resume_calls
+                        .user_message_calls
                         .fetch_add(1, Ordering::Relaxed);
-                    send_response(
-                        &writer,
-                        id.clone(),
-                        serde_json::json!({"thread": { "id": thread_id }}),
-                    )
-                    .await;
-                    send_notification(
-                        &writer,
-                        "thread/started",
-                        serde_json::json!({"thread": { "id": thread_id }}),
-                    )
-                    .await;
-                }
-                ("turn/start", Some(id)) => {
+
                     let prompt = params
-                        .get("input")
-                        .and_then(|v| v.as_array())
-                        .and_then(|a| a.first())
-                        .and_then(|v| v.get("text"))
+                        .get("message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_owned();
+                    let resume = params
+                        .get("resume")
+                        .and_then(|v| v.as_str())
+                        .map(ToOwned::to_owned);
+
+                    state
+                        .observed_user_message_resumes
+                        .lock()
+                        .await
+                        .push(resume.clone());
+
+                    send_response(&writer, id, serde_json::json!({})).await;
 
                     let turn_id = state.alloc_turn_id();
-                    send_response(
-                        &writer,
-                        id.clone(),
-                        serde_json::json!({"turn": { "id": turn_id }}),
-                    )
-                    .await;
+                    let cancel = Arc::new(tokio::sync::Notify::new());
 
-                    send_notification(
-                        &writer,
-                        "turn/started",
-                        serde_json::json!({
-                            "threadId": thread_id,
-                            "turn": { "id": turn_id, "status": "inProgress", "items": [], "error": null }
-                        }),
-                    )
-                    .await;
-
-                    let interrupt = Arc::new(tokio::sync::Notify::new());
                     {
                         let mut inflight = state.inflight.lock().await;
                         *inflight = Some(InflightTurn {
-                            turn_id: turn_id.clone(),
-                            interrupt: Arc::clone(&interrupt),
+                            cancel: Arc::clone(&cancel),
                         });
                     }
 
                     let writer_for_turn = Arc::clone(&writer);
                     let state_for_turn = Arc::clone(&state);
                     tokio::spawn(async move {
-                        let notified = interrupt.notified();
-                        let interrupted = if prompt.contains("block") {
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_secs(60)) => false,
-                                _ = notified => true,
-                            }
-                        } else {
-                            tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_millis(20)) => false,
-                                _ = notified => true,
-                            }
-                        };
+                        let user_message_id = format!("user_{turn_id}");
+                        let assistant_message_id = format!("assistant_{turn_id}");
 
-                        if interrupted {
+                        send_notification(
+                            &writer_for_turn,
+                            "updateConversation",
+                            serde_json::json!({
+                                "diff": [
+                                    { "type": "newConversation", "conversationId": conversation_id },
+                                    { "type": "newTurn", "turnId": turn_id },
+                                    { "type": "newMessage", "messageId": user_message_id, "role": "user", "content": prompt, "done": true }
+                                ]
+                            }),
+                        )
+                        .await;
+
+                        if prompt.contains("block") {
+                            cancel.notified().await;
                             send_notification(
                                 &writer_for_turn,
-                                "turn/completed",
+                                "updateConversation",
                                 serde_json::json!({
-                                    "threadId": thread_id,
-                                    "turn": { "id": turn_id, "status": "interrupted", "items": [], "error": null }
+                                    "diff": [
+                                        { "type": "turnCompleted", "turnId": turn_id, "status": "canceled" }
+                                    ]
                                 }),
                             )
                             .await;
                         } else {
                             send_notification(
                                 &writer_for_turn,
-                                "item/completed",
+                                "updateConversation",
                                 serde_json::json!({
-                                    "threadId": thread_id,
-                                    "turnId": turn_id,
-                                    "item": { "type": "userMessage", "id": "user_1", "content": [{ "type": "text", "text": prompt, "textElements": [] }] }
-                                }),
-                            )
-                            .await;
-                            send_notification(
-                                &writer_for_turn,
-                                "item/completed",
-                                serde_json::json!({
-                                    "threadId": thread_id,
-                                    "turnId": turn_id,
-                                    "item": { "type": "agentMessage", "id": "agent_1", "text": format!("echo: {prompt}") }
-                                }),
-                            )
-                            .await;
-                            send_notification(
-                                &writer_for_turn,
-                                "turn/completed",
-                                serde_json::json!({
-                                    "threadId": thread_id,
-                                    "turn": { "id": turn_id, "status": "completed", "items": [], "error": null }
+                                    "diff": [
+                                        { "type": "newMessage", "messageId": assistant_message_id, "role": "assistant", "content": format!("echo: {prompt}"), "done": true },
+                                        { "type": "turnCompleted", "turnId": turn_id, "status": "completed" }
+                                    ]
                                 }),
                             )
                             .await;
@@ -229,21 +305,23 @@ async fn fake_codex_server(stream: tokio::io::DuplexStream, state: Arc<FakeCodex
                         *inflight = None;
                     });
                 }
-                ("turn/interrupt", Some(id)) => {
-                    state
-                        .counters
-                        .turn_interrupt_calls
-                        .fetch_add(1, Ordering::Relaxed);
-                    let turn_id = params.get("turnId").and_then(|v| v.as_str());
+                ("cancel", Some(id)) => {
+                    state.counters.cancel_calls.fetch_add(1, Ordering::Relaxed);
+                    send_response(&writer, id, serde_json::json!({})).await;
+
                     let inflight = state.inflight.lock().await;
-                    if let (Some(turn_id), Some(inflight_turn)) = (turn_id, inflight.as_ref()) {
-                        if inflight_turn.turn_id == turn_id {
-                            inflight_turn.interrupt.notify_waiters();
-                        }
+                    if let Some(turn) = inflight.as_ref() {
+                        turn.cancel.notify_waiters();
                     }
+                }
+                ("commandExecutionApproval", Some(id)) => {
+                    send_response(&writer, id, serde_json::json!({})).await;
+                }
+                ("fileChangeApproval", Some(id)) => {
                     send_response(&writer, id, serde_json::json!({})).await;
                 }
                 ("initialized", None) => {}
+                ("exit", None) => {}
                 (_other, Some(id)) => {
                     send_error(&writer, id, -32601, "method not supported").await;
                 }
@@ -253,55 +331,28 @@ async fn fake_codex_server(stream: tokio::io::DuplexStream, state: Arc<FakeCodex
     }
 }
 
-type Writer = Arc<Mutex<tokio::io::WriteHalf<tokio::io::DuplexStream>>>;
-
-async fn send_notification(writer: &Writer, method: &str, params: serde_json::Value) {
-    let msg = serde_json::json!({ "method": method, "params": params });
-    let line = format!("{}\n", serde_json::to_string(&msg).expect("json"));
-    let mut w = writer.lock().await;
-    let _ = w.write_all(line.as_bytes()).await;
-    let _ = w.flush().await;
-}
-
-async fn send_response(writer: &Writer, id: serde_json::Value, result: serde_json::Value) {
-    let msg = serde_json::json!({ "id": id, "result": result });
-    let line = format!("{}\n", serde_json::to_string(&msg).expect("json"));
-    let mut w = writer.lock().await;
-    let _ = w.write_all(line.as_bytes()).await;
-    let _ = w.flush().await;
-}
-
-async fn send_error(writer: &Writer, id: serde_json::Value, code: i64, message: &str) {
-    let msg = serde_json::json!({ "id": id, "error": { "code": code, "message": message }});
-    let line = format!("{}\n", serde_json::to_string(&msg).expect("json"));
-    let mut w = writer.lock().await;
-    let _ = w.write_all(line.as_bytes()).await;
-    let _ = w.flush().await;
-}
-
-struct InProcCodexProcess {
+struct InProcV2CodexProcess {
     codex: CodexAppServerProcess,
-    server_state: Arc<FakeCodexState>,
+    server_state: Arc<FakeV2State>,
     client_stream: Mutex<Option<tokio::io::DuplexStream>>,
     server_join: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
-impl InProcCodexProcess {
-    fn new(cwd: PathBuf, counters: Arc<FakeCodexCounters>) -> Self {
+impl InProcV2CodexProcess {
+    fn new(cwd: PathBuf, counters: Arc<FakeV2Counters>) -> Self {
         let mut config = CodexAppServerProcessConfig::codex_default(cwd);
-        config.wire_format = JsonRpcWireFormat::JsonLines;
         config.argv = vec!["fake-codex".to_owned()];
 
         Self {
             codex: CodexAppServerProcess::new(config),
-            server_state: FakeCodexState::new(counters),
+            server_state: FakeV2State::new(counters),
             client_stream: Mutex::new(None),
             server_join: Mutex::new(None),
         }
     }
 }
 
-impl AppServerProcess for InProcCodexProcess {
+impl AppServerProcess for InProcV2CodexProcess {
     fn start(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
         Box::pin(async move {
             let mut join_guard = self.server_join.lock().await;
@@ -314,7 +365,7 @@ impl AppServerProcess for InProcCodexProcess {
 
             let server_state = Arc::clone(&self.server_state);
             let join = tokio::spawn(async move {
-                fake_codex_server(server, server_state).await;
+                fake_v2_app_server(server, server_state).await;
             });
             *join_guard = Some(join);
 
@@ -402,12 +453,13 @@ async fn collect_until_turn_started(
     }
 }
 
-fn find_latest_codex_thread(events: &[SessionEvent]) -> Option<(String, Option<String>)> {
+fn find_latest_codex_conversation(events: &[SessionEvent]) -> Option<(String, Option<String>)> {
     events.iter().rev().find_map(|ev| match &ev.kind {
         SessionEventKind::TurnStarted(ts) => match ts.external_session_ref.as_ref()? {
-            ExternalSessionRef::CodexThread { thread_id, turn_id } => {
-                Some((thread_id.clone(), turn_id.clone()))
-            }
+            ExternalSessionRef::CodexConversation {
+                conversation_id,
+                turn_id,
+            } => Some((conversation_id.clone(), turn_id.clone())),
             _ => None,
         },
         _ => None,
@@ -415,7 +467,7 @@ fn find_latest_codex_thread(events: &[SessionEvent]) -> Option<(String, Option<S
 }
 
 #[tokio::test]
-async fn captures_thread_id_and_emits_message_events() {
+async fn initialize_new_conversation_user_message_emits_codex_conversation_ref() {
     let (frames_tx, mut frames_rx) = mpsc::channel(256);
     let tmp = tempfile::tempdir().expect("tempdir");
     let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
@@ -428,8 +480,11 @@ async fn captures_thread_id_and_emits_message_events() {
     .await
     .expect("supervisor");
 
-    let counters = Arc::new(FakeCodexCounters::default());
-    let process = Arc::new(InProcCodexProcess::new(tmp.path().to_path_buf(), counters));
+    let counters = Arc::new(FakeV2Counters::default());
+    let process = Arc::new(InProcV2CodexProcess::new(
+        tmp.path().to_path_buf(),
+        counters,
+    ));
 
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
@@ -459,15 +514,15 @@ async fn captures_thread_id_and_emits_message_events() {
     let events =
         collect_until_turn_completed(&mut frames_rx, session_id, Duration::from_secs(5)).await;
 
-    let (thread_id, turn_id) = find_latest_codex_thread(&events).expect("thread id");
-    assert_eq!(thread_id, "thr_test");
+    let (conversation_id, turn_id) =
+        find_latest_codex_conversation(&events).expect("conversation id");
+    assert_eq!(conversation_id, "conv_test");
     assert!(turn_id.is_some(), "expected turn id to be present");
 
-    assert!(
-        events.iter().any(
-            |e| matches!(&e.kind, SessionEventKind::AssistantMessage(m) if m.text == "echo: hi")
-        )
-    );
+    assert!(events.iter().any(|e| matches!(
+        &e.kind,
+        SessionEventKind::AssistantMessage(m) if m.text == "echo: hi"
+    )));
 
     supervisor
         .stop_session(session_id)
@@ -477,7 +532,7 @@ async fn captures_thread_id_and_emits_message_events() {
 }
 
 #[tokio::test]
-async fn resumes_existing_thread_with_external_session_ref() {
+async fn resume_sets_user_message_resume_field() {
     let (frames_tx, mut frames_rx) = mpsc::channel(256);
     let tmp = tempfile::tempdir().expect("tempdir");
     let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
@@ -490,11 +545,12 @@ async fn resumes_existing_thread_with_external_session_ref() {
     .await
     .expect("supervisor");
 
-    let counters = Arc::new(FakeCodexCounters::default());
-    let process = Arc::new(InProcCodexProcess::new(
+    let counters = Arc::new(FakeV2Counters::default());
+    let process = Arc::new(InProcV2CodexProcess::new(
         tmp.path().to_path_buf(),
         Arc::clone(&counters),
     ));
+    let server_state = Arc::clone(&process.server_state);
 
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
@@ -523,14 +579,15 @@ async fn resumes_existing_thread_with_external_session_ref() {
 
     let first_events =
         collect_until_turn_completed(&mut frames_rx, session_id, Duration::from_secs(5)).await;
-    let (thread_id, _turn_id) = find_latest_codex_thread(&first_events).expect("thread id");
+    let (conversation_id, _turn_id) =
+        find_latest_codex_conversation(&first_events).expect("conversation id");
 
     let _ = supervisor
         .send_message(
             session_id,
             AppServerTurnIntent::Resume {
-                external: DomainExternalSessionRef::CodexThread {
-                    thread_id: thread_id.clone(),
+                external: DomainExternalSessionRef::CodexConversation {
+                    conversation_id: conversation_id.clone(),
                     turn_id: None,
                 },
                 prompt: "again".to_owned(),
@@ -546,8 +603,17 @@ async fn resumes_existing_thread_with_external_session_ref() {
         SessionEventKind::AssistantMessage(m) if m.text == "echo: again"
     )));
 
-    assert_eq!(counters.thread_start_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(counters.thread_resume_calls.load(Ordering::Relaxed), 1);
+    let resumes = server_state
+        .observed_user_message_resumes
+        .lock()
+        .await
+        .clone();
+    assert_eq!(resumes.len(), 2);
+    assert_eq!(resumes[0], None);
+    assert_eq!(resumes[1], Some(conversation_id));
+
+    assert_eq!(counters.new_conversation_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.user_message_calls.load(Ordering::Relaxed), 2);
 
     supervisor
         .stop_session(session_id)
@@ -557,7 +623,7 @@ async fn resumes_existing_thread_with_external_session_ref() {
 }
 
 #[tokio::test]
-async fn interrupt_requests_turn_interrupt_and_emits_turn_completed() {
+async fn cancel_mid_turn_emits_turn_completed() {
     let (frames_tx, mut frames_rx) = mpsc::channel(256);
     let tmp = tempfile::tempdir().expect("tempdir");
     let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
@@ -570,8 +636,8 @@ async fn interrupt_requests_turn_interrupt_and_emits_turn_completed() {
     .await
     .expect("supervisor");
 
-    let counters = Arc::new(FakeCodexCounters::default());
-    let process = Arc::new(InProcCodexProcess::new(
+    let counters = Arc::new(FakeV2Counters::default());
+    let process = Arc::new(InProcV2CodexProcess::new(
         tmp.path().to_path_buf(),
         Arc::clone(&counters),
     ));
@@ -601,11 +667,10 @@ async fn interrupt_requests_turn_interrupt_and_emits_turn_completed() {
         .await
         .expect("send_message");
 
-    // Wait for turn started so the process has an active turn id.
+    // Wait for turn started so the runner has an active turn id.
     let _events =
         collect_until_turn_started(&mut frames_rx, session_id, Duration::from_secs(5)).await;
 
-    // The fake server completes the blocked turn only on interrupt; trigger it.
     let _ = supervisor
         .interrupt_session(session_id)
         .await
@@ -616,10 +681,10 @@ async fn interrupt_requests_turn_interrupt_and_emits_turn_completed() {
     assert!(
         completed
             .iter()
-            .any(|e| matches!(&e.kind, SessionEventKind::TurnCompleted(tc) if tc.error.is_none()))
+            .any(|e| matches!(&e.kind, SessionEventKind::TurnCompleted(_)))
     );
 
-    assert_eq!(counters.turn_interrupt_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.cancel_calls.load(Ordering::Relaxed), 1);
 
     supervisor
         .stop_session(session_id)

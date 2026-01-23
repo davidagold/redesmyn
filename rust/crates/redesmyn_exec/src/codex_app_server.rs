@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -7,6 +7,7 @@ use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainEx
 use redesmyn_logging::tracing;
 use redesmyn_protocol::session::ExternalSessionRef;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -16,19 +17,7 @@ use crate::app_server::{
     AppServerRequest, AppServerRequestError, AppServerResponse, BoxFuture,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonRpcWireFormat {
-    /// Codex app-server uses JSONL over stdio (one JSON-RPC message per line).
-    JsonLines,
-    /// Optional LSP-style `Content-Length` framing.
-    ContentLength,
-}
-
-impl Default for JsonRpcWireFormat {
-    fn default() -> Self {
-        Self::JsonLines
-    }
-}
+const JSONRPC_VERSION: &str = "2.0";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum JsonRpcId {
@@ -76,16 +65,14 @@ enum FramingError {
 }
 
 #[derive(Debug)]
-struct JsonRpcFramingDecoder {
-    wire_format: JsonRpcWireFormat,
+struct ContentLengthFramingDecoder {
     buffer: Vec<u8>,
     expected_len: Option<usize>,
 }
 
-impl JsonRpcFramingDecoder {
-    fn new(wire_format: JsonRpcWireFormat) -> Self {
+impl ContentLengthFramingDecoder {
+    fn new() -> Self {
         Self {
-            wire_format,
             buffer: Vec::new(),
             expected_len: None,
         }
@@ -93,30 +80,10 @@ impl JsonRpcFramingDecoder {
 
     fn push(&mut self, chunk: &[u8]) -> Result<Vec<Vec<u8>>, FramingError> {
         self.buffer.extend_from_slice(chunk);
-        match self.wire_format {
-            JsonRpcWireFormat::JsonLines => Ok(self.drain_json_lines()),
-            JsonRpcWireFormat::ContentLength => self.drain_content_length_frames(),
-        }
+        self.drain_frames()
     }
 
-    fn drain_json_lines(&mut self) -> Vec<Vec<u8>> {
-        let mut out = Vec::new();
-        while let Some(pos) = self.buffer.iter().position(|b| *b == b'\n') {
-            let mut line = self.buffer.drain(..pos + 1).collect::<Vec<u8>>();
-            while matches!(line.last(), Some(b'\n' | b'\r')) {
-                line.pop();
-            }
-
-            if line.iter().all(|b| b.is_ascii_whitespace()) {
-                continue;
-            }
-
-            out.push(line);
-        }
-        out
-    }
-
-    fn drain_content_length_frames(&mut self) -> Result<Vec<Vec<u8>>, FramingError> {
+    fn drain_frames(&mut self) -> Result<Vec<Vec<u8>>, FramingError> {
         let mut out = Vec::new();
         loop {
             if self.expected_len.is_none() {
@@ -177,7 +144,6 @@ fn parse_content_length(headers: &str) -> Result<usize, FramingError> {
 }
 
 struct JsonRpcConnection {
-    wire_format: JsonRpcWireFormat,
     writer: Mutex<Box<dyn AsyncWrite + Unpin + Send>>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<JsonRpcId, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>,
@@ -186,7 +152,6 @@ struct JsonRpcConnection {
 impl std::fmt::Debug for JsonRpcConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JsonRpcConnection")
-            .field("wire_format", &self.wire_format)
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
             .field("writer", &"<writer>")
             .field("pending", &"<pending>")
@@ -195,9 +160,8 @@ impl std::fmt::Debug for JsonRpcConnection {
 }
 
 impl JsonRpcConnection {
-    fn new(wire_format: JsonRpcWireFormat, writer: Box<dyn AsyncWrite + Unpin + Send>) -> Self {
+    fn new(writer: Box<dyn AsyncWrite + Unpin + Send>) -> Self {
         Self {
-            wire_format,
             writer: Mutex::new(writer),
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
@@ -211,18 +175,11 @@ impl JsonRpcConnection {
 
     async fn send_value(&self, value: &serde_json::Value) -> Result<(), JsonRpcError> {
         let json = serde_json::to_vec(value)?;
+        let header = format!("Content-Length: {}\r\n\r\n", json.len());
+
         let mut writer = self.writer.lock().await;
-        match self.wire_format {
-            JsonRpcWireFormat::JsonLines => {
-                writer.write_all(&json).await?;
-                writer.write_all(b"\n").await?;
-            }
-            JsonRpcWireFormat::ContentLength => {
-                let header = format!("Content-Length: {}\r\n\r\n", json.len());
-                writer.write_all(header.as_bytes()).await?;
-                writer.write_all(&json).await?;
-            }
-        }
+        writer.write_all(header.as_bytes()).await?;
+        writer.write_all(&json).await?;
         writer.flush().await?;
         Ok(())
     }
@@ -241,6 +198,7 @@ impl JsonRpcConnection {
         }
 
         let mut payload = serde_json::json!({
+            "jsonrpc": JSONRPC_VERSION,
             "method": method,
             "id": request_id.to_json(),
         });
@@ -272,7 +230,10 @@ impl JsonRpcConnection {
         method: &'static str,
         params: Option<serde_json::Value>,
     ) -> Result<(), AppServerRequestError> {
-        let mut payload = serde_json::json!({ "method": method });
+        let mut payload = serde_json::json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "method": method,
+        });
         if let Some(params) = params {
             payload["params"] = params;
         }
@@ -298,36 +259,315 @@ impl JsonRpcConnection {
             tracing::debug!(?id, "dropping response for unknown request id");
         }
     }
+
+    async fn respond_ok(&self, id: JsonRpcId, result: serde_json::Value) {
+        let response = serde_json::json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": id.to_json(),
+            "result": result,
+        });
+        if let Err(err) = self.send_value(&response).await {
+            tracing::warn!(error = %err, "failed to send jsonrpc response");
+        }
+    }
+
+    async fn respond_error(&self, id: JsonRpcId, code: i64, message: &str) {
+        let response = serde_json::json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": id.to_json(),
+            "error": { "code": code, "message": message }
+        });
+        if let Err(err) = self.send_value(&response).await {
+            tracing::warn!(error = %err, "failed to send jsonrpc error response");
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CodexAppServerAuth {
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub account_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    access_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+}
+
+impl From<&CodexAppServerAuth> for AuthParams {
+    fn from(value: &CodexAppServerAuth) -> Self {
+        Self {
+            access_token: value.access_token.clone(),
+            refresh_token: value.refresh_token.clone(),
+            account_id: value.account_id.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientInfo {
+    name: String,
+    title: String,
+    version: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeParams {
+    protocol_version: u32,
+    auth: AuthParams,
+    client_info: ClientInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewConversationParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserMessageParams {
+    message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelParams {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "conversationId"
+    )]
+    conversation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "turnId")]
+    turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommandExecutionApprovalParams {
+    #[serde(rename = "commandId")]
+    command_id: String,
+    approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileChangeApprovalParams {
+    #[serde(rename = "proposalId")]
+    proposal_id: String,
+    approved: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateConversationParams {
+    diff: Vec<ConversationDiff>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TurnCompletionStatus {
+    Completed,
+    Failed,
+    #[serde(rename = "canceled", alias = "cancelled")]
+    Canceled,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnFailure {
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum MessageRole {
+    User,
+    Assistant,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ConversationDiff {
+    NewConversation {
+        #[serde(rename = "conversationId")]
+        conversation_id: String,
+    },
+    NewTurn {
+        #[serde(rename = "turnId")]
+        turn_id: String,
+    },
+    TurnCompleted {
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        status: TurnCompletionStatus,
+        #[serde(default)]
+        error: Option<TurnFailure>,
+    },
+    NewMessage {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        role: MessageRole,
+        content: String,
+        #[serde(default)]
+        done: bool,
+    },
+    UpdateMessage {
+        #[serde(rename = "messageId")]
+        message_id: String,
+        #[serde(default)]
+        content: Option<String>,
+        #[serde(default, rename = "contentDelta")]
+        content_delta: Option<String>,
+        #[serde(default)]
+        done: Option<bool>,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+struct AccumulatedMessage {
+    role: MessageRole,
+    text: String,
+    done: bool,
+}
+
+#[derive(Debug, Default)]
+struct ConversationAccumulator {
+    messages: HashMap<String, AccumulatedMessage>,
+    emitted_message_ids: HashSet<String>,
+}
+
+impl ConversationAccumulator {
+    fn reset(&mut self) {
+        self.messages.clear();
+        self.emitted_message_ids.clear();
+    }
+
+    fn apply_new_message(
+        &mut self,
+        message_id: String,
+        role: MessageRole,
+        content: String,
+        done: bool,
+    ) -> Option<AppServerEvent> {
+        self.messages.insert(
+            message_id.clone(),
+            AccumulatedMessage {
+                role,
+                text: content,
+                done,
+            },
+        );
+        self.maybe_emit_message(&message_id)
+    }
+
+    fn apply_update_message(
+        &mut self,
+        message_id: String,
+        content: Option<String>,
+        content_delta: Option<String>,
+        done: Option<bool>,
+    ) -> Option<AppServerEvent> {
+        let entry = self
+            .messages
+            .entry(message_id.clone())
+            .or_insert(AccumulatedMessage {
+                role: MessageRole::Unknown,
+                text: String::new(),
+                done: false,
+            });
+
+        if let Some(content) = content {
+            entry.text = content;
+        } else if let Some(delta) = content_delta {
+            entry.text.push_str(&delta);
+        }
+
+        if let Some(done) = done {
+            entry.done = done;
+        }
+
+        self.maybe_emit_message(&message_id)
+    }
+
+    fn maybe_emit_message(&mut self, message_id: &str) -> Option<AppServerEvent> {
+        if self.emitted_message_ids.contains(message_id) {
+            return None;
+        }
+        let entry = self.messages.get(message_id)?;
+        if !entry.done || entry.text.trim().is_empty() {
+            return None;
+        }
+
+        let text = entry.text.clone();
+        let ev = match entry.role {
+            MessageRole::User => AppServerEvent::UserMessage { text },
+            MessageRole::Assistant => AppServerEvent::AssistantMessage { text },
+            MessageRole::Unknown => return None,
+        };
+
+        self.emitted_message_ids.insert(message_id.to_owned());
+        Some(ev)
+    }
+}
+
+#[derive(Debug, Default)]
+struct CodexAppServerStateInner {
+    conversation_id: Option<String>,
+    active_turn_id: Option<String>,
 }
 
 #[derive(Debug)]
 struct CodexAppServerState {
-    thread_id: Mutex<Option<String>>,
-    active_turn_id: Mutex<Option<String>>,
+    inner: Mutex<CodexAppServerStateInner>,
+    accumulator: Mutex<ConversationAccumulator>,
 }
 
 impl CodexAppServerState {
     fn new() -> Self {
         Self {
-            thread_id: Mutex::new(None),
-            active_turn_id: Mutex::new(None),
+            inner: Mutex::new(CodexAppServerStateInner::default()),
+            accumulator: Mutex::new(ConversationAccumulator::default()),
         }
     }
 
-    async fn set_thread_id(&self, thread_id: String) {
-        *self.thread_id.lock().await = Some(thread_id);
+    async fn reset_for_new_conversation(&self) {
+        {
+            let mut inner = self.inner.lock().await;
+            inner.conversation_id = None;
+            inner.active_turn_id = None;
+        }
+        self.accumulator.lock().await.reset();
     }
 
-    async fn set_active_turn_id(&self, turn_id: Option<String>) {
-        *self.active_turn_id.lock().await = turn_id;
+    async fn set_conversation_id(&self, conversation_id: String) {
+        self.inner.lock().await.conversation_id = Some(conversation_id);
     }
 
-    async fn thread_id(&self) -> Option<String> {
-        self.thread_id.lock().await.clone()
+    async fn conversation_id(&self) -> Option<String> {
+        self.inner.lock().await.conversation_id.clone()
     }
 
     async fn active_turn_id(&self) -> Option<String> {
-        self.active_turn_id.lock().await.clone()
+        self.inner.lock().await.active_turn_id.clone()
     }
 }
 
@@ -339,6 +579,8 @@ pub struct CodexAppServerClient {
     client_name: String,
     client_title: String,
     client_version: String,
+    protocol_version: u32,
+    auth: CodexAppServerAuth,
 }
 
 impl CodexAppServerClient {
@@ -349,6 +591,8 @@ impl CodexAppServerClient {
         client_name: String,
         client_title: String,
         client_version: String,
+        protocol_version: u32,
+        auth: CodexAppServerAuth,
     ) -> Self {
         Self {
             conn,
@@ -357,17 +601,29 @@ impl CodexAppServerClient {
             client_name,
             client_title,
             client_version,
+            protocol_version,
+            auth,
         }
     }
 
     async fn initialize_handshake(&self) -> Result<(), AppServerProcessError> {
-        let params = serde_json::json!({
-            "clientInfo": {
-                "name": self.client_name,
-                "title": self.client_title,
-                "version": self.client_version,
-            }
-        });
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.initialize");
+        let _guard = span.enter();
+
+        let params = InitializeParams {
+            protocol_version: self.protocol_version,
+            auth: AuthParams::from(&self.auth),
+            client_info: ClientInfo {
+                name: self.client_name.clone(),
+                title: self.client_title.clone(),
+                version: self.client_version.clone(),
+            },
+        };
+
+        let params =
+            serde_json::to_value(params).map_err(|err| AppServerProcessError::ConnectFailed {
+                reason: format!("initialize params serialization failed: {err}"),
+            })?;
 
         let _ = self
             .conn
@@ -386,97 +642,63 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn ensure_thread_for_intent(
-        &self,
-        intent: &AppServerTurnIntent,
-    ) -> Result<String, AppServerRequestError> {
-        match intent {
-            AppServerTurnIntent::StartNew { .. } => {
-                let thread_id = self.start_thread().await?;
-                self.state.set_thread_id(thread_id.clone()).await;
-                Ok(thread_id)
-            }
-            AppServerTurnIntent::Resume { external, .. } => {
-                let thread_id = match external {
-                    DomainExternalSessionRef::CodexThread { thread_id, .. } => thread_id.clone(),
-                    DomainExternalSessionRef::None => {
-                        return Err(AppServerRequestError::Failed {
-                            reason: "cannot resume: ExternalSessionRef::None".to_owned(),
-                        });
-                    }
-                    other => {
-                        return Err(AppServerRequestError::Failed {
-                            reason: format!(
-                                "cannot resume: unsupported external session ref: {other:?}"
-                            ),
-                        });
-                    }
-                };
+    async fn start_new_conversation(&self) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.new_conversation");
+        let _guard = span.enter();
 
-                let _ = self
-                    .conn
-                    .request(
-                        "thread/resume",
-                        Some(serde_json::json!({ "threadId": thread_id })),
-                    )
-                    .await?;
+        let params = NewConversationParams {
+            cwd: Some(self.cwd.to_string_lossy().to_string()),
+        };
+        let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
+            reason: format!("newConversation params serialization failed: {err}"),
+        })?;
 
-                self.state.set_thread_id(thread_id.clone()).await;
-                Ok(thread_id)
-            }
+        let result = self.conn.request("newConversation", Some(params)).await?;
+        if let Some(conversation_id) = parse_conversation_id_from_new_conversation_result(&result) {
+            self.state.set_conversation_id(conversation_id).await;
         }
+        Ok(())
     }
 
-    async fn start_thread(&self) -> Result<String, AppServerRequestError> {
-        let cwd = self.cwd.to_string_lossy().to_string();
-        let result = self
-            .conn
-            .request("thread/start", Some(serde_json::json!({ "cwd": cwd })))
-            .await?;
-        parse_thread_id_from_thread_result(&result).ok_or_else(|| AppServerRequestError::Failed {
-            reason: "thread/start response missing result.thread.id".to_owned(),
-        })
-    }
-
-    async fn start_turn(
+    async fn send_user_message(
         &self,
-        thread_id: &str,
         prompt: &str,
-    ) -> Result<String, AppServerRequestError> {
-        let params = serde_json::json!({
-            "threadId": thread_id,
-            "input": [{
-                "type": "text",
-                "text": prompt,
-                "textElements": [],
-            }],
-        });
+        resume: Option<String>,
+    ) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "codex_app_server.user_message",
+            resume = resume.as_deref().unwrap_or("<new>")
+        );
+        let _guard = span.enter();
 
-        let result = self.conn.request("turn/start", Some(params)).await?;
-        parse_turn_id_from_turn_result(&result).ok_or_else(|| AppServerRequestError::Failed {
-            reason: "turn/start response missing result.turn.id".to_owned(),
-        })
+        let params = UserMessageParams {
+            message: prompt.to_owned(),
+            resume,
+        };
+        let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
+            reason: format!("userMessage params serialization failed: {err}"),
+        })?;
+
+        let _ = self.conn.request("userMessage", Some(params)).await?;
+        Ok(())
     }
 
-    async fn interrupt_active_turn(&self) -> Result<(), AppServerRequestError> {
-        let thread_id =
-            self.state
-                .thread_id()
-                .await
-                .ok_or_else(|| AppServerRequestError::Failed {
-                    reason: "turn/interrupt failed: missing thread id".to_owned(),
-                })?;
+    async fn cancel_active_turn(&self) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.cancel");
+        let _guard = span.enter();
 
-        let turn_id =
-            self.state
-                .active_turn_id()
-                .await
-                .ok_or_else(|| AppServerRequestError::Failed {
-                    reason: "turn/interrupt failed: missing active turn id".to_owned(),
-                })?;
+        let conversation_id = self.state.conversation_id().await;
+        let turn_id = self.state.active_turn_id().await;
 
-        let params = serde_json::json!({ "threadId": thread_id, "turnId": turn_id });
-        let _ = self.conn.request("turn/interrupt", Some(params)).await?;
+        let params = CancelParams {
+            conversation_id,
+            turn_id,
+        };
+        let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
+            reason: format!("cancel params serialization failed: {err}"),
+        })?;
+
+        let _ = self.conn.request("cancel", Some(params)).await?;
         Ok(())
     }
 }
@@ -489,18 +711,49 @@ impl AppServerClient for CodexAppServerClient {
         Box::pin(async move {
             match request {
                 AppServerRequest::SendMessage { intent } => {
-                    let thread_id = self.ensure_thread_for_intent(&intent).await?;
-                    let prompt = match intent {
-                        AppServerTurnIntent::StartNew { prompt } => prompt,
-                        AppServerTurnIntent::Resume { prompt, .. } => prompt,
+                    match &intent {
+                        AppServerTurnIntent::StartNew { .. } => {
+                            self.state.reset_for_new_conversation().await;
+                            self.start_new_conversation().await?;
+                        }
+                        AppServerTurnIntent::Resume { external, .. } => match external {
+                            DomainExternalSessionRef::CodexConversation {
+                                conversation_id, ..
+                            } => {
+                                self.state
+                                    .set_conversation_id(conversation_id.clone())
+                                    .await;
+                            }
+                            DomainExternalSessionRef::None => {
+                                return Err(AppServerRequestError::Failed {
+                                    reason: "cannot resume: ExternalSessionRef::None".to_owned(),
+                                });
+                            }
+                            other => {
+                                return Err(AppServerRequestError::Failed {
+                                    reason: format!(
+                                        "cannot resume: unsupported external session ref: {other:?}"
+                                    ),
+                                });
+                            }
+                        },
+                    }
+
+                    let (prompt, resume) = match intent {
+                        AppServerTurnIntent::StartNew { prompt } => (prompt, None),
+                        AppServerTurnIntent::Resume { prompt, external } => match external {
+                            DomainExternalSessionRef::CodexConversation {
+                                conversation_id, ..
+                            } => (prompt, Some(conversation_id)),
+                            _ => (prompt, None),
+                        },
                     };
 
-                    let turn_id = self.start_turn(&thread_id, &prompt).await?;
-                    self.state.set_active_turn_id(Some(turn_id)).await;
+                    self.send_user_message(&prompt, resume).await?;
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => {
-                    self.interrupt_active_turn().await?;
+                    self.cancel_active_turn().await?;
                     Ok(AppServerResponse::Interrupted)
                 }
             }
@@ -508,20 +761,19 @@ impl AppServerClient for CodexAppServerClient {
     }
 }
 
-fn parse_thread_id_from_thread_result(result: &serde_json::Value) -> Option<String> {
+fn parse_conversation_id_from_new_conversation_result(
+    result: &serde_json::Value,
+) -> Option<String> {
     result
-        .get("thread")?
-        .get("id")?
-        .as_str()
+        .get("conversationId")
+        .and_then(|v| v.as_str())
         .map(ToOwned::to_owned)
-}
-
-fn parse_turn_id_from_turn_result(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("turn")?
-        .get("id")?
-        .as_str()
-        .map(ToOwned::to_owned)
+        .or_else(|| {
+            result
+                .get("conversation_id")
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 #[derive(Debug)]
@@ -529,10 +781,11 @@ pub struct CodexAppServerProcessConfig {
     pub argv: Vec<String>,
     pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
-    pub wire_format: JsonRpcWireFormat,
     pub client_name: String,
     pub client_title: String,
     pub client_version: String,
+    pub protocol_version: u32,
+    pub auth: CodexAppServerAuth,
 }
 
 impl CodexAppServerProcessConfig {
@@ -542,10 +795,11 @@ impl CodexAppServerProcessConfig {
             argv: vec!["codex".to_owned(), "app-server".to_owned()],
             cwd,
             env: Vec::new(),
-            wire_format: JsonRpcWireFormat::default(),
             client_name: "redesmyn".to_owned(),
             client_title: "Redesmyn".to_owned(),
             client_version: env!("CARGO_PKG_VERSION").to_owned(),
+            protocol_version: 2,
+            auth: CodexAppServerAuth::default(),
         }
     }
 }
@@ -569,17 +823,14 @@ impl CodexAppServerProcess {
         reader: Box<dyn AsyncRead + Unpin + Send>,
         writer: Box<dyn AsyncWrite + Unpin + Send>,
     ) -> Result<AppServerConnection, AppServerProcessError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.connect");
+        let _guard = span.enter();
+
         let state = Arc::new(CodexAppServerState::new());
-        let conn = Arc::new(JsonRpcConnection::new(self.config.wire_format, writer));
+        let conn = Arc::new(JsonRpcConnection::new(writer));
 
         let (events_tx, events_rx) = mpsc::channel::<AppServerEvent>(256);
-        spawn_reader_loop(
-            self.config.wire_format,
-            reader,
-            Arc::clone(&conn),
-            Arc::clone(&state),
-            events_tx,
-        );
+        spawn_reader_loop(reader, Arc::clone(&conn), Arc::clone(&state), events_tx);
 
         let client = Arc::new(CodexAppServerClient::new(
             Arc::clone(&conn),
@@ -588,6 +839,8 @@ impl CodexAppServerProcess {
             self.config.client_name.clone(),
             self.config.client_title.clone(),
             self.config.client_version.clone(),
+            self.config.protocol_version,
+            self.config.auth.clone(),
         ));
 
         client.initialize_handshake().await?;
@@ -686,7 +939,6 @@ impl AppServerProcess for CodexAppServerProcess {
 }
 
 fn spawn_reader_loop(
-    wire_format: JsonRpcWireFormat,
     mut reader: Box<dyn AsyncRead + Unpin + Send>,
     conn: Arc<JsonRpcConnection>,
     state: Arc<CodexAppServerState>,
@@ -696,7 +948,7 @@ fn spawn_reader_loop(
         let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.reader");
         let _guard = span.enter();
 
-        let mut decoder = JsonRpcFramingDecoder::new(wire_format);
+        let mut decoder = ContentLengthFramingDecoder::new();
         let mut buf = vec![0u8; 8 * 1024];
 
         loop {
@@ -736,18 +988,19 @@ async fn handle_incoming_frame(
     let value: serde_json::Value = serde_json::from_str(text)?;
 
     if let Some(method) = value.get("method").and_then(|m| m.as_str()) {
-        if let Some(id_value) = value.get("id") {
-            if let Some(id) = JsonRpcId::try_from_json(id_value) {
-                handle_server_request(conn, id, method).await;
-            }
-            return Ok(());
-        }
-
         let params = value
             .get("params")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        handle_notification(state, events_tx, method, &params).await;
+
+        if let Some(id_value) = value.get("id") {
+            if let Some(id) = JsonRpcId::try_from_json(id_value) {
+                handle_server_request(conn, state, events_tx, id, method, &params).await;
+            }
+            return Ok(());
+        }
+
+        handle_notification(conn, state, events_tx, method, &params).await;
         return Ok(());
     }
 
@@ -773,157 +1026,273 @@ async fn handle_incoming_frame(
     Ok(())
 }
 
-async fn handle_server_request(conn: &Arc<JsonRpcConnection>, id: JsonRpcId, method: &str) {
-    tracing::warn!(
-        ?id,
-        method,
-        "codex app-server sent an unsupported server request"
-    );
-    let response = serde_json::json!({
-        "id": id.to_json(),
-        "error": { "code": -32601, "message": "method not supported" }
-    });
-    if let Err(err) = conn.send_value(&response).await {
-        tracing::warn!(error = %err, "failed to send jsonrpc error response");
+async fn handle_server_request(
+    conn: &Arc<JsonRpcConnection>,
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    id: JsonRpcId,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    match method {
+        "conversationId" => {
+            let conversation_id = state.conversation_id().await;
+            match conversation_id {
+                Some(conversation_id) => {
+                    conn.respond_ok(id, serde_json::Value::String(conversation_id))
+                        .await;
+                }
+                None => {
+                    conn.respond_error(id, -32000, "missing active conversation id")
+                        .await;
+                }
+            }
+        }
+        "loginWithChatGPT" => {
+            let url = params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_owned();
+
+            let msg = if url.is_empty() {
+                "Login required: run `codex login` and retry.".to_owned()
+            } else {
+                format!("Login required: open {url} in your browser, then retry.")
+            };
+
+            let _ = events_tx
+                .send(AppServerEvent::AssistantMessage { text: msg })
+                .await;
+
+            conn.respond_ok(id, serde_json::json!({ "opened": false }))
+                .await;
+        }
+        _ => {
+            tracing::warn!(?id, method, "unsupported server request");
+            conn.respond_error(id, -32601, "method not supported").await;
+        }
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunCommandParams {
+    #[serde(rename = "commandId", alias = "id")]
+    command_id: String,
+    command: String,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProposalToEditFileParams {
+    #[serde(rename = "proposalId", alias = "id")]
+    proposal_id: String,
+    path: String,
+    diff: String,
+}
+
 async fn handle_notification(
+    conn: &Arc<JsonRpcConnection>,
     state: &Arc<CodexAppServerState>,
     events_tx: &mpsc::Sender<AppServerEvent>,
     method: &str,
     params: &serde_json::Value,
 ) {
     match method {
-        "thread/started" => {
-            if let Some(thread_id) = params
-                .get("thread")
-                .and_then(|t| t.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                state.set_thread_id(thread_id.to_owned()).await;
-            }
+        "updateConversation" => {
+            let params: UpdateConversationParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid updateConversation params");
+                    return;
+                }
+            };
+            handle_update_conversation(state, events_tx, params).await;
         }
-        "turn/started" => {
-            let Some(thread_id) = params.get("threadId").and_then(|v| v.as_str()) else {
-                return;
-            };
-            let Some(turn_id) = params
-                .get("turn")
-                .and_then(|t| t.get("id"))
-                .and_then(|v| v.as_str())
-            else {
-                return;
-            };
-
-            state.set_thread_id(thread_id.to_owned()).await;
-            state.set_active_turn_id(Some(turn_id.to_owned())).await;
-
-            let external_session_ref = ExternalSessionRef::CodexThread {
-                thread_id: thread_id.to_owned(),
-                turn_id: Some(turn_id.to_owned()),
+        "runCommand" => {
+            let params: RunCommandParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid runCommand params");
+                    return;
+                }
             };
 
             let _ = events_tx
-                .send(AppServerEvent::TurnStarted {
-                    turn_id: Some(turn_id.to_owned()),
-                    external_session_ref: Some(external_session_ref),
+                .send(AppServerEvent::ToolInvocation {
+                    tool_name: "run_command".to_owned(),
+                    tool_call_id: Some(params.command_id.clone()),
+                    input: serde_json::json!({
+                        "command": params.command,
+                        "cwd": params.cwd,
+                    })
+                    .to_string(),
                 })
                 .await;
+
+            // Safe-by-default: do not auto-run; deny until a control-plane approval path exists.
+            let conn = Arc::clone(conn);
+            tokio::spawn(async move {
+                let params = CommandExecutionApprovalParams {
+                    command_id: params.command_id,
+                    approved: false,
+                };
+                if let Ok(params) = serde_json::to_value(params) {
+                    let _ = conn.request("commandExecutionApproval", Some(params)).await;
+                }
+            });
         }
-        "turn/completed" => {
-            let Some(thread_id) = params.get("threadId").and_then(|v| v.as_str()) else {
-                return;
-            };
-            let Some(turn) = params.get("turn") else {
-                return;
-            };
-            let Some(turn_id) = turn.get("id").and_then(|v| v.as_str()) else {
-                return;
-            };
-            let status = turn.get("status").and_then(|v| v.as_str());
-            let error = match status {
-                Some("failed") => turn
-                    .get("error")
-                    .and_then(|e| e.get("message"))
-                    .and_then(|m| m.as_str())
-                    .map(|message| {
-                        ErrorEnvelope::new(ErrorCategory::Unavailable, message.to_owned())
-                    }),
-                _ => None,
-            };
-
-            state.set_thread_id(thread_id.to_owned()).await;
-            state.set_active_turn_id(None).await;
-
-            let external_session_ref = ExternalSessionRef::CodexThread {
-                thread_id: thread_id.to_owned(),
-                turn_id: Some(turn_id.to_owned()),
+        "proposalToEditFile" => {
+            let params: ProposalToEditFileParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid proposalToEditFile params");
+                    return;
+                }
             };
 
             let _ = events_tx
-                .send(AppServerEvent::TurnCompleted {
-                    turn_id: Some(turn_id.to_owned()),
-                    external_session_ref: Some(external_session_ref),
-                    error,
+                .send(AppServerEvent::ToolInvocation {
+                    tool_name: "proposal_to_edit_file".to_owned(),
+                    tool_call_id: Some(params.proposal_id.clone()),
+                    input: serde_json::json!({
+                        "path": params.path,
+                        "diff": params.diff,
+                    })
+                    .to_string(),
                 })
                 .await;
-        }
-        "item/completed" => {
-            let Some(item) = params.get("item") else {
-                return;
-            };
-            let Some(item_type) = item.get("type").and_then(|v| v.as_str()) else {
-                return;
-            };
 
-            match item_type {
-                "agentMessage" => {
-                    let Some(text) = item.get("text").and_then(|v| v.as_str()) else {
-                        return;
-                    };
-                    let _ = events_tx
-                        .send(AppServerEvent::AssistantMessage {
-                            text: text.to_owned(),
-                        })
-                        .await;
+            // Safe-by-default: do not auto-edit; deny until a control-plane approval path exists.
+            let conn = Arc::clone(conn);
+            tokio::spawn(async move {
+                let params = FileChangeApprovalParams {
+                    proposal_id: params.proposal_id,
+                    approved: false,
+                };
+                if let Ok(params) = serde_json::to_value(params) {
+                    let _ = conn.request("fileChangeApproval", Some(params)).await;
                 }
-                "userMessage" => {
-                    let text = item
-                        .get("content")
-                        .and_then(|v| v.as_array())
-                        .map(|content| join_user_input_text(content))
-                        .unwrap_or_default();
-                    if text.is_empty() {
-                        return;
-                    }
-                    let _ = events_tx.send(AppServerEvent::UserMessage { text }).await;
-                }
-                _ => {}
-            }
+            });
+        }
+        "shutdown" => {
+            tracing::info!("codex app-server requested shutdown");
+        }
+        "appendToLog" | "rerender" => {
+            // Non-durable UI-only notifications. Ignore for now.
         }
         _ => {}
     }
 }
 
-fn join_user_input_text(content: &[serde_json::Value]) -> String {
-    let mut parts = Vec::new();
-    for block in content {
-        let Some(block_type) = block.get("type").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        match block_type {
-            "text" => {
-                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                    if !text.is_empty() {
-                        parts.push(text.to_owned());
+async fn handle_update_conversation(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: UpdateConversationParams,
+) {
+    let mut events = Vec::new();
+
+    {
+        let mut inner = state.inner.lock().await;
+        let mut acc = state.accumulator.lock().await;
+
+        for diff in params.diff {
+            match diff {
+                ConversationDiff::NewConversation { conversation_id } => {
+                    if inner.conversation_id.as_deref() != Some(conversation_id.as_str()) {
+                        inner.conversation_id = Some(conversation_id);
                     }
                 }
+                ConversationDiff::NewTurn { turn_id } => {
+                    inner.active_turn_id = Some(turn_id.clone());
+
+                    let external_session_ref =
+                        inner.conversation_id.as_ref().map(|conversation_id| {
+                            ExternalSessionRef::CodexConversation {
+                                conversation_id: conversation_id.clone(),
+                                turn_id: Some(turn_id.clone()),
+                            }
+                        });
+
+                    tracing::info!(
+                        conversation_id = inner.conversation_id.as_deref().unwrap_or("<unknown>"),
+                        turn_id = turn_id,
+                        "codex app-server turn started"
+                    );
+
+                    events.push(AppServerEvent::TurnStarted {
+                        turn_id: Some(turn_id),
+                        external_session_ref,
+                    });
+                }
+                ConversationDiff::NewMessage {
+                    message_id,
+                    role,
+                    content,
+                    done,
+                } => {
+                    if let Some(ev) = acc.apply_new_message(message_id, role, content, done) {
+                        events.push(ev);
+                    }
+                }
+                ConversationDiff::UpdateMessage {
+                    message_id,
+                    content,
+                    content_delta,
+                    done,
+                } => {
+                    if let Some(ev) =
+                        acc.apply_update_message(message_id, content, content_delta, done)
+                    {
+                        events.push(ev);
+                    }
+                }
+                ConversationDiff::TurnCompleted {
+                    turn_id,
+                    status,
+                    error,
+                } => {
+                    inner.active_turn_id = None;
+
+                    let external_session_ref =
+                        inner.conversation_id.as_ref().map(|conversation_id| {
+                            ExternalSessionRef::CodexConversation {
+                                conversation_id: conversation_id.clone(),
+                                turn_id: Some(turn_id.clone()),
+                            }
+                        });
+
+                    let error = match status {
+                        TurnCompletionStatus::Failed => error
+                            .and_then(|e| e.message)
+                            .map(|message| ErrorEnvelope::new(ErrorCategory::Unavailable, message)),
+                        _ => None,
+                    };
+
+                    tracing::info!(
+                        conversation_id = inner.conversation_id.as_deref().unwrap_or("<unknown>"),
+                        turn_id = turn_id,
+                        status = ?status,
+                        "codex app-server turn completed"
+                    );
+
+                    events.push(AppServerEvent::TurnCompleted {
+                        turn_id: Some(turn_id),
+                        external_session_ref,
+                        error,
+                    });
+                }
+                ConversationDiff::Unknown => {}
             }
-            _ => {}
         }
     }
-    parts.join("\n")
+
+    for event in events {
+        let _ = events_tx.send(event).await;
+    }
 }
 
 #[cfg(test)]
@@ -932,12 +1301,12 @@ mod tests {
 
     #[test]
     fn content_length_decoder_handles_chunked_reads() {
-        let payload = br#"{"method":"ping","id":1}"#;
+        let payload = br#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
         let framed = format!("Content-Length: {}\r\n\r\n", payload.len());
         let mut bytes = framed.into_bytes();
         bytes.extend_from_slice(payload);
 
-        let mut decoder = JsonRpcFramingDecoder::new(JsonRpcWireFormat::ContentLength);
+        let mut decoder = ContentLengthFramingDecoder::new();
         let mut out = Vec::new();
 
         for chunk in bytes.chunks(3) {
@@ -947,16 +1316,5 @@ mod tests {
 
         assert_eq!(out.len(), 1);
         assert_eq!(out[0], payload);
-    }
-
-    #[test]
-    fn jsonl_decoder_handles_multiple_messages() {
-        let mut decoder = JsonRpcFramingDecoder::new(JsonRpcWireFormat::JsonLines);
-        let frames = decoder
-            .push(b"{\"method\":\"a\"}\n{\"method\":\"b\"}\n")
-            .expect("push");
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0], br#"{"method":"a"}"#);
-        assert_eq!(frames[1], br#"{"method":"b"}"#);
     }
 }
