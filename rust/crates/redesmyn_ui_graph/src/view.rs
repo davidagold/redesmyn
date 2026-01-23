@@ -682,7 +682,7 @@ impl GraphView {
                 self.select_edge(id, cx);
             }
             None => {
-                let had_selection = self.scene.selection().selected_node.is_some()
+                let had_selection = !self.scene.selection().selected_nodes.is_empty()
                     || self.scene.selection().selected_edge.is_some();
                 self.scene.clear_hover();
                 self.pan_drag = Some(PanDrag {
@@ -1669,7 +1669,7 @@ impl Render for GraphView {
                     }
 
                     let did_clear = graph.update(cx, |this, cx| {
-                        let had_selection = this.scene.selection().selected_node.is_some()
+                        let had_selection = !this.scene.selection().selected_nodes.is_empty()
                             || this.scene.selection().selected_edge.is_some();
                         if !had_selection {
                             return false;
