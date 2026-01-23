@@ -4814,6 +4814,7 @@ dependencies = [
  "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

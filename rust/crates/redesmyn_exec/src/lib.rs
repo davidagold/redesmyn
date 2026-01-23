@@ -2,6 +2,7 @@
 
 pub mod app_server;
 pub mod artifact_store;
+pub mod codex_app_server;
 pub mod parser;
 pub mod supervisor;
 

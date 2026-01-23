@@ -9,11 +9,11 @@ use redesmyn_logging::tracing;
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef};
 use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage, SessionEventBatch};
 use redesmyn_protocol::session::{
-    ArtifactEmitted, AssistantMessage, InterfaceMode, SessionEnded, SessionEvent, SessionEventKind,
-    SessionScope, SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
-    TurnStarted, TurnState, UserMessage,
+    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
+    SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
+    ToolResult, TurnCompleted, TurnStarted, TurnState, UserMessage,
 };
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Timestamp};
+use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::active_sessions::ActiveSessionsByTask;
@@ -72,6 +72,15 @@ pub enum AppServerResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppServerEvent {
+    TurnStarted {
+        turn_id: Option<String>,
+        external_session_ref: Option<ExternalSessionRef>,
+    },
+    TurnCompleted {
+        turn_id: Option<String>,
+        external_session_ref: Option<ExternalSessionRef>,
+        error: Option<ErrorEnvelope>,
+    },
     UserMessage {
         text: String,
     },
@@ -482,6 +491,7 @@ async fn run_session(
         &frames_tx,
         session_id,
         scope,
+        None,
         SessionEventKind::SessionStarted(SessionStarted {}),
     )
     .await?;
@@ -498,60 +508,20 @@ async fn run_session(
     let _ = ready_tx.send(Ok(()));
     tracing::info!(%task_id, %session_id, "app-server session started");
 
-    let interface_mode = InterfaceMode::Structured;
     while let Some(cmd) = control_rx.recv().await {
         match cmd {
             SessionCommand::SendMessage { intent, reply } => {
-                emit_event(
-                    &frames_tx,
-                    session_id,
-                    scope,
-                    SessionEventKind::TurnStarted(TurnStarted {
-                        interface_mode,
-                        external_session_ref: None,
-                        idempotency_key: None,
-                        log_offset_bytes: None,
-                    }),
-                )
-                .await?;
-
                 let response = client
                     .request(AppServerRequest::SendMessage { intent })
                     .await;
-                match &response {
-                    Ok(_) => {
-                        emit_event(
-                            &frames_tx,
-                            session_id,
-                            scope,
-                            SessionEventKind::TurnCompleted(TurnCompleted {
-                                interface_mode,
-                                external_session_ref: None,
-                                exit_code: None,
-                                error: None,
-                            }),
-                        )
-                        .await?;
-                    }
-                    Err(err) => {
-                        emit_event(
-                            &frames_tx,
-                            session_id,
-                            scope,
-                            SessionEventKind::TurnCompleted(TurnCompleted {
-                                interface_mode,
-                                external_session_ref: None,
-                                exit_code: None,
-                                error: Some(ErrorEnvelope::new(
-                                    ErrorCategory::Unavailable,
-                                    format!("app-server request failed: {err}"),
-                                )),
-                            }),
-                        )
-                        .await?;
-                    }
+                if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("app_server_request_failed: {err}"),
+                    );
                 }
-
                 let _ = reply.send(response);
             }
             SessionCommand::Interrupt { reply } => {
@@ -614,6 +584,7 @@ async fn run_session(
         &frames_tx,
         session_id,
         scope,
+        None,
         SessionEventKind::SessionEnded(SessionEnded {}),
     )
     .await?;
@@ -671,7 +642,32 @@ async fn emit_app_server_event(
     scope: SessionScope,
     event: AppServerEvent,
 ) -> Result<(), RunSessionError> {
-    let kind = match event {
+    let (turn_id, kind) = match event {
+        AppServerEvent::TurnStarted {
+            turn_id,
+            external_session_ref,
+        } => (
+            turn_id.clone(),
+            SessionEventKind::TurnStarted(TurnStarted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref,
+                idempotency_key: None,
+                log_offset_bytes: None,
+            }),
+        ),
+        AppServerEvent::TurnCompleted {
+            turn_id,
+            external_session_ref,
+            error,
+        } => (
+            turn_id.clone(),
+            SessionEventKind::TurnCompleted(TurnCompleted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref,
+                exit_code: None,
+                error,
+            }),
+        ),
         AppServerEvent::UserMessage { text } => {
             let mut ev = UserMessage {
                 text,
@@ -687,7 +683,7 @@ async fn emit_app_server_event(
                 &mut ev.full_text_artifact,
             )
             .await?;
-            SessionEventKind::UserMessage(ev)
+            (None, SessionEventKind::UserMessage(ev))
         }
         AppServerEvent::AssistantMessage { text } => {
             let mut ev = AssistantMessage {
@@ -704,7 +700,7 @@ async fn emit_app_server_event(
                 &mut ev.full_text_artifact,
             )
             .await?;
-            SessionEventKind::AssistantMessage(ev)
+            (None, SessionEventKind::AssistantMessage(ev))
         }
         AppServerEvent::ToolInvocation {
             tool_name,
@@ -718,12 +714,15 @@ async fn emit_app_server_event(
                 &input,
             )
             .await?;
-            SessionEventKind::ToolInvocation(ToolInvocation {
-                tool_name,
-                tool_call_id,
-                input_preview,
-                input_artifact,
-            })
+            (
+                None,
+                SessionEventKind::ToolInvocation(ToolInvocation {
+                    tool_name,
+                    tool_call_id,
+                    input_preview,
+                    input_artifact,
+                }),
+            )
         }
         AppServerEvent::ToolResult {
             tool_name,
@@ -738,13 +737,16 @@ async fn emit_app_server_event(
                 &output,
             )
             .await?;
-            SessionEventKind::ToolResult(ToolResult {
-                tool_name,
-                tool_call_id,
-                output_preview,
-                output_artifact,
-                error,
-            })
+            (
+                None,
+                SessionEventKind::ToolResult(ToolResult {
+                    tool_name,
+                    tool_call_id,
+                    output_preview,
+                    output_artifact,
+                    error,
+                }),
+            )
         }
         AppServerEvent::ArtifactBytes {
             kind,
@@ -753,14 +755,18 @@ async fn emit_app_server_event(
             bytes,
         } => {
             let artifact = artifact_store.store_bytes(kind, mime, &bytes).await?;
-            SessionEventKind::ArtifactEmitted(ArtifactEmitted { artifact, label })
+            (
+                None,
+                SessionEventKind::ArtifactEmitted(ArtifactEmitted { artifact, label }),
+            )
         }
-        AppServerEvent::ArtifactRef { artifact, label } => {
-            SessionEventKind::ArtifactEmitted(ArtifactEmitted { artifact, label })
-        }
+        AppServerEvent::ArtifactRef { artifact, label } => (
+            None,
+            SessionEventKind::ArtifactEmitted(ArtifactEmitted { artifact, label }),
+        ),
     };
 
-    emit_event(frames_tx, session_id, scope, kind).await?;
+    emit_event(frames_tx, session_id, scope, turn_id, kind).await?;
     Ok(())
 }
 
@@ -823,6 +829,7 @@ enum EmitEventError {
 fn make_session_event_frame(
     session_id: SessionId,
     scope: SessionScope,
+    turn_id: Option<String>,
     kind: SessionEventKind,
 ) -> DaemonFrame {
     let record = SessionEvent {
@@ -830,7 +837,7 @@ fn make_session_event_frame(
         created_at: Timestamp::now_utc(),
         scope,
         session_id,
-        turn_id: None,
+        turn_id,
         kind,
     };
     let batch = SessionEventBatch {
@@ -851,6 +858,7 @@ fn try_emit_status_update(
     let frame = make_session_event_frame(
         session_id,
         scope,
+        None,
         SessionEventKind::StatusUpdate(StatusUpdate {
             turn_state: TurnState::Running,
             blocking: None,
@@ -865,10 +873,11 @@ async fn emit_event(
     frames_tx: &mpsc::Sender<DaemonFrame>,
     session_id: SessionId,
     scope: SessionScope,
+    turn_id: Option<String>,
     kind: SessionEventKind,
 ) -> Result<(), EmitEventError> {
     frames_tx
-        .send(make_session_event_frame(session_id, scope, kind))
+        .send(make_session_event_frame(session_id, scope, turn_id, kind))
         .await
         .map_err(|_| EmitEventError::StreamClosed)
 }
