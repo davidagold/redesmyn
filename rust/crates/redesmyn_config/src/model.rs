@@ -144,10 +144,17 @@ pub struct SandboxConfig {
     pub network: SandboxNetworkMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopFixtureMode {
+    SessionViewer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopConfig {
     pub embed_control_plane: bool,
     pub embed_daemon: bool,
+    pub fixture: Option<DesktopFixtureMode>,
     pub window: WindowConfig,
 }
 

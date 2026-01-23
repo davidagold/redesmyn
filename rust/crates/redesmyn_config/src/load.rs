@@ -220,6 +220,7 @@ fn build_rust_config(
 
     let embed_control_plane = input.desktop.embed_control_plane.unwrap_or(true);
     let embed_daemon = input.desktop.embed_daemon.unwrap_or(true);
+    let fixture = input.desktop.fixture;
     let default_window = default_window();
     let window = WindowConfig {
         width: input.desktop.window.width.unwrap_or(default_window.width),
@@ -250,6 +251,7 @@ fn build_rust_config(
         desktop: DesktopConfig {
             embed_control_plane,
             embed_daemon,
+            fixture,
             window,
         },
     };
@@ -328,6 +330,7 @@ struct SandboxConfigInput {
 struct DesktopConfigInput {
     embed_control_plane: Option<bool>,
     embed_daemon: Option<bool>,
+    fixture: Option<crate::model::DesktopFixtureMode>,
     window: WindowConfigInput,
 }
 

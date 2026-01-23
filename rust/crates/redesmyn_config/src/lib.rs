@@ -54,6 +54,7 @@ pub use crate::model::{
     ConfigProfile, ControlPlaneApiConfig, ControlPlaneAuthConfig, ControlPlaneConfig,
     ControlPlaneDbConfig, DaemonConfig, DesktopConfig, ExecutorConfig, RustConfig, SandboxConfig,
     SandboxNetworkMode, SandboxType, WindowConfig,
+    DesktopFixtureMode,
 };
 pub use crate::paths::{discover_repo_root_from, global_config_path, repo_config_path};
 pub use crate::secret::SecretString;

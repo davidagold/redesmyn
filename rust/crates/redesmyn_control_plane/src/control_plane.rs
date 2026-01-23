@@ -226,6 +226,11 @@ impl ControlPlaneHandle {
         client
     }
 
+    #[must_use]
+    pub fn session_events(&self) -> crate::session_events::SessionEvents {
+        self.state.control_plane.session_events().clone()
+    }
+
     pub async fn shutdown(self) {
         let span = tracing::info_span!("control_plane.shutdown");
         let _enter = span.enter();
