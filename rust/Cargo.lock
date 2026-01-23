@@ -5069,6 +5069,7 @@ name = "rn"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "prost",
  "redesmyn_config",
  "redesmyn_ids",
  "redesmyn_logging",

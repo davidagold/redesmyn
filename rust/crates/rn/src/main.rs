@@ -12,6 +12,7 @@ use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::Serialize;
 
 mod protocol;
+mod ui_driver;
 
 fn exit_code_from_i32(code: i32) -> ExitCode {
     ExitCode::from(u8::try_from(code).unwrap_or(1))
@@ -74,6 +75,7 @@ fn run(cli: Cli, output: &Output) -> CommandOutcome {
     match cli.command {
         Commands::Doctor(args) => doctor(args, output),
         Commands::Protocol(cmd) => protocol::protocol(cmd, output),
+        Commands::UiDriver(cmd) => ui_driver::ui_driver(cmd, output),
         Commands::Version(args) => version(args, output),
         Commands::Bench(cmd) => bench(cmd, output),
     }
@@ -134,6 +136,10 @@ enum Commands {
     /// Protocol tooling.
     #[command(subcommand)]
     Protocol(protocol::ProtocolCommands),
+
+    /// Desktop UI automation driver tools.
+    #[command(subcommand)]
+    UiDriver(ui_driver::UiDriverCommands),
 
     /// Prints version information.
     Version(VersionArgs),
