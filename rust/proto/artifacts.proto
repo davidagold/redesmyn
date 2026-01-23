@@ -79,6 +79,7 @@ message ExternalSessionRef {
     ExternalSessionNone none = 1;
     CodexThreadRef codex_thread = 2;
     ClaudeSessionRef claude_session = 3;
+    CodexConversationRef codex_conversation = 4;
     UnknownExternalSessionRef unknown = 100;
   }
 }
@@ -88,6 +89,13 @@ message ExternalSessionNone {}
 message CodexThreadRef {
   // Stable external conversation id.
   string thread_id = 1;
+  // Best-effort external turn id.
+  optional string turn_id = 2;
+}
+
+message CodexConversationRef {
+  // Stable external conversation id (app-server).
+  string conversation_id = 1;
   // Best-effort external turn id.
   optional string turn_id = 2;
 }

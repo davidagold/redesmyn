@@ -1021,6 +1021,15 @@ impl ExternalSessionRef {
                         turn_id: normalize_optional_string(turn_id.clone()),
                     })
                 }
+                Self::CodexConversation {
+                    conversation_id,
+                    turn_id,
+                } => {
+                    pbv1::external_session_ref::Ref::CodexConversation(pbv1::CodexConversationRef {
+                        conversation_id: conversation_id.clone(),
+                        turn_id: normalize_optional_string(turn_id.clone()),
+                    })
+                }
                 Self::ClaudeSession { session_id } => {
                     pbv1::external_session_ref::Ref::ClaudeSession(pbv1::ClaudeSessionRef {
                         session_id: session_id.clone(),
@@ -1048,6 +1057,15 @@ impl ExternalSessionRef {
                 }
                 Ok(Self::CodexThread {
                     thread_id: codex.thread_id,
+                    turn_id: normalize_optional_string(codex.turn_id),
+                })
+            }
+            Some(pbv1::external_session_ref::Ref::CodexConversation(codex)) => {
+                if codex.conversation_id.is_empty() {
+                    return Err(invalid_field("codex_conversation.conversation_id", "empty"));
+                }
+                Ok(Self::CodexConversation {
+                    conversation_id: codex.conversation_id,
                     turn_id: normalize_optional_string(codex.turn_id),
                 })
             }

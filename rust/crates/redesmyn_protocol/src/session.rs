@@ -43,6 +43,11 @@ pub enum ExternalSessionRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
+    CodexConversation {
+        conversation_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+    },
     ClaudeSession {
         session_id: String,
     },
