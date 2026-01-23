@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use redesmyn_ids::{EpicId, RequestId, SessionId};
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
     CreateChatSessionResponse, GetEpicGraphRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
@@ -87,12 +88,14 @@ impl ControlPlaneClient {
 
     pub async fn create_chat_session(
         &self,
+        scope: RepoScope,
         title: Option<String>,
     ) -> Result<CreateChatSessionResponse, ControlPlaneClientError> {
         match self
-            .request(RequestPayload::CreateChatSession(
-                CreateChatSessionRequest { title },
-            ))
+            .request_scoped(
+                scope,
+                RequestPayload::CreateChatSession(CreateChatSessionRequest { title }),
+            )
             .await?
         {
             ResponseResult::CreateChatSession(resp) => Ok(resp),
@@ -105,12 +108,14 @@ impl ControlPlaneClient {
 
     pub async fn close_chat_session(
         &self,
+        scope: RepoScope,
         session_id: SessionId,
     ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::CloseChatSession(CloseChatSessionRequest {
-                session_id,
-            }))
+            .request_scoped(
+                scope,
+                RequestPayload::CloseChatSession(CloseChatSessionRequest { session_id }),
+            )
             .await?
         {
             ResponseResult::CloseChatSession(_) => Ok(()),
@@ -123,16 +128,18 @@ impl ControlPlaneClient {
 
     pub async fn pin_chat_session_to_epic(
         &self,
+        scope: RepoScope,
         epic_id: EpicId,
         session_id: SessionId,
     ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::PinChatSessionToEpic(
-                PinChatSessionToEpicRequest {
+            .request_scoped(
+                scope,
+                RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
                     epic_id,
                     session_id,
-                },
-            ))
+                }),
+            )
             .await?
         {
             ResponseResult::PinChatSessionToEpic(_) => Ok(()),
@@ -145,12 +152,14 @@ impl ControlPlaneClient {
 
     pub async fn unpin_chat_session_from_epic(
         &self,
+        scope: RepoScope,
         epic_id: EpicId,
     ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::UnpinChatSessionFromEpic(
-                UnpinChatSessionFromEpicRequest { epic_id },
-            ))
+            .request_scoped(
+                scope,
+                RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest { epic_id }),
+            )
             .await?
         {
             ResponseResult::UnpinChatSessionFromEpic(_) => Ok(()),
@@ -161,18 +170,29 @@ impl ControlPlaneClient {
         }
     }
 
+    async fn request_scoped(
+        &self,
+        scope: RepoScope,
+        payload: RequestPayload,
+    ) -> Result<ResponseResult, ControlPlaneClientError> {
+        let envelope = ProtocolEnvelope::new().with_scope(scope.into());
+        self.request_with_envelope(envelope, payload).await
+    }
+
     async fn request(
         &self,
         payload: RequestPayload,
     ) -> Result<ResponseResult, ControlPlaneClientError> {
+        self.request_with_envelope(ProtocolEnvelope::new(), payload).await
+    }
+
+    async fn request_with_envelope(
+        &self,
+        envelope: ProtocolEnvelope,
+        payload: RequestPayload,
+    ) -> Result<ResponseResult, ControlPlaneClientError> {
         let request_id = RequestId::new();
-        let frame = ClientFrame::new(
-            redesmyn_protocol::ProtocolEnvelope::new(),
-            ClientMessage::Request(Request {
-                request_id,
-                payload,
-            }),
-        );
+        let frame = ClientFrame::new(envelope, ClientMessage::Request(Request { request_id, payload }));
 
         let mut conn = self.conn.lock().await;
         conn.send(frame).await?;

@@ -16,7 +16,7 @@ use redesmyn_protocol::ui_driver::{
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, Timestamp};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
 
@@ -1014,6 +1014,84 @@ fn control_plane_error_to_envelope(
     )
 }
 
+fn ui_driver_fail<T>(
+    root: &WeakEntity<RootView>,
+    cx: &AsyncApp,
+    err: ErrorEnvelope,
+) -> Result<T, ErrorEnvelope> {
+    let root = root.clone();
+    let message = err.message.clone();
+    let _ = cx.update(move |cx| {
+        if let Some(root) = root.upgrade() {
+            root.update(cx, move |this, cx| {
+                this.ui_driver_action.fail(message);
+                this.ui_driver_action_label = None;
+                this.notify_ui_updated(cx);
+            });
+        }
+    });
+    Err(err)
+}
+
+fn selected_epic_slug_or_fail(
+    root: &WeakEntity<RootView>,
+    cx: &AsyncApp,
+    epic_slug: Option<String>,
+    message: &'static str,
+) -> Result<String, ErrorEnvelope> {
+    let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(ErrorCategory::InvalidRequest, message),
+        );
+    };
+    Ok(epic_slug)
+}
+
+fn repo_scope_from_graph_or_fail(
+    root: &WeakEntity<RootView>,
+    cx: &AsyncApp,
+    graph: &redesmyn_protocol::client::EpicGraph,
+) -> Result<RepoScope, ErrorEnvelope> {
+    let Some(workspace_id) = graph.workspace_id else {
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Workspace id unavailable for selected epic.",
+            ),
+        );
+    };
+    let Some(repo_id) = graph.repo_id else {
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(ErrorCategory::Unavailable, "Repo id unavailable for selected epic."),
+        );
+    };
+    Ok(RepoScope::new(workspace_id, repo_id))
+}
+
+fn epic_id_from_graph_or_fail(
+    root: &WeakEntity<RootView>,
+    cx: &AsyncApp,
+    graph: &redesmyn_protocol::client::EpicGraph,
+) -> Result<redesmyn_ids::EpicId, ErrorEnvelope> {
+    let Some(epic_id) = graph.epic_id else {
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Epic id unavailable for selected epic.",
+            ),
+        );
+    };
+    Ok(epic_id)
+}
+
 async fn create_chat_session_via_control_plane(
     root: &WeakEntity<RootView>,
     name_hint: String,
@@ -1022,7 +1100,7 @@ async fn create_chat_session_via_control_plane(
     let title = name_hint.trim();
     let title = (!title.is_empty()).then_some(title.to_string());
 
-    let client = cx
+    let (client, epic_slug) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
                 return Err(ErrorEnvelope::new(
@@ -1031,12 +1109,12 @@ async fn create_chat_session_via_control_plane(
                 ));
             };
 
-            let client = {
-                root.read(cx)
-                    .model
-                    .read(cx)
-                    .chrome_control_plane_client
-                    .clone()
+            let (client, epic_slug) = {
+                let this = root.read(cx);
+                (
+                    this.model.read(cx).chrome_control_plane_client.clone(),
+                    this.chrome.selected_epic_slug.clone(),
+                )
             };
 
             root.update(cx, |this, cx| {
@@ -1045,31 +1123,38 @@ async fn create_chat_session_via_control_plane(
                 this.notify_ui_updated(cx);
             });
 
-            Ok::<_, ErrorEnvelope>(client)
+            Ok::<_, ErrorEnvelope>((client, epic_slug))
         })
         .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
 
     let Some(client) = client else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Control plane client unavailable (not embedded).",
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Control plane client unavailable (not embedded).",
+            ),
         );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
     };
 
-    let resp = client
-        .create_chat_session(title)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
+    let epic_slug = selected_epic_slug_or_fail(
+        root,
+        cx,
+        epic_slug,
+        "Select an epic before creating a chat session.",
+    )?;
+
+    let graph = match client.get_epic_graph(epic_slug).await {
+        Ok(graph) => graph,
+        Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
+    };
+    let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
+
+    let resp = match client.create_chat_session(scope, title).await {
+        Ok(resp) => resp,
+        Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
+    };
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
@@ -1091,7 +1176,7 @@ async fn close_chat_session_via_control_plane(
     session_id: redesmyn_ids::SessionId,
     cx: &AsyncApp,
 ) -> Result<(), ErrorEnvelope> {
-    let client = cx
+    let (client, epic_slug) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
                 return Err(ErrorEnvelope::new(
@@ -1100,12 +1185,12 @@ async fn close_chat_session_via_control_plane(
                 ));
             };
 
-            let client = {
-                root.read(cx)
-                    .model
-                    .read(cx)
-                    .chrome_control_plane_client
-                    .clone()
+            let (client, epic_slug) = {
+                let this = root.read(cx);
+                (
+                    this.model.read(cx).chrome_control_plane_client.clone(),
+                    this.chrome.selected_epic_slug.clone(),
+                )
             };
 
             root.update(cx, |this, cx| {
@@ -1114,31 +1199,37 @@ async fn close_chat_session_via_control_plane(
                 this.notify_ui_updated(cx);
             });
 
-            Ok::<_, ErrorEnvelope>(client)
+            Ok::<_, ErrorEnvelope>((client, epic_slug))
         })
         .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
 
     let Some(client) = client else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Control plane client unavailable (not embedded).",
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Control plane client unavailable (not embedded).",
+            ),
         );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
     };
 
-    client
-        .close_chat_session(session_id)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
+    let epic_slug = selected_epic_slug_or_fail(
+        root,
+        cx,
+        epic_slug,
+        "Select an epic before closing a chat session.",
+    )?;
+
+    let graph = match client.get_epic_graph(epic_slug).await {
+        Ok(graph) => graph,
+        Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
+    };
+    let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
+
+    if let Err(err) = client.close_chat_session(scope, session_id).await {
+        return ui_driver_fail(root, cx, control_plane_error_to_envelope(err));
+    }
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
@@ -1186,64 +1277,29 @@ async fn pin_chat_session_via_control_plane(
         .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
 
     let Some(client) = client else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Control plane client unavailable (not embedded).",
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Control plane client unavailable (not embedded).",
+            ),
         );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
     };
 
-    let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::InvalidRequest,
-            "Select an epic before pinning.",
-        );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
-    };
+    let epic_slug =
+        selected_epic_slug_or_fail(root, cx, epic_slug, "Select an epic before pinning.")?;
 
-    let graph = client
-        .get_epic_graph(epic_slug)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
-    let Some(epic_id) = graph.epic_id else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Epic id unavailable for selected epic.",
-        );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
+    let graph = match client.get_epic_graph(epic_slug).await {
+        Ok(graph) => graph,
+        Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
     };
+    let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
+    let epic_id = epic_id_from_graph_or_fail(root, cx, &graph)?;
 
-    client
-        .pin_chat_session_to_epic(epic_id, session_id)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
+    if let Err(err) = client.pin_chat_session_to_epic(scope, epic_id, session_id).await {
+        return ui_driver_fail(root, cx, control_plane_error_to_envelope(err));
+    }
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
@@ -1290,64 +1346,29 @@ async fn unpin_chat_session_via_control_plane(
         .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
 
     let Some(client) = client else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Control plane client unavailable (not embedded).",
+        return ui_driver_fail(
+            root,
+            cx,
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Control plane client unavailable (not embedded).",
+            ),
         );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
     };
 
-    let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::InvalidRequest,
-            "Select an epic before unpinning.",
-        );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
-    };
+    let epic_slug =
+        selected_epic_slug_or_fail(root, cx, epic_slug, "Select an epic before unpinning.")?;
 
-    let graph = client
-        .get_epic_graph(epic_slug)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
-    let Some(epic_id) = graph.epic_id else {
-        let err = ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Epic id unavailable for selected epic.",
-        );
-        let _ = cx.update(|cx| {
-            if let Some(root) = root.upgrade() {
-                root.update(cx, |this, cx| {
-                    this.ui_driver_action.fail(err.message.clone());
-                    this.ui_driver_action_label = None;
-                    this.notify_ui_updated(cx);
-                });
-            }
-        });
-        return Err(err);
+    let graph = match client.get_epic_graph(epic_slug).await {
+        Ok(graph) => graph,
+        Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
     };
+    let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
+    let epic_id = epic_id_from_graph_or_fail(root, cx, &graph)?;
 
-    client
-        .unpin_chat_session_from_epic(epic_id)
-        .await
-        .map_err(control_plane_error_to_envelope)?;
+    if let Err(err) = client.unpin_chat_session_from_epic(scope, epic_id).await {
+        return ui_driver_fail(root, cx, control_plane_error_to_envelope(err));
+    }
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
