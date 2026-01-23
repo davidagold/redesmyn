@@ -788,41 +788,6 @@ impl GraphView {
             }
         }
     }
-
-    fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
-        self.cancel_camera_animation();
-        self.pending_pan_to_selection = None;
-        if !self.did_initial_fit {
-            self.fit_suppressed = true;
-        }
-
-        let from_layout = self.snapshot_displayed_layout();
-        let selected_node = self.scene.selection().selected_node;
-
-        self.scene
-            .set_focus_mode_enabled(!self.scene.focus_mode_enabled());
-
-        redesmyn_logging::tracing::info!(
-            enabled = self.scene.focus_mode_enabled(),
-            "graph focus mode toggled"
-        );
-
-        let to_layout = self.snapshot_scene_layout();
-        if from_layout != to_layout {
-            self.start_layout_animation(
-                from_layout,
-                to_layout,
-                selected_node,
-                self.scene.selection().selected_node,
-            );
-        }
-
-        if let Some(node_id) = self.scene.selection().selected_node {
-            self.pending_pan_to_selection = Some(node_id);
-        }
-
-        cx.notify();
-    }
 }
 
 impl Focusable for GraphView {
@@ -997,18 +962,6 @@ impl Render for GraphView {
         let graph_for_prepaint = graph.clone();
         let graph_for_paint = graph.clone();
 
-        let focus_label = if self.scene.focus_mode_enabled() {
-            "Focus: on"
-        } else {
-            "Focus: off"
-        };
-        let toggle_focus_mode = {
-            let graph = graph.clone();
-            move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-                graph.update(cx, |this, cx| this.toggle_focus_mode(cx));
-            }
-        };
-
         let debug_bar = div()
             .h(px(30.0))
             .px(theme.spacing.md)
@@ -1034,12 +987,7 @@ impl Render for GraphView {
                     .text_sm()
                     .text_color(theme.colors.foreground_muted)
                     .child(controls_hint)
-                    .child(format!("Zoom: {:.2}", zoom))
-                    .child(
-                        TextButton::new(("graph_focus_mode_toggle", cx.entity_id()), focus_label)
-                            .kind(ButtonKind::Ghost)
-                            .on_click(toggle_focus_mode),
-                    ),
+                    .child(format!("Zoom: {:.2}", zoom)),
             );
 
         let canvas = canvas(

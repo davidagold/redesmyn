@@ -6,7 +6,6 @@
 #![forbid(unsafe_code)]
 
 mod camera;
-mod focus_span;
 mod geometry;
 mod hit_test;
 mod scene;
