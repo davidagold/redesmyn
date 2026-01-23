@@ -2,26 +2,158 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use redesmyn_control_plane::ControlPlane;
 use redesmyn_control_plane::client_api::ClientApiCodec;
-use redesmyn_ids::{CommandId, RequestId};
-use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_control_plane::{ControlPlane, DaemonLinkHandle};
+use redesmyn_ids::{CommandId, EventId, HostId, HostInstanceId, RepoId, RequestId, WorkspaceId};
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CommandState, CreateCommandRequest, GetCommandRequest, Request,
-    RequestPayload, ResponseResult, WaitForCommandRequest, WaitForEventRequest, WaitForIdleRequest,
+    ClientFrame, ClientMessage, CommandState as ClientCommandState, CreateCommandRequest,
+    GetCommandRequest, Request, RequestPayload, ResponseResult, WaitForCommandRequest,
+    WaitForEventRequest, WaitForIdleRequest,
 };
+use redesmyn_protocol::daemon::{
+    CommandState as DaemonCommandState, CommandUpdate as DaemonCommandUpdate, DaemonFrame,
+    DaemonHello, DaemonMessage, RepoAttach,
+};
+use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion, RepoScope, Scope};
 use redesmyn_protocol::ui_driver::{
     GetUiSnapshotRequest, GetUiSnapshotResponse, OpenEpicRequest, TriggerMergeRequest,
     UiDriverRequest, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
     UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
 };
+use redesmyn_transport::in_proc::InProcEndpoint;
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
 use std::sync::Arc;
 use tokio::sync::{Mutex, watch};
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(i64::MAX)
+}
+
+async fn seed_repo_scope(control_plane: &ControlPlane) -> RepoScope {
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let now_ms = now_ms();
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert workspace");
+
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("repo")
+    .bind("Test Repo")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert repository");
+
+    RepoScope::new(workspace_id, repo_id)
+}
+
+async fn run_mock_daemon(mut conn: InProcEndpoint, repo_scope: RepoScope) {
+    let host_id = HostId::new();
+    let host_instance_id = HostInstanceId::new();
+
+    let hello = DaemonHello {
+        host_id,
+        host_instance_id,
+        capabilities: vec!["test".to_string()],
+        supported_protocol: ProtocolVersion::CURRENT,
+    };
+
+    let envelope = ProtocolEnvelope::new();
+    conn.send_frame(DaemonFrame::new(envelope, DaemonMessage::DaemonHello(hello)))
+        .await
+        .expect("send daemon hello");
+
+    let accepted = loop {
+        let frame = conn.recv_frame().await.expect("recv control plane hello ack");
+        if let DaemonMessage::ControlPlaneHelloAck(ack) = frame.message {
+            break ack.accepted_protocol;
+        }
+    };
+
+    let mut attach_envelope = ProtocolEnvelope::new().with_scope(Scope::from(repo_scope));
+    attach_envelope.protocol_major = accepted.major;
+    attach_envelope.protocol_minor = accepted.minor;
+
+    let _ = conn
+        .send_frame(DaemonFrame::new(
+            attach_envelope,
+            DaemonMessage::RepoAttach(RepoAttach {
+                repo_scope,
+                repo_root_hint: None,
+            }),
+        ))
+        .await;
+
+    loop {
+        let frame = match conn.recv_frame().await {
+            Ok(frame) => frame,
+            Err(_) => break,
+        };
+
+        let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
+            continue;
+        };
+
+        for state in [
+            DaemonCommandState::Accepted,
+            DaemonCommandState::Running,
+            DaemonCommandState::Succeeded,
+        ] {
+            let mut update_envelope = ProtocolEnvelope::new().with_scope(Scope::from(dispatch.scope));
+            update_envelope.protocol_major = accepted.major;
+            update_envelope.protocol_minor = accepted.minor;
+
+            let update = DaemonCommandUpdate {
+                command_id: dispatch.command_id,
+                state,
+                message: Some(format!("state={state:?}")),
+                progress: None,
+                detail: None,
+                error: None,
+            };
+
+            if conn
+                .send_frame(DaemonFrame::new(
+                    update_envelope,
+                    DaemonMessage::CommandUpdate(update),
+                ))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+}
 
 async fn wait_for_socket(path: &Path) {
     for _ in 0..50 {
@@ -33,7 +165,11 @@ async fn wait_for_socket(path: &Path) {
     panic!("socket file was not created: {}", path.display());
 }
 
-async fn control_plane_request(socket_path: &Path, payload: RequestPayload) -> ResponseResult {
+async fn control_plane_request(
+    socket_path: &Path,
+    scope: Scope,
+    payload: RequestPayload,
+) -> ResponseResult {
     let stream = tokio::net::UnixStream::connect(socket_path)
         .await
         .expect("connect control plane");
@@ -41,7 +177,7 @@ async fn control_plane_request(socket_path: &Path, payload: RequestPayload) -> R
 
     let request_id = RequestId::new();
     conn.send(ClientFrame::new(
-        ProtocolEnvelope::new(),
+        ProtocolEnvelope::new().with_scope(scope),
         ClientMessage::Request(Request {
             request_id,
             payload,
@@ -61,12 +197,15 @@ async fn control_plane_request(socket_path: &Path, payload: RequestPayload) -> R
     }
 }
 
-async fn create_noop_command(socket_path: &Path) -> CommandId {
+async fn create_noop_command(socket_path: &Path, scope: Scope) -> CommandId {
     let result = control_plane_request(
         socket_path,
+        scope,
         RequestPayload::CreateCommand(CreateCommandRequest {
             kind: "noop".to_string(),
             target_task_id: None,
+            idempotency_key: None,
+            created_by: None,
         }),
     )
     .await;
@@ -77,9 +216,14 @@ async fn create_noop_command(socket_path: &Path) -> CommandId {
     }
 }
 
-async fn wait_for_command(socket_path: &Path, command_id: CommandId) -> CommandState {
+async fn wait_for_command(
+    socket_path: &Path,
+    scope: Scope,
+    command_id: CommandId,
+) -> ClientCommandState {
     let result = control_plane_request(
         socket_path,
+        scope,
         RequestPayload::WaitForCommand(WaitForCommandRequest {
             command_id,
             terminal_states: Vec::new(),
@@ -94,9 +238,14 @@ async fn wait_for_command(socket_path: &Path, command_id: CommandId) -> CommandS
     }
 }
 
-async fn get_command_state(socket_path: &Path, command_id: CommandId) -> CommandState {
+async fn get_command_state(
+    socket_path: &Path,
+    scope: Scope,
+    command_id: CommandId,
+) -> ClientCommandState {
     let result = control_plane_request(
         socket_path,
+        scope,
         RequestPayload::GetCommand(GetCommandRequest { command_id }),
     )
     .await;
@@ -107,13 +256,19 @@ async fn get_command_state(socket_path: &Path, command_id: CommandId) -> Command
     }
 }
 
-async fn wait_for_event(socket_path: &Path, event_type_prefix: &str) -> String {
+async fn wait_for_event(
+    socket_path: &Path,
+    scope: Scope,
+    event_type_prefix: &str,
+    after_event_id: Option<EventId>,
+) -> String {
     let result = control_plane_request(
         socket_path,
+        scope,
         RequestPayload::WaitForEvent(WaitForEventRequest {
             filter: redesmyn_protocol::client::EventWaitFilter {
                 event_type_prefix: event_type_prefix.to_string(),
-                after_event_id: None,
+                after_event_id,
             },
             timeout_ms: 2_000,
         }),
@@ -126,9 +281,10 @@ async fn wait_for_event(socket_path: &Path, event_type_prefix: &str) -> String {
     }
 }
 
-async fn wait_for_idle(socket_path: &Path) {
+async fn wait_for_idle(socket_path: &Path, scope: Scope) {
     let result = control_plane_request(
         socket_path,
+        scope,
         RequestPayload::WaitForIdle(WaitForIdleRequest {
             scope: None,
             timeout_ms: 2_000,
@@ -146,6 +302,7 @@ async fn wait_for_idle(socket_path: &Path) {
 #[derive(Debug)]
 struct UiDriverHarness {
     control_plane_socket_path: PathBuf,
+    scope: Scope,
     state: Arc<Mutex<UiDriverState>>,
     updated_tx: watch::Sender<u64>,
 }
@@ -160,10 +317,11 @@ struct UiDriverState {
 }
 
 impl UiDriverHarness {
-    fn new(control_plane_socket_path: PathBuf) -> Self {
+    fn new(control_plane_socket_path: PathBuf, scope: Scope) -> Self {
         let (updated_tx, _updated_rx) = watch::channel(0_u64);
         Self {
             control_plane_socket_path,
+            scope,
             state: Arc::new(Mutex::new(UiDriverState {
                 epic_slug: String::new(),
                 selected_task_slug: String::new(),
@@ -265,7 +423,8 @@ impl UiDriverHarness {
                 }
             }
             UiDriverRequestPayload::TriggerMerge(_req) => {
-                let command_id = create_noop_command(&self.control_plane_socket_path).await;
+                let command_id =
+                    create_noop_command(&self.control_plane_socket_path, self.scope).await;
 
                 {
                     let mut state = self.state.lock().await;
@@ -274,10 +433,11 @@ impl UiDriverHarness {
                 self.touch();
 
                 let socket_path = self.control_plane_socket_path.clone();
+                let scope = self.scope;
                 let updated_tx = self.updated_tx.clone();
                 let state = Arc::clone(&self.state);
                 tokio::spawn(async move {
-                    let _ = wait_for_command(&socket_path, command_id).await;
+                    let _ = wait_for_command(&socket_path, scope, command_id).await;
                     {
                         let mut state = state.lock().await;
                         state.in_flight.remove(&command_id);
@@ -312,6 +472,17 @@ async fn ai_testability_surfaces_cover_actions_model_and_ui_snapshot() {
     let socket_path = tmp.path().join("control_plane.sock");
 
     let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let repo_scope = seed_repo_scope(&control_plane).await;
+    let scope = Scope::from(repo_scope);
+
+    let (control_plane_conn, daemon_conn) = InProcEndpoint::pair(64);
+    let daemon_link = DaemonLinkHandle::start(
+        &tokio::runtime::Handle::current(),
+        control_plane.clone(),
+        control_plane_conn,
+    );
+    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope));
+
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let server_socket_path = socket_path.clone();
     let server_control_plane = control_plane.clone();
@@ -329,7 +500,7 @@ async fn ai_testability_surfaces_cover_actions_model_and_ui_snapshot() {
 
     wait_for_socket(&socket_path).await;
 
-    let ui = UiDriverHarness::new(socket_path.clone());
+    let ui = UiDriverHarness::new(socket_path.clone(), scope);
 
     let _ = ui
         .handle(UiDriverRequest {
@@ -378,12 +549,12 @@ async fn ai_testability_surfaces_cover_actions_model_and_ui_snapshot() {
     );
 
     // Deterministic waiting primitive: wait for completion without sleeps.
-    let terminal_state = wait_for_command(&socket_path, command_id).await;
-    assert_eq!(terminal_state, CommandState::Succeeded);
+    let terminal_state = wait_for_command(&socket_path, scope, command_id).await;
+    assert_eq!(terminal_state, ClientCommandState::Succeeded);
 
     // Queryable model state: validate command lifecycle result.
-    let state = get_command_state(&socket_path, command_id).await;
-    assert_eq!(state, CommandState::Succeeded);
+    let state = get_command_state(&socket_path, scope, command_id).await;
+    assert_eq!(state, ClientCommandState::Succeeded);
 
     // UI snapshot reflects completion (in-flight cleared).
     let settled = ui.wait_for_no_inflight(Duration::from_secs(2)).await;
@@ -391,6 +562,8 @@ async fn ai_testability_surfaces_cover_actions_model_and_ui_snapshot() {
 
     let _ = shutdown_tx.send(());
     server.await.expect("server task").expect("server exit");
+    daemon_link.shutdown().await;
+    daemon_task.await.expect("daemon task");
 }
 
 #[tokio::test]
@@ -399,6 +572,17 @@ async fn wait_primitives_support_events_and_idle() {
     let socket_path = tmp.path().join("control_plane.sock");
 
     let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let repo_scope = seed_repo_scope(&control_plane).await;
+    let scope = Scope::from(repo_scope);
+
+    let (control_plane_conn, daemon_conn) = InProcEndpoint::pair(64);
+    let daemon_link = DaemonLinkHandle::start(
+        &tokio::runtime::Handle::current(),
+        control_plane.clone(),
+        control_plane_conn,
+    );
+    let daemon_task = tokio::spawn(run_mock_daemon(daemon_conn, repo_scope));
+
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let server_socket_path = socket_path.clone();
     let server_control_plane = control_plane.clone();
@@ -416,15 +600,31 @@ async fn wait_primitives_support_events_and_idle() {
 
     wait_for_socket(&socket_path).await;
 
-    let command_id = create_noop_command(&socket_path).await;
-    let event_type = wait_for_event(&socket_path, "command.succeeded").await;
+    let baseline_event_id = control_plane
+        .event_log()
+        .append_event(
+            redesmyn_storage::events::EventScope::Repo {
+                workspace_id: repo_scope.workspace_id,
+                repo_id: repo_scope.repo_id,
+            },
+            "test.baseline",
+            Vec::new(),
+        )
+        .await
+        .expect("append baseline event");
+
+    let command_id = create_noop_command(&socket_path, scope).await;
+    let event_type =
+        wait_for_event(&socket_path, scope, "command.succeeded", Some(baseline_event_id)).await;
     assert_eq!(event_type, "command.succeeded");
 
-    let terminal_state = wait_for_command(&socket_path, command_id).await;
-    assert_eq!(terminal_state, CommandState::Succeeded);
+    let terminal_state = wait_for_command(&socket_path, scope, command_id).await;
+    assert_eq!(terminal_state, ClientCommandState::Succeeded);
 
-    wait_for_idle(&socket_path).await;
+    wait_for_idle(&socket_path, scope).await;
 
     let _ = shutdown_tx.send(());
     server.await.expect("server task").expect("server exit");
+    daemon_link.shutdown().await;
+    daemon_task.await.expect("daemon task");
 }
