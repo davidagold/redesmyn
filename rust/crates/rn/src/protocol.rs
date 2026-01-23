@@ -714,10 +714,32 @@ enum ClientEventSummary {
         event_type: String,
         json_payload_len: usize,
     },
+    SessionEvent {
+        session_id: redesmyn_ids::SessionId,
+        session_event_id: redesmyn_ids::SessionEventId,
+        event_type: String,
+    },
     Error {
         category: ErrorCategory,
         message: String,
     },
+}
+
+fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind) -> String {
+    match kind {
+        redesmyn_protocol::session::SessionEventKind::SessionStarted(_) => "session_started",
+        redesmyn_protocol::session::SessionEventKind::SessionEnded(_) => "session_ended",
+        redesmyn_protocol::session::SessionEventKind::TurnStarted(_) => "turn_started",
+        redesmyn_protocol::session::SessionEventKind::TurnCompleted(_) => "turn_completed",
+        redesmyn_protocol::session::SessionEventKind::UserMessage(_) => "user_message",
+        redesmyn_protocol::session::SessionEventKind::AssistantMessage(_) => "assistant_message",
+        redesmyn_protocol::session::SessionEventKind::ToolInvocation(_) => "tool_invocation",
+        redesmyn_protocol::session::SessionEventKind::ToolResult(_) => "tool_result",
+        redesmyn_protocol::session::SessionEventKind::StatusUpdate(_) => "status_update",
+        redesmyn_protocol::session::SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
+        redesmyn_protocol::session::SessionEventKind::Unknown(unknown) => &unknown.event_type,
+    }
+    .to_owned()
 }
 
 fn client_frame_summary(
@@ -751,6 +773,13 @@ fn client_frame_summary(
                         event_id: event_log.event_id,
                         event_type: event_log.event_type.clone(),
                         json_payload_len: event_log.json_payload.len(),
+                    }
+                }
+                redesmyn_protocol::client::SubscriptionEvent::SessionEvent(session_event) => {
+                    ClientEventSummary::SessionEvent {
+                        session_id: session_event.session_id,
+                        session_event_id: session_event.session_event_id,
+                        event_type: session_event_kind_label(&session_event.kind),
                     }
                 }
                 redesmyn_protocol::client::SubscriptionEvent::Error(err) => {
@@ -835,6 +864,13 @@ fn client_frame_summary_line(frame: &ClientFrame, payload_len: usize, frame_inde
                     json_payload_len,
                 } => format!(
                     "event_log event_id={event_id} event_type={event_type} json_payload_len={json_payload_len}"
+                ),
+                ClientEventSummary::SessionEvent {
+                    session_id,
+                    session_event_id,
+                    event_type,
+                } => format!(
+                    "session_event session_id={session_id} session_event_id={session_event_id} event_type={event_type}"
                 ),
                 ClientEventSummary::Error { category, message } => {
                     format!("error {category}: {message}")
