@@ -216,20 +216,19 @@ impl GraphScene {
 
     pub fn toggle_node(&mut self, id: GraphNodeId) {
         let previous_selected_node = self.selection.selected_node;
-
         self.selection.selected_edge = None;
 
         let removed = self.selection.selected_nodes.remove(&id);
         if removed {
             if self.selection.selected_node == Some(id) {
-                self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
-            }
-            if self.selection.selected_nodes.is_empty() {
                 self.selection.selected_node = None;
             }
         } else {
             self.selection.selected_nodes.insert(id);
-            self.selection.selected_node = Some(id);
+        }
+
+        if let Some(selected_node) = self.selection.selected_node {
+            self.selection.selected_nodes.insert(selected_node);
         }
 
         let sizes_changed = self.apply_expandedness_policy();
@@ -434,13 +433,21 @@ impl GraphScene {
             .retain(|selected| self.nodes.contains_key(selected));
 
         if let Some(selected) = self.selection.selected_node
-            && !self.selection.selected_nodes.contains(&selected)
+            && !self.nodes.contains_key(&selected)
         {
-            self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
+            self.selection.selected_node = None;
         }
 
-        if self.selection.selected_node.is_none() && !self.selection.selected_nodes.is_empty() {
-            self.selection.selected_node = self.selection.selected_nodes.iter().next().copied();
+        if let Some(selected) = self.selection.selected_node
+            && !self.selection.selected_nodes.contains(&selected)
+        {
+            self.selection.selected_node = None;
+        }
+
+        if let Some(selected) = self.selection.selected_node
+            && self.selection.selected_edge.is_none()
+        {
+            self.selection.selected_nodes.insert(selected);
         }
 
         if let Some(selected) = self.selection.selected_edge
@@ -657,20 +664,24 @@ mod tests {
 
         scene.toggle_node(a);
         assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
+        assert_eq!(scene.selection().selected_node, None);
+
+        scene.select_node(a);
         assert_eq!(scene.selection().selected_node, Some(a));
+        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
 
         scene.toggle_node(b);
         assert_eq!(
             scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(),
             vec![a, b]
         );
-        assert_eq!(scene.selection().selected_node, Some(b));
-
-        scene.toggle_node(b);
-        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![a]);
         assert_eq!(scene.selection().selected_node, Some(a));
 
         scene.toggle_node(a);
+        assert_eq!(scene.selection().selected_nodes.iter().copied().collect::<Vec<_>>(), vec![b]);
+        assert_eq!(scene.selection().selected_node, None);
+
+        scene.toggle_node(b);
         assert!(scene.selection().selected_nodes.is_empty());
         assert_eq!(scene.selection().selected_node, None);
     }

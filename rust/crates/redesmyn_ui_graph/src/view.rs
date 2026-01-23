@@ -184,7 +184,10 @@ impl GraphView {
         if count > 1 {
             return format!("Selected nodes: {count}");
         }
-        if let Some(node) = self.visual_selected_node() {
+        if let Some(node) = self
+            .visual_selected_node()
+            .or_else(|| self.scene.selection().selected_nodes.iter().next().copied())
+        {
             return format!("Selected node: {node}");
         }
         "Selected: <none>".to_string()
