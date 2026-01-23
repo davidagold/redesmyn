@@ -19,6 +19,7 @@
 
 mod error;
 
+pub mod commands;
 pub mod epic_graph;
 pub mod events;
 pub mod schema;

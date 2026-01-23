@@ -666,8 +666,11 @@ impl CommandDispatch {
 
 fn encode_command_state(value: CommandState) -> i32 {
     match value {
+        CommandState::Queued => pbv1::CommandState::Queued as i32,
         CommandState::Accepted => pbv1::CommandState::Accepted as i32,
         CommandState::Running => pbv1::CommandState::Running as i32,
+        CommandState::Blocked => pbv1::CommandState::Blocked as i32,
+        CommandState::Resumable => pbv1::CommandState::Resumable as i32,
         CommandState::Succeeded => pbv1::CommandState::Succeeded as i32,
         CommandState::Failed => pbv1::CommandState::Failed as i32,
         CommandState::Canceled => pbv1::CommandState::Canceled as i32,
@@ -677,16 +680,16 @@ fn encode_command_state(value: CommandState) -> i32 {
 
 fn decode_command_state(value: i32) -> Result<CommandState, ErrorEnvelope> {
     match pbv1::CommandState::try_from(value) {
+        Ok(pbv1::CommandState::Queued) => Ok(CommandState::Queued),
         Ok(pbv1::CommandState::Accepted) => Ok(CommandState::Accepted),
         Ok(pbv1::CommandState::Running) => Ok(CommandState::Running),
+        Ok(pbv1::CommandState::Blocked) => Ok(CommandState::Blocked),
+        Ok(pbv1::CommandState::Resumable) => Ok(CommandState::Resumable),
         Ok(pbv1::CommandState::Succeeded) => Ok(CommandState::Succeeded),
         Ok(pbv1::CommandState::Failed) => Ok(CommandState::Failed),
         Ok(pbv1::CommandState::Canceled) => Ok(CommandState::Canceled),
         Ok(pbv1::CommandState::Rejected) => Ok(CommandState::Rejected),
-        Ok(pbv1::CommandState::Blocked)
-        | Ok(pbv1::CommandState::Resumable)
-        | Ok(pbv1::CommandState::Unspecified)
-        | Err(_) => Err(invalid_field(
+        Ok(pbv1::CommandState::Unspecified) | Err(_) => Err(invalid_field(
             "state",
             format!("unknown enum value for CommandState: {value}"),
         )),
@@ -1577,6 +1580,7 @@ fn decode_merge_readiness(value: i32) -> crate::client::MergeReadiness {
 fn encode_client_command_state(value: crate::client::CommandState) -> i32 {
     match value {
         crate::client::CommandState::Unknown => pbv1::CommandState::Unspecified as i32,
+        crate::client::CommandState::Queued => pbv1::CommandState::Queued as i32,
         crate::client::CommandState::Accepted => pbv1::CommandState::Accepted as i32,
         crate::client::CommandState::Running => pbv1::CommandState::Running as i32,
         crate::client::CommandState::Blocked => pbv1::CommandState::Blocked as i32,
@@ -1589,6 +1593,7 @@ fn encode_client_command_state(value: crate::client::CommandState) -> i32 {
 
 fn decode_client_command_state(value: i32) -> crate::client::CommandState {
     match pbv1::CommandState::try_from(value) {
+        Ok(pbv1::CommandState::Queued) => crate::client::CommandState::Queued,
         Ok(pbv1::CommandState::Accepted) => crate::client::CommandState::Accepted,
         Ok(pbv1::CommandState::Running) => crate::client::CommandState::Running,
         Ok(pbv1::CommandState::Blocked) => crate::client::CommandState::Blocked,
@@ -2105,6 +2110,8 @@ impl crate::client::CreateCommandRequest {
                 .target_task_id
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
+            idempotency_key: self.idempotency_key.clone(),
+            created_by: self.created_by.clone(),
         }
     }
 
@@ -2119,6 +2126,8 @@ impl crate::client::CreateCommandRequest {
                 "target_task_id",
                 &proto.target_task_id,
             )?,
+            idempotency_key: proto.idempotency_key,
+            created_by: proto.created_by,
         })
     }
 }

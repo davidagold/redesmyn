@@ -166,8 +166,11 @@ pub struct CommandDispatch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandState {
+    Queued,
     Accepted,
     Running,
+    Blocked,
+    Resumable,
     Succeeded,
     Failed,
     Canceled,

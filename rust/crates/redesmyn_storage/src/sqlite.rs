@@ -16,7 +16,7 @@ use sqlx::{
 
 use crate::StorageError;
 
-pub type TxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+pub type TxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 

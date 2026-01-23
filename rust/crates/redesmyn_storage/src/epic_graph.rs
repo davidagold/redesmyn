@@ -308,7 +308,7 @@ where
                 scope_kind = 'repo'
                 AND scope_workspace_id = ?1
                 AND scope_repo_id = ?2
-                AND state IN ('accepted', 'running', 'blocked', 'resumable')
+                AND state IN ('queued', 'accepted', 'running', 'blocked', 'resumable')
             ORDER BY created_at_ms DESC
             LIMIT ?3
             "#,
@@ -606,6 +606,7 @@ fn decode_task_state(value: &str) -> Result<TaskState, StorageError> {
 
 fn decode_command_state(value: &str) -> Result<CommandState, StorageError> {
     match value {
+        "queued" => Ok(CommandState::Queued),
         "accepted" => Ok(CommandState::Accepted),
         "running" => Ok(CommandState::Running),
         "blocked" => Ok(CommandState::Blocked),

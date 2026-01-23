@@ -895,7 +895,7 @@ fn agent_status_by_task_id(
 
     fn from_command_state(state: CommandState) -> AgentStatus {
         match state {
-            CommandState::Running | CommandState::Accepted => AgentStatus::Running,
+            CommandState::Queued | CommandState::Running | CommandState::Accepted => AgentStatus::Running,
             CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
             CommandState::Failed => AgentStatus::Error,
             CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,

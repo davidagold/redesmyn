@@ -32,6 +32,7 @@ impl fmt::Display for RepoScopeKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandState {
+    Queued,
     Accepted,
     Running,
     Blocked,
@@ -45,6 +46,7 @@ impl CommandState {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Accepted => "accepted",
             Self::Running => "running",
             Self::Blocked => "blocked",

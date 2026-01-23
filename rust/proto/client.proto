@@ -328,6 +328,8 @@ message CreateCommandRequest {
   string kind = 1;
   // TaskId (ULID bytes, length = 16).
   bytes target_task_id = 2;
+  optional string idempotency_key = 3;
+  optional string created_by = 4;
 }
 
 message CreateCommandResponse {

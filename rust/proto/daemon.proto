@@ -194,6 +194,7 @@ enum CommandState {
   COMMAND_STATE_REJECTED = 6;
   COMMAND_STATE_BLOCKED = 7;
   COMMAND_STATE_RESUMABLE = 8;
+  COMMAND_STATE_QUEUED = 9;
 }
 
 message CommandProgress {
