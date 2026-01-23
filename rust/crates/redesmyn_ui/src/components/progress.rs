@@ -77,8 +77,10 @@ impl ProgressDots {
 
 impl Render for ProgressDots {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if ui_test_mode_enabled() {
-            return div().child("...");
+        let ui_test_mode = ui_test_mode_enabled();
+        let dots = progress_dots_text(ui_test_mode, self.phase);
+        if ui_test_mode {
+            return div().child(dots);
         }
 
         if self.task.is_none() {
@@ -108,13 +110,42 @@ impl Render for ProgressDots {
             ));
         }
 
-        let dots = match self.phase {
-            0 => "",
-            1 => ".",
-            2 => "..",
-            _ => "...",
-        };
-
         div().child(dots)
+    }
+}
+
+fn progress_dots_text(ui_test_mode: bool, phase: u8) -> &'static str {
+    if ui_test_mode {
+        return "...";
+    }
+
+    match phase {
+        0 => "",
+        1 => ".",
+        2 => "..",
+        _ => "...",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::progress_dots_text;
+
+    #[test]
+    fn progress_dots_text_is_frozen_in_test_mode() {
+        assert_eq!(progress_dots_text(true, 0), "...");
+        assert_eq!(progress_dots_text(true, 1), "...");
+        assert_eq!(progress_dots_text(true, 2), "...");
+        assert_eq!(progress_dots_text(true, 3), "...");
+        assert_eq!(progress_dots_text(true, 255), "...");
+    }
+
+    #[test]
+    fn progress_dots_text_cycles_in_normal_mode() {
+        assert_eq!(progress_dots_text(false, 0), "");
+        assert_eq!(progress_dots_text(false, 1), ".");
+        assert_eq!(progress_dots_text(false, 2), "..");
+        assert_eq!(progress_dots_text(false, 3), "...");
+        assert_eq!(progress_dots_text(false, 4), "...");
     }
 }

@@ -105,3 +105,26 @@ fn unique_run_id() -> String {
         .unwrap_or(0);
     format!("run_{pid}_{unix_ms}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_label;
+
+    #[test]
+    fn sanitize_label_defaults_to_checkpoint() {
+        assert_eq!(sanitize_label(""), "checkpoint");
+        assert_eq!(sanitize_label("   "), "checkpoint");
+    }
+
+    #[test]
+    fn sanitize_label_allows_safe_chars() {
+        assert_eq!(sanitize_label("abcDEF012_-"), "abcDEF012_-");
+    }
+
+    #[test]
+    fn sanitize_label_replaces_unsafe_chars() {
+        assert_eq!(sanitize_label("hello world"), "hello_world");
+        assert_eq!(sanitize_label("a/b:c"), "a_b_c");
+        assert_eq!(sanitize_label("💥"), "_");
+    }
+}
