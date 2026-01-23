@@ -481,6 +481,27 @@ impl GraphView {
         let zoom = self.camera.zoom();
 
         let (margin_x, margin_y) = Self::viewport_margins_px(canvas_bounds);
+        // T-54 pan-to-selection defines a "safe rect" inside the canvas (screen space), then pans
+        // the camera until the selected node's screen-space bounding box is fully inside it:
+        //
+        //   safe_min = (margin_x, margin_y)
+        //   safe_max = (canvas_w - margin_x, canvas_h - margin_y)
+        //
+        // (Where `margin_*` is fixed-ish padding: ~72px or 25% of the viewport, whichever is
+        // smaller.)
+        //
+        // This currently assumes the entire `canvas_bounds` region is usable/visible graph space.
+        // That is not always true: we already (and will increasingly) draw UI overlays on top of
+        // the canvas via absolutely positioned elements (multi-select selection bar, toasts,
+        // floating toolbars, etc.). Those overlays occupy screen real estate but do not change
+        // `canvas_bounds`, so the "safe rect" can include regions behind an overlay and a node can
+        // be "in view" per this math while still being partially occluded.
+        //
+        // If we ever want a strict "never hidden" guarantee, this safe rect should incorporate
+        // dynamic insets/exclusion zones, e.g.:
+        //   safe_min.y += overlay_top_height;
+        //   safe_max.y -= overlay_bottom_height;
+        //   safe_max.x -= overlay_right_width;
         let safe_min = gpui::point(margin_x, margin_y);
         let safe_max = gpui::point(
             canvas_bounds.size.width - margin_x,
