@@ -1095,6 +1095,8 @@ impl GraphView {
             strikethrough: None,
         };
 
+        // Note: This shapes per paint for each visible label. If this becomes hot with many trunk
+        // marks on screen, cache shaped lines by (font_size, text) similarly to edge labels.
         let shaped = window
             .text_system()
             .shape_line(text, font_size, std::slice::from_ref(&run), None);

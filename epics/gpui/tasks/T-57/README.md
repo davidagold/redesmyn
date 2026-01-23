@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-57-trunk-timeline
+  suggested: rn/gpui/T-57-trunk-timeline-column
 rn:
   parent: T-50
 ---
@@ -33,6 +33,11 @@ Plan and implement trunk timeline support as an optional column:
 ### 1) Data model
 
 Use the EpicGraph trunk timeline data (from the control plane read model) when available.
+
+Note: `redesmyn_protocol::client::EpicGraph` does not currently expose trunk timeline fields; the
+integration seam is `GraphScene::set_trunk_timeline(Some(..))`. Once trunk data is available in the
+protocol/read-model, build a `TrunkTimeline` from it and call `set_trunk_timeline` so trunk data
+present ⇒ trunk renders.
 
 ### 2) Rendering
 
@@ -71,4 +76,3 @@ Support trunk-aware layout anchoring:
   - `dashboard/src/components/graph/GraphView.tsx` (trunk metrics and anchor calculation).
   - `dashboard/src/components/graph/TrunkNode.tsx`
   - `dashboard/src/components/graph/graphConfig.ts` (trunk constants).
-

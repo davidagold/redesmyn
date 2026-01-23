@@ -412,6 +412,11 @@ impl GraphScene {
         );
         let _guard = span.enter();
 
+        // TODO(T-57): Wire trunk timeline data in once the control-plane read model exposes it on
+        // `redesmyn_protocol::client::EpicGraph` by translating into `TrunkTimeline` and calling
+        // `set_trunk_timeline(Some(..))` (or having the caller do it) so trunk data present ⇒ trunk
+        // renders. Until then, trunk rendering can be toggled explicitly via `set_trunk_timeline`.
+
         // Prefer stable protocol identifiers when available, but fall back to deterministic
         // slug hashing for older protocol versions (or partial payloads) that omit ids.
         let mut node_id_by_slug: BTreeMap<String, GraphNodeId> = BTreeMap::new();
