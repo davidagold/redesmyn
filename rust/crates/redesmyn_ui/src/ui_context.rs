@@ -48,11 +48,6 @@ impl UiContext {
 
     pub fn theme_for_window(&self, window: &Window) -> UiTheme {
         let preference = ui_test_theme_override().unwrap_or(self.settings.settings().theme);
-        UiTheme::for_window(
-            preference,
-            window.appearance(),
-            self.density,
-            self.scale,
-        )
+        UiTheme::for_window(preference, window.appearance(), self.density, self.scale)
     }
 }

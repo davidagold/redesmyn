@@ -72,7 +72,9 @@ impl ControlPlaneClient {
         epic_slug: String,
     ) -> Result<redesmyn_protocol::client::EpicGraph, ControlPlaneClientError> {
         match self
-            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest { epic_slug }))
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug,
+            }))
             .await?
         {
             ResponseResult::GetEpicGraph(resp) => Ok(resp.graph),
@@ -88,7 +90,9 @@ impl ControlPlaneClient {
         title: Option<String>,
     ) -> Result<CreateChatSessionResponse, ControlPlaneClientError> {
         match self
-            .request(RequestPayload::CreateChatSession(CreateChatSessionRequest { title }))
+            .request(RequestPayload::CreateChatSession(
+                CreateChatSessionRequest { title },
+            ))
             .await?
         {
             ResponseResult::CreateChatSession(resp) => Ok(resp),
@@ -99,9 +103,14 @@ impl ControlPlaneClient {
         }
     }
 
-    pub async fn close_chat_session(&self, session_id: SessionId) -> Result<(), ControlPlaneClientError> {
+    pub async fn close_chat_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::CloseChatSession(CloseChatSessionRequest { session_id }))
+            .request(RequestPayload::CloseChatSession(CloseChatSessionRequest {
+                session_id,
+            }))
             .await?
         {
             ResponseResult::CloseChatSession(_) => Ok(()),
@@ -118,10 +127,12 @@ impl ControlPlaneClient {
         session_id: SessionId,
     ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
-                epic_id,
-                session_id,
-            }))
+            .request(RequestPayload::PinChatSessionToEpic(
+                PinChatSessionToEpicRequest {
+                    epic_id,
+                    session_id,
+                },
+            ))
             .await?
         {
             ResponseResult::PinChatSessionToEpic(_) => Ok(()),
@@ -137,9 +148,9 @@ impl ControlPlaneClient {
         epic_id: EpicId,
     ) -> Result<(), ControlPlaneClientError> {
         match self
-            .request(RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest {
-                epic_id,
-            }))
+            .request(RequestPayload::UnpinChatSessionFromEpic(
+                UnpinChatSessionFromEpicRequest { epic_id },
+            ))
             .await?
         {
             ResponseResult::UnpinChatSessionFromEpic(_) => Ok(()),

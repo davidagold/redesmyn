@@ -68,7 +68,10 @@ pub fn sanitize_label(label: &str) -> String {
         .collect()
 }
 
-pub fn write_json_pretty<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), std::io::Error> {
+pub fn write_json_pretty<T: serde::Serialize>(
+    path: &Path,
+    value: &T,
+) -> Result<(), std::io::Error> {
     ensure_parent_dir(path)?;
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;

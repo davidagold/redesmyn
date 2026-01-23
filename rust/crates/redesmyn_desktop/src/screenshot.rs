@@ -2,13 +2,15 @@ use std::path::Path;
 use std::process::Command;
 
 use gpui::{AnyWindowHandle, App};
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use redesmyn_protocol::ui_driver::UiScreenshotWindow;
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ScreenshotTarget {
     #[cfg(target_os = "macos")]
-    MacosWindow { window_number: i64 },
+    MacosWindow {
+        window_number: i64,
+    },
     #[cfg(target_os = "macos")]
     MacosScreen,
     Unsupported,
@@ -126,8 +128,8 @@ fn select_primary_window(cx: &mut App) -> Result<AnyWindowHandle, ErrorEnvelope>
 
 #[cfg(target_os = "macos")]
 fn macos_window_number(window: &gpui::Window) -> Result<i64, ErrorEnvelope> {
-    use objc2::rc::Retained;
     use objc2::MainThreadMarker;
+    use objc2::rc::Retained;
     use objc2_app_kit::NSView;
     use raw_window_handle::RawWindowHandle;
 

@@ -10,10 +10,11 @@ use gpui::{
 use tokio::sync::{mpsc, watch};
 
 use redesmyn_protocol::ui_driver::{
-    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse, UiDriverRequestPayload,
-    UiDriverResponse, UiDriverResponseResult, UiErrorCallout, UiInFlightAction, UiLeftPaneState,
-    UiPrimaryView, UiSelectionState, UiSnapshot, UiSnapshotPredicate, WaitForUiIdleRequest,
-    WaitForUiIdleResponse, WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
+    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse,
+    UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
+    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
+    WaitForUiSnapshotResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -68,7 +69,9 @@ impl DesktopModel {
         self.session_control_plane_client.take()
     }
 
-    pub fn take_ui_driver_rx(&mut self) -> Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>> {
+    pub fn take_ui_driver_rx(
+        &mut self,
+    ) -> Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>> {
         self.ui_driver_rx.take()
     }
 }
@@ -782,9 +785,9 @@ async fn handle_ui_driver_request(
                 .and_then(Result::ok)
                 .unwrap_or_else(ui_unavailable_snapshot);
 
-            UiDriverResponseResult::GetSnapshot(redesmyn_protocol::ui_driver::GetUiSnapshotResponse {
-                snapshot,
-            })
+            UiDriverResponseResult::GetSnapshot(
+                redesmyn_protocol::ui_driver::GetUiSnapshotResponse { snapshot },
+            )
         }
         UiDriverRequestPayload::OpenEpic(req) => {
             let slug = req.epic_slug;
@@ -885,7 +888,8 @@ async fn handle_ui_driver_request(
             }
         }
         UiDriverRequestPayload::UnpinChatSession(_req) => {
-            let result: Result<(), ErrorEnvelope> = unpin_chat_session_via_control_plane(root, cx).await;
+            let result: Result<(), ErrorEnvelope> =
+                unpin_chat_session_via_control_plane(root, cx).await;
             match result {
                 Ok(()) => UiDriverResponseResult::UnpinChatSession(
                     redesmyn_protocol::ui_driver::UnpinChatSessionResponse {},
@@ -909,11 +913,15 @@ async fn handle_ui_driver_request(
                         };
                         Ok::<_, ErrorEnvelope>(root.read(cx).ui_snapshot(cx))
                     })
-                    .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+                    .map_err(|_| {
+                        ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable.")
+                    })??;
 
                 let target = cx
                     .update(|cx| crate::screenshot::select_target(window, cx))
-                    .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
+                    .map_err(|_| {
+                        ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable.")
+                    })??;
 
                 let Some(artifacts) = crate::test_artifacts::ui_test_artifacts() else {
                     let png_path = crate::test_artifacts::temp_png_path(&label);
@@ -947,14 +955,13 @@ async fn handle_ui_driver_request(
                 let screenshot_path_str = screenshot_path.to_string_lossy().to_string();
 
                 let task = gpui::background_executor().spawn(async move {
-                    crate::test_artifacts::write_json_pretty(&ui_snapshot_path, &snapshot).map_err(
-                        |err| {
+                    crate::test_artifacts::write_json_pretty(&ui_snapshot_path, &snapshot)
+                        .map_err(|err| {
                             ErrorEnvelope::new(
                                 ErrorCategory::Unavailable,
                                 format!("Failed to write UI snapshot: {err}"),
                             )
-                        },
-                    )?;
+                        })?;
                     crate::test_artifacts::ensure_parent_dir(&screenshot_path).map_err(|err| {
                         ErrorEnvelope::new(
                             ErrorCategory::Unavailable,
@@ -979,12 +986,14 @@ async fn handle_ui_driver_request(
                 Err(err) => UiDriverResponseResult::Error(err),
             }
         }
-        UiDriverRequestPayload::WaitForSnapshot(req) => match wait_for_snapshot(root, req, cx).await {
-            Ok(snapshot) => UiDriverResponseResult::WaitForSnapshot(WaitForUiSnapshotResponse {
-                snapshot,
-            }),
-            Err(err) => UiDriverResponseResult::Error(err),
-        },
+        UiDriverRequestPayload::WaitForSnapshot(req) => {
+            match wait_for_snapshot(root, req, cx).await {
+                Ok(snapshot) => {
+                    UiDriverResponseResult::WaitForSnapshot(WaitForUiSnapshotResponse { snapshot })
+                }
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
         UiDriverRequestPayload::WaitForIdle(req) => match wait_for_idle(root, req, cx).await {
             Ok(()) => UiDriverResponseResult::WaitForIdle(WaitForUiIdleResponse {}),
             Err(err) => UiDriverResponseResult::Error(err),
@@ -996,7 +1005,9 @@ async fn handle_ui_driver_request(
     }
 }
 
-fn control_plane_error_to_envelope(err: crate::control_plane_client::ControlPlaneClientError) -> ErrorEnvelope {
+fn control_plane_error_to_envelope(
+    err: crate::control_plane_client::ControlPlaneClientError,
+) -> ErrorEnvelope {
     ErrorEnvelope::new(
         ErrorCategory::Unavailable,
         format!("Control plane request failed: {err}"),
@@ -1014,10 +1025,19 @@ async fn create_chat_session_via_control_plane(
     let client = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
-                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ));
             };
 
-            let client = { root.read(cx).model.read(cx).chrome_control_plane_client.clone() };
+            let client = {
+                root.read(cx)
+                    .model
+                    .read(cx)
+                    .chrome_control_plane_client
+                    .clone()
+            };
 
             root.update(cx, |this, cx| {
                 this.ui_driver_action.start();
@@ -1074,10 +1094,19 @@ async fn close_chat_session_via_control_plane(
     let client = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
-                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ));
             };
 
-            let client = { root.read(cx).model.read(cx).chrome_control_plane_client.clone() };
+            let client = {
+                root.read(cx)
+                    .model
+                    .read(cx)
+                    .chrome_control_plane_client
+                    .clone()
+            };
 
             root.update(cx, |this, cx| {
                 this.ui_driver_action.start();
@@ -1132,7 +1161,10 @@ async fn pin_chat_session_via_control_plane(
     let (client, epic_slug) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
-                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ));
             };
 
             let (client, epic_slug) = {
@@ -1171,7 +1203,10 @@ async fn pin_chat_session_via_control_plane(
     };
 
     let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
-        let err = ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Select an epic before pinning.");
+        let err = ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Select an epic before pinning.",
+        );
         let _ = cx.update(|cx| {
             if let Some(root) = root.upgrade() {
                 root.update(cx, |this, cx| {
@@ -1230,7 +1265,10 @@ async fn unpin_chat_session_via_control_plane(
     let (client, epic_slug) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
-                return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."));
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ));
             };
 
             let (client, epic_slug) = {
@@ -1269,8 +1307,10 @@ async fn unpin_chat_session_via_control_plane(
     };
 
     let Some(epic_slug) = epic_slug.filter(|slug| !slug.trim().is_empty()) else {
-        let err =
-            ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Select an epic before unpinning.");
+        let err = ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Select an epic before unpinning.",
+        );
         let _ = cx.update(|cx| {
             if let Some(root) = root.upgrade() {
                 root.update(cx, |this, cx| {

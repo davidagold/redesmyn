@@ -40,4 +40,3 @@ fn ui_test_mode() -> UiTestMode {
         UiTestMode { enabled, theme }
     })
 }
-

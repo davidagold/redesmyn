@@ -9,7 +9,9 @@ use tokio::sync::{mpsc, oneshot};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
-use redesmyn_protocol::ui_driver::{UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverResponse};
+use redesmyn_protocol::ui_driver::{
+    UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverResponse,
+};
 
 pub const DEFAULT_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
@@ -49,10 +51,11 @@ pub fn start_ui_driver_server(
         let _ = std::fs::remove_file(&config.socket_path);
     }
 
-    let listener = UnixListener::bind(&config.socket_path).map_err(|source| UiDriverStartError::Bind {
-        socket_path: config.socket_path.clone(),
-        source,
-    })?;
+    let listener =
+        UnixListener::bind(&config.socket_path).map_err(|source| UiDriverStartError::Bind {
+            socket_path: config.socket_path.clone(),
+            source,
+        })?;
 
     tracing::info!(
         socket_path = %config.socket_path.display(),
@@ -105,8 +108,9 @@ fn handle_connection(
         };
 
         let proto = pbv1::UiDriverFrame::decode(bytes.as_slice())?;
-        let frame = UiDriverFrame::try_from_protobuf(proto)
-            .map_err(|err| UiDriverConnectionError::Frame(format!("{:?}: {}", err.category, err.message)))?;
+        let frame = UiDriverFrame::try_from_protobuf(proto).map_err(|err| {
+            UiDriverConnectionError::Frame(format!("{:?}: {}", err.category, err.message))
+        })?;
 
         let UiDriverMessage::Request(request) = frame.message else {
             continue;
@@ -124,7 +128,8 @@ fn handle_connection(
             .blocking_recv()
             .map_err(|_| UiDriverConnectionError::ChannelClosed)?;
 
-        let response_frame = UiDriverFrame::new(ProtocolEnvelope::new(), UiDriverMessage::Response(response));
+        let response_frame =
+            UiDriverFrame::new(ProtocolEnvelope::new(), UiDriverMessage::Response(response));
         let out = response_frame.to_protobuf().encode_to_vec();
         write_framed_bytes(&mut stream, &out, max_frame_len)?;
     }

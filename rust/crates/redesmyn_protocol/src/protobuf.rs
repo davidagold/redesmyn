@@ -3501,12 +3501,18 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::CloseChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::CloseChatSession)
         }
-        Ok(pbv1::UiDriverMethod::PinChatSession) => Ok(crate::ui_driver::UiDriverMethod::PinChatSession),
+        Ok(pbv1::UiDriverMethod::PinChatSession) => {
+            Ok(crate::ui_driver::UiDriverMethod::PinChatSession)
+        }
         Ok(pbv1::UiDriverMethod::UnpinChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::UnpinChatSession)
         }
-        Ok(pbv1::UiDriverMethod::TriggerRefresh) => Ok(crate::ui_driver::UiDriverMethod::TriggerRefresh),
-        Ok(pbv1::UiDriverMethod::WaitForSnapshot) => Ok(crate::ui_driver::UiDriverMethod::WaitForSnapshot),
+        Ok(pbv1::UiDriverMethod::TriggerRefresh) => {
+            Ok(crate::ui_driver::UiDriverMethod::TriggerRefresh)
+        }
+        Ok(pbv1::UiDriverMethod::WaitForSnapshot) => {
+            Ok(crate::ui_driver::UiDriverMethod::WaitForSnapshot)
+        }
         Ok(pbv1::UiDriverMethod::WaitForIdle) => Ok(crate::ui_driver::UiDriverMethod::WaitForIdle),
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
@@ -4278,8 +4284,12 @@ impl crate::ui_driver::UiSnapshotPredicate {
 
     pub fn from_protobuf(proto: pbv1::UiSnapshotPredicate) -> Result<Self, ErrorEnvelope> {
         let primary_view = match pbv1::UiPrimaryView::try_from(proto.primary_view) {
-            Ok(pbv1::UiPrimaryView::EpicSelector) => Some(crate::ui_driver::UiPrimaryView::EpicSelector),
-            Ok(pbv1::UiPrimaryView::EpicWorkspace) => Some(crate::ui_driver::UiPrimaryView::EpicWorkspace),
+            Ok(pbv1::UiPrimaryView::EpicSelector) => {
+                Some(crate::ui_driver::UiPrimaryView::EpicSelector)
+            }
+            Ok(pbv1::UiPrimaryView::EpicWorkspace) => {
+                Some(crate::ui_driver::UiPrimaryView::EpicWorkspace)
+            }
             Ok(pbv1::UiPrimaryView::Unspecified) | Err(_) => None,
         };
 
@@ -4300,9 +4310,7 @@ impl crate::ui_driver::WaitForUiSnapshotRequest {
         }
     }
 
-    pub fn try_from_protobuf(
-        proto: pbv1::WaitForUiSnapshotRequest,
-    ) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(proto: pbv1::WaitForUiSnapshotRequest) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             timeout_ms: proto.timeout_ms,
             predicate: crate::ui_driver::UiSnapshotPredicate::from_protobuf(
@@ -4378,7 +4386,9 @@ impl crate::ui_driver::CaptureScreenshotRequest {
 
     pub fn try_from_protobuf(proto: pbv1::CaptureScreenshotRequest) -> Result<Self, ErrorEnvelope> {
         let window = match pbv1::UiScreenshotWindow::try_from(proto.window) {
-            Ok(pbv1::UiScreenshotWindow::Primary) => Some(crate::ui_driver::UiScreenshotWindow::Primary),
+            Ok(pbv1::UiScreenshotWindow::Primary) => {
+                Some(crate::ui_driver::UiScreenshotWindow::Primary)
+            }
             Ok(pbv1::UiScreenshotWindow::All) => Some(crate::ui_driver::UiScreenshotWindow::All),
             Ok(pbv1::UiScreenshotWindow::Unspecified) | Err(_) => None,
         };
