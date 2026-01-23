@@ -226,6 +226,8 @@ impl ControlPlaneHandle {
         client
     }
 
+    /// Fixture-only helper for local desktop dev tooling.
+    #[cfg(any(debug_assertions, test))]
     #[must_use]
     pub fn session_events(&self) -> crate::session_events::SessionEvents {
         self.state.control_plane.session_events().clone()

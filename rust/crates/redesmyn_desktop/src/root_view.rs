@@ -1972,37 +1972,35 @@ impl EpicSessionPaneHost {
         self.emit_demo_error = None;
         cx.notify();
 
-        self.emit_demo_task = Some(cx.spawn(
-            move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
-                let cx = cx.clone();
-                async move {
-                    let Some(entity) = weak.upgrade() else {
-                        return;
-                    };
+        self.emit_demo_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
 
-                    let tokio = fixture.tokio();
-                    let task = tokio.spawn({
-                        let fixture = fixture.clone();
-                        async move { fixture.emit_demo_message().await }
-                    });
+                let tokio = fixture.tokio();
+                let task = tokio.spawn({
+                    let fixture = fixture.clone();
+                    async move { fixture.emit_demo_message().await }
+                });
 
-                    let error = match task.await {
-                        Ok(Ok(())) => None,
-                        Ok(Err(error)) => Some(error.to_string()),
-                        Err(error) => Some(format!("Demo event task failed: {error}")),
-                    };
+                let error = match task.await {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error.to_string()),
+                    Err(error) => Some(format!("Demo event task failed: {error}")),
+                };
 
-                    let _ = cx.update(|cx| {
-                        entity.update(cx, |this, cx| {
-                            this.emit_demo_task = None;
-                            this.emit_demo_in_flight = false;
-                            this.emit_demo_error = error.map(Into::into);
-                            cx.notify();
-                        })
-                    });
-                }
-            },
-        ));
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        this.emit_demo_task = None;
+                        this.emit_demo_in_flight = false;
+                        this.emit_demo_error = error.map(Into::into);
+                        cx.notify();
+                    })
+                });
+            }
+        }));
     }
 }
 
@@ -2038,9 +2036,12 @@ impl Render for EpicSessionPaneHost {
                                 "Emit demo message"
                             };
                             controls = controls.child(
-                                TextButton::new(("session_fixture_emit_demo", cx.entity_id()), label)
-                                    .disabled(self.emit_demo_in_flight)
-                                    .on_click(cx.listener(Self::emit_demo_message)),
+                                TextButton::new(
+                                    ("session_fixture_emit_demo", cx.entity_id()),
+                                    label,
+                                )
+                                .disabled(self.emit_demo_in_flight)
+                                .on_click(cx.listener(Self::emit_demo_message)),
                             );
                         }
                         controls

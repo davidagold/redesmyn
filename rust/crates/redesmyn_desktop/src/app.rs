@@ -1,23 +1,33 @@
-use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use redesmyn_config::DesktopFixtureMode;
 use redesmyn_control_plane::session_events::SessionEvents;
 use redesmyn_logging::tracing;
+use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
+#[cfg(debug_assertions)]
 use redesmyn_protocol::session::{
-    AssistantMessage, SessionEventKind, SessionScope, SessionStarted, UserMessage,
+    ExternalSessionRef, InterfaceMode, SessionStarted, ToolInvocation, ToolResult, TurnCompleted,
+    TurnStarted,
 };
 use redesmyn_protocol::{SessionEvent, Timestamp};
 use redesmyn_storage::StorageError;
 use redesmyn_transport::in_proc::InProcEndpoint;
 
+#[cfg(debug_assertions)]
+use std::path::Path;
+#[cfg(debug_assertions)]
+use std::str::FromStr as _;
+
 pub struct DesktopApp;
 
+#[cfg(debug_assertions)]
 const SESSION_VIEWER_FIXTURE_SESSION_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+#[cfg(debug_assertions)]
 const SESSION_VIEWER_FIXTURE_BASE_MS: i64 = 1_700_000_000_000;
-const SESSION_VIEWER_FIXTURE_TURN_COUNT: u64 = 65;
+#[cfg(debug_assertions)]
+const SESSION_VIEWER_FIXTURE_TURN_COUNT: u64 = 30;
 
 #[derive(Clone)]
 pub struct SessionViewerFixtureEmitter {
@@ -83,6 +93,7 @@ impl SessionViewerFixtureEmitter {
         Ok(())
     }
 
+    #[cfg(debug_assertions)]
     fn new(tokio: tokio::runtime::Handle, session_events: SessionEvents) -> Self {
         let session_id = session_viewer_fixture_session_id();
         Self {
@@ -113,6 +124,9 @@ pub enum DesktopStartError {
     ControlPlane(#[from] redesmyn_control_plane::ControlPlaneStartError),
     #[error("desktop fixture mode requires an embedded control plane")]
     FixtureRequiresEmbeddedControlPlane,
+    #[cfg_attr(debug_assertions, allow(dead_code))]
+    #[error("desktop fixture mode is only supported in debug builds")]
+    FixtureNotSupportedInRelease,
     #[error("failed to reset fixture sqlite DB at {path}")]
     FixtureDbReset {
         path: PathBuf,
@@ -131,12 +145,26 @@ impl DesktopApp {
         let _enter = span.enter();
 
         let fixture_mode = config.desktop.fixture;
-        if fixture_mode == Some(DesktopFixtureMode::SessionViewer) && !config.desktop.embed_control_plane
+
+        #[cfg(not(debug_assertions))]
+        if fixture_mode.is_some() {
+            tracing::warn!(
+                fixture = ?fixture_mode,
+                "desktop fixture mode requested in a release build; refusing"
+            );
+            return Err(DesktopStartError::FixtureNotSupportedInRelease);
+        }
+
+        if fixture_mode == Some(DesktopFixtureMode::SessionViewer)
+            && !config.desktop.embed_control_plane
         {
             return Err(DesktopStartError::FixtureRequiresEmbeddedControlPlane);
         }
 
+        #[cfg(debug_assertions)]
         if fixture_mode == Some(DesktopFixtureMode::SessionViewer) {
+            tracing::warn!("SESSION VIEWER FIXTURE MODE ENABLED: fixture DB is reset on startup");
+
             let fixture_db_path = session_viewer_fixture_db_path(&config.control_plane.db.path);
             reset_fixture_sqlite_db(&fixture_db_path).map_err(|source| {
                 DesktopStartError::FixtureDbReset {
@@ -170,30 +198,38 @@ impl DesktopApp {
             None
         };
 
-        let session_viewer_fixture = if fixture_mode == Some(DesktopFixtureMode::SessionViewer) {
-            let session_events = control_plane
-                .as_ref()
-                .expect("fixture mode requires an embedded control plane")
-                .session_events();
-            let session_id = session_viewer_fixture_session_id();
+        let session_viewer_fixture = {
+            #[cfg(debug_assertions)]
+            {
+                if fixture_mode == Some(DesktopFixtureMode::SessionViewer) {
+                    let session_events = control_plane
+                        .as_ref()
+                        .expect("fixture mode requires an embedded control plane")
+                        .session_events();
+                    let session_id = session_viewer_fixture_session_id();
 
-            let seeded = runtime.block_on(seed_session_viewer_fixture(
-                &session_events,
-                session_id,
-            ))?;
+                    let seeded = runtime
+                        .block_on(seed_session_viewer_fixture(&session_events, session_id))?;
 
-            tracing::info!(
-                session_id = %session_id,
-                events = seeded,
-                "seeded session viewer fixture data"
-            );
+                    tracing::info!(
+                        session_id = %session_id,
+                        events = seeded,
+                        "seeded session viewer fixture data"
+                    );
 
-            Some(SessionViewerFixtureEmitter::new(
-                runtime.handle().clone(),
-                session_events,
-            ))
-        } else {
-            None
+                    Some(SessionViewerFixtureEmitter::new(
+                        runtime.handle().clone(),
+                        session_events,
+                    ))
+                } else {
+                    None
+                }
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                None
+            }
         };
 
         let control_plane_client = control_plane
@@ -249,11 +285,13 @@ impl DesktopApp {
     }
 }
 
+#[cfg(debug_assertions)]
 fn session_viewer_fixture_session_id() -> redesmyn_ids::SessionId {
     redesmyn_ids::SessionId::from_str(SESSION_VIEWER_FIXTURE_SESSION_ID)
         .expect("fixture session id should parse")
 }
 
+#[cfg(debug_assertions)]
 fn session_viewer_fixture_db_path(base_db_path: &Path) -> PathBuf {
     let Some(state_dir) = base_db_path.parent() else {
         return PathBuf::from(".redesmyn/fixtures/session_viewer/redesmyn_rust.sqlite3");
@@ -265,6 +303,7 @@ fn session_viewer_fixture_db_path(base_db_path: &Path) -> PathBuf {
         .join("redesmyn_rust.sqlite3")
 }
 
+#[cfg(debug_assertions)]
 fn reset_fixture_sqlite_db(db_path: &Path) -> Result<(), std::io::Error> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -282,6 +321,7 @@ fn reset_fixture_sqlite_db(db_path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+#[cfg(debug_assertions)]
 fn seeded_timestamp(index: u64) -> Timestamp {
     let offset_ms = i64::try_from(index)
         .unwrap_or(i64::MAX)
@@ -290,12 +330,14 @@ fn seeded_timestamp(index: u64) -> Timestamp {
     Timestamp::from_unix_millis(ms).expect("fixture timestamp should be in range")
 }
 
+#[cfg(debug_assertions)]
 fn seeded_ms(index: u64) -> u64 {
     u64::try_from(SESSION_VIEWER_FIXTURE_BASE_MS)
         .expect("fixture base ms should be non-negative")
         .saturating_add(index.saturating_mul(1_000))
 }
 
+#[cfg(debug_assertions)]
 fn seeded_session_event_id(created_at_ms: u64, counter: u64) -> redesmyn_ids::SessionEventId {
     let mut bytes = [0_u8; 16];
 
@@ -308,6 +350,7 @@ fn seeded_session_event_id(created_at_ms: u64, counter: u64) -> redesmyn_ids::Se
     redesmyn_ids::SessionEventId::from_bytes(bytes)
 }
 
+#[cfg(debug_assertions)]
 async fn seed_session_viewer_fixture(
     session_events: &SessionEvents,
     session_id: redesmyn_ids::SessionId,
@@ -328,17 +371,37 @@ async fn seed_session_viewer_fixture(
     ix += 1;
 
     for turn in 0..SESSION_VIEWER_FIXTURE_TURN_COUNT {
+        let turn_id = format!("fixture_turn_{turn:03}");
+
+        let turn_started = SessionEvent {
+            session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
+            created_at: seeded_timestamp(ix),
+            scope: SessionScope::Chat,
+            session_id,
+            turn_id: Some(turn_id.clone()),
+            kind: SessionEventKind::TurnStarted(TurnStarted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref: Some(ExternalSessionRef::CodexThread {
+                    thread_id: "fixture_thread".to_string(),
+                    turn_id: Some(turn_id.clone()),
+                }),
+                idempotency_key: Some(format!("fixture_turn_start_{turn:03}")),
+                log_offset_bytes: None,
+            }),
+        };
+        session_events.append_session_event(&turn_started).await?;
+        seeded += 1;
+        ix += 1;
+
         let user_preview = format!("Fixture user message #{turn}");
         let user = SessionEvent {
             session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
             created_at: seeded_timestamp(ix),
             scope: SessionScope::Chat,
             session_id,
-            turn_id: None,
+            turn_id: Some(turn_id.clone()),
             kind: SessionEventKind::UserMessage(UserMessage {
-                text: format!(
-                    "{user_preview}\n\n- bullet one\n- bullet two\n\n`inline_code()`"
-                ),
+                text: format!("{user_preview}\n\n- bullet one\n- bullet two\n\n`inline_code()`"),
                 preview: user_preview,
                 full_text_artifact: None,
             }),
@@ -347,13 +410,52 @@ async fn seed_session_viewer_fixture(
         seeded += 1;
         ix += 1;
 
+        if turn % 10 == 0 {
+            let tool_call_id = format!("fixture_tool_{turn:03}");
+
+            let invocation = SessionEvent {
+                session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
+                created_at: seeded_timestamp(ix),
+                scope: SessionScope::Chat,
+                session_id,
+                turn_id: Some(turn_id.clone()),
+                kind: SessionEventKind::ToolInvocation(ToolInvocation {
+                    tool_name: "functions.exec_command".to_string(),
+                    tool_call_id: Some(tool_call_id.clone()),
+                    input_preview: "echo \"hello from fixture\"".to_string(),
+                    input_artifact: None,
+                }),
+            };
+            session_events.append_session_event(&invocation).await?;
+            seeded += 1;
+            ix += 1;
+
+            let result = SessionEvent {
+                session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
+                created_at: seeded_timestamp(ix),
+                scope: SessionScope::Chat,
+                session_id,
+                turn_id: Some(turn_id.clone()),
+                kind: SessionEventKind::ToolResult(ToolResult {
+                    tool_name: "functions.exec_command".to_string(),
+                    tool_call_id: Some(tool_call_id),
+                    output_preview: "hello from fixture".to_string(),
+                    output_artifact: None,
+                    error: None,
+                }),
+            };
+            session_events.append_session_event(&result).await?;
+            seeded += 1;
+            ix += 1;
+        }
+
         let assistant_preview = format!("Fixture assistant reply #{turn}");
         let assistant = SessionEvent {
             session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
             created_at: seeded_timestamp(ix),
             scope: SessionScope::Chat,
             session_id,
-            turn_id: None,
+            turn_id: Some(turn_id.clone()),
             kind: SessionEventKind::AssistantMessage(AssistantMessage {
                 text: format!(
                     "{assistant_preview}\n\n```rust\nfn hello() {{\n    println!(\"hi\");\n}}\n```"
@@ -363,6 +465,23 @@ async fn seed_session_viewer_fixture(
             }),
         };
         session_events.append_session_event(&assistant).await?;
+        seeded += 1;
+        ix += 1;
+
+        let turn_completed = SessionEvent {
+            session_event_id: seeded_session_event_id(seeded_ms(ix), ix),
+            created_at: seeded_timestamp(ix),
+            scope: SessionScope::Chat,
+            session_id,
+            turn_id: Some(turn_id),
+            kind: SessionEventKind::TurnCompleted(TurnCompleted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref: None,
+                exit_code: Some(0),
+                error: None,
+            }),
+        };
+        session_events.append_session_event(&turn_completed).await?;
         seeded += 1;
         ix += 1;
     }
