@@ -1243,6 +1243,7 @@ impl Render for GraphView {
             let entity_id = cx.entity_id();
             let primary_selected = self.visual_selected_node();
             let selected_nodes = &self.scene.selection().selected_nodes;
+            let layout_animation = self.layout_animation.as_ref();
 
             let mut layer = div().absolute().inset_0();
 
@@ -1253,19 +1254,47 @@ impl Render for GraphView {
                 let node_id = node.id;
                 let node_key: gpui::SharedString = node_id.to_string().into();
                 let is_primary_selected = primary_selected == Some(node_id);
-                let is_selected = is_primary_selected || selected_nodes.contains(&node_id);
-                let is_expanded = is_primary_selected;
+                let is_multi_selected = selected_nodes.contains(&node_id);
 
-                let bg = if is_selected {
-                    theme.colors.ring.opacity(0.10)
+                let is_animating_expand = layout_animation
+                    .is_some_and(|animation| animation.to_selected_node == Some(node_id));
+                let is_animating_collapse = layout_animation.is_some_and(|animation| {
+                    animation.from_selected_node == Some(node_id)
+                        && animation.to_selected_node != Some(node_id)
+                });
+
+                let expandedness = if is_animating_expand {
+                    t
+                } else if is_animating_collapse {
+                    1.0 - t
+                } else if is_primary_selected {
+                    1.0
                 } else {
-                    theme.colors.surface_elevated
+                    0.0
                 };
-                let border = if is_selected {
-                    theme.colors.ring
+
+                let expandedness = expandedness.clamp(0.0, 1.0);
+                let selection_t = if is_animating_expand || is_animating_collapse {
+                    expandedness
+                } else if is_primary_selected || is_multi_selected {
+                    1.0
                 } else {
-                    theme.colors.border.opacity(0.8)
+                    0.0
                 };
+
+                let expanded_opacity =
+                    expandedness.powf(if is_animating_collapse { 4.0 } else { 1.5 });
+                let collapsed_opacity = (1.0 - expandedness).powf(2.0);
+                let bg = lerp_hsla(
+                    theme.colors.surface_elevated,
+                    theme.colors.ring,
+                    0.10 * selection_t,
+                );
+                let border = lerp_hsla(
+                    theme.colors.border.opacity(0.8),
+                    theme.colors.ring,
+                    selection_t,
+                );
 
                 let node_element_id = (
                     gpui::ElementId::from(("graph_node", entity_id)),
@@ -1301,18 +1330,21 @@ impl Render for GraphView {
                         }
                     });
 
-                if !is_expanded {
+                if collapsed_opacity > 0.01 {
                     let task_slug = node.task_slug.clone();
                     let padding_x = px(f32::from(theme.spacing.sm) * zoom);
                     let padding_y = px(f32::from(theme.spacing.xs) * zoom);
 
                     card = card.child(
                         div()
+                            .absolute()
+                            .inset_0()
                             .px(padding_x)
                             .py(padding_y)
                             .size_full()
                             .flex()
                             .items_center()
+                            .opacity(collapsed_opacity)
                             .child(
                                 div()
                                     .flex_1()
@@ -1323,7 +1355,9 @@ impl Render for GraphView {
                                     .child(task_slug),
                             ),
                     );
-                } else {
+                }
+
+                if expanded_opacity > 0.01 {
                     let title = node.title.clone();
                     let task_slug = node.task_slug.clone();
                     let state = node.state;
@@ -1362,6 +1396,9 @@ impl Render for GraphView {
                             .flex()
                             .flex_col()
                             .size_full()
+                            .absolute()
+                            .inset_0()
+                            .opacity(expanded_opacity)
                             .child(
                                 div()
                                     .h(px(44.0))
@@ -1720,6 +1757,19 @@ fn ease_out_cubic(t: f32) -> f32 {
 
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
+}
+
+fn lerp_rgba(a: gpui::Rgba, b: gpui::Rgba, t: f32) -> gpui::Rgba {
+    gpui::Rgba {
+        r: lerp_f32(a.r, b.r, t),
+        g: lerp_f32(a.g, b.g, t),
+        b: lerp_f32(a.b, b.b, t),
+        a: lerp_f32(a.a, b.a, t),
+    }
+}
+
+fn lerp_hsla(a: gpui::Hsla, b: gpui::Hsla, t: f32) -> gpui::Hsla {
+    lerp_rgba(a.into(), b.into(), t.clamp(0.0, 1.0)).into()
 }
 
 fn lerp_point(a: gpui::Point<f32>, b: gpui::Point<f32>, t: f32) -> gpui::Point<f32> {
