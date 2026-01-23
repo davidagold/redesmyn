@@ -342,6 +342,13 @@ pub struct UiErrorCallout {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct UiComposerState {
+    pub sending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Stable, machine-readable representation of what the UI is showing.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UiSnapshot {
@@ -353,6 +360,10 @@ pub struct UiSnapshot {
     pub in_flight: Vec<UiInFlightAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<UiErrorCallout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_chat_session_id: Option<SessionId>,
+    #[serde(default)]
+    pub pinned_chat_composer: UiComposerState,
 }
 
 /// UI driver protocol messages.

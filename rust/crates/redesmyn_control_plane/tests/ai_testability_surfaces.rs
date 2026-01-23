@@ -18,8 +18,9 @@ use redesmyn_protocol::daemon::{
 };
 use redesmyn_protocol::ui_driver::{
     GetUiSnapshotRequest, GetUiSnapshotResponse, OpenEpicRequest, TriggerMergeRequest,
-    UiDriverRequest, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
-    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    UiComposerState, UiDriverRequest, UiDriverRequestPayload, UiDriverResponse,
+    UiDriverResponseResult, UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState,
+    UiSnapshot,
 };
 use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion, RepoScope, Scope};
 use redesmyn_transport::client::ClientConnection;
@@ -391,6 +392,8 @@ impl UiDriverHarness {
                     message: message.clone(),
                 })
                 .collect(),
+            pinned_chat_session_id: None,
+            pinned_chat_composer: UiComposerState::default(),
         }
     }
 

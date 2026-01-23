@@ -387,12 +387,18 @@ impl SessionEvents {
 
         let (scope_kind, epic_id, task_id) = match event.scope {
             SessionScope::Task { task_id } => ("task", None, Some(task_id)),
-            SessionScope::Chat | SessionScope::Unknown => ("none", None, None),
+            SessionScope::Chat => ("repo", None, None),
+            SessionScope::Unknown => ("none", None, None),
             _ => ("none", None, None),
         };
 
         let (workspace_id, repo_id, resolved_epic_id) = match event.scope {
             SessionScope::Task { task_id } => resolve_task_scope(&self.pool, task_id).await?,
+            SessionScope::Chat => {
+                let (workspace_id, repo_id) =
+                    resolve_chat_scope(&self.pool, event.session_id).await?;
+                (Some(workspace_id), Some(repo_id), None)
+            }
             _ => (None, None, None),
         };
 
@@ -706,4 +712,36 @@ async fn resolve_task_scope(
     Ok(row
         .map(|row| (Some(row.workspace_id), Some(row.repo_id), Some(row.epic_id)))
         .unwrap_or((None, None, None)))
+}
+
+async fn resolve_chat_scope(
+    pool: &SqlitePool,
+    session_id: SessionId,
+) -> Result<(redesmyn_ids::WorkspaceId, redesmyn_ids::RepoId), StorageError> {
+    #[derive(Debug, Clone, sqlx::FromRow)]
+    struct Row {
+        workspace_id: redesmyn_ids::WorkspaceId,
+        repo_id: redesmyn_ids::RepoId,
+    }
+
+    let row = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT
+            scope_workspace_id as workspace_id,
+            scope_repo_id as repo_id
+        FROM agent_sessions
+        WHERE session_id = ?1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Err(StorageError::InvalidData {
+            message: format!("session not found while resolving chat scope: {session_id}"),
+        });
+    };
+
+    Ok((row.workspace_id, row.repo_id))
 }

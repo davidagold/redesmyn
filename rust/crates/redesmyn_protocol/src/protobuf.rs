@@ -4621,6 +4621,24 @@ impl crate::ui_driver::UiErrorCallout {
     }
 }
 
+impl crate::ui_driver::UiComposerState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiComposerState {
+        pbv1::UiComposerState {
+            sending: self.sending,
+            error: self.error.clone().unwrap_or_default(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UiComposerState) -> Self {
+        Self {
+            sending: proto.sending,
+            error: normalize_nonempty_string(proto.error),
+        }
+    }
+}
+
 impl crate::ui_driver::UiSnapshot {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiSnapshot {
@@ -4639,6 +4657,11 @@ impl crate::ui_driver::UiSnapshot {
                 .iter()
                 .map(crate::ui_driver::UiErrorCallout::to_protobuf)
                 .collect(),
+            pinned_chat_session_id: self
+                .pinned_chat_session_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            pinned_chat_composer: Some(self.pinned_chat_composer.to_protobuf()),
         }
     }
 
@@ -4666,6 +4689,14 @@ impl crate::ui_driver::UiSnapshot {
                 .into_iter()
                 .map(crate::ui_driver::UiErrorCallout::from_protobuf)
                 .collect(),
+            pinned_chat_session_id: decode_optional_ulid::<SessionId>(
+                "pinned_chat_session_id",
+                &proto.pinned_chat_session_id,
+            )?,
+            pinned_chat_composer: proto
+                .pinned_chat_composer
+                .map(crate::ui_driver::UiComposerState::from_protobuf)
+                .unwrap_or_default(),
         })
     }
 }

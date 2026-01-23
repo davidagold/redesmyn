@@ -271,6 +271,12 @@ message UiErrorCallout {
   string message = 1;
 }
 
+message UiComposerState {
+  bool sending = 1;
+  // Empty means "no error".
+  string error = 2;
+}
+
 // Stable, machine-readable representation of what the UI is showing.
 message UiSnapshot {
   google.protobuf.Timestamp captured_at = 1;
@@ -279,4 +285,7 @@ message UiSnapshot {
   UiSelectionState selection = 4;
   repeated UiInFlightAction in_flight = 5;
   repeated UiErrorCallout errors = 6;
+  // SessionId (ULID bytes, length = 16). Empty means "no pinned chat".
+  bytes pinned_chat_session_id = 7;
+  UiComposerState pinned_chat_composer = 8;
 }

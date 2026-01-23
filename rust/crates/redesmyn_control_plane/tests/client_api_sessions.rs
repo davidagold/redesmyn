@@ -8,10 +8,11 @@ use redesmyn_ids::{
     EpicId, RepoId, RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
+    AgentMessageConflictAction, ClientFrame, ClientMessage, CloseChatSessionRequest,
+    CreateChatSessionRequest,
     GetEpicPinnedChatSessionRequest, GetSessionEventsRequest, ListChatSessionsRequest,
     ListTaskSessionsRequest, PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
-    SessionEventsFilter, Subscribe, SubscriptionEvent, SubscriptionFilter,
+    SendSessionMessageRequest, SessionEventsFilter, Subscribe, SubscriptionEvent, SubscriptionFilter,
 };
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope, SessionEvent, Timestamp};
@@ -355,6 +356,41 @@ async fn uds_server_supports_session_query_surfaces() {
         other => panic!("unexpected response: {other:?}"),
     }
 
+    let send_session_message_request_id = RequestId::new();
+    conn.send(ClientFrame::new(
+        ProtocolEnvelope::new().with_scope(scope.into()),
+        ClientMessage::Request(Request {
+            request_id: send_session_message_request_id,
+            payload: RequestPayload::SendSessionMessage(SendSessionMessageRequest {
+                session_id: chat_session_id,
+                message: "hello from client".to_string(),
+                on_conflict: AgentMessageConflictAction::Fail,
+            }),
+        }),
+    ))
+    .await
+    .expect("send send_session_message");
+
+    let frame = recv_frame(&mut conn).await;
+    let ClientMessage::Response(resp) = frame.message else {
+        panic!("expected Response, got {:?}", frame.message);
+    };
+    let sent_event_id = match resp.result {
+        ResponseResult::SendSessionMessage(payload) => {
+            assert_eq!(resp.request_id, send_session_message_request_id);
+            assert_eq!(payload.session_id, chat_session_id);
+            assert_eq!(payload.event.session_id, chat_session_id);
+            match payload.event.kind {
+                SessionEventKind::UserMessage(message) => {
+                    assert_eq!(message.text, "hello from client");
+                    payload.event.session_event_id
+                }
+                other => panic!("unexpected SendSessionMessage event kind: {other:?}"),
+            }
+        }
+        other => panic!("unexpected response: {other:?}"),
+    };
+
     let close_chat_session_request_id = RequestId::new();
     conn.send(ClientFrame::new(
         ProtocolEnvelope::new().with_scope(scope.into()),
@@ -475,7 +511,7 @@ async fn uds_server_supports_session_query_surfaces() {
                     .iter()
                     .map(|ev| ev.session_event_id)
                     .collect::<Vec<_>>(),
-                vec![e1.session_event_id, e2.session_event_id]
+                vec![e1.session_event_id, e2.session_event_id, sent_event_id]
             );
         }
         other => panic!("unexpected response: {other:?}"),
