@@ -4116,14 +4116,14 @@ impl crate::ui_driver::SetLeftPaneCollapsedResponse {
 
 impl crate::ui_driver::CreateChatSessionRequest {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionRequest {
-        pbv1::CreateChatSessionRequest {
+    pub fn to_protobuf(&self) -> pbv1::UiDriverCreateChatSessionRequest {
+        pbv1::UiDriverCreateChatSessionRequest {
             name_hint: self.name_hint.clone(),
         }
     }
 
     #[must_use]
-    pub fn from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Self {
+    pub fn from_protobuf(proto: pbv1::UiDriverCreateChatSessionRequest) -> Self {
         Self {
             name_hint: proto.name_hint,
         }
@@ -4132,14 +4132,14 @@ impl crate::ui_driver::CreateChatSessionRequest {
 
 impl crate::ui_driver::CreateChatSessionResponse {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CreateChatSessionResponse {
-        pbv1::CreateChatSessionResponse {
+    pub fn to_protobuf(&self) -> pbv1::UiDriverCreateChatSessionResponse {
+        pbv1::UiDriverCreateChatSessionResponse {
             session_id: self.session_id.to_bytes().to_vec(),
         }
     }
 
     pub fn try_from_protobuf(
-        proto: pbv1::CreateChatSessionResponse,
+        proto: pbv1::UiDriverCreateChatSessionResponse,
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             session_id: decode_required_ulid("session_id", &proto.session_id)?,
@@ -4149,14 +4149,14 @@ impl crate::ui_driver::CreateChatSessionResponse {
 
 impl crate::ui_driver::CloseChatSessionRequest {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionRequest {
-        pbv1::CloseChatSessionRequest {
+    pub fn to_protobuf(&self) -> pbv1::UiDriverCloseChatSessionRequest {
+        pbv1::UiDriverCloseChatSessionRequest {
             session_id: self.session_id.to_bytes().to_vec(),
         }
     }
 
     pub fn try_from_protobuf(
-        proto: pbv1::CloseChatSessionRequest,
+        proto: pbv1::UiDriverCloseChatSessionRequest,
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             session_id: decode_required_ulid("session_id", &proto.session_id)?,
@@ -4166,12 +4166,12 @@ impl crate::ui_driver::CloseChatSessionRequest {
 
 impl crate::ui_driver::CloseChatSessionResponse {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionResponse {
-        pbv1::CloseChatSessionResponse {}
+    pub fn to_protobuf(&self) -> pbv1::UiDriverCloseChatSessionResponse {
+        pbv1::UiDriverCloseChatSessionResponse {}
     }
 
     #[must_use]
-    pub fn from_protobuf(_proto: pbv1::CloseChatSessionResponse) -> Self {
+    pub fn from_protobuf(_proto: pbv1::UiDriverCloseChatSessionResponse) -> Self {
         Self {}
     }
 }

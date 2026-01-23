@@ -63,8 +63,8 @@ message UiDriverRequest {
     OpenDiffViewRequest open_diff_view = 15;
     CaptureScreenshotRequest capture_screenshot = 16;
     SetLeftPaneCollapsedRequest set_left_pane_collapsed = 17;
-    CreateChatSessionRequest create_chat_session = 18;
-    CloseChatSessionRequest close_chat_session = 19;
+    UiDriverCreateChatSessionRequest create_chat_session = 18;
+    UiDriverCloseChatSessionRequest close_chat_session = 19;
     PinChatSessionRequest pin_chat_session = 20;
     UnpinChatSessionRequest unpin_chat_session = 21;
     TriggerRefreshRequest trigger_refresh = 22;
@@ -93,8 +93,8 @@ message UiDriverResponse {
     OpenDiffViewResponse open_diff_view = 15;
     CaptureScreenshotResponse capture_screenshot = 16;
     SetLeftPaneCollapsedResponse set_left_pane_collapsed = 17;
-    CreateChatSessionResponse create_chat_session = 18;
-    CloseChatSessionResponse close_chat_session = 19;
+    UiDriverCreateChatSessionResponse create_chat_session = 18;
+    UiDriverCloseChatSessionResponse close_chat_session = 19;
     PinChatSessionResponse pin_chat_session = 20;
     UnpinChatSessionResponse unpin_chat_session = 21;
     TriggerRefreshResponse trigger_refresh = 22;
@@ -148,22 +148,22 @@ message SetLeftPaneCollapsedRequest {
 
 message SetLeftPaneCollapsedResponse {}
 
-message CreateChatSessionRequest {
+message UiDriverCreateChatSessionRequest {
   // Best-effort label used for UI + artifacts.
   string name_hint = 1;
 }
 
-message CreateChatSessionResponse {
+message UiDriverCreateChatSessionResponse {
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 1;
 }
 
-message CloseChatSessionRequest {
+message UiDriverCloseChatSessionRequest {
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 1;
 }
 
-message CloseChatSessionResponse {}
+message UiDriverCloseChatSessionResponse {}
 
 message PinChatSessionRequest {
   // SessionId (ULID bytes, length = 16).
