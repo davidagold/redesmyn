@@ -330,6 +330,8 @@ message CreateCommandRequest {
   bytes target_task_id = 2;
   optional string idempotency_key = 3;
   optional string created_by = 4;
+  // Optional JSON payload bytes for daemon-executed commands.
+  optional bytes json_payload = 5;
 }
 
 message CreateCommandResponse {

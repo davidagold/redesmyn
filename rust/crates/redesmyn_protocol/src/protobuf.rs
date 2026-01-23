@@ -2112,6 +2112,7 @@ impl crate::client::CreateCommandRequest {
                 .unwrap_or_default(),
             idempotency_key: self.idempotency_key.clone(),
             created_by: self.created_by.clone(),
+            json_payload: (!self.json_payload.is_empty()).then(|| self.json_payload.clone()),
         }
     }
 
@@ -2128,6 +2129,7 @@ impl crate::client::CreateCommandRequest {
             )?,
             idempotency_key: proto.idempotency_key,
             created_by: proto.created_by,
+            json_payload: proto.json_payload.unwrap_or_default(),
         })
     }
 }

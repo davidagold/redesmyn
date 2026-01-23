@@ -434,6 +434,8 @@ pub struct CreateCommandRequest {
     pub idempotency_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub json_payload: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
