@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::settings::ThemePreference;
 
@@ -17,6 +18,16 @@ pub fn ui_test_mode_enabled() -> bool {
 pub fn ui_test_theme_override() -> Option<ThemePreference> {
     let mode = ui_test_mode();
     mode.enabled.then_some(mode.theme)
+}
+
+pub fn ui_test_mode_animation_duration(duration: Duration) -> Duration {
+    ui_test_mode_animation_duration_for_enabled(ui_test_mode_enabled(), duration)
+}
+
+fn ui_test_mode_animation_duration_for_enabled(enabled: bool, duration: Duration) -> Duration {
+    enabled
+        .then_some(Duration::from_millis(0))
+        .unwrap_or(duration)
 }
 
 fn ui_test_mode() -> UiTestMode {
@@ -44,7 +55,10 @@ fn ui_test_mode_from_env(enabled: bool, theme_env: Option<&str>) -> UiTestMode {
 
 #[cfg(test)]
 mod tests {
-    use super::{ThemePreference, ui_test_mode_from_env};
+    use super::{
+        ThemePreference, ui_test_mode_animation_duration_for_enabled, ui_test_mode_from_env,
+    };
+    use std::time::Duration;
 
     #[test]
     fn ui_test_mode_defaults_to_system_when_disabled() {
@@ -72,5 +86,17 @@ mod tests {
         let mode = ui_test_mode_from_env(true, Some("nope"));
         assert!(mode.enabled);
         assert_eq!(mode.theme, ThemePreference::Dark);
+    }
+
+    #[test]
+    fn ui_test_mode_animation_duration_is_zero_when_enabled() {
+        assert_eq!(
+            ui_test_mode_animation_duration_for_enabled(true, Duration::from_millis(123)),
+            Duration::from_millis(0)
+        );
+        assert_eq!(
+            ui_test_mode_animation_duration_for_enabled(false, Duration::from_millis(123)),
+            Duration::from_millis(123)
+        );
     }
 }

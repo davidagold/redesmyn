@@ -14,7 +14,10 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
     TextButton,
 };
-use redesmyn_ui::utils::{UserActionState, theme_for_window};
+use redesmyn_ui::utils::{
+    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    ui_test_mode_animation_duration,
+};
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
 use crate::geometry::{
@@ -123,6 +126,7 @@ pub struct GraphView {
     scene: GraphScene,
     camera: GraphCamera,
     camera_animation: Option<CameraAnimation>,
+    camera_animation_guard: Option<UiActivityGuard>,
     pan_drag: Option<PanDrag>,
     last_canvas_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     expanded_session_scroll: ScrollHandle,
@@ -130,12 +134,14 @@ pub struct GraphView {
     demo_action: UserActionState,
     demo_action_task: Option<Task<()>>,
     layout_animation: Option<LayoutAnimation>,
+    layout_animation_guard: Option<UiActivityGuard>,
     pending_pan_to_selection: Option<GraphNodeId>,
     did_initial_fit: bool,
     fit_suppressed: bool,
     edge_label_cache: RefCell<HashMap<gpui::SharedString, gpui::ShapedLine>>,
     selection_bar_progress: f32,
     selection_bar_transition: Option<SelectionBarTransition>,
+    selection_bar_guard: Option<UiActivityGuard>,
     bulk_start: BulkCommandState,
 }
 
@@ -149,6 +155,7 @@ impl GraphView {
             scene: GraphScene::demo(),
             camera: GraphCamera::new(GraphCameraLimits::default()),
             camera_animation: None,
+            camera_animation_guard: None,
             pan_drag: None,
             last_canvas_bounds: None,
             expanded_session_scroll: ScrollHandle::new(),
@@ -156,12 +163,14 @@ impl GraphView {
             demo_action: UserActionState::default(),
             demo_action_task: None,
             layout_animation: None,
+            layout_animation_guard: None,
             pending_pan_to_selection: None,
             did_initial_fit: false,
             fit_suppressed: false,
             edge_label_cache: RefCell::new(HashMap::new()),
             selection_bar_progress: 0.0,
             selection_bar_transition: None,
+            selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
         }
     }
@@ -202,12 +211,18 @@ impl GraphView {
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
-            self.start_layout_animation(
+            let did_start_layout_animation = self.start_layout_animation(
                 from_layout,
                 self.snapshot_scene_layout(),
                 previous_selection.selected_node,
                 next_selection.selected_node,
             );
+            if did_start_layout_animation {
+                self.layout_animation_guard =
+                    ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
+            } else {
+                self.layout_animation_guard = None;
+            }
 
             if !self.did_initial_fit {
                 self.fit_suppressed = true;
@@ -216,7 +231,7 @@ impl GraphView {
             self.pending_pan_to_selection = next_selection.selected_node;
         }
 
-        self.update_selection_bar_target();
+        self.update_selection_bar_target(cx);
         cx.notify();
     }
 
@@ -269,15 +284,22 @@ impl GraphView {
         to_layout: BTreeMap<GraphNodeId, NodeWorldRect>,
         from_selected_node: Option<GraphNodeId>,
         to_selected_node: Option<GraphNodeId>,
-    ) {
+    ) -> bool {
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
+        if duration == Duration::from_millis(0) {
+            self.layout_animation = None;
+            return false;
+        }
+
         self.layout_animation = Some(LayoutAnimation {
             start: Instant::now(),
-            duration: Duration::from_millis(180),
+            duration,
             from_layout,
             to_layout,
             from_selected_node,
             to_selected_node,
         });
+        true
     }
 
     fn node_world_rect_for_progress(&self, node_id: GraphNodeId, t: f32) -> NodeWorldRect {
@@ -328,6 +350,7 @@ impl GraphView {
         let t = animation.progress();
         if t >= 1.0 {
             self.layout_animation = None;
+            self.layout_animation_guard = None;
             1.0
         } else {
             window.request_animation_frame();
@@ -346,6 +369,7 @@ impl GraphView {
         let Some(animation) = self.camera_animation.take() else {
             return false;
         };
+        self.camera_animation_guard = None;
 
         let t = animation.progress();
         if t <= 0.0 {
@@ -376,6 +400,7 @@ impl GraphView {
 
         if t >= 1.0 {
             self.camera_animation = None;
+            self.camera_animation_guard = None;
         } else {
             window.request_animation_frame();
         }
@@ -397,6 +422,13 @@ impl GraphView {
             && (self.camera.zoom() - to_zoom).abs() < 1e-3
         {
             return false;
+        }
+
+        let duration = ui_test_mode_animation_duration(duration);
+        if duration == Duration::from_millis(0) {
+            self.camera.set_origin_world(to_origin_world);
+            self.camera.set_zoom(to_zoom);
+            return true;
         }
 
         self.camera_animation = Some(CameraAnimation {
@@ -802,10 +834,18 @@ impl GraphView {
             && self.scene.selection().selected_nodes.len() > 1
     }
 
-    fn update_selection_bar_target(&mut self) {
+    fn update_selection_bar_target(&mut self, cx: &App) {
         let target_visible = self.selection_bar_target_visible();
         let target = if target_visible { 1.0 } else { 0.0 };
         if (self.selection_bar_progress - target).abs() < f32::EPSILON {
+            return;
+        }
+
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
+        if duration == Duration::from_millis(0) {
+            self.selection_bar_progress = target;
+            self.selection_bar_transition = None;
+            self.selection_bar_guard = None;
             return;
         }
 
@@ -813,14 +853,22 @@ impl GraphView {
             started_at: Instant::now(),
             from: self.selection_bar_progress,
             to: target,
-            duration: Duration::from_millis(180),
+            duration,
         });
+        self.selection_bar_guard = ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
     }
 
     fn tick_selection_bar_animation(&mut self, window: &mut Window) {
         let Some(transition) = self.selection_bar_transition else {
             return;
         };
+
+        if transition.duration == Duration::from_millis(0) {
+            self.selection_bar_progress = transition.to;
+            self.selection_bar_transition = None;
+            self.selection_bar_guard = None;
+            return;
+        }
 
         let elapsed = transition.started_at.elapsed();
         let t = (elapsed.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0);
@@ -830,6 +878,7 @@ impl GraphView {
         if t >= 1.0 {
             self.selection_bar_progress = transition.to;
             self.selection_bar_transition = None;
+            self.selection_bar_guard = None;
         } else {
             window.request_animation_frame();
         }
@@ -1179,7 +1228,11 @@ impl Render for GraphView {
         self.step_camera_animation_for_render(window);
         let started_fit = self.try_initial_fit_for_render();
         let started_pan = self.try_pan_to_selection_for_render();
-        if started_fit || started_pan {
+        if (started_fit || started_pan) && self.camera_animation.is_some() {
+            if self.camera_animation_guard.is_none() {
+                self.camera_animation_guard =
+                    ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
+            }
             window.request_animation_frame();
         }
 

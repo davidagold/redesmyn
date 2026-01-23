@@ -704,16 +704,24 @@ async fn wait_for_idle(
         Duration::from_millis(req.quiescence_ms)
     };
 
-    let mut updates_rx = cx
+    let (mut updates_rx, idle_rx_opt) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
                 return Err(());
             };
-            Ok::<_, ()>(root.read(cx).subscribe_ui_updates())
+
+            Ok::<_, ()>((
+                root.read(cx).subscribe_ui_updates(),
+                cx.try_global::<UiContext>()
+                    .map(|ui| ui.idle_tracker().subscribe()),
+            ))
         })
         .ok()
         .and_then(Result::ok)
         .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
+
+    let (_idle_dummy_tx, idle_dummy_rx) = watch::channel(0_usize);
+    let mut idle_rx = idle_rx_opt.unwrap_or(idle_dummy_rx);
 
     let timeout_timer = gpui::Timer::after(timeout);
     tokio::pin!(timeout_timer);
@@ -730,7 +738,10 @@ async fn wait_for_idle(
             .and_then(Result::ok)
             .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
 
-        if snapshot.in_flight.is_empty() {
+        let active_transitions = *idle_rx.borrow();
+        let is_idle = snapshot.in_flight.is_empty() && active_transitions == 0;
+
+        if is_idle {
             let quiescence_timer = gpui::Timer::after(quiescence);
             tokio::pin!(quiescence_timer);
 
@@ -738,6 +749,12 @@ async fn wait_for_idle(
                 changed = updates_rx.changed() => {
                     if changed.is_err() {
                         return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                    }
+                    continue;
+                }
+                changed = idle_rx.changed() => {
+                    if changed.is_err() {
+                        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI idle channel closed."));
                     }
                     continue;
                 }
@@ -755,6 +772,11 @@ async fn wait_for_idle(
             changed = updates_rx.changed() => {
                 if changed.is_err() {
                     return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                }
+            }
+            changed = idle_rx.changed() => {
+                if changed.is_err() {
+                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI idle channel closed."));
                 }
             }
             _ = &mut timeout_timer => {
