@@ -23,6 +23,12 @@ pub struct Commands {
     updates_tx: broadcast::Sender<CommandUpdateNotice>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateCommandResult {
+    pub command: CommandSummary,
+    pub created_new: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CommandUpdateNotice {
     command_id: CommandId,
@@ -55,7 +61,7 @@ impl Commands {
         target_task_id: Option<TaskId>,
         idempotency_key: Option<String>,
         created_by: Option<String>,
-    ) -> Result<CommandSummary, ControlPlaneError> {
+    ) -> Result<CreateCommandResult, ControlPlaneError> {
         if kind.trim().is_empty() {
             return Err(ControlPlaneError::InvalidCommandKind { kind });
         }
@@ -161,12 +167,18 @@ impl Commands {
                 let last_update = last_update
                     .map(command_update_summary_from_record)
                     .transpose()?;
-                Ok(command_summary_from_records(command, last_update)?)
+                Ok(CreateCommandResult {
+                    command: command_summary_from_records(command, last_update)?,
+                    created_new: false,
+                })
             }
             CreateResult::New { command, update } => {
                 self.publish_update(&command, &update).await;
                 let last_update = Some(command_update_summary_from_record(update)?);
-                Ok(command_summary_from_records(command, last_update)?)
+                Ok(CreateCommandResult {
+                    command: command_summary_from_records(command, last_update)?,
+                    created_new: true,
+                })
             }
         }
     }

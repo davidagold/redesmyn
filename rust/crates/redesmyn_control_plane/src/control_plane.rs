@@ -6,9 +6,16 @@ use tokio::runtime::Handle;
 
 use crate::client_api::{ClientApiCodec, ClientApiServeError};
 use crate::command::Commands;
+use crate::daemon_router::DaemonRouter;
 use crate::event_log::{EventLog, EventLogConfig};
 use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
+
+use redesmyn_ids::{CommandId, HostInstanceId, TaskId};
+use redesmyn_protocol::daemon::CommandUpdate as DaemonCommandUpdate;
+use redesmyn_protocol::{ErrorEnvelope, RepoScope};
+use redesmyn_storage::commands::CommandScope;
+use redesmyn_storage::schema::CommandState as StorageCommandState;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneInitError {
@@ -57,6 +64,7 @@ pub struct ControlPlane {
     event_log: EventLog,
     session_events: SessionEvents,
     commands: Commands,
+    daemons: DaemonRouter,
 }
 
 impl ControlPlane {
@@ -97,11 +105,13 @@ impl ControlPlane {
         let session_events =
             SessionEvents::new_with_config(pool.clone(), SessionEventsConfig::default());
         let commands = Commands::new(pool.clone(), event_log.clone());
+        let daemons = DaemonRouter::new();
         Self {
             pool,
             event_log,
             session_events,
             commands,
+            daemons,
         }
     }
 
@@ -123,6 +133,119 @@ impl ControlPlane {
     #[must_use]
     pub fn commands(&self) -> &Commands {
         &self.commands
+    }
+
+    #[must_use]
+    pub fn daemons(&self) -> &DaemonRouter {
+        &self.daemons
+    }
+
+    pub async fn issue_command(
+        &self,
+        scope: CommandScope,
+        kind: String,
+        target_task_id: Option<TaskId>,
+        idempotency_key: Option<String>,
+        created_by: Option<String>,
+    ) -> Result<redesmyn_protocol::client::CommandSummary, crate::error::ControlPlaneError> {
+        let result = self
+            .commands()
+            .create_command(scope, kind.clone(), target_task_id, idempotency_key, created_by)
+            .await?;
+
+        if result.created_new {
+            self.dispatch_repo_command_if_needed(scope, result.command.command_id, kind)
+                .await?;
+
+            return self
+                .commands()
+                .get_command(result.command.command_id)
+                .await?
+                .ok_or(crate::error::ControlPlaneError::CommandNotFound {
+                    command_id: result.command.command_id,
+                });
+        }
+
+        Ok(result.command)
+    }
+
+    async fn dispatch_repo_command_if_needed(
+        &self,
+        scope: CommandScope,
+        command_id: CommandId,
+        kind: String,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        let CommandScope::Repo {
+            workspace_id,
+            repo_id,
+        } = scope
+        else {
+            return Ok(());
+        };
+
+        let repo_scope = RepoScope {
+            workspace_id,
+            repo_id,
+        };
+
+        let dispatch_result = self
+            .daemons()
+            .dispatch_command(repo_scope, command_id, kind, Vec::new())
+            .await;
+
+        if let Err(err) = dispatch_result {
+            let detail = serde_json::to_vec(&err).unwrap_or_default();
+            let _ = self
+                .commands()
+                .append_update(
+                    command_id,
+                    StorageCommandState::Failed,
+                    Some(err.message),
+                    None,
+                    None,
+                    Some(detail),
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn apply_daemon_command_update(
+        &self,
+        host_instance_id: HostInstanceId,
+        update: DaemonCommandUpdate,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        let command_id = update.command_id;
+        if !self
+            .daemons()
+            .authorize_command_update(host_instance_id, command_id)
+            .await
+        {
+            tracing::warn!(
+                host_instance_id = %host_instance_id,
+                command_id = %command_id,
+                "ignoring unauthorized daemon command update"
+            );
+            return Ok(());
+        }
+
+        let (state, message, progress_current, progress_total, detail) =
+            map_daemon_command_update(update);
+
+        let _ = self
+            .commands()
+            .append_update(
+                command_id,
+                state,
+                message,
+                progress_current,
+                progress_total,
+                detail,
+            )
+            .await?;
+
+        Ok(())
     }
 
     pub async fn start(
@@ -173,6 +296,56 @@ impl ControlPlane {
     }
 }
 
+fn map_daemon_command_update(
+    update: DaemonCommandUpdate,
+) -> (
+    StorageCommandState,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<Vec<u8>>,
+) {
+    let state = match update.state {
+        redesmyn_protocol::daemon::CommandState::Queued => StorageCommandState::Queued,
+        redesmyn_protocol::daemon::CommandState::Accepted => StorageCommandState::Accepted,
+        redesmyn_protocol::daemon::CommandState::Running => StorageCommandState::Running,
+        redesmyn_protocol::daemon::CommandState::Blocked => StorageCommandState::Blocked,
+        redesmyn_protocol::daemon::CommandState::Resumable => StorageCommandState::Resumable,
+        redesmyn_protocol::daemon::CommandState::Succeeded => StorageCommandState::Succeeded,
+        redesmyn_protocol::daemon::CommandState::Failed => StorageCommandState::Failed,
+        redesmyn_protocol::daemon::CommandState::Canceled => StorageCommandState::Canceled,
+        redesmyn_protocol::daemon::CommandState::Rejected => StorageCommandState::Failed,
+    };
+
+    let (progress_current, progress_total) = update
+        .progress
+        .map(|progress| {
+            let percent: i64 = progress.percent.into();
+            (Some(percent), Some(100))
+        })
+        .unwrap_or((None, None));
+
+    #[derive(serde::Serialize)]
+    struct UpdateDetail {
+        detail: Option<redesmyn_protocol::ErrorDetail>,
+        error: Option<ErrorEnvelope>,
+    }
+
+    let detail = serde_json::to_vec(&UpdateDetail {
+        detail: update.detail,
+        error: update.error,
+    })
+    .ok();
+
+    (
+        state,
+        update.message,
+        progress_current,
+        progress_total,
+        detail,
+    )
+}
+
 struct ControlPlaneState {
     #[allow(dead_code)]
     control_plane: ControlPlane,
@@ -185,6 +358,11 @@ pub struct ControlPlaneHandle {
 }
 
 impl ControlPlaneHandle {
+    #[must_use]
+    pub fn control_plane(&self) -> ControlPlane {
+        self.state.control_plane.clone()
+    }
+
     /// Connect a client to the control plane using an in-proc transport.
     ///
     /// This returns the client side of an in-memory channel pair and spawns a

@@ -4,6 +4,7 @@
 
 mod command;
 mod daemon_link;
+mod daemon_router;
 mod task_manager;
 
 pub mod client_api;

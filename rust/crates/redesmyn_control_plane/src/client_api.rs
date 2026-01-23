@@ -631,8 +631,7 @@ async fn handle_request_result(
             };
 
             let command = control_plane
-                .commands()
-                .create_command(
+                .issue_command(
                     scope,
                     req.kind,
                     req.target_task_id,

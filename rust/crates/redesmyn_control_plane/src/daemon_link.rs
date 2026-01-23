@@ -1,17 +1,16 @@
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use redesmyn_logging::tracing;
-use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
+use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonHello, DaemonMessage};
 use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion};
 use redesmyn_transport::in_proc::InProcEndpoint;
 use redesmyn_transport::{DaemonConnection, TransportError};
 
+use crate::ControlPlane;
+
 /// A minimal control-plane↔daemon adapter for embedded daemon mode.
 ///
-/// For now this keeps the in-proc daemon connection drained so heartbeats don't
-/// backpressure the daemon, and performs a basic T-11 handshake to prove the
-/// wiring works. Higher-level routing belongs in the control-plane domain.
 #[derive(Debug)]
 pub struct DaemonLinkHandle {
     shutdown_tx: watch::Sender<bool>,
@@ -20,9 +19,13 @@ pub struct DaemonLinkHandle {
 
 impl DaemonLinkHandle {
     #[must_use]
-    pub fn start(runtime: &tokio::runtime::Runtime, conn: InProcEndpoint) -> Self {
+    pub fn start(
+        handle: &tokio::runtime::Handle,
+        control_plane: ControlPlane,
+        conn: InProcEndpoint,
+    ) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let task = runtime.spawn(run_daemon_link(conn, shutdown_rx));
+        let task = handle.spawn(run_daemon_link(control_plane, conn, shutdown_rx));
         Self { shutdown_tx, task }
     }
 
@@ -35,7 +38,11 @@ impl DaemonLinkHandle {
     }
 }
 
-async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Receiver<bool>) {
+async fn run_daemon_link(
+    control_plane: ControlPlane,
+    mut conn: InProcEndpoint,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
     let span = tracing::info_span!("control_plane.daemon_link");
     let _enter = span.enter();
 
@@ -53,7 +60,7 @@ async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Recei
     };
 
     let peer_version = frame.envelope.protocol_version();
-    let DaemonMessage::DaemonHello(_) = frame.message else {
+    let DaemonMessage::DaemonHello(hello) = frame.message else {
         tracing::warn!(?frame.message, "unexpected daemon message during handshake");
         return;
     };
@@ -86,23 +93,92 @@ async fn run_daemon_link(mut conn: InProcEndpoint, mut shutdown_rx: watch::Recei
         return;
     }
 
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<DaemonFrame>(64);
+    register_daemon(&control_plane, &hello, accepted, outbound_tx).await;
+
     loop {
         if *shutdown_rx.borrow() {
-            return;
+            break;
         }
 
         tokio::select! {
             _ = shutdown_rx.changed() => {}
+            outbound = outbound_rx.recv() => {
+                let Some(frame) = outbound else {
+                    break;
+                };
+
+                if let Err(err) = conn.send(frame).await {
+                    if !matches!(err, TransportError::ChannelClosed) {
+                        tracing::warn!(error = %err, "daemon link send error");
+                    }
+                    break;
+                }
+            }
             frame = conn.recv() => {
                 match frame {
-                    Ok(_frame) => {}
-                    Err(TransportError::ChannelClosed) => return,
+                    Ok(frame) => {
+                        handle_inbound_frame(&control_plane, hello.host_instance_id, frame).await;
+                    }
+                    Err(TransportError::ChannelClosed) => break,
                     Err(err) => {
-                        tracing::warn!(error = %err, "daemon link transport error");
-                        return;
+                        tracing::warn!(error = %err, "daemon link recv error");
+                        break;
                     }
                 }
             }
         }
+    }
+
+    control_plane
+        .daemons()
+        .unregister_connection(hello.host_instance_id)
+        .await;
+}
+
+async fn register_daemon(
+    control_plane: &ControlPlane,
+    hello: &DaemonHello,
+    accepted: ProtocolVersion,
+    outbound_tx: mpsc::Sender<DaemonFrame>,
+) {
+    control_plane
+        .daemons()
+        .register_connection(
+            hello.host_id,
+            hello.host_instance_id,
+            accepted,
+            outbound_tx,
+        )
+        .await;
+}
+
+async fn handle_inbound_frame(
+    control_plane: &ControlPlane,
+    host_instance_id: redesmyn_ids::HostInstanceId,
+    frame: DaemonFrame,
+) {
+    match frame.message {
+        DaemonMessage::CommandUpdate(update) => {
+            if let Err(err) = control_plane
+                .apply_daemon_command_update(host_instance_id, update)
+                .await
+            {
+                tracing::warn!(error = %err, "failed to apply daemon command update");
+            }
+        }
+        DaemonMessage::RepoAttach(attach) => {
+            control_plane
+                .daemons()
+                .attach_repo(host_instance_id, attach.repo_scope)
+                .await;
+        }
+        DaemonMessage::RepoDetach(detach) => {
+            control_plane
+                .daemons()
+                .detach_repo(host_instance_id, detach.repo_scope)
+                .await;
+        }
+        _ => {}
     }
 }

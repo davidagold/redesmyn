@@ -262,7 +262,11 @@ impl DesktopApp {
             });
 
             let daemon_link = Some(redesmyn_control_plane::DaemonLinkHandle::start(
-                &runtime,
+                runtime.handle(),
+                control_plane
+                    .as_ref()
+                    .expect("embedded daemon requires embedded control plane")
+                    .control_plane(),
                 control_plane_conn,
             ));
 
