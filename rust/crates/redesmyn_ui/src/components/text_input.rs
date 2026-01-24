@@ -8,7 +8,12 @@ use gpui::{
     actions, div, fill, point, prelude::*, px, relative, size,
 };
 
-use crate::utils::theme_for_window;
+use crate::utils::{
+    text_editing::{
+        line_end_offset, line_start_offset, next_word_boundary, previous_word_boundary,
+    },
+    theme_for_window,
+};
 
 actions!(
     redesmyn_ui_text_input,
@@ -17,11 +22,23 @@ actions!(
         Delete,
         Left,
         Right,
+        MoveWordLeft,
+        MoveWordRight,
         SelectLeft,
         SelectRight,
+        SelectWordLeft,
+        SelectWordRight,
         SelectAll,
         Home,
         End,
+        MoveLineStart,
+        MoveLineEnd,
+        SelectLineStart,
+        SelectLineEnd,
+        DeleteWordBackward,
+        DeleteWordForward,
+        DeleteToLineStart,
+        DeleteToLineEnd,
         Paste,
         Cut,
         Copy,
@@ -39,10 +56,35 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("left", Left, Some("TextArea")),
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("right", Right, Some("TextArea")),
+        // Word navigation (macOS: alt-*, Windows/Linux: ctrl-*).
+        KeyBinding::new("alt-left", MoveWordLeft, Some("TextInput")),
+        KeyBinding::new("alt-left", MoveWordLeft, Some("TextArea")),
+        KeyBinding::new("alt-right", MoveWordRight, Some("TextInput")),
+        KeyBinding::new("alt-right", MoveWordRight, Some("TextArea")),
+        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextInput")),
+        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextArea")),
+        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextInput")),
+        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextArea")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextArea")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextArea")),
+        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextArea")),
+        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextInput")),
+        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextArea")),
+        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextArea")),
+        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextInput")),
+        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextArea")),
+        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextInput")),
+        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextArea")),
+        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextInput")),
+        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextArea")),
+        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextInput")),
+        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextArea")),
+        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextInput")),
+        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextArea")),
         KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
         KeyBinding::new("cmd-a", SelectAll, Some("TextArea")),
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
@@ -51,10 +93,28 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, Some("TextArea")),
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
         KeyBinding::new("cmd-x", Cut, Some("TextArea")),
-        KeyBinding::new("home", Home, Some("TextInput")),
-        KeyBinding::new("home", Home, Some("TextArea")),
-        KeyBinding::new("end", End, Some("TextInput")),
-        KeyBinding::new("end", End, Some("TextArea")),
+        // Line navigation (macOS: cmd-left/right, Windows/Linux: home/end).
+        KeyBinding::new("cmd-left", MoveLineStart, Some("TextInput")),
+        KeyBinding::new("cmd-left", MoveLineStart, Some("TextArea")),
+        KeyBinding::new("cmd-right", MoveLineEnd, Some("TextInput")),
+        KeyBinding::new("cmd-right", MoveLineEnd, Some("TextArea")),
+        KeyBinding::new("shift-cmd-left", SelectLineStart, Some("TextInput")),
+        KeyBinding::new("shift-cmd-left", SelectLineStart, Some("TextArea")),
+        KeyBinding::new("shift-cmd-right", SelectLineEnd, Some("TextInput")),
+        KeyBinding::new("shift-cmd-right", SelectLineEnd, Some("TextArea")),
+        KeyBinding::new("home", MoveLineStart, Some("TextInput")),
+        KeyBinding::new("home", MoveLineStart, Some("TextArea")),
+        KeyBinding::new("end", MoveLineEnd, Some("TextInput")),
+        KeyBinding::new("end", MoveLineEnd, Some("TextArea")),
+        KeyBinding::new("shift-home", SelectLineStart, Some("TextInput")),
+        KeyBinding::new("shift-home", SelectLineStart, Some("TextArea")),
+        KeyBinding::new("shift-end", SelectLineEnd, Some("TextInput")),
+        KeyBinding::new("shift-end", SelectLineEnd, Some("TextArea")),
+        // Line deletion (optional but recommended).
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextInput")),
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextArea")),
+        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextInput")),
+        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextArea")),
         KeyBinding::new("enter", Submit, Some("TextInput")),
         KeyBinding::new("cmd-enter", Submit, Some("TextArea")),
     ]);
@@ -180,12 +240,42 @@ impl TextInput {
         }
     }
 
+    fn move_word_left(&mut self, _: &MoveWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(
+                previous_word_boundary(&self.content, self.cursor_offset()),
+                cx,
+            );
+        } else {
+            self.move_to(self.selected_range.start, cx)
+        }
+    }
+
+    fn move_word_right(&mut self, _: &MoveWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
+        } else {
+            self.move_to(self.selected_range.end, cx)
+        }
+    }
+
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(
+            previous_word_boundary(&self.content, self.cursor_offset()),
+            cx,
+        );
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -202,6 +292,22 @@ impl TextInput {
         self.move_to(self.content.len(), cx);
     }
 
+    fn move_line_start(&mut self, _: &MoveLineStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+    }
+
+    fn move_line_end(&mut self, _: &MoveLineEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.content.len(), cx);
+    }
+
+    fn select_line_start(&mut self, _: &SelectLineStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(0, cx);
+    }
+
+    fn select_line_end(&mut self, _: &SelectLineEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.content.len(), cx);
+    }
+
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
@@ -212,6 +318,57 @@ impl TextInput {
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_word_backward(
+        &mut self,
+        _: &DeleteWordBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(
+                previous_word_boundary(&self.content, self.cursor_offset()),
+                cx,
+            )
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_word_forward(
+        &mut self,
+        _: &DeleteWordForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx)
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_line_start(
+        &mut self,
+        _: &DeleteToLineStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(0, cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_line_end(
+        &mut self,
+        _: &DeleteToLineEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(self.content.len(), cx);
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -683,11 +840,23 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::move_word_left))
+            .on_action(cx.listener(Self::move_word_right))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
+            .on_action(cx.listener(Self::move_line_start))
+            .on_action(cx.listener(Self::move_line_end))
+            .on_action(cx.listener(Self::select_line_start))
+            .on_action(cx.listener(Self::select_line_end))
+            .on_action(cx.listener(Self::delete_word_backward))
+            .on_action(cx.listener(Self::delete_word_forward))
+            .on_action(cx.listener(Self::delete_to_line_start))
+            .on_action(cx.listener(Self::delete_to_line_end))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
@@ -1105,6 +1274,24 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
+    fn move_word_left(&mut self, _: &MoveWordLeft, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(previous_word_boundary(&self.content, self.cursor_offset()), cx);
+        } else {
+            self.move_to(self.selected_range.start, cx)
+        }
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn move_word_right(&mut self, _: &MoveWordRight, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
+        } else {
+            self.move_to(self.selected_range.end, cx)
+        }
+        self.scroll_caret_into_view(window, cx);
+    }
+
     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
@@ -1112,6 +1299,26 @@ impl TextArea {
 
     fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn select_word_left(
+        &mut self,
+        _: &SelectWordLeft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(previous_word_boundary(&self.content, self.cursor_offset()), cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn select_word_right(
+        &mut self,
+        _: &SelectWordRight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
@@ -1132,6 +1339,38 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
+    fn move_line_start(&mut self, _: &MoveLineStart, window: &mut Window, cx: &mut Context<Self>) {
+        let start = line_start_offset(&self.content, self.cursor_offset());
+        self.move_to(start, cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn move_line_end(&mut self, _: &MoveLineEnd, window: &mut Window, cx: &mut Context<Self>) {
+        let end = line_end_offset(&self.content, self.cursor_offset());
+        self.move_to(end, cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn select_line_start(
+        &mut self,
+        _: &SelectLineStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(line_start_offset(&self.content, self.cursor_offset()), cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
+    fn select_line_end(
+        &mut self,
+        _: &SelectLineEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
+        self.scroll_caret_into_view(window, cx);
+    }
+
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
@@ -1144,6 +1383,57 @@ impl TextArea {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn delete_word_backward(
+        &mut self,
+        _: &DeleteWordBackward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(
+                previous_word_boundary(&self.content, self.cursor_offset()),
+                cx,
+            )
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_word_forward(
+        &mut self,
+        _: &DeleteWordForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx)
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_line_start(
+        &mut self,
+        _: &DeleteToLineStart,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(line_start_offset(&self.content, self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_to_line_end(
+        &mut self,
+        _: &DeleteToLineEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_range.is_empty() {
+            self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
+        }
+        self.replace_text_in_range(None, "", window, cx)
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -1674,11 +1964,23 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::move_word_left))
+            .on_action(cx.listener(Self::move_word_right))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
+            .on_action(cx.listener(Self::move_line_start))
+            .on_action(cx.listener(Self::move_line_end))
+            .on_action(cx.listener(Self::select_line_start))
+            .on_action(cx.listener(Self::select_line_end))
+            .on_action(cx.listener(Self::delete_word_backward))
+            .on_action(cx.listener(Self::delete_word_forward))
+            .on_action(cx.listener(Self::delete_to_line_start))
+            .on_action(cx.listener(Self::delete_to_line_end))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))

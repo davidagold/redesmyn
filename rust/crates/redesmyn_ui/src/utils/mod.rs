@@ -2,6 +2,7 @@
 
 mod idle;
 mod test_mode;
+pub(crate) mod text_editing;
 mod theme;
 mod user_action;
 
