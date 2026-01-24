@@ -3,10 +3,9 @@ use std::sync::Arc;
 use redesmyn_ids::{EpicId, RequestId, SessionId};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
-    CreateChatSessionResponse, GetEpicGraphRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
-    Request, RequestPayload, ResponseResult, StatusRequest, StatusResponse,
-    UnpinChatSessionFromEpicRequest,
-    GetEpicPinnedChatSessionRequest, ListChatSessionsRequest,
+    CreateChatSessionResponse, GetEpicGraphRequest, GetEpicPinnedChatSessionRequest,
+    ListChatSessionsRequest, ListEpicsRequest, PinChatSessionToEpicRequest, Request,
+    RequestPayload, ResponseResult, StatusRequest, StatusResponse, UnpinChatSessionFromEpicRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};

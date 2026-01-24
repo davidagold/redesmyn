@@ -855,9 +855,7 @@ fn trunk_layout_for_timeline(timeline: &TrunkTimeline) -> TrunkLayout {
 
     let mark_count = marks.len() as i32;
     let span_height = if mark_count > 1 {
-        TRUNK_COMMIT_PADDING * 2
-            + (mark_count - 1) * TRUNK_COMMIT_SPACING
-            + TRUNK_COMMIT_ROW_HEIGHT
+        TRUNK_COMMIT_PADDING * 2 + (mark_count - 1) * TRUNK_COMMIT_SPACING + TRUNK_COMMIT_ROW_HEIGHT
     } else {
         trunk_layout_default_span_height()
     };
@@ -895,7 +893,9 @@ fn agent_status_by_task_id(
 
     fn from_command_state(state: CommandState) -> AgentStatus {
         match state {
-            CommandState::Queued | CommandState::Running | CommandState::Accepted => AgentStatus::Running,
+            CommandState::Queued | CommandState::Running | CommandState::Accepted => {
+                AgentStatus::Running
+            }
             CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
             CommandState::Failed => AgentStatus::Error,
             CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,

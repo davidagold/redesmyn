@@ -65,11 +65,8 @@ impl From<ControlPlaneError> for ErrorEnvelope {
             }
             ControlPlaneError::InvalidIdempotencyKey { idempotency_key } => {
                 let detail = ErrorDetail::from([("idempotency_key".to_string(), idempotency_key)]);
-                ErrorEnvelope::new(
-                    ErrorCategory::InvalidRequest,
-                    "Invalid idempotency key.",
-                )
-                .with_detail(detail)
+                ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Invalid idempotency key.")
+                    .with_detail(detail)
             }
             ControlPlaneError::CommandIdempotencyPayloadMismatch {
                 idempotency_key,

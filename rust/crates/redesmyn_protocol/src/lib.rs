@@ -445,10 +445,10 @@ mod tests {
         ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, Timestamp, TraceId,
     };
 
-	    use redesmyn_ids::{
-	        CommandId, EpicId, EventId, HostId, HostInstanceId, RepoId, RequestId, SubscriptionId,
-	        WorkspaceId,
-	    };
+    use redesmyn_ids::{
+        CommandId, EpicId, EventId, HostId, HostInstanceId, RepoId, RequestId, SubscriptionId,
+        WorkspaceId,
+    };
 
     use prost::Message;
 
@@ -777,15 +777,15 @@ mod tests {
                 ProtocolEnvelope::new(),
                 ClientMessage::Response(Response {
                     request_id: RequestId::new(),
-	                    result: ResponseResult::ListEpics(ListEpicsResponse {
-	                        epics: vec![EpicSummary {
-	                            slug: "gpui".to_string(),
-	                            name: "GPUI + Rust Port".to_string(),
-	                            epic_id: Some(EpicId::new()),
-	                        }],
-	                    }),
-	                }),
-	            ),
+                    result: ResponseResult::ListEpics(ListEpicsResponse {
+                        epics: vec![EpicSummary {
+                            slug: "gpui".to_string(),
+                            name: "GPUI + Rust Port".to_string(),
+                            epic_id: Some(EpicId::new()),
+                        }],
+                    }),
+                }),
+            ),
             ClientFrame::new(
                 ProtocolEnvelope::new(),
                 ClientMessage::Request(Request {

@@ -6,7 +6,9 @@ use tokio::sync::{RwLock, mpsc};
 use redesmyn_ids::{CommandId, HostId, HostInstanceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::daemon::{CommandDispatch, DaemonFrame, DaemonMessage};
-use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope};
+use redesmyn_protocol::{
+    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope,
+};
 
 #[derive(Clone, Default)]
 pub struct DaemonRouter {
@@ -113,10 +115,12 @@ impl DaemonRouter {
                 })
                 .map(|(id, entry)| (*id, entry.accepted_protocol, entry.outbound_tx.clone()));
 
-            selected.ok_or_else(|| ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                "No daemon connection is available for the requested scope.",
-            ))?
+            selected.ok_or_else(|| {
+                ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "No daemon connection is available for the requested scope.",
+                )
+            })?
         };
 
         let mut envelope = ProtocolEnvelope::new();
@@ -145,10 +149,8 @@ impl DaemonRouter {
                 inner.assignments.remove(&command_id);
             }
 
-            let detail = ErrorDetail::from([(
-                "host_instance_id".to_string(),
-                host_instance_id.to_string(),
-            )]);
+            let detail =
+                ErrorDetail::from([("host_instance_id".to_string(), host_instance_id.to_string())]);
             return Err(ErrorEnvelope::new(
                 ErrorCategory::Unavailable,
                 "Daemon connection closed while dispatching command.",

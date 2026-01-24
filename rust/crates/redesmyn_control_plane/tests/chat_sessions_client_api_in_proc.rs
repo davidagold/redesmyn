@@ -3,13 +3,13 @@ use std::time::Duration;
 use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, ControlPlaneDb, ControlPlaneStartOptions};
 use redesmyn_ids::{EpicId, RepoId, RequestId, WorkspaceId};
-use redesmyn_protocol::{ProtocolEnvelope, RepoScope, Scope};
 use redesmyn_protocol::client::{
     ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
     GetEpicPinnedChatSessionRequest, ListChatSessionsRequest, ListEpicsRequest,
     PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
     UnpinChatSessionFromEpicRequest,
 };
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope, Scope};
 use redesmyn_transport::client::ClientConnection;
 
 async fn request(
@@ -23,7 +23,10 @@ async fn request(
 
     conn.send(ClientFrame::new(
         envelope,
-        ClientMessage::Request(Request { request_id, payload }),
+        ClientMessage::Request(Request {
+            request_id,
+            payload,
+        }),
     ))
     .await
     .expect("send request");
@@ -433,10 +436,12 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     };
     assert_eq!(list_open.sessions.len(), 1);
     assert_eq!(list_open.sessions[0].session_id, second_session_id);
-    assert!(list_open
-        .sessions
-        .iter()
-        .all(|session| session.closed_at.is_none()));
+    assert!(
+        list_open
+            .sessions
+            .iter()
+            .all(|session| session.closed_at.is_none())
+    );
 
     control_plane.shutdown().await;
 }

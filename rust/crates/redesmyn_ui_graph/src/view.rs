@@ -20,10 +20,12 @@ use redesmyn_ui::utils::{
 };
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
-use crate::constants::{TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH};
+use crate::constants::{
+    TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH,
+};
 use crate::geometry::{
-    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band, edge_route_between_points_in_window,
-    edge_route_in_window,
+    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band,
+    edge_route_between_points_in_window, edge_route_in_window,
 };
 use crate::hit_test::{GraphHit, hit_test};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
@@ -1024,11 +1026,7 @@ impl GraphView {
             return None;
         }
 
-        Some(self.node_bounds_in_window_for_progress(
-            GraphNodeId::Trunk,
-            canvas_bounds,
-            t,
-        ))
+        Some(self.node_bounds_in_window_for_progress(GraphNodeId::Trunk, canvas_bounds, t))
     }
 
     fn trunk_base_anchor_in_window_for_progress(
@@ -1097,9 +1095,10 @@ impl GraphView {
 
         // Note: This shapes per paint for each visible label. If this becomes hot with many trunk
         // marks on screen, cache shaped lines by (font_size, text) similarly to edge labels.
-        let shaped = window
-            .text_system()
-            .shape_line(text, font_size, std::slice::from_ref(&run), None);
+        let shaped =
+            window
+                .text_system()
+                .shape_line(text, font_size, std::slice::from_ref(&run), None);
         self.paint_shaped_line(origin, line_height, &shaped, color, window);
     }
 
@@ -1127,8 +1126,8 @@ impl GraphView {
         let line_x_px = trunk_bounds.left() + px(line_x * zoom);
 
         let title_x = trunk_bounds.left();
-        let sha_x = trunk_bounds.left()
-            + px((TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH + 10) as f32 * zoom);
+        let sha_x =
+            trunk_bounds.left() + px((TRUNK_TITLE_WIDTH + TRUNK_MARKER_WIDTH + 10) as f32 * zoom);
         let ellipsis_x = sha_x;
 
         let font_size = px(11.0 * zoom);
@@ -1144,7 +1143,8 @@ impl GraphView {
         for (index, mark) in trunk_layout.marks.iter().enumerate() {
             let row_top = trunk_bounds.top()
                 + px(
-                    (trunk_layout.commit_padding + index as i32 * trunk_layout.commit_spacing) as f32
+                    (trunk_layout.commit_padding + index as i32 * trunk_layout.commit_spacing)
+                        as f32
                         * zoom,
                 );
             let row_height = px(trunk_layout.row_height as f32 * zoom);
@@ -1270,7 +1270,8 @@ impl GraphView {
 
         for edge in self.scene.edges() {
             if edge.id.from == GraphNodeId::Trunk {
-                let Some(from_anchor) = self.trunk_base_anchor_in_window_for_progress(canvas_bounds, t)
+                let Some(from_anchor) =
+                    self.trunk_base_anchor_in_window_for_progress(canvas_bounds, t)
                 else {
                     continue;
                 };
@@ -1278,8 +1279,7 @@ impl GraphView {
                     continue;
                 };
 
-                let to_bounds =
-                    self.node_bounds_in_window_for_progress(to.id, canvas_bounds, t);
+                let to_bounds = self.node_bounds_in_window_for_progress(to.id, canvas_bounds, t);
                 let to_anchor = gpui::point(
                     to_bounds.left(),
                     to_bounds.top() + to_bounds.size.height / 2.0,

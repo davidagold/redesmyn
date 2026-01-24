@@ -2160,16 +2160,14 @@ impl EpicSessionPaneHost {
                     };
 
                     let scope = RepoScope::new(workspace_id, repo_id);
-                    let epic_id = selected_epic
-                        .epic_id
-                        .or(graph.epic_id)
-                        .ok_or_else(|| ControlPlaneClientError::Server {
+                    let epic_id = selected_epic.epic_id.or(graph.epic_id).ok_or_else(|| {
+                        ControlPlaneClientError::Server {
                             message: "Epic id unavailable for selected epic.".to_string(),
-                        })?;
+                        }
+                    })?;
 
-                    let pinned_session_id = client
-                        .get_epic_pinned_chat_session(scope, epic_id)
-                        .await?;
+                    let pinned_session_id =
+                        client.get_epic_pinned_chat_session(scope, epic_id).await?;
                     let chat_sessions = client.list_chat_sessions(scope, true, 100).await?;
 
                     Ok::<_, ControlPlaneClientError>((pinned_session_id, chat_sessions))
@@ -2226,13 +2224,15 @@ impl EpicSessionPaneHost {
         }
 
         let Some(client) = self.control_plane_client.clone() else {
-            self.create_and_pin.fail("Control plane client unavailable.");
+            self.create_and_pin
+                .fail("Control plane client unavailable.");
             cx.notify();
             return;
         };
 
         let Some(selected_epic) = self.selected_epic.clone() else {
-            self.create_and_pin.fail("Select an epic before creating a chat session.");
+            self.create_and_pin
+                .fail("Select an epic before creating a chat session.");
             cx.notify();
             return;
         };
@@ -2266,12 +2266,11 @@ impl EpicSessionPaneHost {
                     };
 
                     let scope = RepoScope::new(workspace_id, repo_id);
-                    let epic_id = selected_epic
-                        .epic_id
-                        .or(graph.epic_id)
-                        .ok_or_else(|| ControlPlaneClientError::Server {
+                    let epic_id = selected_epic.epic_id.or(graph.epic_id).ok_or_else(|| {
+                        ControlPlaneClientError::Server {
                             message: "Epic id unavailable for selected epic.".to_string(),
-                        })?;
+                        }
+                    })?;
 
                     let resp = client.create_chat_session(scope, None).await?;
                     let session_id = resp.session_id;
@@ -2387,12 +2386,11 @@ impl EpicSessionPaneHost {
                     };
 
                     let scope = RepoScope::new(workspace_id, repo_id);
-                    let epic_id = selected_epic
-                        .epic_id
-                        .or(graph.epic_id)
-                        .ok_or_else(|| ControlPlaneClientError::Server {
+                    let epic_id = selected_epic.epic_id.or(graph.epic_id).ok_or_else(|| {
+                        ControlPlaneClientError::Server {
                             message: "Epic id unavailable for selected epic.".to_string(),
-                        })?;
+                        }
+                    })?;
 
                     client
                         .pin_chat_session_to_epic(scope, epic_id, session_id)
@@ -2495,12 +2493,11 @@ impl EpicSessionPaneHost {
                     };
 
                     let scope = RepoScope::new(workspace_id, repo_id);
-                    let epic_id = selected_epic
-                        .epic_id
-                        .or(graph.epic_id)
-                        .ok_or_else(|| ControlPlaneClientError::Server {
+                    let epic_id = selected_epic.epic_id.or(graph.epic_id).ok_or_else(|| {
+                        ControlPlaneClientError::Server {
                             message: "Epic id unavailable for selected epic.".to_string(),
-                        })?;
+                        }
+                    })?;
 
                     client.unpin_chat_session_from_epic(scope, epic_id).await?;
 
@@ -2648,9 +2645,7 @@ impl EpicSessionPaneHost {
         }));
     }
 
-    fn pinned_chat_summary(
-        &self,
-    ) -> Option<&redesmyn_protocol::client::AgentSessionSummary> {
+    fn pinned_chat_summary(&self) -> Option<&redesmyn_protocol::client::AgentSessionSummary> {
         let pinned = self.pinned_session_id?;
         self.chat_sessions
             .iter()
@@ -2683,11 +2678,7 @@ impl Render for EpicSessionPaneHost {
             None
         };
 
-        let mut header_actions = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(theme.spacing.sm);
+        let mut header_actions = div().flex().flex_row().items_center().gap(theme.spacing.sm);
 
         if let Some(label) = in_flight_label {
             header_actions = header_actions.child(ProgressPill::new(label));
@@ -2736,7 +2727,9 @@ impl Render for EpicSessionPaneHost {
         header_actions = header_actions
             .child(create_button)
             .child(pin_existing_button)
-            .when(has_pinned, |this| this.child(unpin_button).child(close_button));
+            .when(has_pinned, |this| {
+                this.child(unpin_button).child(close_button)
+            });
 
         if self.fixture.is_some() {
             let label = if self.emit_demo_in_flight {
@@ -2765,7 +2758,12 @@ impl Render for EpicSessionPaneHost {
                     .flex_row()
                     .items_center()
                     .gap(theme.spacing.sm)
-                    .child(div().text_sm().text_color(theme.colors.foreground).child("Chat"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .child("Chat"),
+                    )
                     .child(
                         div()
                             .text_sm()
@@ -2900,7 +2898,12 @@ impl Render for EpicSessionPaneHost {
             }
         }
 
-        body = body.child(div().flex_1().min_h(px(0.0)).child(self.session_view.clone()));
+        body = body.child(
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(self.session_view.clone()),
+        );
 
         let mut container = div()
             .flex()

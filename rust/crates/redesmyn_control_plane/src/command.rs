@@ -66,11 +66,12 @@ impl Commands {
         if kind.trim().is_empty() {
             return Err(ControlPlaneError::InvalidCommandKind { kind });
         }
-        if idempotency_key.as_ref().is_some_and(|key| key.trim().is_empty()) {
+        if idempotency_key
+            .as_ref()
+            .is_some_and(|key| key.trim().is_empty())
+        {
             let idempotency_key = idempotency_key.clone().unwrap_or_default();
-            return Err(ControlPlaneError::InvalidIdempotencyKey {
-                idempotency_key,
-            });
+            return Err(ControlPlaneError::InvalidIdempotencyKey { idempotency_key });
         }
 
         enum CreateResult {
@@ -223,7 +224,10 @@ impl Commands {
         .await?;
 
         match result {
-            CreateResult::Existing { command, last_update } => {
+            CreateResult::Existing {
+                command,
+                last_update,
+            } => {
                 let last_update = last_update
                     .map(command_update_summary_from_record)
                     .transpose()?;
@@ -258,10 +262,11 @@ impl Commands {
             return Ok(None);
         };
 
-        let last_update = redesmyn_storage::commands::get_command_last_update(&self.pool, command_id)
-            .await?
-            .map(command_update_summary_from_record)
-            .transpose()?;
+        let last_update =
+            redesmyn_storage::commands::get_command_last_update(&self.pool, command_id)
+                .await?
+                .map(command_update_summary_from_record)
+                .transpose()?;
 
         Ok(Some(command_summary_from_records(command, last_update)?))
     }
@@ -361,11 +366,14 @@ impl Commands {
             let Some(current) = self.get_command(command_id).await.map_err(|err| {
                 let envelope: ErrorEnvelope = err.into();
                 envelope
-            })? else {
+            })?
+            else {
                 let detail =
                     ErrorDetail::from([("command_id".to_string(), command_id.to_string())]);
-                return Err(ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
-                    .with_detail(detail));
+                return Err(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.")
+                        .with_detail(detail),
+                );
             };
 
             if storage_state_from_client_state(current.state)
@@ -487,7 +495,11 @@ fn validate_transition(
         | StorageCommandState::Canceled => false,
     };
 
-    if ok { Ok(()) } else { Err(InvalidTransition { from, to }) }
+    if ok {
+        Ok(())
+    } else {
+        Err(InvalidTransition { from, to })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -583,7 +595,9 @@ impl IsTerminal for StorageCommandState {
     fn is_terminal(self) -> bool {
         matches!(
             self,
-            StorageCommandState::Succeeded | StorageCommandState::Failed | StorageCommandState::Canceled
+            StorageCommandState::Succeeded
+                | StorageCommandState::Failed
+                | StorageCommandState::Canceled
         )
     }
 }

@@ -52,9 +52,8 @@ pub use crate::error::{LoadConfigError, ValidationError};
 pub use crate::load::{ConfigFiles, DotenvMode, LoadConfigOptions, load_rust_config};
 pub use crate::model::{
     ConfigProfile, ControlPlaneApiConfig, ControlPlaneAuthConfig, ControlPlaneConfig,
-    ControlPlaneDbConfig, DaemonConfig, DesktopConfig, ExecutorConfig, RustConfig, SandboxConfig,
-    SandboxNetworkMode, SandboxType, WindowConfig,
-    DesktopFixtureMode,
+    ControlPlaneDbConfig, DaemonConfig, DesktopConfig, DesktopFixtureMode, ExecutorConfig,
+    RustConfig, SandboxConfig, SandboxNetworkMode, SandboxType, WindowConfig,
 };
 pub use crate::paths::{discover_repo_root_from, global_config_path, repo_config_path};
 pub use crate::secret::SecretString;

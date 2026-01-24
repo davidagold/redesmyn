@@ -144,12 +144,7 @@ async fn register_daemon(
 ) {
     control_plane
         .daemons()
-        .register_connection(
-            hello.host_id,
-            hello.host_instance_id,
-            accepted,
-            outbound_tx,
-        )
+        .register_connection(hello.host_id, hello.host_instance_id, accepted, outbound_tx)
         .await;
 }
 

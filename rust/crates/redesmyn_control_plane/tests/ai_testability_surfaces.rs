@@ -16,16 +16,16 @@ use redesmyn_protocol::daemon::{
     CommandState as DaemonCommandState, CommandUpdate as DaemonCommandUpdate, DaemonFrame,
     DaemonHello, DaemonMessage, RepoAttach,
 };
-use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion, RepoScope, Scope};
 use redesmyn_protocol::ui_driver::{
     GetUiSnapshotRequest, GetUiSnapshotResponse, OpenEpicRequest, TriggerMergeRequest,
     UiDriverRequest, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
     UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
 };
-use redesmyn_transport::in_proc::InProcEndpoint;
+use redesmyn_protocol::{ProtocolEnvelope, ProtocolVersion, RepoScope, Scope};
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
+use redesmyn_transport::in_proc::InProcEndpoint;
 use std::sync::Arc;
 use tokio::sync::{Mutex, watch};
 
@@ -92,12 +92,18 @@ async fn run_mock_daemon(
     };
 
     let envelope = ProtocolEnvelope::new();
-    conn.send_frame(DaemonFrame::new(envelope, DaemonMessage::DaemonHello(hello)))
-        .await
-        .expect("send daemon hello");
+    conn.send_frame(DaemonFrame::new(
+        envelope,
+        DaemonMessage::DaemonHello(hello),
+    ))
+    .await
+    .expect("send daemon hello");
 
     let accepted = loop {
-        let frame = conn.recv_frame().await.expect("recv control plane hello ack");
+        let frame = conn
+            .recv_frame()
+            .await
+            .expect("recv control plane hello ack");
         if let DaemonMessage::ControlPlaneHelloAck(ack) = frame.message {
             break ack.accepted_protocol;
         }
@@ -137,7 +143,8 @@ async fn run_mock_daemon(
             DaemonCommandState::Running,
             DaemonCommandState::Succeeded,
         ] {
-            let mut update_envelope = ProtocolEnvelope::new().with_scope(Scope::from(dispatch.scope));
+            let mut update_envelope =
+                ProtocolEnvelope::new().with_scope(Scope::from(dispatch.scope));
             update_envelope.protocol_major = accepted.major;
             update_envelope.protocol_minor = accepted.minor;
 
@@ -624,8 +631,13 @@ async fn wait_primitives_support_events_and_idle() {
         .expect("append baseline event");
 
     let command_id = create_noop_command(&socket_path, scope).await;
-    let event_type =
-        wait_for_event(&socket_path, scope, "command.succeeded", Some(baseline_event_id)).await;
+    let event_type = wait_for_event(
+        &socket_path,
+        scope,
+        "command.succeeded",
+        Some(baseline_event_id),
+    )
+    .await;
     assert_eq!(event_type, "command.succeeded");
 
     let terminal_state = wait_for_command(&socket_path, scope, command_id).await;
@@ -727,7 +739,10 @@ async fn create_command_payload_is_dispatched_and_idempotency_payload_mismatch_c
         detail.get("conflict_code").map(String::as_str),
         Some("command_idempotency_payload_mismatch")
     );
-    assert_eq!(detail.get("idempotency_key").map(String::as_str), Some("test-key"));
+    assert_eq!(
+        detail.get("idempotency_key").map(String::as_str),
+        Some("test-key")
+    );
     assert_eq!(
         detail.get("existing_command_id").map(String::as_str),
         Some(command_id_str.as_str())
