@@ -17,9 +17,10 @@ use gpui::prelude::*;
 use redesmyn_ids::{RequestId, SessionEventId, SessionId, SubscriptionId};
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, GetSessionEventsRequest, GetSessionEventsResponse, Request,
-    RequestPayload, ResponseResult, SessionEventCursor, SessionEventsFilter, Subscribe,
-    SubscriptionEvent, SubscriptionFilter,
+    AgentMessageConflictAction, ClientFrame, ClientMessage, GetSessionEventsRequest,
+    GetSessionEventsResponse, Request, RequestPayload, ResponseResult, SendSessionMessageRequest,
+    SendSessionMessageResponse, SessionEventCursor, SessionEventsFilter, Subscribe,
+    SubscriptionEvent, SubscriptionFilter, Unsubscribe,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use redesmyn_transport::client::ClientConnection;
@@ -27,7 +28,7 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    Callout, CalloutKind, ScrollArea, TextButton, TextInput, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, ScrollArea, TextArea, TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::utils::theme_for_window;
 
@@ -35,6 +36,10 @@ fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
     u64::from_be_bytes(bytes[0..8].try_into().expect("slice length"))
 }
+
+const CONFLICT_CODE_KEY: &str = "conflict_code";
+const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
+const CONFLICT_CODE_SESSION_CONFLICT: &str = "structured_session_conflict";
 
 #[derive(Clone)]
 struct ClientApi {
@@ -51,6 +56,9 @@ enum ClientCommand {
         filter: SessionEventsFilter,
         events_tx: mpsc::Sender<SubscriptionEvent>,
         ack: oneshot::Sender<Result<(), ErrorEnvelope>>,
+    },
+    Unsubscribe {
+        subscription_id: SubscriptionId,
     },
 }
 
@@ -119,6 +127,32 @@ impl ClientApi {
         }
     }
 
+    async fn send_session_message(
+        &self,
+        session_id: SessionId,
+        message: String,
+        on_conflict: AgentMessageConflictAction,
+    ) -> Result<SendSessionMessageResponse, ErrorEnvelope> {
+        let response = self
+            .request(RequestPayload::SendSessionMessage(
+                SendSessionMessageRequest {
+                    session_id,
+                    message,
+                    on_conflict,
+                },
+            ))
+            .await?;
+
+        match response {
+            ResponseResult::SendSessionMessage(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(err),
+            other => Err(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("Unexpected response: {other:?}"),
+            )),
+        }
+    }
+
     async fn subscribe_session_events(
         &self,
         session_id: SessionId,
@@ -149,6 +183,16 @@ impl ClientApi {
 
         Ok((subscription_id, events_rx))
     }
+
+    async fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ErrorEnvelope> {
+        self.tx
+            .send(ClientCommand::Unsubscribe { subscription_id })
+            .await
+            .map_err(|_| {
+                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
+            })?;
+        Ok(())
+    }
 }
 
 async fn run_client_loop(mut conn: ClientInProcEndpoint, mut rx: mpsc::Receiver<ClientCommand>) {
@@ -174,6 +218,22 @@ async fn run_client_loop(mut conn: ClientInProcEndpoint, mut rx: mpsc::Receiver<
                     let frame = ClientFrame::new(
                         ProtocolEnvelope::new(),
                         ClientMessage::Subscribe(Subscribe { subscription_id, filter: SubscriptionFilter::SessionEvents(filter) }),
+                    );
+                    if conn.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+                ClientCommand::Unsubscribe { subscription_id } => {
+                    subscriptions.remove(&subscription_id);
+                    if let Some(ack) = subscribe_acks.remove(&subscription_id) {
+                        let _ = ack.send(Err(ErrorEnvelope::new(
+                            ErrorCategory::Unavailable,
+                            "Subscription canceled.",
+                        )));
+                    }
+                    let frame = ClientFrame::new(
+                        ProtocolEnvelope::new(),
+                        ClientMessage::Unsubscribe(Unsubscribe { subscription_id }),
                     );
                     if conn.send(frame).await.is_err() {
                         break;
@@ -261,6 +321,7 @@ pub struct SessionView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     session_id_input: Entity<TextInput>,
+    composer_input: Entity<TextArea>,
     feed: Option<SessionFeedState>,
     client: Option<ClientApi>,
     _client_task: Option<Task<()>>,
@@ -268,6 +329,7 @@ pub struct SessionView {
     subscription_id: Option<SubscriptionId>,
     load_task: Option<Task<()>>,
     load_older_task: Option<Task<()>>,
+    send_task: Option<Task<()>>,
     pending_scroll_restore: Option<ScrollRestore>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -288,6 +350,7 @@ impl SessionView {
         let focus_handle = cx.focus_handle();
         let scroll_handle = ScrollHandle::new();
         let session_id_input = cx.new(|cx| TextInput::new(cx).placeholder("Session id…"));
+        let composer_input = cx.new(|cx| TextArea::new(cx).placeholder("Message…"));
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe(&session_id_input, |this, _, event, cx| {
@@ -295,6 +358,19 @@ impl SessionView {
                 this.load_session_id(text.as_ref(), cx);
             }
         }));
+        subscriptions.push(
+            cx.subscribe(&composer_input, |this, _, event, cx| match event {
+                TextInputEvent::Changed(text) => {
+                    if let Some(feed) = this.feed.as_mut() {
+                        feed.set_draft(text.as_ref());
+                        cx.notify();
+                    }
+                }
+                TextInputEvent::Submitted(_text) => {
+                    this.send_message(AgentMessageConflictAction::Fail, cx);
+                }
+            }),
+        );
 
         let (client, client_task) = match control_plane_client {
             Some(conn) => {
@@ -315,6 +391,7 @@ impl SessionView {
             focus_handle,
             scroll_handle,
             session_id_input,
+            composer_input,
             feed: None,
             client,
             _client_task: client_task,
@@ -322,6 +399,7 @@ impl SessionView {
             subscription_id: None,
             load_task: None,
             load_older_task: None,
+            send_task: None,
             pending_scroll_restore: None,
             error: None,
             _subscriptions: subscriptions,
@@ -342,6 +420,14 @@ impl SessionView {
             return;
         };
 
+        if let Some(subscription_id) = self.subscription_id.take() {
+            let client = client.clone();
+            cx.spawn(move |_: WeakEntity<Self>, _cx: &mut AsyncApp| async move {
+                let _ = client.unsubscribe(subscription_id).await;
+            })
+            .detach();
+        }
+
         let raw = raw.trim();
         let session_id = match SessionId::from_str(raw) {
             Ok(id) => id,
@@ -353,7 +439,14 @@ impl SessionView {
         };
 
         self.error = None;
+        self.subscription_task = None;
+        self.subscription_id = None;
+        self.load_task = None;
+        self.load_older_task = None;
+        self.send_task = None;
         self.feed = Some(SessionFeedState::new(session_id));
+        self.composer_input
+            .update(cx, |input, cx| input.set_text("", cx));
         self.scroll_handle.scroll_to_bottom();
         cx.notify();
 
@@ -367,6 +460,95 @@ impl SessionView {
                     .update(|cx| view.update(cx, |this, cx| this.on_history_loaded(response, cx)));
             }
         }));
+    }
+
+    fn send_message(&mut self, on_conflict: AgentMessageConflictAction, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            if let Some(feed) = self.feed.as_mut() {
+                feed.finish_sending_error("Control plane client is unavailable.");
+            } else {
+                self.error = Some("Control plane client is unavailable.".into());
+            }
+            cx.notify();
+            return;
+        };
+
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        if feed.composer.sending {
+            return;
+        }
+
+        let draft = self.composer_input.read(cx).text().clone();
+        let message = draft.as_ref().trim().to_string();
+        if message.is_empty() {
+            return;
+        }
+
+        let session_id = feed.session_id;
+        feed.start_sending();
+        cx.notify();
+
+        let view = cx.entity();
+        self.send_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let result = client
+                    .send_session_message(session_id, message, on_conflict)
+                    .await;
+                let _ =
+                    cx.update(|cx| view.update(cx, |this, cx| this.on_send_completed(result, cx)));
+            }
+        }));
+    }
+
+    fn on_send_completed(
+        &mut self,
+        result: Result<SendSessionMessageResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.send_task = None;
+
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        match result {
+            Ok(resp) => {
+                let previous = feed.session_id;
+                feed.finish_sending_success();
+                self.composer_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+
+                if resp.session_id != previous {
+                    let raw = resp.session_id.to_string();
+                    self.session_id_input
+                        .update(cx, |input, cx| input.set_text(raw.clone(), cx));
+                    self.load_session_id(raw.as_ref(), cx);
+                    return;
+                }
+            }
+            Err(err) => {
+                if err.category == ErrorCategory::Conflict {
+                    let code = err
+                        .detail
+                        .as_ref()
+                        .and_then(|detail| detail.get(CONFLICT_CODE_KEY))
+                        .cloned();
+                    if let Some(code) = code {
+                        feed.finish_sending_conflict(code, err.message);
+                    } else {
+                        feed.finish_sending_error(err.message);
+                    }
+                } else {
+                    feed.finish_sending_error(err.message);
+                }
+            }
+        }
+
+        cx.notify();
     }
 
     fn on_history_loaded(
@@ -769,6 +951,174 @@ impl Render for SessionView {
                 .border_color(theme.colors.border.opacity(0.4))
                 .rounded_md()
                 .child(body),
+        );
+
+        if let Some(feed) = self.feed.as_ref() {
+            if let Some(prompt) = feed.composer.conflict_prompt.clone() {
+                let (message, action): (SharedString, _) = match prompt.code.as_str() {
+                    CONFLICT_CODE_TURN_IN_PROGRESS => (
+                        "A structured agent turn is currently in progress. Interrupt it and send your message?".into(),
+                        div()
+                            .flex()
+                            .gap(theme.spacing.sm)
+                            .child(
+                                TextButton::new(
+                                    ("session_conflict_cancel", cx.entity_id()),
+                                    "Cancel",
+                                )
+                                .kind(ButtonKind::Secondary)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            if let Some(feed) = this.feed.as_mut() {
+                                                feed.composer.conflict_prompt = None;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                            )
+                            .child(
+                                TextButton::new(
+                                    ("session_conflict_interrupt", cx.entity_id()),
+                                    "Interrupt & send",
+                                )
+                                .kind(ButtonKind::Primary)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            this.send_message(
+                                                AgentMessageConflictAction::InterruptTurn,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                            ),
+                    ),
+                    CONFLICT_CODE_SESSION_CONFLICT => (
+                        "Another agent session is already running for this task. Stop it and send your message?".into(),
+                        div()
+                            .flex()
+                            .gap(theme.spacing.sm)
+                            .child(
+                                TextButton::new(
+                                    ("session_conflict_cancel", cx.entity_id()),
+                                    "Cancel",
+                                )
+                                .kind(ButtonKind::Secondary)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            if let Some(feed) = this.feed.as_mut() {
+                                                feed.composer.conflict_prompt = None;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                            )
+                            .child(
+                                TextButton::new(
+                                    ("session_conflict_stop", cx.entity_id()),
+                                    "Stop session & send",
+                                )
+                                .kind(ButtonKind::Danger)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            this.send_message(
+                                                AgentMessageConflictAction::StopSessionAndStartNew,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                            ),
+                    ),
+                    _ => (
+                        prompt.message.clone().into(),
+                        div().flex().gap(theme.spacing.sm).child(
+                            TextButton::new(("session_conflict_cancel", cx.entity_id()), "Close")
+                                .kind(ButtonKind::Secondary)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            if let Some(feed) = this.feed.as_mut() {
+                                                feed.composer.conflict_prompt = None;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                        ),
+                    ),
+                };
+
+                content = content.child(
+                    Callout::new(message)
+                        .kind(CalloutKind::Warning)
+                        .title("Send message")
+                        .action(action),
+                );
+            } else if let Some(error) = feed.composer.last_error.clone() {
+                content = content.child(
+                    Callout::new(error)
+                        .kind(CalloutKind::Danger)
+                        .title("Send message"),
+                );
+            }
+        }
+
+        let composer_draft = self
+            .feed
+            .as_ref()
+            .map(|feed| feed.composer.draft.as_str())
+            .unwrap_or_default();
+        let composer_sending = self.feed.as_ref().is_some_and(|feed| feed.composer.sending);
+        let composer_can_send = self.client.is_some()
+            && self.feed.is_some()
+            && !composer_sending
+            && !composer_draft.trim().is_empty();
+
+        let send_button = TextButton::new(
+            ("session_send_message", cx.entity_id()),
+            if composer_sending {
+                "Sending…"
+            } else {
+                "Send"
+            },
+        )
+        .kind(ButtonKind::Primary)
+        .disabled(!composer_can_send)
+        .on_click({
+            let view = view.clone();
+            move |_, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.send_message(AgentMessageConflictAction::Fail, cx)
+                });
+            }
+        });
+
+        content = content.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(theme.spacing.sm)
+                .items_end()
+                .w_full()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(self.composer_input.clone()),
+                )
+                .child(send_button),
         );
 
         div()

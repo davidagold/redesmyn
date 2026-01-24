@@ -51,6 +51,7 @@ enum ClientMethod {
   CLIENT_METHOD_LIST_CHAT_SESSIONS = 16;
   CLIENT_METHOD_PIN_CHAT_SESSION_TO_EPIC = 17;
   CLIENT_METHOD_UNPIN_CHAT_SESSION_FROM_EPIC = 18;
+  CLIENT_METHOD_SEND_SESSION_MESSAGE = 19;
 }
 
 // Request for a control-plane method.
@@ -78,6 +79,7 @@ message Request {
     ListChatSessionsRequest list_chat_sessions = 33;
     PinChatSessionToEpicRequest pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicRequest unpin_chat_session_from_epic = 35;
+    SendSessionMessageRequest send_session_message = 36;
   }
 }
 
@@ -112,8 +114,30 @@ message Response {
     ListChatSessionsResponse list_chat_sessions = 33;
     PinChatSessionToEpicResponse pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicResponse unpin_chat_session_from_epic = 35;
+    SendSessionMessageResponse send_session_message = 36;
     ErrorEnvelope error = 100;
   }
+}
+
+// Stable conflict actions for sending a message to an agent session (T-41/T-62).
+enum AgentMessageConflictAction {
+  AGENT_MESSAGE_CONFLICT_ACTION_UNSPECIFIED = 0;
+  AGENT_MESSAGE_CONFLICT_ACTION_FAIL = 1;
+  AGENT_MESSAGE_CONFLICT_ACTION_INTERRUPT_TURN = 2;
+  AGENT_MESSAGE_CONFLICT_ACTION_STOP_SESSION_AND_START_NEW = 3;
+}
+
+message SendSessionMessageRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  string message = 2;
+  AgentMessageConflictAction on_conflict = 3;
+}
+
+message SendSessionMessageResponse {
+  SessionEvent event = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
 }
 
 message HealthRequest {}

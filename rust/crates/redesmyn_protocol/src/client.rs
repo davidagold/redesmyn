@@ -36,6 +36,7 @@ pub enum ClientMethod {
     GetSessionEvents,
     GetLatestTaskSession,
     GetEpicPinnedChatSession,
+    SendSessionMessage,
     CreateCommand,
     GetCommand,
     WaitForCommand,
@@ -73,6 +74,7 @@ pub enum RequestPayload {
     GetSessionEvents(GetSessionEventsRequest),
     GetLatestTaskSession(GetLatestTaskSessionRequest),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
+    SendSessionMessage(SendSessionMessageRequest),
     CreateCommand(CreateCommandRequest),
     GetCommand(GetCommandRequest),
     WaitForCommand(WaitForCommandRequest),
@@ -97,6 +99,7 @@ impl RequestPayload {
             Self::GetSessionEvents(_) => ClientMethod::GetSessionEvents,
             Self::GetLatestTaskSession(_) => ClientMethod::GetLatestTaskSession,
             Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
+            Self::SendSessionMessage(_) => ClientMethod::SendSessionMessage,
             Self::CreateCommand(_) => ClientMethod::CreateCommand,
             Self::GetCommand(_) => ClientMethod::GetCommand,
             Self::WaitForCommand(_) => ClientMethod::WaitForCommand,
@@ -146,6 +149,7 @@ pub enum ResponseResult {
     GetSessionEvents(GetSessionEventsResponse),
     GetLatestTaskSession(GetLatestTaskSessionResponse),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
+    SendSessionMessage(SendSessionMessageResponse),
     CreateCommand(CreateCommandResponse),
     GetCommand(GetCommandResponse),
     WaitForCommand(WaitForCommandResponse),
@@ -423,6 +427,34 @@ pub struct GetEpicPinnedChatSessionRequest {
 pub struct GetEpicPinnedChatSessionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMessageConflictAction {
+    Fail,
+    InterruptTurn,
+    StopSessionAndStartNew,
+}
+
+impl Default for AgentMessageConflictAction {
+    fn default() -> Self {
+        Self::Fail
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SendSessionMessageRequest {
+    pub session_id: SessionId,
+    pub message: String,
+    #[serde(default)]
+    pub on_conflict: AgentMessageConflictAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SendSessionMessageResponse {
+    pub event: SessionEvent,
+    pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

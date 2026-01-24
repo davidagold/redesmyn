@@ -335,6 +335,51 @@ where
     .await
 }
 
+pub async fn create_task_session<'e, E>(
+    executor: E,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+    agent_kind: AgentKind,
+    interface_mode: AgentInterfaceMode,
+    title: Option<&str>,
+) -> Result<SessionId, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let session_id = SessionId::new();
+    let now_ms = now_ms();
+
+    async {
+        let session = AgentSessionRecord {
+            session_id,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: AgentSessionScopeKind::Task,
+            task_id: Some(task_id),
+            agent_kind,
+            interface_mode,
+            status: AgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            title: title.map(ToOwned::to_owned),
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        };
+
+        insert_agent_session(executor, &session).await?;
+        Ok(session_id)
+    }
+    .instrument(debug_span!(
+        "storage.create_task_session",
+        session_id = %session_id,
+        task_id = %task_id
+    ))
+    .await
+}
+
 pub async fn list_task_sessions<'e, E>(
     executor: E,
     task_id: TaskId,
@@ -491,6 +536,64 @@ where
         Ok(())
     }
     .instrument(debug_span!("storage.close_chat_session", session_id = %session_id))
+    .await
+}
+
+pub async fn update_agent_session_status<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    status: AgentSessionStatus,
+) -> Result<(), StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let now_ms = now_ms();
+    async {
+        sqlx::query(
+            r#"
+            UPDATE agent_sessions
+            SET updated_at_ms = ?1, status = ?2
+            WHERE session_id = ?3
+            "#,
+        )
+        .bind(now_ms)
+        .bind(status.as_str())
+        .bind(session_id)
+        .execute(executor)
+        .await?;
+        Ok(())
+    }
+    .instrument(debug_span!(
+        "storage.update_agent_session_status",
+        session_id = %session_id,
+        status = %status
+    ))
+    .await
+}
+
+pub async fn end_task_sessions<'e, E>(executor: E, task_id: TaskId) -> Result<u64, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let now_ms = now_ms();
+    async {
+        let result = sqlx::query(
+            r#"
+            UPDATE agent_sessions
+            SET
+                updated_at_ms = ?1,
+                status = 'stopped',
+                ended_at_ms = COALESCE(ended_at_ms, ?1)
+            WHERE scope_kind = 'task' AND task_id = ?2 AND ended_at_ms IS NULL
+            "#,
+        )
+        .bind(now_ms)
+        .bind(task_id)
+        .execute(executor)
+        .await?;
+        Ok(result.rows_affected())
+    }
+    .instrument(debug_span!("storage.end_task_sessions", task_id = %task_id))
     .await
 }
 

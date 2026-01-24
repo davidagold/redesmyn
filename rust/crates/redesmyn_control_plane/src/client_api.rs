@@ -2,31 +2,33 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use redesmyn_ids::{RepoId, WorkspaceId};
-use redesmyn_logging::tracing;
-use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus, AgentSessionSummary,
-    ClientFrame, ClientMessage, CloseChatSessionResponse, CommandState, CommandSummary,
-    CommandUpdateSummary, CreateChatSessionResponse, CreateCommandResponse, DaemonPresenceSummary,
-    EpicGraph, EpicSummary, Event, EventLogEvent, EventWaitFilter, GetCommandResponse,
-    GetEpicGraphResponse, GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse,
-    GetSessionEventsResponse, HealthResponse, ListChatSessionsResponse, ListEpicsResponse,
-    ListTaskSessionsResponse, MergeReadiness, PinChatSessionToEpicResponse, Response,
-    ResponseResult, SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
-    UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
-    WaitForIdleResponse,
-};
-use redesmyn_protocol::{
-    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, Timestamp,
-};
-use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
-use redesmyn_transport::client::framed::FramedEndpoint;
-use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 use crate::ControlPlane;
 use crate::error::ControlPlaneError;
 use crate::session_events::{
     SessionEventsResync, SessionEventsResyncReason, SessionEventsSubscriptionItem,
 };
+use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
+use redesmyn_logging::tracing;
+use redesmyn_protocol::client::{
+    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, AgentSessionScopeKind,
+    AgentSessionStatus, AgentSessionSummary, ClientFrame, ClientMessage, CloseChatSessionResponse,
+    CommandState, CommandSummary, CommandUpdateSummary, CreateChatSessionResponse,
+    CreateCommandResponse, DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent,
+    EventWaitFilter, GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
+    GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse,
+    ListChatSessionsResponse, ListEpicsResponse, ListTaskSessionsResponse, MergeReadiness,
+    PinChatSessionToEpicResponse, Response, ResponseResult, SendSessionMessageResponse,
+    SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
+    UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
+    WaitForIdleResponse,
+};
+use redesmyn_protocol::{
+    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope,
+    SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
+};
+use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
+use redesmyn_transport::client::framed::FramedEndpoint;
+use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
 use redesmyn_storage::schema::{
     AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
@@ -37,6 +39,11 @@ use redesmyn_storage::sessions::AgentSessionRecord;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
+
+const CONFLICT_CODE_KEY: &str = "conflict_code";
+const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
+const CONFLICT_CODE_SESSION_CONFLICT: &str = "structured_session_conflict";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
     Json,
@@ -624,6 +631,215 @@ async fn handle_request_result(
                 GetEpicPinnedChatSessionResponse { session_id },
             ))
         }
+        redesmyn_protocol::client::RequestPayload::SendSessionMessage(send) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.send_session_message",
+                session_id = %send.session_id,
+                on_conflict = ?send.on_conflict
+            );
+            let _guard = span.enter();
+
+            let (workspace_id, repo_id) =
+                match repo_scope_ids_or_default(control_plane.pool(), envelope).await {
+                    Ok(ids) => ids,
+                    Err(err) => return Ok(ResponseResult::Error(err)),
+                };
+
+            let trimmed = send.message.trim();
+            if trimmed.is_empty() {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Message text is required.",
+                )));
+            }
+
+            const MAX_TEXT_CHARS: usize = 20_000;
+            if trimmed.chars().count() > MAX_TEXT_CHARS {
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Message text is too long.")
+                        .with_detail(ErrorDetail::from([(
+                            "max_chars".to_string(),
+                            MAX_TEXT_CHARS.to_string(),
+                        )])),
+                ));
+            }
+
+            let text = send.message.trim_end();
+
+            let session = redesmyn_storage::sessions::get_agent_session(
+                control_plane.pool(),
+                send.session_id,
+            )
+            .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), send.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            if session.scope_workspace_id != workspace_id || session.scope_repo_id != repo_id {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "Session not found in repo scope.",
+                )));
+            }
+
+            let (session_id, scope, interface_mode) = match (session.scope_kind, session.task_id) {
+                (StorageAgentSessionScopeKind::Chat, _) => {
+                    if session.closed_at_ms.is_some() {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::InvalidRequest,
+                            "Chat session is closed.",
+                        )));
+                    }
+                    (session.session_id, SessionScope::Chat, None)
+                }
+                (StorageAgentSessionScopeKind::Task, Some(task_id)) => (
+                    session.session_id,
+                    SessionScope::Task { task_id },
+                    Some(session.interface_mode),
+                ),
+                (StorageAgentSessionScopeKind::Task, None) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Internal,
+                        "Task session is missing task_id.",
+                    )));
+                }
+            };
+
+            let (session_id, scope) = if let Some(interface_mode) = interface_mode {
+                let task_id = match scope {
+                    SessionScope::Task { task_id } => task_id,
+                    _ => {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::Internal,
+                            "Expected task scope for task session.",
+                        )));
+                    }
+                };
+
+                let turn_in_progress = interface_mode == StorageAgentInterfaceMode::StructuredExec
+                    && session.ended_at_ms.is_none()
+                    && matches!(
+                        session.status,
+                        StorageAgentSessionStatus::Running | StorageAgentSessionStatus::Blocked
+                    );
+
+                let sessions = redesmyn_storage::sessions::list_task_sessions(
+                    control_plane.pool(),
+                    task_id,
+                    50,
+                )
+                .await?;
+                let other_active_task_session = sessions.iter().any(|row| {
+                    row.session_id != session.session_id
+                        && row.ended_at_ms.is_none()
+                        && matches!(
+                            row.status,
+                            StorageAgentSessionStatus::Running | StorageAgentSessionStatus::Blocked
+                        )
+                });
+
+                let mut session_id = session_id;
+                let mut scope = scope;
+
+                match send.on_conflict {
+                    AgentMessageConflictAction::Fail => {
+                        if turn_in_progress {
+                            return Ok(ResponseResult::Error(conflict_error(
+                                session.session_id,
+                                CONFLICT_CODE_TURN_IN_PROGRESS,
+                                "A structured agent turn is currently in progress.",
+                            )));
+                        }
+                        if other_active_task_session {
+                            return Ok(ResponseResult::Error(conflict_error(
+                                session.session_id,
+                                CONFLICT_CODE_SESSION_CONFLICT,
+                                "Another agent session is already running for this task.",
+                            )));
+                        }
+                    }
+                    AgentMessageConflictAction::InterruptTurn => {
+                        if other_active_task_session && !turn_in_progress {
+                            return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                ErrorCategory::InvalidRequest,
+                                "Cannot interrupt: another session is running. Use stop_session_and_start_new instead.",
+                            )));
+                        }
+
+                        if turn_in_progress {
+                            // TODO(T41): Interrupt the running structured turn via daemon command(s)
+                            // instead of directly mutating persisted session state.
+                            redesmyn_storage::sessions::update_agent_session_status(
+                                control_plane.pool(),
+                                session.session_id,
+                                StorageAgentSessionStatus::Stopped,
+                            )
+                            .await?;
+                        }
+                    }
+                    AgentMessageConflictAction::StopSessionAndStartNew => {
+                        if turn_in_progress {
+                            return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                ErrorCategory::InvalidRequest,
+                                "Stop-and-start-new is not supported when a structured turn is in progress. Use interrupt_turn instead.",
+                            )));
+                        }
+
+                        // TODO(T41): Replace direct session termination with daemon command(s) so the
+                        // runtime can shut down cleanly before we create a new session row.
+                        let _ended = redesmyn_storage::sessions::end_task_sessions(
+                            control_plane.pool(),
+                            task_id,
+                        )
+                        .await?;
+
+                        session_id = redesmyn_storage::sessions::create_task_session(
+                            control_plane.pool(),
+                            session.scope_workspace_id,
+                            session.scope_repo_id,
+                            task_id,
+                            session.agent_kind,
+                            interface_mode,
+                            None,
+                        )
+                        .await?;
+
+                        scope = SessionScope::Task { task_id };
+                    }
+                }
+
+                (session_id, scope)
+            } else {
+                (session_id, scope)
+            };
+
+            let event = SessionEvent {
+                session_event_id: SessionEventId::new(),
+                created_at: Timestamp::now_utc(),
+                scope,
+                session_id,
+                turn_id: None,
+                kind: SessionEventKind::UserMessage(UserMessage {
+                    text: text.to_string(),
+                    preview: session_message_preview(trimmed),
+                    full_text_artifact: None,
+                }),
+            };
+
+            control_plane
+                .session_events()
+                .append_session_event(&event)
+                .await?;
+
+            Ok(ResponseResult::SendSessionMessage(
+                SendSessionMessageResponse { event, session_id },
+            ))
+        }
         redesmyn_protocol::client::RequestPayload::CreateCommand(req) => {
             let scope = match command_scope_from_envelope(envelope) {
                 Ok(scope) => scope,
@@ -641,19 +857,18 @@ async fn handle_request_result(
                 )
                 .await?;
 
-            Ok(ResponseResult::CreateCommand(CreateCommandResponse { command }))
+            Ok(ResponseResult::CreateCommand(CreateCommandResponse {
+                command,
+            }))
         }
         redesmyn_protocol::client::RequestPayload::GetCommand(req) => {
             match control_plane.commands().get_command(req.command_id).await? {
                 Some(command) => Ok(ResponseResult::GetCommand(GetCommandResponse { command })),
-                None => Ok(ResponseResult::Error(ErrorEnvelope::new(
-                    ErrorCategory::NotFound,
-                    "Command not found.",
-                )
-                .with_detail(ErrorDetail::from([(
-                    "command_id".to_string(),
-                    req.command_id.to_string(),
-                )])))),
+                None => Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.").with_detail(
+                        ErrorDetail::from([("command_id".to_string(), req.command_id.to_string())]),
+                    ),
+                )),
             }
         }
         redesmyn_protocol::client::RequestPayload::WaitForCommand(req) => {
@@ -673,7 +888,8 @@ async fn handle_request_result(
             match control_plane
                 .commands()
                 .wait_for_command(req.command_id, &req.terminal_states, timeout)
-                .await {
+                .await
+            {
                 Ok(command) => Ok(ResponseResult::WaitForCommand(WaitForCommandResponse {
                     command,
                 })),
@@ -721,7 +937,15 @@ async fn handle_request_result(
                 Err(err) => return Ok(ResponseResult::Error(err)),
             };
 
-            match wait_for_idle(control_plane, command_scope, event_scope, timeout, quiescence).await {
+            match wait_for_idle(
+                control_plane,
+                command_scope,
+                event_scope,
+                timeout,
+                quiescence,
+            )
+            .await
+            {
                 Ok(()) => Ok(ResponseResult::WaitForIdle(WaitForIdleResponse {})),
                 Err(err) => Ok(ResponseResult::Error(err)),
             }
@@ -1006,6 +1230,84 @@ fn require_repo_scope_ids(
             "Repo scope is required.",
         )),
     }
+}
+
+async fn repo_scope_ids_or_default(
+    pool: &sqlx::SqlitePool,
+    envelope: &ProtocolEnvelope,
+) -> Result<(WorkspaceId, RepoId), ErrorEnvelope> {
+    match envelope.scope {
+        Some(Scope::Repo { repo }) => Ok((repo.workspace_id, repo.repo_id)),
+        Some(Scope::Unknown) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unknown scope kind.",
+        )),
+        Some(_) => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Unsupported scope kind.",
+        )),
+        None => {
+            #[derive(Debug, Clone, sqlx::FromRow)]
+            struct Row {
+                workspace_id: WorkspaceId,
+                repo_id: RepoId,
+            }
+
+            let rows: Vec<Row> = sqlx::query_as(
+                r#"
+                SELECT
+                    workspace_id,
+                    id as repo_id
+                FROM repositories
+                ORDER BY created_at_ms DESC
+                LIMIT 2
+                "#,
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "failed to resolve default repo scope");
+                ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "Failed to resolve default repo scope.",
+                )
+            })?;
+
+            match rows.as_slice() {
+                [row] => Ok((row.workspace_id, row.repo_id)),
+                [] => Err(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "No repositories exist.",
+                )),
+                _ => Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Repo scope is required when multiple repositories exist.",
+                )
+                .with_detail(ErrorDetail::from([(
+                    "repo_count_hint".to_string(),
+                    ">=2".to_string(),
+                )]))),
+            }
+        }
+    }
+}
+
+fn conflict_error(
+    session_id: SessionId,
+    code: &'static str,
+    message: &'static str,
+) -> ErrorEnvelope {
+    ErrorEnvelope::new(ErrorCategory::Conflict, message).with_detail(ErrorDetail::from([
+        ("session_id".to_string(), session_id.to_string()),
+        (CONFLICT_CODE_KEY.to_string(), code.to_string()),
+    ]))
+}
+
+fn session_message_preview(text: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 140;
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    normalized.chars().take(MAX_PREVIEW_CHARS).collect()
 }
 
 fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSessionSummary {

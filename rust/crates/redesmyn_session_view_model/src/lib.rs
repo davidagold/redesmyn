@@ -177,12 +177,37 @@ pub struct SessionScrollState {
     pub pending_prepend_anchor: Option<SessionEventId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct SessionFeedSummaryState {
+    pub message_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionComposerConflictPrompt {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct SessionComposerState {
+    pub draft: String,
+    pub sending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_prompt: Option<SessionComposerConflictPrompt>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionFeedState {
     pub session_id: SessionId,
     events: Vec<SessionEventRow>,
     event_ids: BTreeSet<SessionEventId>,
     ephemeral: BTreeMap<String, EphemeralTextItem>,
+    pub summary: SessionFeedSummaryState,
+    pub composer: SessionComposerState,
     pub history: SessionHistoryState,
     pub live: SessionLiveState,
     pub scroll: SessionScrollState,
@@ -196,6 +221,8 @@ impl SessionFeedState {
             events: Vec::new(),
             event_ids: BTreeSet::new(),
             ephemeral: BTreeMap::new(),
+            summary: SessionFeedSummaryState::default(),
+            composer: SessionComposerState::default(),
             history: SessionHistoryState::default(),
             live: SessionLiveState::default(),
             scroll: SessionScrollState::default(),
@@ -270,6 +297,7 @@ impl SessionFeedState {
             self.insert_event(SessionEventRow::from_event(event));
         }
 
+        self.recompute_summary();
         self.history.loading_older = false;
         self.history.next_cursor = next_cursor;
         self.history.error = None;
@@ -291,7 +319,11 @@ impl SessionFeedState {
     }
 
     pub fn apply_live_event(&mut self, event: SessionEvent) {
-        let inserted_at_end = self.insert_event(SessionEventRow::from_event(event));
+        let inserted = self.insert_event(SessionEventRow::from_event(event));
+
+        let Some(inserted_at_end) = inserted else {
+            return;
+        };
 
         if inserted_at_end {
             if self.scroll.at_bottom {
@@ -300,6 +332,42 @@ impl SessionFeedState {
                 self.scroll.unseen_count = self.scroll.unseen_count.saturating_add(1);
             }
         }
+
+        self.recompute_summary();
+    }
+
+    pub fn set_draft(&mut self, draft: impl Into<String>) {
+        self.composer.draft = draft.into();
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = None;
+    }
+
+    pub fn start_sending(&mut self) {
+        self.composer.sending = true;
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = None;
+    }
+
+    pub fn finish_sending_success(&mut self) {
+        self.composer.sending = false;
+        self.composer.draft.clear();
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = None;
+    }
+
+    pub fn finish_sending_error(&mut self, message: impl Into<String>) {
+        self.composer.sending = false;
+        self.composer.last_error = Some(message.into());
+        self.composer.conflict_prompt = None;
+    }
+
+    pub fn finish_sending_conflict(&mut self, code: impl Into<String>, message: impl Into<String>) {
+        self.composer.sending = false;
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = Some(SessionComposerConflictPrompt {
+            code: code.into(),
+            message: message.into(),
+        });
     }
 
     pub fn upsert_ephemeral_text(
@@ -323,13 +391,13 @@ impl SessionFeedState {
         self.ephemeral.clear();
     }
 
-    fn insert_event(&mut self, row: SessionEventRow) -> bool {
+    fn insert_event(&mut self, row: SessionEventRow) -> Option<bool> {
         if row.event.session_id != self.session_id {
-            return false;
+            return None;
         }
 
         if !self.event_ids.insert(row.event.session_event_id) {
-            return false;
+            return None;
         }
 
         let pos = self
@@ -337,7 +405,25 @@ impl SessionFeedState {
             .binary_search_by(|existing| existing.cursor.cmp(&row.cursor))
             .unwrap_or_else(|pos| pos);
         self.events.insert(pos, row);
-        pos + 1 == self.events.len()
+        Some(pos + 1 == self.events.len())
+    }
+
+    fn recompute_summary(&mut self) {
+        let mut message_count = 0_u32;
+        let mut last_preview = None;
+
+        for row in &self.events {
+            match row.kind {
+                SessionEventKindTag::UserMessage | SessionEventKindTag::AssistantMessage => {
+                    message_count = message_count.saturating_add(1);
+                    last_preview = row.preview.clone();
+                }
+                _ => {}
+            }
+        }
+
+        self.summary.message_count = message_count;
+        self.summary.last_message_preview = last_preview;
     }
 }
 
@@ -446,6 +532,26 @@ mod tests {
         }
     }
 
+    fn assistant_event(
+        session_id: SessionId,
+        id: SessionEventId,
+        created_at: Timestamp,
+        preview: &str,
+    ) -> SessionEvent {
+        SessionEvent {
+            session_event_id: id,
+            created_at,
+            scope: redesmyn_protocol::SessionScope::Chat,
+            session_id,
+            turn_id: None,
+            kind: SessionEventKind::AssistantMessage(AssistantMessage {
+                text: preview.to_string(),
+                preview: preview.to_string(),
+                full_text_artifact: None,
+            }),
+        }
+    }
+
     #[test]
     fn test_history_prepend_sets_anchor() {
         let session_id = SessionId::new();
@@ -467,6 +573,83 @@ mod tests {
         assert_eq!(state.events.len(), 2);
         assert_eq!(state.events[0].event.session_event_id, older_id);
         assert_eq!(state.events[1].event.session_event_id, existing_id);
+    }
+
+    #[test]
+    fn test_summary_updates_message_count_and_last_preview() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+
+        assert_eq!(state.summary.message_count, 0);
+        assert_eq!(state.summary.last_message_preview, None);
+
+        state.apply_live_event(user_event(
+            session_id,
+            SessionEventId::new(),
+            ts(1),
+            "hello",
+        ));
+        assert_eq!(state.summary.message_count, 1);
+        assert_eq!(state.summary.last_message_preview.as_deref(), Some("hello"));
+
+        state.apply_live_event(assistant_event(
+            session_id,
+            SessionEventId::new(),
+            ts(2),
+            "world",
+        ));
+        assert_eq!(state.summary.message_count, 2);
+        assert_eq!(state.summary.last_message_preview.as_deref(), Some("world"));
+    }
+
+    #[test]
+    fn test_composer_preserves_draft_on_error() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+
+        state.set_draft("hi");
+        state.start_sending();
+        assert!(state.composer.sending);
+
+        state.finish_sending_error("nope");
+        assert!(!state.composer.sending);
+        assert_eq!(state.composer.draft, "hi");
+        assert_eq!(state.composer.last_error.as_deref(), Some("nope"));
+    }
+
+    #[test]
+    fn test_composer_clears_draft_on_success() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+
+        state.set_draft("hi");
+        state.start_sending();
+        state.finish_sending_success();
+        assert_eq!(state.composer.draft, "");
+        assert!(state.composer.last_error.is_none());
+        assert!(state.composer.conflict_prompt.is_none());
+    }
+
+    #[test]
+    fn test_composer_sets_conflict_prompt() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+
+        state.set_draft("hi");
+        state.start_sending();
+        state.finish_sending_conflict("structured_turn_in_progress", "turn in progress");
+
+        assert!(!state.composer.sending);
+        assert_eq!(state.composer.draft, "hi");
+        assert!(state.composer.last_error.is_none());
+        assert_eq!(
+            state
+                .composer
+                .conflict_prompt
+                .as_ref()
+                .map(|p| p.code.as_str()),
+            Some("structured_turn_in_progress")
+        );
     }
 
     #[test]
