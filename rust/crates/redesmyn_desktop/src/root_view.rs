@@ -2875,6 +2875,28 @@ impl Render for EpicSessionPaneHost {
                                 .child(subtitle),
                         ),
                 );
+
+                if closed {
+                    body = body.child(
+                        Callout::new("Closing a chat does not unpin it from the epic.")
+                            .kind(CalloutKind::Warning)
+                            .title("Pinned chat is closed")
+                            .action(
+                                TextButton::new(
+                                    ("chat_closed_create", cx.entity_id()),
+                                    "Create new chat",
+                                )
+                                .kind(ButtonKind::Secondary)
+                                .disabled(self.create_and_pin.in_flight)
+                                .on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        view.update(cx, |this, cx| this.create_and_pin_chat(cx))
+                                    }
+                                }),
+                            ),
+                    );
+                }
             }
         }
 
