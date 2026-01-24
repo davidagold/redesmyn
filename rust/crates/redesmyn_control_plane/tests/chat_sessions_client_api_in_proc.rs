@@ -54,6 +54,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let workspace_id = WorkspaceId::new();
     let repo_id = RepoId::new();
     let epic_id = EpicId::new();
+    let second_epic_id = EpicId::new();
 
     sqlx::query(
         r#"
@@ -101,6 +102,22 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     .await
     .expect("insert epic");
 
+    sqlx::query(
+        r#"
+        INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(second_epic_id)
+    .bind(repo_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("gpui-2")
+    .bind("GPUI + Rust Port (2)")
+    .execute(&db)
+    .await
+    .expect("insert second epic");
+
     let options = ControlPlaneStartOptions {
         db: ControlPlaneDb::Pool(db),
         client_api_socket_path: None,
@@ -125,9 +142,21 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let ResponseResult::ListEpics(list_epics) = list_epics else {
         panic!("expected ListEpics, got {list_epics:?}");
     };
-    assert_eq!(list_epics.epics.len(), 1);
-    assert_eq!(list_epics.epics[0].slug, "gpui");
-    assert_eq!(list_epics.epics[0].epic_id, Some(epic_id));
+    assert_eq!(list_epics.epics.len(), 2);
+
+    let gpui = list_epics
+        .epics
+        .iter()
+        .find(|epic| epic.slug == "gpui")
+        .expect("gpui epic present");
+    assert_eq!(gpui.epic_id, Some(epic_id));
+
+    let gpui_2 = list_epics
+        .epics
+        .iter()
+        .find(|epic| epic.slug == "gpui-2")
+        .expect("second epic present");
+    assert_eq!(gpui_2.epic_id, Some(second_epic_id));
 
     let create = request(
         &mut conn,
@@ -155,10 +184,36 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
         panic!("expected PinChatSessionToEpic, got {pin:?}");
     };
 
+    let pin = request(
+        &mut conn,
+        scope,
+        RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
+            session_id: first_session_id,
+            epic_id: second_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::PinChatSessionToEpic(_pin) = pin else {
+        panic!("expected PinChatSessionToEpic, got {pin:?}");
+    };
+
     let pinned = request(
         &mut conn,
         scope,
         RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest { epic_id }),
+    )
+    .await;
+    let ResponseResult::GetEpicPinnedChatSession(pinned) = pinned else {
+        panic!("expected GetEpicPinnedChatSession, got {pinned:?}");
+    };
+    assert_eq!(pinned.session_id, Some(first_session_id));
+
+    let pinned = request(
+        &mut conn,
+        scope,
+        RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+            epic_id: second_epic_id,
+        }),
     )
     .await;
     let ResponseResult::GetEpicPinnedChatSession(pinned) = pinned else {
@@ -217,6 +272,19 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     };
     assert_eq!(pinned.session_id, Some(second_session_id));
 
+    let pinned = request(
+        &mut conn,
+        scope,
+        RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+            epic_id: second_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::GetEpicPinnedChatSession(pinned) = pinned else {
+        panic!("expected GetEpicPinnedChatSession, got {pinned:?}");
+    };
+    assert_eq!(pinned.session_id, Some(first_session_id));
+
     let unpin = request(
         &mut conn,
         scope,
@@ -238,6 +306,94 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     };
     assert_eq!(pinned.session_id, None);
 
+    let pinned = request(
+        &mut conn,
+        scope,
+        RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+            epic_id: second_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::GetEpicPinnedChatSession(pinned) = pinned else {
+        panic!("expected GetEpicPinnedChatSession, got {pinned:?}");
+    };
+    assert_eq!(pinned.session_id, Some(first_session_id));
+
+    let unknown_epic_id = EpicId::new();
+    let pinned = request(
+        &mut conn,
+        scope,
+        RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+            epic_id: unknown_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::Error(err) = pinned else {
+        panic!("expected Error, got {pinned:?}");
+    };
+    assert_eq!(err.category, redesmyn_protocol::ErrorCategory::NotFound);
+    assert!(
+        err.detail
+            .as_ref()
+            .is_some_and(|detail| detail.contains_key("epic_id"))
+    );
+
+    let pin_unknown_epic = request(
+        &mut conn,
+        scope,
+        RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
+            session_id: first_session_id,
+            epic_id: unknown_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::Error(err) = pin_unknown_epic else {
+        panic!("expected Error, got {pin_unknown_epic:?}");
+    };
+    assert_eq!(err.category, redesmyn_protocol::ErrorCategory::NotFound);
+    assert!(
+        err.detail
+            .as_ref()
+            .is_some_and(|detail| detail.contains_key("epic_id"))
+    );
+
+    let pin_unknown_session = request(
+        &mut conn,
+        scope,
+        RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
+            session_id: redesmyn_ids::SessionId::new(),
+            epic_id: second_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::Error(err) = pin_unknown_session else {
+        panic!("expected Error, got {pin_unknown_session:?}");
+    };
+    assert_eq!(err.category, redesmyn_protocol::ErrorCategory::NotFound);
+    assert!(
+        err.detail
+            .as_ref()
+            .is_some_and(|detail| detail.contains_key("session_id"))
+    );
+
+    let unpin_unknown_epic = request(
+        &mut conn,
+        scope,
+        RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest {
+            epic_id: unknown_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::Error(err) = unpin_unknown_epic else {
+        panic!("expected Error, got {unpin_unknown_epic:?}");
+    };
+    assert_eq!(err.category, redesmyn_protocol::ErrorCategory::NotFound);
+    assert!(
+        err.detail
+            .as_ref()
+            .is_some_and(|detail| detail.contains_key("epic_id"))
+    );
+
     let close = request(
         &mut conn,
         scope,
@@ -249,6 +405,19 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let ResponseResult::CloseChatSession(_) = close else {
         panic!("expected CloseChatSession, got {close:?}");
     };
+
+    let pinned = request(
+        &mut conn,
+        scope,
+        RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
+            epic_id: second_epic_id,
+        }),
+    )
+    .await;
+    let ResponseResult::GetEpicPinnedChatSession(pinned) = pinned else {
+        panic!("expected GetEpicPinnedChatSession, got {pinned:?}");
+    };
+    assert_eq!(pinned.session_id, Some(first_session_id));
 
     let list_open = request(
         &mut conn,
@@ -262,6 +431,8 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let ResponseResult::ListChatSessions(list_open) = list_open else {
         panic!("expected ListChatSessions, got {list_open:?}");
     };
+    assert_eq!(list_open.sessions.len(), 1);
+    assert_eq!(list_open.sessions[0].session_id, second_session_id);
     assert!(list_open
         .sessions
         .iter()
