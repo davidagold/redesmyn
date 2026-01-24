@@ -170,19 +170,11 @@ async fn handle_inbound_frame(
             );
             let _enter = span.enter();
 
-            for event in &batch.events {
-                if let Err(err) = control_plane
-                    .session_events()
-                    .append_session_event(event)
-                    .await
-                {
-                    tracing::warn!(
-                        error = %err,
-                        session_id = %event.session_id,
-                        session_event_id = %event.session_event_id,
-                        "failed to persist session event from daemon",
-                    );
-                }
+            if let Err(err) = control_plane
+                .apply_daemon_session_event_batch(host_instance_id, batch)
+                .await
+            {
+                tracing::warn!(error = %err, "failed to apply daemon session event batch");
             }
         }
         DaemonMessage::RepoAttach(attach) => {

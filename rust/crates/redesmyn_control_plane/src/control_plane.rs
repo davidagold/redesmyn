@@ -12,7 +12,7 @@ use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
 
 use redesmyn_ids::{CommandId, HostInstanceId, TaskId};
-use redesmyn_protocol::daemon::CommandUpdate as DaemonCommandUpdate;
+use redesmyn_protocol::daemon::{CommandUpdate as DaemonCommandUpdate, SessionEventBatch};
 use redesmyn_protocol::{ErrorEnvelope, RepoScope};
 use redesmyn_storage::commands::CommandScope;
 use redesmyn_storage::schema::CommandState as StorageCommandState;
@@ -240,20 +240,43 @@ impl ControlPlane {
             return Ok(());
         }
 
-        let (state, message, progress_current, progress_total, detail) =
-            map_daemon_command_update(update);
+        let mapped = map_daemon_command_update(update);
 
         let _ = self
             .commands()
             .append_update(
                 command_id,
-                state,
-                message,
-                progress_current,
-                progress_total,
-                detail,
+                mapped.state,
+                mapped.message,
+                mapped.progress_current,
+                mapped.progress_total,
+                mapped.detail,
             )
             .await?;
+
+        Ok(())
+    }
+
+    pub async fn apply_daemon_session_event_batch(
+        &self,
+        _host_instance_id: HostInstanceId,
+        batch: SessionEventBatch,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        for event in batch.events {
+            if let Err(err) = self.session_events.append_session_event(&event).await {
+                tracing::warn!(error = %err, "failed to append session event");
+                continue;
+            }
+
+            if let Err(err) =
+                crate::session_events_projection::apply_session_event_to_agent_session_row(
+                    &self.pool, &event,
+                )
+                .await
+            {
+                tracing::warn!(error = %err, "failed to apply session event to agent session row");
+            }
+        }
 
         Ok(())
     }
@@ -306,15 +329,15 @@ impl ControlPlane {
     }
 }
 
-fn map_daemon_command_update(
-    update: DaemonCommandUpdate,
-) -> (
-    StorageCommandState,
-    Option<String>,
-    Option<i64>,
-    Option<i64>,
-    Option<Vec<u8>>,
-) {
+struct MappedDaemonCommandUpdate {
+    state: StorageCommandState,
+    message: Option<String>,
+    progress_current: Option<i64>,
+    progress_total: Option<i64>,
+    detail: Option<Vec<u8>>,
+}
+
+fn map_daemon_command_update(update: DaemonCommandUpdate) -> MappedDaemonCommandUpdate {
     let state = match update.state {
         redesmyn_protocol::daemon::CommandState::Queued => StorageCommandState::Queued,
         redesmyn_protocol::daemon::CommandState::Accepted => StorageCommandState::Accepted,
@@ -347,13 +370,13 @@ fn map_daemon_command_update(
     })
     .ok();
 
-    (
+    MappedDaemonCommandUpdate {
         state,
-        update.message,
+        message: update.message,
         progress_current,
         progress_total,
         detail,
-    )
+    }
 }
 
 struct ControlPlaneState {

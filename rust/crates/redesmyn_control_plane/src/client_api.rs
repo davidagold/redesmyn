@@ -877,6 +877,70 @@ async fn handle_request_result(
                 SendSessionMessageResponse { event, session_id },
             ))
         }
+        redesmyn_protocol::client::RequestPayload::StartAgent(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match control_plane.start_agent(workspace_id, repo_id, req).await {
+                Ok(resp) => Ok(ResponseResult::StartAgent(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::StopAgent(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match control_plane.stop_agent(workspace_id, repo_id, req).await {
+                Ok(resp) => Ok(ResponseResult::StopAgent(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::RestartAgent(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match control_plane
+                .restart_agent(workspace_id, repo_id, req)
+                .await
+            {
+                Ok(resp) => Ok(ResponseResult::RestartAgent(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::SendTaskAgentMessage(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match control_plane
+                .send_task_agent_message(workspace_id, repo_id, req)
+                .await
+            {
+                Ok(resp) => Ok(ResponseResult::SendTaskAgentMessage(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::AttachAgentSession(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            match control_plane
+                .attach_agent_session(workspace_id, repo_id, req)
+                .await
+            {
+                Ok(resp) => Ok(ResponseResult::AttachAgentSession(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
         redesmyn_protocol::client::RequestPayload::CreateCommand(req) => {
             let scope = match command_scope_from_envelope(envelope) {
                 Ok(scope) => scope,

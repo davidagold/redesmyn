@@ -2,9 +2,11 @@
 //!
 //! This crate intentionally does not depend on repo execution crates like `redesmyn_git`.
 
+mod agent_orchestration;
 mod command;
 mod daemon_link;
 mod daemon_router;
+mod session_events_projection;
 mod task_manager;
 
 pub mod client_api;
