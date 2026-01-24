@@ -1562,7 +1562,6 @@ impl Element for TextAreaElement {
                         let local_start = start - line_start_ix;
                         let local_end = end - line_start_ix;
 
-                        let mut segment_start = 0usize;
                         let boundary_indices = line
                             .wrap_boundaries
                             .iter()
@@ -1573,26 +1572,30 @@ impl Element for TextAreaElement {
                             })
                             .chain(std::iter::once(line.len()));
 
+                        let mut segment_start = 0usize;
+                        let mut segment_y = px(0.0);
                         for segment_end in boundary_indices {
                             let start_ix = local_start.clamp(segment_start, segment_end);
                             let end_ix = local_end.clamp(segment_start, segment_end);
                             if start_ix < end_ix {
-                                if let (Some(start_pos), Some(end_pos)) = (
-                                    line.position_for_index(start_ix, line_height),
-                                    line.position_for_index(end_ix, line_height),
-                                ) {
-                                    let top_left = line_origin + start_pos;
-                                    let bottom_right = gpui::point(
-                                        line_origin.x + end_pos.x,
-                                        top_left.y + line_height,
-                                    );
-                                    window.paint_quad(fill(
-                                        Bounds::from_corners(top_left, bottom_right),
-                                        selection_color,
-                                    ));
-                                }
+                                let segment_start_x = line.unwrapped_layout.x_for_index(segment_start);
+                                let x0 =
+                                    line.unwrapped_layout.x_for_index(start_ix) - segment_start_x;
+                                let x1 = line.unwrapped_layout.x_for_index(end_ix) - segment_start_x;
+
+                                let top_left =
+                                    gpui::point(line_origin.x + x0, line_origin.y + segment_y);
+                                let bottom_right = gpui::point(
+                                    line_origin.x + x1,
+                                    top_left.y + line_height,
+                                );
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(top_left, bottom_right),
+                                    selection_color,
+                                ));
                             }
                             segment_start = segment_end;
+                            segment_y += line_height;
                         }
                     }
 
