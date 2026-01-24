@@ -29,8 +29,6 @@ actions!(
         SelectWordLeft,
         SelectWordRight,
         SelectAll,
-        Home,
-        End,
         MoveLineStart,
         MoveLineEnd,
         SelectLineStart,
@@ -282,14 +280,6 @@ impl TextInput {
         self.selection_reversed = false;
         self.selected_range = 0..self.content.len();
         cx.notify()
-    }
-
-    fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
-    }
-
-    fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.content.len(), cx);
     }
 
     fn move_line_start(&mut self, _: &MoveLineStart, _: &mut Window, cx: &mut Context<Self>) {
@@ -847,8 +837,6 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::select_word_left))
             .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::home))
-            .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::move_line_start))
             .on_action(cx.listener(Self::move_line_end))
             .on_action(cx.listener(Self::select_line_start))
@@ -1326,16 +1314,6 @@ impl TextArea {
         self.selection_reversed = false;
         self.selected_range = 0..self.content.len();
         cx.notify();
-        self.scroll_caret_into_view(window, cx);
-    }
-
-    fn home(&mut self, _: &Home, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, cx);
-        self.scroll_caret_into_view(window, cx);
-    }
-
-    fn end(&mut self, _: &End, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.content.len(), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
@@ -1971,8 +1949,6 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::select_word_left))
             .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::home))
-            .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::move_line_start))
             .on_action(cx.listener(Self::move_line_end))
             .on_action(cx.listener(Self::select_line_start))
