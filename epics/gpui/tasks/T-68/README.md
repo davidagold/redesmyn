@@ -44,6 +44,8 @@ Implement a daemon-side **Codex app-server runner** that:
 
 - Use the shared taxonomy/types from T-32 (`AgentProvider`, `AgentRuntimeKind`, `ExternalSessionRef`, etc.).
 - This runner is `AgentProvider::Codex` + `AgentRuntimeKind::AppServer`.
+- It must be consumable through the same control-plane command surface (T-41) as StructuredExec Codex (T-37); app-server must not require new
+  “special-cased” UI or client APIs beyond capability checks.
 
 ### 2) Transport framing (stdio)
 

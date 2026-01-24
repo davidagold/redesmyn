@@ -28,6 +28,12 @@ Create the daemon-side **app-server agent runtime skeleton**:
 
 without fully implementing a specific external protocol yet.
 
+Interface note (important):
+
+- The app-server skeleton must align with the same high-level session runtime surface consumed by the control plane (T-41) as the StructuredExec runners
+  (T-37/T-38). The control plane should not need “app-server special cases”.
+- Provider-specific protocol details (e.g., Codex app-server JSON-RPC) live in the provider runner (T-68), built on this skeleton.
+
 ## Requirements
 
 ### 1) Agent runtime taxonomy

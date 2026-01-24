@@ -60,6 +60,14 @@ Expose a minimal API internally (names are illustrative):
 - `stop_session(session_id)` (graceful then hard kill)
 - `shutdown()` (graceful supervisor shutdown)
 
+Also define explicit seams (this is what keeps app-server migration easy):
+
+- The daemon exposes a **provider/runtime-agnostic** session runtime surface (start/stop/interrupt/send-turn), consumed by the control plane.
+- The supervisor is an internal implementation detail: structured exec runners (T-37/T-38) and app-server runners (T-39/T-68) must be implemented
+  behind interfaces/traits so the control plane never needs to know whether a turn was satisfied by:
+  - `codex exec --json … resume <thread_id> -` (structured exec), or
+  - JSON-RPC `userMessage` (app-server).
+
 ### 2) Output ingestion + parsing
 
 - Read stdout/stderr incrementally (non-blocking, bounded buffering).

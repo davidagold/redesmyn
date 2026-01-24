@@ -26,6 +26,13 @@ We need a daemon-side runner that:
 
 Implement the daemon-side Codex runner built on the exec-session supervisor (T-35), using the Codex parser (T-33).
 
+Interface note (important):
+
+- This runner is a **daemon-side implementation** behind the shared “agent session runtime” surface consumed by the control plane (T-41).
+- Codex-specific behavior (argv shaping, `--output-last-message`, JSONL parsing, thread-id capture) must live *inside* this runner/substrate.
+  The control plane must not build Codex argv directly.
+- This is what keeps the “switch Codex from StructuredExec → AppServer” migration cheap (T-68 becomes an alternative runner behind the same surface).
+
 The runner must support:
 
 - starting a new structured session, and
@@ -77,6 +84,8 @@ The runner must be testable without real Codex installed:
   - and output-last-message capture (when enabled).
 - Resume-by-id turn execution uses the canonical builder semantics (T-32).
 - Interrupt semantics work and are observable.
+ - The runner is consumable via the same control-plane command semantics regardless of whether Codex is configured for StructuredExec (this ticket) or
+   AppServer (T-68).
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
@@ -97,4 +106,3 @@ The runner must be testable without real Codex installed:
 - Resume-by-id turns (Python today):
   - `redesmyn/agent_turn_transport.py`
   - `tests/test_agent_turn_transport.py`
-

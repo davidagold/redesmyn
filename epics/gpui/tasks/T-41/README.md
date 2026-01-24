@@ -39,6 +39,14 @@ Implement agent orchestration as **control-plane-owned business logic** exposed 
 
 The control plane persists command lifecycles (T-19) and routes execution to the daemon via the daemon stream protocol (T-11), while persisting session events (T-40).
 
+Architecture note (important):
+
+- The control plane defines *what* we are trying to do (“send this prompt”, “interrupt”, “stop session”, “resume existing conversation when possible”).
+- The daemon runner defines *how* that is satisfied for a given `(AgentProvider, AgentRuntimeKind)`:
+  - StructuredExec: argv shaping + subprocess supervision + stdout parsing (T-35/T-37/T-38).
+  - AppServer: request/response + notifications (T-39/T-68).
+- Command payloads should therefore avoid embedding provider-specific argv/protocol details; keep them stable-id + intent oriented.
+
 ## Requirements
 
 ### 1) Define command kinds + payloads

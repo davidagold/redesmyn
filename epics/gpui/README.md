@@ -262,6 +262,15 @@ This domain ports/redesigns agent execution around **durable structured session 
 - “send message” conflict handling semantics,
 - interrupt semantics.
 
+Architecture note (important):
+
+- The control plane and UI/CLI never “run Codex/Claude” directly. They issue typed commands and consume `SessionEvent`s.
+- Daemon-side runners are implementations of a **runtime interface** (start/stop/interrupt/send-turn) with multiple internal runtime kinds:
+  - `StructuredExec` (per-turn subprocess spawn; stdout parsing), and
+  - `AppServer` (long-lived server; request/response + notifications).
+- This seam is what lets us transition Codex from exec-mode to app-server mode quickly: swap the daemon runner implementation without rewriting
+  control-plane semantics or UI components.
+
 Tasks:
 
 - `epics/gpui/tasks/T-32/README.md`: Agent taxonomy + interface inference + turn builders (structured exec + app-server).
