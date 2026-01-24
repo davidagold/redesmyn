@@ -22,6 +22,7 @@ use redesmyn_protocol::client::{
     SendSessionMessageResponse, SessionEventCursor, SessionEventsFilter, Subscribe,
     SubscriptionEvent, SubscriptionFilter, Unsubscribe,
 };
+use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -323,8 +324,10 @@ struct ScrollRestore {
 pub struct SessionView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
+    show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
+    pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     client: Option<ClientApi>,
     _client_task: Option<Task<()>>,
@@ -352,6 +355,9 @@ impl SessionView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = ScrollHandle::new();
+        let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
+            .ok()
+            .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
         let session_id_input = cx.new(|cx| TextInput::new(cx).placeholder("Session id…"));
         let composer_input = cx.new(|cx| TextArea::new(cx).placeholder("Message…"));
 
@@ -383,9 +389,11 @@ impl SessionView {
             None => (None, None),
         };
 
-        let initial_id = initial_session_id
-            .map(|id| id.to_string())
-            .or_else(|| std::env::var("REDESMYN_SESSION_VIEWER_SESSION_ID").ok());
+        let initial_id = initial_session_id.map(|id| id.to_string()).or_else(|| {
+            std::env::var("REDESMYN_SESSION_VIEWER_SESSION_ID")
+                .ok()
+                .filter(|_| show_debug_controls)
+        });
         if let Some(id) = initial_id {
             session_id_input.update(cx, move |input, cx| input.set_text(id, cx));
         }
@@ -393,8 +401,10 @@ impl SessionView {
         let mut this = Self {
             focus_handle,
             scroll_handle,
+            show_debug_controls,
             session_id_input,
             composer_input,
+            pending_focus_composer: false,
             feed: None,
             client,
             _client_task: client_task,
@@ -425,6 +435,9 @@ impl SessionView {
             self.pending_scroll_restore = None;
             self.error = None;
             self.feed = None;
+            self.pending_focus_composer = false;
+            self.composer_input
+                .update(cx, |input, cx| input.set_text("", cx));
             self.session_id_input
                 .update(cx, |input, cx| input.set_text("", cx));
             cx.notify();
@@ -434,6 +447,23 @@ impl SessionView {
         self.session_id_input
             .update(cx, |input, cx| input.set_text(session_id.to_string(), cx));
         self.load_session_id(&session_id.to_string(), cx);
+    }
+
+    pub fn request_focus_composer(&mut self, cx: &mut Context<Self>) {
+        self.pending_focus_composer = true;
+        cx.notify();
+    }
+
+    #[must_use]
+    pub fn ui_composer_state(&self) -> UiComposerState {
+        let Some(feed) = self.feed.as_ref() else {
+            return UiComposerState::default();
+        };
+
+        UiComposerState {
+            sending: feed.composer.sending,
+            error: feed.composer.last_error.clone(),
+        }
     }
 
     fn load_session_id(&mut self, raw: &str, cx: &mut Context<Self>) {
@@ -461,18 +491,13 @@ impl SessionView {
             }
         };
 
-        self.subscription_id = None;
-        self.subscription_task = None;
-        self.load_task = None;
-        self.load_older_task = None;
-        self.pending_scroll_restore = None;
-
         self.error = None;
         self.subscription_task = None;
         self.subscription_id = None;
         self.load_task = None;
         self.load_older_task = None;
         self.send_task = None;
+        self.pending_scroll_restore = None;
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -558,6 +583,9 @@ impl SessionView {
                     self.load_session_id(raw.as_ref(), cx);
                     return;
                 }
+
+                feed.apply_live_event(resp.event);
+                apply_scroll_intents(feed, &self.scroll_handle);
             }
             Err(err) => {
                 if err.category == ErrorCategory::Conflict {
@@ -822,7 +850,11 @@ impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
-        let load_view = view.clone();
+
+        if self.pending_focus_composer && self.feed.is_some() {
+            self.pending_focus_composer = false;
+            window.focus(&self.composer_input.focus_handle(cx));
+        }
 
         let mut content = div()
             .flex()
@@ -848,28 +880,31 @@ impl Render for SessionView {
             );
         }
 
-        let controls = div()
-            .flex()
-            .flex_row()
-            .gap(theme.spacing.sm)
-            .items_center()
-            .w_full()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(self.session_id_input.clone()),
-            )
-            .child(
-                TextButton::new(("session_load", cx.entity_id()), "Load").on_click(
-                    move |_, _, cx| {
-                        let id = load_view.read(cx).session_id_input.read(cx).text().clone();
-                        load_view.update(cx, |this, cx| this.load_session_id(id.as_ref(), cx));
-                    },
-                ),
-            );
+        if self.show_debug_controls {
+            let load_view = view.clone();
+            let controls = div()
+                .flex()
+                .flex_row()
+                .gap(theme.spacing.sm)
+                .items_center()
+                .w_full()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(self.session_id_input.clone()),
+                )
+                .child(
+                    TextButton::new(("session_load", cx.entity_id()), "Load").on_click(
+                        move |_, _, cx| {
+                            let id = load_view.read(cx).session_id_input.read(cx).text().clone();
+                            load_view.update(cx, |this, cx| this.load_session_id(id.as_ref(), cx));
+                        },
+                    ),
+                );
 
-        content = content.child(controls);
+            content = content.child(controls);
+        }
 
         let items = self
             .feed

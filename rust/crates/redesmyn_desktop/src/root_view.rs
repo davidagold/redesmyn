@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, watch};
 
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse,
-    UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
-    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    UiComposerState, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
+    UiErrorCallout, UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
@@ -526,6 +526,13 @@ impl RootView {
 
     fn ui_snapshot(&self, cx: &App) -> UiSnapshot {
         let split_state = self.split_pane.read(cx).state();
+        let pinned_chat_session_id = self.session_pane.read(cx).pinned_session_id;
+        let pinned_chat_composer = self
+            .session_pane
+            .read(cx)
+            .session_view
+            .read(cx)
+            .ui_composer_state();
 
         let primary_view = if self.chrome.selected_epic_slug.is_some() {
             UiPrimaryView::EpicWorkspace
@@ -614,6 +621,8 @@ impl RootView {
             selection,
             in_flight,
             errors,
+            pinned_chat_session_id,
+            pinned_chat_composer,
         }
     }
 }
@@ -638,6 +647,8 @@ fn ui_unavailable_snapshot() -> UiSnapshot {
         errors: vec![UiErrorCallout {
             message: "UI unavailable.".to_string(),
         }],
+        pinned_chat_session_id: None,
+        pinned_chat_composer: UiComposerState::default(),
     }
 }
 
@@ -2317,6 +2328,7 @@ impl EpicSessionPaneHost {
                                 this.chat_sessions = sessions;
                                 this.session_view.update(cx, |view, cx| {
                                     view.set_session_id(Some(session_id), cx);
+                                    view.request_focus_composer(cx);
                                 });
                             }
                             Err(err) => this.create_and_pin.fail(err.to_string()),
@@ -2435,6 +2447,7 @@ impl EpicSessionPaneHost {
                                 this.chat_sessions = sessions;
                                 this.session_view.update(cx, |view, cx| {
                                     view.set_session_id(Some(session_id), cx);
+                                    view.request_focus_composer(cx);
                                 });
                             }
                             Err(err) => this.pin_existing.fail(err.to_string()),
@@ -2730,7 +2743,6 @@ impl Render for EpicSessionPaneHost {
             .when(has_pinned, |this| {
                 this.child(unpin_button).child(close_button)
             });
-
         if self.fixture.is_some() {
             let label = if self.emit_demo_in_flight {
                 "Emitting…"
