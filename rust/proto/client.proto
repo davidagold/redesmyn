@@ -164,6 +164,9 @@ message EpicSummary {
   string slug = 1;
   string name = 2;
   // EpicId (ULID bytes, length = 16). Empty => none.
+  //
+  // Optional for back-compat with older servers. Newer servers should always
+  // populate this field.
   bytes epic_id = 3;
 }
 
