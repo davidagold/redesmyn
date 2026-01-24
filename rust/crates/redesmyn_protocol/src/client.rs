@@ -37,6 +37,11 @@ pub enum ClientMethod {
     GetLatestTaskSession,
     GetEpicPinnedChatSession,
     SendSessionMessage,
+    StartAgent,
+    StopAgent,
+    RestartAgent,
+    SendTaskAgentMessage,
+    AttachAgentSession,
     CreateCommand,
     GetCommand,
     WaitForCommand,
@@ -75,6 +80,11 @@ pub enum RequestPayload {
     GetLatestTaskSession(GetLatestTaskSessionRequest),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
     SendSessionMessage(SendSessionMessageRequest),
+    StartAgent(StartAgentRequest),
+    StopAgent(StopAgentRequest),
+    RestartAgent(RestartAgentRequest),
+    SendTaskAgentMessage(SendTaskAgentMessageRequest),
+    AttachAgentSession(AttachAgentSessionRequest),
     CreateCommand(CreateCommandRequest),
     GetCommand(GetCommandRequest),
     WaitForCommand(WaitForCommandRequest),
@@ -100,6 +110,11 @@ impl RequestPayload {
             Self::GetLatestTaskSession(_) => ClientMethod::GetLatestTaskSession,
             Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
             Self::SendSessionMessage(_) => ClientMethod::SendSessionMessage,
+            Self::StartAgent(_) => ClientMethod::StartAgent,
+            Self::StopAgent(_) => ClientMethod::StopAgent,
+            Self::RestartAgent(_) => ClientMethod::RestartAgent,
+            Self::SendTaskAgentMessage(_) => ClientMethod::SendTaskAgentMessage,
+            Self::AttachAgentSession(_) => ClientMethod::AttachAgentSession,
             Self::CreateCommand(_) => ClientMethod::CreateCommand,
             Self::GetCommand(_) => ClientMethod::GetCommand,
             Self::WaitForCommand(_) => ClientMethod::WaitForCommand,
@@ -150,6 +165,11 @@ pub enum ResponseResult {
     GetLatestTaskSession(GetLatestTaskSessionResponse),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
     SendSessionMessage(SendSessionMessageResponse),
+    StartAgent(StartAgentResponse),
+    StopAgent(StopAgentResponse),
+    RestartAgent(RestartAgentResponse),
+    SendTaskAgentMessage(SendTaskAgentMessageResponse),
+    AttachAgentSession(AttachAgentSessionResponse),
     CreateCommand(CreateCommandResponse),
     GetCommand(GetCommandResponse),
     WaitForCommand(WaitForCommandResponse),
@@ -459,6 +479,101 @@ pub struct SendSessionMessageResponse {
     pub session_id: SessionId,
 }
 
+// Agent orchestration (T-41).
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAgentMessageDelivery {
+    StructuredStarted,
+    StructuredResumed,
+    InteractiveStarted,
+    InteractiveSent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAgentMessageConversationContinuity {
+    Kept,
+    Broken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StartAgentRequest {
+    pub task_id: TaskId,
+    pub agent_kind: AgentKind,
+    pub interface_mode: AgentInterfaceMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
+    #[serde(default)]
+    pub on_conflict: AgentMessageConflictAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StartAgentResponse {
+    pub command: CommandSummary,
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StopAgentRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StopAgentResponse {
+    pub command: CommandSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ended_session_ids: Vec<SessionId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RestartAgentRequest {
+    pub task_id: TaskId,
+    pub agent_kind: AgentKind,
+    pub interface_mode: AgentInterfaceMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RestartAgentResponse {
+    pub command: CommandSummary,
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SendTaskAgentMessageRequest {
+    pub task_id: TaskId,
+    pub message: String,
+    #[serde(default)]
+    pub on_conflict: AgentMessageConflictAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupt: Option<bool>,
+    pub agent_kind: AgentKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_interface_mode: Option<AgentInterfaceMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SendTaskAgentMessageResponse {
+    pub command: CommandSummary,
+    pub session_id: SessionId,
+    pub agent_interface_mode: AgentInterfaceMode,
+    pub delivery: TaskAgentMessageDelivery,
+    pub conversation_continuity: TaskAgentMessageConversationContinuity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AttachAgentSessionRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AttachAgentSessionResponse {
+    pub command: CommandSummary,
+}
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CreateCommandRequest {
     pub kind: String,

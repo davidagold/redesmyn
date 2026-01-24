@@ -52,6 +52,11 @@ enum ClientMethod {
   CLIENT_METHOD_PIN_CHAT_SESSION_TO_EPIC = 17;
   CLIENT_METHOD_UNPIN_CHAT_SESSION_FROM_EPIC = 18;
   CLIENT_METHOD_SEND_SESSION_MESSAGE = 19;
+  CLIENT_METHOD_START_AGENT = 20;
+  CLIENT_METHOD_STOP_AGENT = 21;
+  CLIENT_METHOD_RESTART_AGENT = 22;
+  CLIENT_METHOD_SEND_TASK_AGENT_MESSAGE = 23;
+  CLIENT_METHOD_ATTACH_AGENT_SESSION = 24;
 }
 
 // Request for a control-plane method.
@@ -68,6 +73,11 @@ message Request {
     GetSessionEventsRequest get_session_events = 14;
     GetLatestTaskSessionRequest get_latest_task_session = 15;
     GetEpicPinnedChatSessionRequest get_epic_pinned_chat_session = 16;
+    StartAgentRequest start_agent = 23;
+    StopAgentRequest stop_agent = 24;
+    RestartAgentRequest restart_agent = 25;
+    SendTaskAgentMessageRequest send_task_agent_message = 26;
+    AttachAgentSessionRequest attach_agent_session = 27;
     CreateCommandRequest create_command = 17;
     GetCommandRequest get_command = 18;
     WaitForCommandRequest wait_for_command = 19;
@@ -103,6 +113,11 @@ message Response {
     GetSessionEventsResponse get_session_events = 14;
     GetLatestTaskSessionResponse get_latest_task_session = 15;
     GetEpicPinnedChatSessionResponse get_epic_pinned_chat_session = 16;
+    StartAgentResponse start_agent = 23;
+    StopAgentResponse stop_agent = 24;
+    RestartAgentResponse restart_agent = 25;
+    SendTaskAgentMessageResponse send_task_agent_message = 26;
+    AttachAgentSessionResponse attach_agent_session = 27;
     CreateCommandResponse create_command = 17;
     GetCommandResponse get_command = 18;
     WaitForCommandResponse wait_for_command = 19;
@@ -350,6 +365,91 @@ message GetEpicPinnedChatSessionRequest {
 message GetEpicPinnedChatSessionResponse {
   // SessionId (ULID bytes, length = 16). Empty => none.
   bytes session_id = 1;
+}
+
+// Agent orchestration (T-41).
+
+enum TaskAgentMessageDelivery {
+  TASK_AGENT_MESSAGE_DELIVERY_UNSPECIFIED = 0;
+  TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_STARTED = 1;
+  TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_RESUMED = 2;
+  TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_STARTED = 3;
+  TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_SENT = 4;
+}
+
+enum TaskAgentMessageConversationContinuity {
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_UNSPECIFIED = 0;
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_KEPT = 1;
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_BROKEN = 2;
+}
+
+message StartAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  AgentKind agent_kind = 2;
+  AgentInterfaceMode interface_mode = 3;
+  optional string initial_prompt = 4;
+  AgentMessageConflictAction on_conflict = 5;
+}
+
+message StartAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message StopAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message StopAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  repeated bytes ended_session_ids = 2;
+}
+
+message RestartAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  AgentKind agent_kind = 2;
+  AgentInterfaceMode interface_mode = 3;
+  optional string initial_prompt = 4;
+}
+
+message RestartAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message SendTaskAgentMessageRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  string message = 2;
+  AgentMessageConflictAction on_conflict = 3;
+  optional bool interrupt = 4;
+  AgentKind agent_kind = 5;
+  optional AgentInterfaceMode preferred_interface_mode = 6;
+}
+
+message SendTaskAgentMessageResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+  AgentInterfaceMode agent_interface_mode = 3;
+  TaskAgentMessageDelivery delivery = 4;
+  TaskAgentMessageConversationContinuity conversation_continuity = 5;
+  repeated string warnings = 6;
+}
+
+message AttachAgentSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message AttachAgentSessionResponse {
+  CommandSummary command = 1;
 }
 
 // Command lifecycle requests for deterministic automation (T-15).

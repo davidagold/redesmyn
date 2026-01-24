@@ -1463,6 +1463,15 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::SendSessionMessage => {
             pbv1::ClientMethod::SendSessionMessage as i32
         }
+        crate::client::ClientMethod::StartAgent => pbv1::ClientMethod::StartAgent as i32,
+        crate::client::ClientMethod::StopAgent => pbv1::ClientMethod::StopAgent as i32,
+        crate::client::ClientMethod::RestartAgent => pbv1::ClientMethod::RestartAgent as i32,
+        crate::client::ClientMethod::SendTaskAgentMessage => {
+            pbv1::ClientMethod::SendTaskAgentMessage as i32
+        }
+        crate::client::ClientMethod::AttachAgentSession => {
+            pbv1::ClientMethod::AttachAgentSession as i32
+        }
         crate::client::ClientMethod::CreateCommand => pbv1::ClientMethod::CreateCommand as i32,
         crate::client::ClientMethod::GetCommand => pbv1::ClientMethod::GetCommand as i32,
         crate::client::ClientMethod::WaitForCommand => pbv1::ClientMethod::WaitForCommand as i32,
@@ -1506,6 +1515,15 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         }
         Ok(pbv1::ClientMethod::SendSessionMessage) => {
             Ok(crate::client::ClientMethod::SendSessionMessage)
+        }
+        Ok(pbv1::ClientMethod::StartAgent) => Ok(crate::client::ClientMethod::StartAgent),
+        Ok(pbv1::ClientMethod::StopAgent) => Ok(crate::client::ClientMethod::StopAgent),
+        Ok(pbv1::ClientMethod::RestartAgent) => Ok(crate::client::ClientMethod::RestartAgent),
+        Ok(pbv1::ClientMethod::SendTaskAgentMessage) => {
+            Ok(crate::client::ClientMethod::SendTaskAgentMessage)
+        }
+        Ok(pbv1::ClientMethod::AttachAgentSession) => {
+            Ok(crate::client::ClientMethod::AttachAgentSession)
         }
         Ok(pbv1::ClientMethod::CreateCommand) => Ok(crate::client::ClientMethod::CreateCommand),
         Ok(pbv1::ClientMethod::GetCommand) => Ok(crate::client::ClientMethod::GetCommand),
@@ -1675,6 +1693,78 @@ fn decode_agent_interface_mode(
     }
 }
 
+fn encode_task_agent_message_delivery(value: crate::client::TaskAgentMessageDelivery) -> i32 {
+    match value {
+        crate::client::TaskAgentMessageDelivery::StructuredStarted => {
+            pbv1::TaskAgentMessageDelivery::StructuredStarted as i32
+        }
+        crate::client::TaskAgentMessageDelivery::StructuredResumed => {
+            pbv1::TaskAgentMessageDelivery::StructuredResumed as i32
+        }
+        crate::client::TaskAgentMessageDelivery::InteractiveStarted => {
+            pbv1::TaskAgentMessageDelivery::InteractiveStarted as i32
+        }
+        crate::client::TaskAgentMessageDelivery::InteractiveSent => {
+            pbv1::TaskAgentMessageDelivery::InteractiveSent as i32
+        }
+    }
+}
+
+fn decode_task_agent_message_delivery(
+    value: i32,
+) -> Result<crate::client::TaskAgentMessageDelivery, ErrorEnvelope> {
+    match pbv1::TaskAgentMessageDelivery::try_from(value) {
+        Ok(pbv1::TaskAgentMessageDelivery::StructuredStarted) => {
+            Ok(crate::client::TaskAgentMessageDelivery::StructuredStarted)
+        }
+        Ok(pbv1::TaskAgentMessageDelivery::StructuredResumed) => {
+            Ok(crate::client::TaskAgentMessageDelivery::StructuredResumed)
+        }
+        Ok(pbv1::TaskAgentMessageDelivery::InteractiveStarted) => {
+            Ok(crate::client::TaskAgentMessageDelivery::InteractiveStarted)
+        }
+        Ok(pbv1::TaskAgentMessageDelivery::InteractiveSent) => {
+            Ok(crate::client::TaskAgentMessageDelivery::InteractiveSent)
+        }
+        Ok(pbv1::TaskAgentMessageDelivery::Unspecified) | Err(_) => Err(invalid_field(
+            "delivery",
+            format!("unknown enum value for TaskAgentMessageDelivery: {value}"),
+        )),
+    }
+}
+
+fn encode_task_agent_message_conversation_continuity(
+    value: crate::client::TaskAgentMessageConversationContinuity,
+) -> i32 {
+    match value {
+        crate::client::TaskAgentMessageConversationContinuity::Kept => {
+            pbv1::TaskAgentMessageConversationContinuity::Kept as i32
+        }
+        crate::client::TaskAgentMessageConversationContinuity::Broken => {
+            pbv1::TaskAgentMessageConversationContinuity::Broken as i32
+        }
+    }
+}
+
+fn decode_task_agent_message_conversation_continuity(
+    value: i32,
+) -> Result<crate::client::TaskAgentMessageConversationContinuity, ErrorEnvelope> {
+    match pbv1::TaskAgentMessageConversationContinuity::try_from(value) {
+        Ok(pbv1::TaskAgentMessageConversationContinuity::Kept) => {
+            Ok(crate::client::TaskAgentMessageConversationContinuity::Kept)
+        }
+        Ok(pbv1::TaskAgentMessageConversationContinuity::Broken) => {
+            Ok(crate::client::TaskAgentMessageConversationContinuity::Broken)
+        }
+        Ok(pbv1::TaskAgentMessageConversationContinuity::Unspecified) | Err(_) => {
+            Err(invalid_field(
+                "conversation_continuity",
+                format!("unknown enum value for TaskAgentMessageConversationContinuity: {value}"),
+            ))
+        }
+    }
+}
+
 fn encode_agent_session_scope_kind(value: crate::client::AgentSessionScopeKind) -> i32 {
     match value {
         crate::client::AgentSessionScopeKind::Task => pbv1::AgentSessionScopeKind::Task as i32,
@@ -1839,6 +1929,21 @@ impl crate::client::Request {
                 crate::client::RequestPayload::SendSessionMessage(req) => {
                     pbv1::request::Payload::SendSessionMessage(req.to_protobuf())
                 }
+                crate::client::RequestPayload::StartAgent(req) => {
+                    pbv1::request::Payload::StartAgent(req.to_protobuf())
+                }
+                crate::client::RequestPayload::StopAgent(req) => {
+                    pbv1::request::Payload::StopAgent(req.to_protobuf())
+                }
+                crate::client::RequestPayload::RestartAgent(req) => {
+                    pbv1::request::Payload::RestartAgent(req.to_protobuf())
+                }
+                crate::client::RequestPayload::SendTaskAgentMessage(req) => {
+                    pbv1::request::Payload::SendTaskAgentMessage(req.to_protobuf())
+                }
+                crate::client::RequestPayload::AttachAgentSession(req) => {
+                    pbv1::request::Payload::AttachAgentSession(req.to_protobuf())
+                }
                 crate::client::RequestPayload::ListTaskSessions(req) => {
                     pbv1::request::Payload::ListTaskSessions(req.to_protobuf())
                 }
@@ -1913,6 +2018,27 @@ impl crate::client::Request {
             pbv1::request::Payload::SendSessionMessage(req) => {
                 crate::client::RequestPayload::SendSessionMessage(
                     crate::client::SendSessionMessageRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::StartAgent(req) => crate::client::RequestPayload::StartAgent(
+                crate::client::StartAgentRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::StopAgent(req) => crate::client::RequestPayload::StopAgent(
+                crate::client::StopAgentRequest::try_from_protobuf(req)?,
+            ),
+            pbv1::request::Payload::RestartAgent(req) => {
+                crate::client::RequestPayload::RestartAgent(
+                    crate::client::RestartAgentRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::SendTaskAgentMessage(req) => {
+                crate::client::RequestPayload::SendTaskAgentMessage(
+                    crate::client::SendTaskAgentMessageRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::AttachAgentSession(req) => {
+                crate::client::RequestPayload::AttachAgentSession(
+                    crate::client::AttachAgentSessionRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::ListTaskSessions(req) => {
@@ -2350,6 +2476,114 @@ impl crate::client::SendSessionMessageRequest {
     }
 }
 
+impl crate::client::StartAgentRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StartAgentRequest {
+        pbv1::StartAgentRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+            agent_kind: encode_agent_kind(self.agent_kind),
+            interface_mode: encode_agent_interface_mode(self.interface_mode),
+            initial_prompt: self.initial_prompt.clone(),
+            on_conflict: encode_agent_message_conflict_action(self.on_conflict),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::StartAgentRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+            agent_kind: decode_agent_kind(proto.agent_kind)?,
+            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
+            initial_prompt: proto.initial_prompt,
+            on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
+        })
+    }
+}
+
+impl crate::client::StopAgentRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StopAgentRequest {
+        pbv1::StopAgentRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::StopAgentRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::client::RestartAgentRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RestartAgentRequest {
+        pbv1::RestartAgentRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+            agent_kind: encode_agent_kind(self.agent_kind),
+            interface_mode: encode_agent_interface_mode(self.interface_mode),
+            initial_prompt: self.initial_prompt.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::RestartAgentRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+            agent_kind: decode_agent_kind(proto.agent_kind)?,
+            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
+            initial_prompt: proto.initial_prompt,
+        })
+    }
+}
+
+impl crate::client::SendTaskAgentMessageRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SendTaskAgentMessageRequest {
+        pbv1::SendTaskAgentMessageRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+            message: self.message.clone(),
+            on_conflict: encode_agent_message_conflict_action(self.on_conflict),
+            interrupt: self.interrupt,
+            agent_kind: encode_agent_kind(self.agent_kind),
+            preferred_interface_mode: self
+                .preferred_interface_mode
+                .map(encode_agent_interface_mode),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SendTaskAgentMessageRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
+            message: proto.message,
+            on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
+            interrupt: proto.interrupt,
+            agent_kind: decode_agent_kind(proto.agent_kind)?,
+            preferred_interface_mode: proto
+                .preferred_interface_mode
+                .map(decode_agent_interface_mode)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::AttachAgentSessionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AttachAgentSessionRequest {
+        pbv1::AttachAgentSessionRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::AttachAgentSessionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
 impl crate::client::EventWaitFilter {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::EventWaitFilter {
@@ -2470,6 +2704,21 @@ impl crate::client::Response {
                 crate::client::ResponseResult::SendSessionMessage(resp) => {
                     pbv1::response::Result::SendSessionMessage(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::StartAgent(resp) => {
+                    pbv1::response::Result::StartAgent(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::StopAgent(resp) => {
+                    pbv1::response::Result::StopAgent(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::RestartAgent(resp) => {
+                    pbv1::response::Result::RestartAgent(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::SendTaskAgentMessage(resp) => {
+                    pbv1::response::Result::SendTaskAgentMessage(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::AttachAgentSession(resp) => {
+                    pbv1::response::Result::AttachAgentSession(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::ListTaskSessions(resp) => {
                     pbv1::response::Result::ListTaskSessions(resp.to_protobuf())
                 }
@@ -2547,6 +2796,27 @@ impl crate::client::Response {
             pbv1::response::Result::SendSessionMessage(resp) => {
                 crate::client::ResponseResult::SendSessionMessage(
                     crate::client::SendSessionMessageResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::StartAgent(resp) => crate::client::ResponseResult::StartAgent(
+                crate::client::StartAgentResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::StopAgent(resp) => crate::client::ResponseResult::StopAgent(
+                crate::client::StopAgentResponse::try_from_protobuf(resp)?,
+            ),
+            pbv1::response::Result::RestartAgent(resp) => {
+                crate::client::ResponseResult::RestartAgent(
+                    crate::client::RestartAgentResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::SendTaskAgentMessage(resp) => {
+                crate::client::ResponseResult::SendTaskAgentMessage(
+                    crate::client::SendTaskAgentMessageResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::AttachAgentSession(resp) => {
+                crate::client::ResponseResult::AttachAgentSession(
+                    crate::client::AttachAgentSessionResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::ListTaskSessions(resp) => {
@@ -3110,6 +3380,124 @@ impl crate::client::SendSessionMessageResponse {
         Ok(Self {
             event,
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::StartAgentResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StartAgentResponse {
+        pbv1::StartAgentResponse {
+            command: Some(self.command.to_protobuf()),
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::StartAgentResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::StopAgentResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::StopAgentResponse {
+        pbv1::StopAgentResponse {
+            command: Some(self.command.to_protobuf()),
+            ended_session_ids: self
+                .ended_session_ids
+                .iter()
+                .map(|id| id.to_bytes().to_vec())
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::StopAgentResponse) -> Result<Self, ErrorEnvelope> {
+        let ended_session_ids = proto
+            .ended_session_ids
+            .iter()
+            .map(|bytes| decode_required_ulid::<SessionId>("ended_session_ids", bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+            ended_session_ids,
+        })
+    }
+}
+impl crate::client::RestartAgentResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RestartAgentResponse {
+        pbv1::RestartAgentResponse {
+            command: Some(self.command.to_protobuf()),
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::RestartAgentResponse) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::SendTaskAgentMessageResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SendTaskAgentMessageResponse {
+        pbv1::SendTaskAgentMessageResponse {
+            command: Some(self.command.to_protobuf()),
+            session_id: self.session_id.to_bytes().to_vec(),
+            agent_interface_mode: encode_agent_interface_mode(self.agent_interface_mode),
+            delivery: encode_task_agent_message_delivery(self.delivery),
+            conversation_continuity: encode_task_agent_message_conversation_continuity(
+                self.conversation_continuity,
+            ),
+            warnings: self.warnings.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SendTaskAgentMessageResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            agent_interface_mode: decode_agent_interface_mode(proto.agent_interface_mode)?,
+            delivery: decode_task_agent_message_delivery(proto.delivery)?,
+            conversation_continuity: decode_task_agent_message_conversation_continuity(
+                proto.conversation_continuity,
+            )?,
+            warnings: proto.warnings,
+        })
+    }
+}
+
+impl crate::client::AttachAgentSessionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AttachAgentSessionResponse {
+        pbv1::AttachAgentSessionResponse {
+            command: Some(self.command.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::AttachAgentSessionResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: crate::client::CommandSummary::try_from_protobuf(
+                proto.command.ok_or_else(|| missing_required("command"))?,
+            )?,
         })
     }
 }

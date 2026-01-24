@@ -18,6 +18,7 @@ pub mod pb {
 
 pub use redesmyn_errors::ErrorCategory;
 
+pub mod agent_commands;
 pub mod artifacts;
 pub mod client;
 pub mod daemon;
