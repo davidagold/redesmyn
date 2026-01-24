@@ -513,6 +513,7 @@ async fn handle_request_result(
                     .map(|epic| EpicSummary {
                         slug: epic.slug,
                         name: epic.title,
+                        epic_id: Some(epic.epic_id),
                     })
                     .collect(),
             }))
