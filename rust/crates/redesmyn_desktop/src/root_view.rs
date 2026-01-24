@@ -33,7 +33,7 @@ use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
     CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
-use crate::control_plane_client::ControlPlaneClient;
+use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 
 use self::command_palette_overlay::CommandPaletteOverlay;
 
@@ -108,6 +108,7 @@ impl UiUpdateCounter {
 pub struct RootView {
     model: Entity<DesktopModel>,
     split_pane: Entity<SplitPane>,
+    session_pane: Entity<EpicSessionPaneHost>,
     workspace_pane: Entity<WorkspacePaneHost>,
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
@@ -178,6 +179,7 @@ impl RootView {
         let mut this = Self {
             model,
             split_pane,
+            session_pane,
             workspace_pane,
             focus_handle,
             command_palette,
@@ -2131,6 +2133,7 @@ impl EpicSessionPaneHost {
 
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
 
         self.load.start();
         cx.notify();
@@ -2144,7 +2147,7 @@ impl EpicSessionPaneHost {
                 };
 
                 let task = tokio.spawn(async move {
-                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
                     let Some(workspace_id) = graph.workspace_id else {
                         return Err(ControlPlaneClientError::Server {
                             message: "Workspace id unavailable for selected epic.".to_string(),
@@ -2236,6 +2239,7 @@ impl EpicSessionPaneHost {
 
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
 
         self.create_and_pin.start();
         cx.notify();
@@ -2249,7 +2253,7 @@ impl EpicSessionPaneHost {
                 };
 
                 let task = tokio.spawn(async move {
-                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
                     let Some(workspace_id) = graph.workspace_id else {
                         return Err(ControlPlaneClientError::Server {
                             message: "Workspace id unavailable for selected epic.".to_string(),
@@ -2356,6 +2360,7 @@ impl EpicSessionPaneHost {
 
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
 
         self.pin_existing.start();
         cx.notify();
@@ -2369,7 +2374,7 @@ impl EpicSessionPaneHost {
                 };
 
                 let task = tokio.spawn(async move {
-                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
                     let Some(workspace_id) = graph.workspace_id else {
                         return Err(ControlPlaneClientError::Server {
                             message: "Workspace id unavailable for selected epic.".to_string(),
@@ -2463,6 +2468,7 @@ impl EpicSessionPaneHost {
 
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
 
         self.unpin.start();
         cx.notify();
@@ -2476,7 +2482,7 @@ impl EpicSessionPaneHost {
                 };
 
                 let task = tokio.spawn(async move {
-                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
                     let Some(workspace_id) = graph.workspace_id else {
                         return Err(ControlPlaneClientError::Server {
                             message: "Workspace id unavailable for selected epic.".to_string(),
@@ -2568,6 +2574,7 @@ impl EpicSessionPaneHost {
 
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
 
         self.close_session.start();
         cx.notify();
@@ -2581,7 +2588,7 @@ impl EpicSessionPaneHost {
                 };
 
                 let task = tokio.spawn(async move {
-                    let graph = client.get_epic_graph(epic_slug.clone()).await?;
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
                     let Some(workspace_id) = graph.workspace_id else {
                         return Err(ControlPlaneClientError::Server {
                             message: "Workspace id unavailable for selected epic.".to_string(),
