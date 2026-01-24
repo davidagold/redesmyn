@@ -102,8 +102,14 @@ impl DaemonRouter {
             let selected = inner
                 .connections
                 .iter()
-                .find(|(_, entry)| {
-                    entry.attached_repo_scopes.is_empty() || entry.attached_repo_scopes.contains(&scope)
+                .filter(|(_, entry)| entry.attached_repo_scopes.contains(&scope))
+                .min_by_key(|(id, _)| *id)
+                .or_else(|| {
+                    inner
+                        .connections
+                        .iter()
+                        .filter(|(_, entry)| entry.attached_repo_scopes.is_empty())
+                        .min_by_key(|(id, _)| *id)
                 })
                 .map(|(id, entry)| (*id, entry.accepted_protocol, entry.outbound_tx.clone()));
 
@@ -128,7 +134,17 @@ impl DaemonRouter {
             }),
         );
 
+        {
+            let mut inner = self.inner.write().await;
+            inner.assignments.insert(command_id, host_instance_id);
+        }
+
         if outbound_tx.send(frame).await.is_err() {
+            {
+                let mut inner = self.inner.write().await;
+                inner.assignments.remove(&command_id);
+            }
+
             let detail = ErrorDetail::from([(
                 "host_instance_id".to_string(),
                 host_instance_id.to_string(),
@@ -138,11 +154,6 @@ impl DaemonRouter {
                 "Daemon connection closed while dispatching command.",
             )
             .with_detail(detail));
-        }
-
-        {
-            let mut inner = self.inner.write().await;
-            inner.assignments.insert(command_id, host_instance_id);
         }
 
         tracing::debug!(

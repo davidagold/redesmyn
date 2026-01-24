@@ -139,12 +139,62 @@ impl Commands {
                     kind_clone,
                     StorageCommandState::Queued,
                     target_task_id,
-                    idempotency_key_clone,
+                    idempotency_key_clone.clone(),
                     created_by,
                     payload,
                 );
 
-                redesmyn_storage::commands::insert_command(&mut *conn, &command).await?;
+                if let Err(err) = redesmyn_storage::commands::insert_command(&mut *conn, &command)
+                    .await
+                {
+                    if idempotency_key_clone.as_deref().is_some()
+                        && storage_error_is_unique_violation(&err)
+                    {
+                        let key = idempotency_key_clone
+                            .as_deref()
+                            .expect("checked is_some above");
+
+                        if let Some(existing_id) =
+                            redesmyn_storage::commands::find_command_by_idempotency_key(
+                                &mut *conn,
+                                scope_clone,
+                                &command.kind,
+                                key,
+                            )
+                            .await?
+                        {
+                            let Some(existing) =
+                                redesmyn_storage::commands::get_command(&mut *conn, existing_id)
+                                    .await?
+                            else {
+                                return Err(redesmyn_storage::StorageError::InvalidData {
+                                    message: format!(
+                                        "command exists for idempotency_key but row is missing: {existing_id}"
+                                    ),
+                                });
+                            };
+                            let last_update =
+                                redesmyn_storage::commands::get_command_last_update(
+                                    &mut *conn,
+                                    existing_id,
+                                )
+                                .await?;
+
+                            if existing.payload != command.payload {
+                                return Ok(CreateResult::IdempotencyConflict {
+                                    existing_command_id: existing_id,
+                                });
+                            }
+
+                            return Ok(CreateResult::Existing {
+                                command: existing,
+                                last_update,
+                            });
+                        }
+                    }
+
+                    return Err(err);
+                }
 
                 let update = CommandUpdateRecord::new_now(
                     CommandUpdateId::new(),
@@ -512,6 +562,17 @@ fn timestamp_from_unix_ms(unix_ms: i64) -> Result<Timestamp, ControlPlaneError> 
 
 fn to_optional_u64(value: i64) -> Option<u64> {
     u64::try_from(value).ok()
+}
+
+fn storage_error_is_unique_violation(err: &redesmyn_storage::StorageError) -> bool {
+    match err {
+        redesmyn_storage::StorageError::Sqlx(sqlx::Error::Database(db))
+            if db.kind() == sqlx::error::ErrorKind::UniqueViolation =>
+        {
+            true
+        }
+        _ => false,
+    }
 }
 
 trait IsTerminal {
