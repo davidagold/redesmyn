@@ -39,7 +39,10 @@ fn session_event_id_key(id: SessionEventId) -> u64 {
 
 const CONFLICT_CODE_KEY: &str = "conflict_code";
 const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
-const CONFLICT_CODE_SESSION_CONFLICT: &str = "structured_session_conflict";
+// NOTE: `conflict_code` values are part of the client-visible contract.
+// `structured_session_conflict` is currently returned for any concurrent task session (even if the
+// conflicting session isn't structured). Consider renaming if we need semantic precision.
+const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
 
 #[derive(Clone)]
 struct ClientApi {
@@ -998,7 +1001,7 @@ impl Render for SessionView {
                                 }),
                             ),
                     ),
-                    CONFLICT_CODE_SESSION_CONFLICT => (
+                    CONFLICT_CODE_TASK_SESSION_CONFLICT => (
                         "Another agent session is already running for this task. Stop it and send your message?".into(),
                         div()
                             .flex()

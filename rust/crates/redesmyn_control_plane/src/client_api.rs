@@ -42,7 +42,10 @@ const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
 
 const CONFLICT_CODE_KEY: &str = "conflict_code";
 const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
-const CONFLICT_CODE_SESSION_CONFLICT: &str = "structured_session_conflict";
+// NOTE: `conflict_code` values are part of the client-visible contract.
+// `structured_session_conflict` is currently returned for any concurrent task session (even if the
+// conflicting session isn't structured). Consider renaming if we need semantic precision.
+const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
@@ -639,12 +642,6 @@ async fn handle_request_result(
             );
             let _guard = span.enter();
 
-            let (workspace_id, repo_id) =
-                match repo_scope_ids_or_default(control_plane.pool(), envelope).await {
-                    Ok(ids) => ids,
-                    Err(err) => return Ok(ResponseResult::Error(err)),
-                };
-
             let trimmed = send.message.trim();
             if trimmed.is_empty() {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
@@ -680,11 +677,30 @@ async fn handle_request_result(
                 ));
             };
 
-            if session.scope_workspace_id != workspace_id || session.scope_repo_id != repo_id {
-                return Ok(ResponseResult::Error(ErrorEnvelope::new(
-                    ErrorCategory::NotFound,
-                    "Session not found in repo scope.",
-                )));
+            match envelope.scope {
+                Some(Scope::Repo { repo }) => {
+                    if session.scope_workspace_id != repo.workspace_id
+                        || session.scope_repo_id != repo.repo_id
+                    {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::NotFound,
+                            "Session not found in repo scope.",
+                        )));
+                    }
+                }
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {}
             }
 
             let (session_id, scope, interface_mode) = match (session.scope_kind, session.task_id) {
@@ -758,7 +774,7 @@ async fn handle_request_result(
                         if other_active_task_session {
                             return Ok(ResponseResult::Error(conflict_error(
                                 session.session_id,
-                                CONFLICT_CODE_SESSION_CONFLICT,
+                                CONFLICT_CODE_TASK_SESSION_CONFLICT,
                                 "Another agent session is already running for this task.",
                             )));
                         }
@@ -1229,66 +1245,6 @@ fn require_repo_scope_ids(
             ErrorCategory::InvalidRequest,
             "Repo scope is required.",
         )),
-    }
-}
-
-async fn repo_scope_ids_or_default(
-    pool: &sqlx::SqlitePool,
-    envelope: &ProtocolEnvelope,
-) -> Result<(WorkspaceId, RepoId), ErrorEnvelope> {
-    match envelope.scope {
-        Some(Scope::Repo { repo }) => Ok((repo.workspace_id, repo.repo_id)),
-        Some(Scope::Unknown) => Err(ErrorEnvelope::new(
-            ErrorCategory::InvalidRequest,
-            "Unknown scope kind.",
-        )),
-        Some(_) => Err(ErrorEnvelope::new(
-            ErrorCategory::InvalidRequest,
-            "Unsupported scope kind.",
-        )),
-        None => {
-            #[derive(Debug, Clone, sqlx::FromRow)]
-            struct Row {
-                workspace_id: WorkspaceId,
-                repo_id: RepoId,
-            }
-
-            let rows: Vec<Row> = sqlx::query_as(
-                r#"
-                SELECT
-                    workspace_id,
-                    id as repo_id
-                FROM repositories
-                ORDER BY created_at_ms DESC
-                LIMIT 2
-                "#,
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(|error| {
-                tracing::error!(error = %error, "failed to resolve default repo scope");
-                ErrorEnvelope::new(
-                    ErrorCategory::Internal,
-                    "Failed to resolve default repo scope.",
-                )
-            })?;
-
-            match rows.as_slice() {
-                [row] => Ok((row.workspace_id, row.repo_id)),
-                [] => Err(ErrorEnvelope::new(
-                    ErrorCategory::NotFound,
-                    "No repositories exist.",
-                )),
-                _ => Err(ErrorEnvelope::new(
-                    ErrorCategory::InvalidRequest,
-                    "Repo scope is required when multiple repositories exist.",
-                )
-                .with_detail(ErrorDetail::from([(
-                    "repo_count_hint".to_string(),
-                    ">=2".to_string(),
-                )]))),
-            }
-        }
     }
 }
 
