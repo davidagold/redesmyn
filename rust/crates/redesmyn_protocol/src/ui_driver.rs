@@ -40,6 +40,12 @@ pub enum UiDriverMethod {
     TriggerRefresh,
     WaitForSnapshot,
     WaitForIdle,
+    GraphSelectNode,
+    GraphClearSelection,
+    GraphToggleFocusMode,
+    GraphToggleExpandedTaskCard,
+    GraphMultiSelectAddNode,
+    GraphMultiSelectRemoveNode,
 }
 
 /// A request issued to the UI driver.
@@ -74,6 +80,12 @@ pub enum UiDriverRequestPayload {
     TriggerRefresh(TriggerRefreshRequest),
     WaitForSnapshot(WaitForUiSnapshotRequest),
     WaitForIdle(WaitForUiIdleRequest),
+    GraphSelectNode(SelectGraphNodeRequest),
+    GraphClearSelection(ClearGraphSelectionRequest),
+    GraphToggleFocusMode(ToggleGraphFocusModeRequest),
+    GraphToggleExpandedTaskCard(ToggleExpandedTaskCardRequest),
+    GraphMultiSelectAddNode(MultiSelectAddNodeRequest),
+    GraphMultiSelectRemoveNode(MultiSelectRemoveNodeRequest),
 }
 
 impl UiDriverRequestPayload {
@@ -95,6 +107,12 @@ impl UiDriverRequestPayload {
             Self::TriggerRefresh(_) => UiDriverMethod::TriggerRefresh,
             Self::WaitForSnapshot(_) => UiDriverMethod::WaitForSnapshot,
             Self::WaitForIdle(_) => UiDriverMethod::WaitForIdle,
+            Self::GraphSelectNode(_) => UiDriverMethod::GraphSelectNode,
+            Self::GraphClearSelection(_) => UiDriverMethod::GraphClearSelection,
+            Self::GraphToggleFocusMode(_) => UiDriverMethod::GraphToggleFocusMode,
+            Self::GraphToggleExpandedTaskCard(_) => UiDriverMethod::GraphToggleExpandedTaskCard,
+            Self::GraphMultiSelectAddNode(_) => UiDriverMethod::GraphMultiSelectAddNode,
+            Self::GraphMultiSelectRemoveNode(_) => UiDriverMethod::GraphMultiSelectRemoveNode,
         }
     }
 }
@@ -141,6 +159,12 @@ pub enum UiDriverResponseResult {
     TriggerRefresh(TriggerRefreshResponse),
     WaitForSnapshot(WaitForUiSnapshotResponse),
     WaitForIdle(WaitForUiIdleResponse),
+    GraphSelectNode(SelectGraphNodeResponse),
+    GraphClearSelection(ClearGraphSelectionResponse),
+    GraphToggleFocusMode(ToggleGraphFocusModeResponse),
+    GraphToggleExpandedTaskCard(ToggleExpandedTaskCardResponse),
+    GraphMultiSelectAddNode(MultiSelectAddNodeResponse),
+    GraphMultiSelectRemoveNode(MultiSelectRemoveNodeResponse),
     Error(ErrorEnvelope),
 }
 
@@ -261,6 +285,14 @@ pub struct UiSnapshotPredicate {
     pub epic_slug: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_flight_empty: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_focus_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_layout_settled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_selection_settled: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -276,6 +308,50 @@ pub struct WaitForUiIdleRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WaitForUiIdleResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SelectGraphNodeRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SelectGraphNodeResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClearGraphSelectionRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ClearGraphSelectionResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToggleGraphFocusModeRequest {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToggleGraphFocusModeResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToggleExpandedTaskCardRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToggleExpandedTaskCardResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MultiSelectAddNodeRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MultiSelectAddNodeResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MultiSelectRemoveNodeRequest {
+    pub task_id: TaskId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MultiSelectRemoveNodeResponse {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -349,12 +425,65 @@ impl Default for UiGraphLoadState {
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum UiGraphNodeId {
+    Task(TaskId),
+    Trunk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct UiGraphEdgeId {
+    pub from: UiGraphNodeId,
+    pub to: UiGraphNodeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiGraphCameraState {
+    pub origin_world_x: i32,
+    pub origin_world_y: i32,
+    pub zoom_percent: u32,
+}
+
+impl Default for UiGraphCameraState {
+    fn default() -> Self {
+        Self {
+            origin_world_x: 0,
+            origin_world_y: 0,
+            zoom_percent: 100,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct UiGraphState {
     #[serde(default)]
     pub load_state: UiGraphLoadState,
     pub node_count: u32,
     pub edge_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_node: Option<UiGraphNodeId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_edge: Option<UiGraphEdgeId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub multi_selected_nodes: Vec<UiGraphNodeId>,
+    pub focus_mode: bool,
+    pub expanded_task_card_open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expanded_task_id: Option<TaskId>,
+    pub selection_bar_visible: bool,
+    /// True when the graph's layout animation has finished (node positions stable).
+    ///
+    /// This intentionally does **not** include camera or selection-bar transitions.
+    pub layout_settled: bool,
+    /// True when selection-driven UI transitions have finished (layout + camera + selection bar).
+    ///
+    /// Prefer this for deterministic tests that need "selection applied".
+    pub selection_settled: bool,
+    #[serde(default)]
+    pub camera: UiGraphCameraState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -393,6 +522,8 @@ pub struct UiSnapshot {
     pub pinned_chat_session_id: Option<SessionId>,
     #[serde(default)]
     pub pinned_chat_composer: UiComposerState,
+    #[serde(default)]
+    pub graph: UiGraphState,
 }
 
 /// UI driver protocol messages.

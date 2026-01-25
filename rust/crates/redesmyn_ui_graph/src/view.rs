@@ -42,7 +42,25 @@ use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload,
     ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
 };
+use redesmyn_protocol::ui_driver::{
+    UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
+    UiGraphNodeId as UiDriverGraphNodeId, UiGraphState,
+};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
+
+fn graph_node_id_to_ui(id: GraphNodeId) -> UiDriverGraphNodeId {
+    match id {
+        GraphNodeId::Task(task_id) => UiDriverGraphNodeId::Task(task_id),
+        GraphNodeId::Trunk => UiDriverGraphNodeId::Trunk,
+    }
+}
+
+fn graph_edge_id_to_ui(id: GraphEdgeId) -> UiDriverGraphEdgeId {
+    UiDriverGraphEdgeId {
+        from: graph_node_id_to_ui(id.from),
+        to: graph_node_id_to_ui(id.to),
+    }
+}
 
 #[derive(Debug, Clone)]
 struct FpsOverlay {
@@ -224,6 +242,7 @@ pub struct GraphView {
     scene: GraphScene,
     full_scene: Option<GraphScene>,
     task_filters: TaskFilters,
+    focus_mode: bool,
     camera: GraphCamera,
     fps_overlay: FpsOverlay,
     camera_animation: Option<CameraAnimation>,
@@ -293,6 +312,7 @@ impl GraphView {
             scene,
             full_scene: None,
             task_filters: TaskFilters::default(),
+            focus_mode: false,
             camera: GraphCamera::new(GraphCameraLimits::default()),
             fps_overlay: FpsOverlay::new(fps_overlay_enabled),
             camera_animation: None,
@@ -525,6 +545,121 @@ impl GraphView {
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.clear_selection(), cx);
+    }
+
+    #[must_use]
+    pub fn contains_task_node(&self, task_id: TaskId) -> bool {
+        self.scene.node(GraphNodeId::Task(task_id)).is_some()
+    }
+
+    #[must_use]
+    pub fn task_slug_for_task_node(&self, task_id: TaskId) -> Option<String> {
+        self.scene
+            .node(GraphNodeId::Task(task_id))
+            .map(|node| node.task_slug.to_string())
+    }
+
+    pub fn driver_select_node_by_task_id(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        self.select_node(GraphNodeId::Task(task_id), cx);
+    }
+
+    pub fn driver_clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.clear_selection(cx);
+    }
+
+    pub fn driver_toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        self.focus_mode = !self.focus_mode;
+        cx.notify();
+    }
+
+    pub fn driver_toggle_expanded_task_card(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        let node_id = GraphNodeId::Task(task_id);
+        if self.scene.selection().selected_node == Some(node_id) {
+            self.clear_selection(cx);
+        } else {
+            self.select_node(node_id, cx);
+        }
+    }
+
+    pub fn driver_multi_select_add_node(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        let node_id = GraphNodeId::Task(task_id);
+        if self.scene.selection().selected_nodes.contains(&node_id) {
+            return;
+        }
+        self.toggle_node(node_id, cx);
+    }
+
+    pub fn driver_multi_select_remove_node(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        let node_id = GraphNodeId::Task(task_id);
+        if !self.scene.selection().selected_nodes.contains(&node_id) {
+            return;
+        }
+        self.toggle_node(node_id, cx);
+    }
+
+    #[must_use]
+    pub fn ui_graph_state(&self) -> UiGraphState {
+        let selected_node = self.visual_selected_node().map(graph_node_id_to_ui);
+        let selected_edge = self
+            .scene
+            .selection()
+            .selected_edge
+            .map(graph_edge_id_to_ui);
+        let multi_selected_nodes = self
+            .scene
+            .selection()
+            .selected_nodes
+            .iter()
+            .copied()
+            .map(graph_node_id_to_ui)
+            .collect::<Vec<_>>();
+
+        let expanded_task_id = match self.visual_selected_node() {
+            Some(GraphNodeId::Task(task_id))
+                if self.scene.selection().selected_edge.is_none()
+                    && self.scene.selection().selected_nodes.len() == 1 =>
+            {
+                Some(task_id)
+            }
+            _ => None,
+        };
+
+        let origin_world = self.camera.origin_world();
+        let zoom_percent = (self.camera.zoom() * 100.0).round().max(0.0) as u32;
+
+        // `layout_settled` covers only node layout animations. It intentionally ignores camera
+        // motion and selection bar transitions so tests can wait for a stable layout before
+        // asserting other UI changes.
+        let layout_settled = self.layout_animation.is_none();
+
+        // `selection_settled` is a stricter notion: it includes selection-driven camera pans/zooms
+        // and selection bar transitions. Prefer this for deterministic "selection applied" waits.
+        let selection_settled = layout_settled
+            && self.camera_animation.is_none()
+            && self.selection_bar_transition.is_none()
+            && self.pending_pan_to_selection.is_none()
+            && self.pending_focus_task_card.is_none()
+            && self.pending_restore_task_focus_zoom.is_none();
+
+        UiGraphState {
+            load_state: UiGraphLoadState::Unknown,
+            node_count: self.scene.nodes().count().min(u32::MAX as usize) as u32,
+            edge_count: self.scene.edges().count().min(u32::MAX as usize) as u32,
+            selected_node,
+            selected_edge,
+            multi_selected_nodes,
+            focus_mode: self.focus_mode,
+            expanded_task_card_open: expanded_task_id.is_some(),
+            expanded_task_id,
+            selection_bar_visible: self.selection_bar_progress.clamp(0.0, 1.0) > 0.001,
+            layout_settled,
+            selection_settled,
+            camera: UiGraphCameraState {
+                origin_world_x: origin_world.x.round() as i32,
+                origin_world_y: origin_world.y.round() as i32,
+                zoom_percent,
+            },
+        }
     }
 
     fn sync_task_session_view(

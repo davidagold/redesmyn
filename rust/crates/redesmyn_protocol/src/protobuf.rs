@@ -4296,6 +4296,24 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
             pbv1::UiDriverMethod::WaitForSnapshot as i32
         }
         crate::ui_driver::UiDriverMethod::WaitForIdle => pbv1::UiDriverMethod::WaitForIdle as i32,
+        crate::ui_driver::UiDriverMethod::GraphSelectNode => {
+            pbv1::UiDriverMethod::GraphSelectNode as i32
+        }
+        crate::ui_driver::UiDriverMethod::GraphClearSelection => {
+            pbv1::UiDriverMethod::GraphClearSelection as i32
+        }
+        crate::ui_driver::UiDriverMethod::GraphToggleFocusMode => {
+            pbv1::UiDriverMethod::GraphToggleFocusMode as i32
+        }
+        crate::ui_driver::UiDriverMethod::GraphToggleExpandedTaskCard => {
+            pbv1::UiDriverMethod::GraphToggleExpandedTaskCard as i32
+        }
+        crate::ui_driver::UiDriverMethod::GraphMultiSelectAddNode => {
+            pbv1::UiDriverMethod::GraphMultiSelectAddNode as i32
+        }
+        crate::ui_driver::UiDriverMethod::GraphMultiSelectRemoveNode => {
+            pbv1::UiDriverMethod::GraphMultiSelectRemoveNode as i32
+        }
     }
 }
 
@@ -4338,6 +4356,24 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
             Ok(crate::ui_driver::UiDriverMethod::WaitForSnapshot)
         }
         Ok(pbv1::UiDriverMethod::WaitForIdle) => Ok(crate::ui_driver::UiDriverMethod::WaitForIdle),
+        Ok(pbv1::UiDriverMethod::GraphSelectNode) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphSelectNode)
+        }
+        Ok(pbv1::UiDriverMethod::GraphClearSelection) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphClearSelection)
+        }
+        Ok(pbv1::UiDriverMethod::GraphToggleFocusMode) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphToggleFocusMode)
+        }
+        Ok(pbv1::UiDriverMethod::GraphToggleExpandedTaskCard) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphToggleExpandedTaskCard)
+        }
+        Ok(pbv1::UiDriverMethod::GraphMultiSelectAddNode) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphMultiSelectAddNode)
+        }
+        Ok(pbv1::UiDriverMethod::GraphMultiSelectRemoveNode) => {
+            Ok(crate::ui_driver::UiDriverMethod::GraphMultiSelectRemoveNode)
+        }
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
             format!("unknown enum value for UiDriverMethod: {value}"),
@@ -4510,6 +4546,24 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::WaitForIdle(req) => {
                     pbv1::ui_driver_request::Payload::WaitForIdle(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::GraphSelectNode(req) => {
+                    pbv1::ui_driver_request::Payload::SelectGraphNode(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::GraphClearSelection(req) => {
+                    pbv1::ui_driver_request::Payload::ClearGraphSelection(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::GraphToggleFocusMode(req) => {
+                    pbv1::ui_driver_request::Payload::ToggleGraphFocusMode(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::GraphToggleExpandedTaskCard(req) => {
+                    pbv1::ui_driver_request::Payload::ToggleExpandedTaskCard(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::GraphMultiSelectAddNode(req) => {
+                    pbv1::ui_driver_request::Payload::MultiSelectAddNode(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::GraphMultiSelectRemoveNode(req) => {
+                    pbv1::ui_driver_request::Payload::MultiSelectRemoveNode(req.to_protobuf())
+                }
             }),
         }
     }
@@ -4594,6 +4648,36 @@ impl crate::ui_driver::UiDriverRequest {
                     crate::ui_driver::WaitForUiIdleRequest::from_protobuf(req),
                 )
             }
+            pbv1::ui_driver_request::Payload::SelectGraphNode(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphSelectNode(
+                    crate::ui_driver::SelectGraphNodeRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::ClearGraphSelection(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphClearSelection(
+                    crate::ui_driver::ClearGraphSelectionRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::ToggleGraphFocusMode(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphToggleFocusMode(
+                    crate::ui_driver::ToggleGraphFocusModeRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::ToggleExpandedTaskCard(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphToggleExpandedTaskCard(
+                    crate::ui_driver::ToggleExpandedTaskCardRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::MultiSelectAddNode(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphMultiSelectAddNode(
+                    crate::ui_driver::MultiSelectAddNodeRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::ui_driver_request::Payload::MultiSelectRemoveNode(req) => {
+                crate::ui_driver::UiDriverRequestPayload::GraphMultiSelectRemoveNode(
+                    crate::ui_driver::MultiSelectRemoveNodeRequest::try_from_protobuf(req)?,
+                )
+            }
         };
 
         let derived_method = payload.method();
@@ -4662,6 +4746,24 @@ impl crate::ui_driver::UiDriverResponse {
                 }
                 crate::ui_driver::UiDriverResponseResult::WaitForIdle(resp) => {
                     pbv1::ui_driver_response::Result::WaitForIdle(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphSelectNode(resp) => {
+                    pbv1::ui_driver_response::Result::SelectGraphNode(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphClearSelection(resp) => {
+                    pbv1::ui_driver_response::Result::ClearGraphSelection(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphToggleFocusMode(resp) => {
+                    pbv1::ui_driver_response::Result::ToggleGraphFocusMode(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphToggleExpandedTaskCard(resp) => {
+                    pbv1::ui_driver_response::Result::ToggleExpandedTaskCard(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphMultiSelectAddNode(resp) => {
+                    pbv1::ui_driver_response::Result::MultiSelectAddNode(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::GraphMultiSelectRemoveNode(resp) => {
+                    pbv1::ui_driver_response::Result::MultiSelectRemoveNode(resp.to_protobuf())
                 }
                 crate::ui_driver::UiDriverResponseResult::Error(err) => {
                     pbv1::ui_driver_response::Result::Error(err.to_protobuf())
@@ -4748,6 +4850,36 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::WaitForIdle(resp) => {
                 crate::ui_driver::UiDriverResponseResult::WaitForIdle(
                     crate::ui_driver::WaitForUiIdleResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SelectGraphNode(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphSelectNode(
+                    crate::ui_driver::SelectGraphNodeResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::ClearGraphSelection(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphClearSelection(
+                    crate::ui_driver::ClearGraphSelectionResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::ToggleGraphFocusMode(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphToggleFocusMode(
+                    crate::ui_driver::ToggleGraphFocusModeResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::ToggleExpandedTaskCard(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphToggleExpandedTaskCard(
+                    crate::ui_driver::ToggleExpandedTaskCardResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::MultiSelectAddNode(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphMultiSelectAddNode(
+                    crate::ui_driver::MultiSelectAddNodeResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::MultiSelectRemoveNode(resp) => {
+                crate::ui_driver::UiDriverResponseResult::GraphMultiSelectRemoveNode(
+                    crate::ui_driver::MultiSelectRemoveNodeResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::Error(err) => {
@@ -5127,6 +5259,13 @@ impl crate::ui_driver::UiSnapshotPredicate {
                 .unwrap_or(pbv1::UiPrimaryView::Unspecified as i32),
             epic_slug: self.epic_slug.clone(),
             in_flight_empty: self.in_flight_empty,
+            selected_task_id: self
+                .selected_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            graph_focus_mode: self.graph_focus_mode,
+            graph_layout_settled: self.graph_layout_settled,
+            graph_selection_settled: self.graph_selection_settled,
         }
     }
 
@@ -5145,6 +5284,10 @@ impl crate::ui_driver::UiSnapshotPredicate {
             primary_view,
             epic_slug: proto.epic_slug,
             in_flight_empty: proto.in_flight_empty,
+            selected_task_id: decode_optional_ulid("selected_task_id", &proto.selected_task_id)?,
+            graph_focus_mode: proto.graph_focus_mode,
+            graph_layout_settled: proto.graph_layout_settled,
+            graph_selection_settled: proto.graph_selection_settled,
         })
     }
 }
@@ -5215,6 +5358,168 @@ impl crate::ui_driver::WaitForUiIdleResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::WaitForUiIdleResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SelectGraphNodeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SelectGraphNodeRequest {
+        pbv1::SelectGraphNodeRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SelectGraphNodeRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::SelectGraphNodeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SelectGraphNodeResponse {
+        pbv1::SelectGraphNodeResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SelectGraphNodeResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::ClearGraphSelectionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ClearGraphSelectionRequest {
+        pbv1::ClearGraphSelectionRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::ClearGraphSelectionRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::ClearGraphSelectionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ClearGraphSelectionResponse {
+        pbv1::ClearGraphSelectionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::ClearGraphSelectionResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::ToggleGraphFocusModeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToggleGraphFocusModeRequest {
+        pbv1::ToggleGraphFocusModeRequest {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::ToggleGraphFocusModeRequest) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::ToggleGraphFocusModeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToggleGraphFocusModeResponse {
+        pbv1::ToggleGraphFocusModeResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::ToggleGraphFocusModeResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::ToggleExpandedTaskCardRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToggleExpandedTaskCardRequest {
+        pbv1::ToggleExpandedTaskCardRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ToggleExpandedTaskCardRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::ToggleExpandedTaskCardResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToggleExpandedTaskCardResponse {
+        pbv1::ToggleExpandedTaskCardResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::ToggleExpandedTaskCardResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::MultiSelectAddNodeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::MultiSelectAddNodeRequest {
+        pbv1::MultiSelectAddNodeRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::MultiSelectAddNodeRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::MultiSelectAddNodeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::MultiSelectAddNodeResponse {
+        pbv1::MultiSelectAddNodeResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::MultiSelectAddNodeResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::MultiSelectRemoveNodeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::MultiSelectRemoveNodeRequest {
+        pbv1::MultiSelectRemoveNodeRequest {
+            task_id: self.task_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::MultiSelectRemoveNodeRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            task_id: decode_required_ulid("task_id", &proto.task_id)?,
+        })
+    }
+}
+
+impl crate::ui_driver::MultiSelectRemoveNodeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::MultiSelectRemoveNodeResponse {
+        pbv1::MultiSelectRemoveNodeResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::MultiSelectRemoveNodeResponse) -> Self {
         Self {}
     }
 }
@@ -5393,6 +5698,124 @@ impl crate::ui_driver::UiComposerState {
     }
 }
 
+impl crate::ui_driver::UiGraphNodeId {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiGraphNodeId {
+        pbv1::UiGraphNodeId {
+            id: Some(match self {
+                crate::ui_driver::UiGraphNodeId::Task(task_id) => {
+                    pbv1::ui_graph_node_id::Id::TaskId(task_id.to_bytes().to_vec())
+                }
+                crate::ui_driver::UiGraphNodeId::Trunk => pbv1::ui_graph_node_id::Id::Trunk(true),
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiGraphNodeId) -> Result<Self, ErrorEnvelope> {
+        match proto.id.ok_or_else(|| missing_required("id"))? {
+            pbv1::ui_graph_node_id::Id::TaskId(task_id) => {
+                Ok(Self::Task(decode_required_ulid("task_id", &task_id)?))
+            }
+            pbv1::ui_graph_node_id::Id::Trunk(_) => Ok(Self::Trunk),
+        }
+    }
+}
+
+impl crate::ui_driver::UiGraphEdgeId {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiGraphEdgeId {
+        pbv1::UiGraphEdgeId {
+            from: Some(self.from.to_protobuf()),
+            to: Some(self.to.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiGraphEdgeId) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            from: crate::ui_driver::UiGraphNodeId::try_from_protobuf(
+                proto.from.ok_or_else(|| missing_required("from"))?,
+            )?,
+            to: crate::ui_driver::UiGraphNodeId::try_from_protobuf(
+                proto.to.ok_or_else(|| missing_required("to"))?,
+            )?,
+        })
+    }
+}
+
+impl crate::ui_driver::UiGraphCameraState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiGraphCameraState {
+        pbv1::UiGraphCameraState {
+            origin_world_x: self.origin_world_x,
+            origin_world_y: self.origin_world_y,
+            zoom_percent: self.zoom_percent,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UiGraphCameraState) -> Self {
+        Self {
+            origin_world_x: proto.origin_world_x,
+            origin_world_y: proto.origin_world_y,
+            zoom_percent: proto.zoom_percent,
+        }
+    }
+}
+
+impl crate::ui_driver::UiGraphState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiGraphState {
+        pbv1::UiGraphState {
+            selected_node: self.selected_node.map(|id| id.to_protobuf()),
+            selected_edge: self.selected_edge.map(|id| id.to_protobuf()),
+            multi_selected_nodes: self
+                .multi_selected_nodes
+                .iter()
+                .copied()
+                .map(|id| id.to_protobuf())
+                .collect(),
+            focus_mode: self.focus_mode,
+            expanded_task_card_open: self.expanded_task_card_open,
+            expanded_task_id: self
+                .expanded_task_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            selection_bar_visible: self.selection_bar_visible,
+            layout_settled: self.layout_settled,
+            selection_settled: self.selection_settled,
+            camera: Some(self.camera.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::UiGraphState) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            selected_node: proto
+                .selected_node
+                .map(crate::ui_driver::UiGraphNodeId::try_from_protobuf)
+                .transpose()?,
+            selected_edge: proto
+                .selected_edge
+                .map(crate::ui_driver::UiGraphEdgeId::try_from_protobuf)
+                .transpose()?,
+            multi_selected_nodes: proto
+                .multi_selected_nodes
+                .into_iter()
+                .map(crate::ui_driver::UiGraphNodeId::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+            focus_mode: proto.focus_mode,
+            expanded_task_card_open: proto.expanded_task_card_open,
+            expanded_task_id: decode_optional_ulid("expanded_task_id", &proto.expanded_task_id)?,
+            selection_bar_visible: proto.selection_bar_visible,
+            layout_settled: proto.layout_settled,
+            selection_settled: proto.selection_settled,
+            camera: proto
+                .camera
+                .map(crate::ui_driver::UiGraphCameraState::from_protobuf)
+                .unwrap_or_default(),
+        })
+    }
+}
+
 impl crate::ui_driver::UiSnapshot {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiSnapshot {
@@ -5417,6 +5840,7 @@ impl crate::ui_driver::UiSnapshot {
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
             pinned_chat_composer: Some(self.pinned_chat_composer.to_protobuf()),
+            graph: Some(self.graph.to_protobuf()),
         }
     }
 
@@ -5455,6 +5879,11 @@ impl crate::ui_driver::UiSnapshot {
             pinned_chat_composer: proto
                 .pinned_chat_composer
                 .map(crate::ui_driver::UiComposerState::from_protobuf)
+                .unwrap_or_default(),
+            graph: proto
+                .graph
+                .map(crate::ui_driver::UiGraphState::try_from_protobuf)
+                .transpose()?
                 .unwrap_or_default(),
         })
     }

@@ -47,6 +47,13 @@ enum UiDriverMethod {
   // Deterministic waiting primitives (T-15/T-48).
   UI_DRIVER_METHOD_WAIT_FOR_SNAPSHOT = 14;
   UI_DRIVER_METHOD_WAIT_FOR_IDLE = 15;
+  // Graph actions (Domain 6).
+  UI_DRIVER_METHOD_GRAPH_SELECT_NODE = 16;
+  UI_DRIVER_METHOD_GRAPH_CLEAR_SELECTION = 17;
+  UI_DRIVER_METHOD_GRAPH_TOGGLE_FOCUS_MODE = 18;
+  UI_DRIVER_METHOD_GRAPH_TOGGLE_EXPANDED_TASK_CARD = 19;
+  UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_ADD_NODE = 20;
+  UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_REMOVE_NODE = 21;
 }
 
 message UiDriverRequest {
@@ -70,6 +77,12 @@ message UiDriverRequest {
     TriggerRefreshRequest trigger_refresh = 22;
     WaitForUiSnapshotRequest wait_for_snapshot = 23;
     WaitForUiIdleRequest wait_for_idle = 24;
+    SelectGraphNodeRequest select_graph_node = 25;
+    ClearGraphSelectionRequest clear_graph_selection = 26;
+    ToggleGraphFocusModeRequest toggle_graph_focus_mode = 27;
+    ToggleExpandedTaskCardRequest toggle_expanded_task_card = 28;
+    MultiSelectAddNodeRequest multi_select_add_node = 29;
+    MultiSelectRemoveNodeRequest multi_select_remove_node = 30;
   }
 }
 
@@ -100,6 +113,12 @@ message UiDriverResponse {
     TriggerRefreshResponse trigger_refresh = 22;
     WaitForUiSnapshotResponse wait_for_snapshot = 23;
     WaitForUiIdleResponse wait_for_idle = 24;
+    SelectGraphNodeResponse select_graph_node = 25;
+    ClearGraphSelectionResponse clear_graph_selection = 26;
+    ToggleGraphFocusModeResponse toggle_graph_focus_mode = 27;
+    ToggleExpandedTaskCardResponse toggle_expanded_task_card = 28;
+    MultiSelectAddNodeResponse multi_select_add_node = 29;
+    MultiSelectRemoveNodeResponse multi_select_remove_node = 30;
     ErrorEnvelope error = 100;
   }
 }
@@ -201,6 +220,15 @@ message UiSnapshotPredicate {
   string epic_slug = 2;
   // If set, require in_flight to be empty/non-empty.
   optional bool in_flight_empty = 3;
+  // If empty, treated as "don't care".
+  // TaskId (ULID bytes, length = 16).
+  bytes selected_task_id = 4;
+  // If set, require focus mode to match.
+  optional bool graph_focus_mode = 5;
+  // If set, require graph layout settled to match.
+  optional bool graph_layout_settled = 6;
+  // If set, require graph selection settled to match.
+  optional bool graph_selection_settled = 7;
 }
 
 message WaitForUiSnapshotResponse {
@@ -215,6 +243,44 @@ message WaitForUiIdleRequest {
 }
 
 message WaitForUiIdleResponse {}
+
+// --- Graph driver requests (Domain 6) ---
+
+message SelectGraphNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message SelectGraphNodeResponse {}
+
+message ClearGraphSelectionRequest {}
+
+message ClearGraphSelectionResponse {}
+
+message ToggleGraphFocusModeRequest {}
+
+message ToggleGraphFocusModeResponse {}
+
+message ToggleExpandedTaskCardRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message ToggleExpandedTaskCardResponse {}
+
+message MultiSelectAddNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message MultiSelectAddNodeResponse {}
+
+message MultiSelectRemoveNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message MultiSelectRemoveNodeResponse {}
 
 enum UiScreenshotWindow {
   UI_SCREENSHOT_WINDOW_UNSPECIFIED = 0;
@@ -269,10 +335,47 @@ enum UiGraphLoadState {
   UI_GRAPH_LOAD_STATE_ERROR = 5;
 }
 
+message UiGraphNodeId {
+  oneof id {
+    // TaskId (ULID bytes, length = 16).
+    bytes task_id = 1;
+    bool trunk = 2;
+  }
+}
+
+message UiGraphEdgeId {
+  UiGraphNodeId from = 1;
+  UiGraphNodeId to = 2;
+}
+
+message UiGraphCameraState {
+  // Coarse camera origin in world-space (logical pixels).
+  sint32 origin_world_x = 1;
+  sint32 origin_world_y = 2;
+  // Coarse zoom (percent), where 100 == 1.0.
+  uint32 zoom_percent = 3;
+}
+
 message UiGraphState {
   UiGraphLoadState load_state = 1;
   uint32 node_count = 2;
   uint32 edge_count = 3;
+
+  UiGraphNodeId selected_node = 4;
+  UiGraphEdgeId selected_edge = 5;
+  repeated UiGraphNodeId multi_selected_nodes = 6;
+  bool focus_mode = 7;
+  bool expanded_task_card_open = 8;
+  // TaskId (ULID bytes, length = 16). Empty means "no expanded card".
+  bytes expanded_task_id = 9;
+  bool selection_bar_visible = 10;
+  // True when the graph's layout animation has finished (node positions stable).
+  // This intentionally does not include camera or selection-bar transitions.
+  bool layout_settled = 11;
+  // True when selection-driven UI transitions have finished
+  // (layout + camera + selection bar).
+  bool selection_settled = 12;
+  UiGraphCameraState camera = 13;
 }
 
 message UiInFlightAction {

@@ -9,11 +9,12 @@ use std::{
 
 use clap::{Args, Subcommand};
 use prost::Message as _;
-use redesmyn_ids::RequestId;
+use redesmyn_ids::{RequestId, TaskId};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
-    CreateChatSessionResponse, OpenEpicRequest, UiDriverFrame, UiDriverMessage, UiDriverRequest,
+    CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest,
+    ToggleGraphFocusModeRequest, UiDriverFrame, UiDriverMessage, UiDriverRequest,
     UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow,
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest,
 };
@@ -32,6 +33,9 @@ pub(crate) enum UiDriverCommands {
     /// Runs a minimal end-to-end driver smoke flow:
     /// open epic → create chat → wait for idle → capture artifacts.
     Smoke(UiDriverSmokeArgs),
+    /// Runs a deterministic graph smoke flow:
+    /// open epic → select node → toggle focus mode → capture artifacts.
+    GraphSmoke(UiDriverGraphSmokeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -79,6 +83,53 @@ pub(crate) struct UiDriverSmokeArgs {
     keep_open: bool,
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct UiDriverGraphSmokeArgs {
+    /// Unix domain socket path for the desktop UI driver.
+    ///
+    /// If omitted, uses `REDESMYN_UI_DRIVER_SOCKET_PATH` when present.
+    #[arg(long)]
+    uds: Option<PathBuf>,
+
+    /// Epic slug to select (required).
+    #[arg(long)]
+    epic: String,
+
+    /// TaskId to select in the graph.
+    ///
+    /// If omitted, uses a deterministic demo TaskId (bytes: [1; 16]).
+    #[arg(long)]
+    task_id: Option<TaskId>,
+
+    /// Artifact label for `CaptureScreenshot`.
+    #[arg(long, default_value = "graph_smoke")]
+    label: String,
+
+    /// Timeout for wait operations (milliseconds).
+    #[arg(long, default_value_t = 20_000)]
+    timeout_ms: u64,
+
+    /// Quiescence window for `WaitForIdle` (milliseconds).
+    #[arg(long, default_value_t = 50)]
+    quiescence_ms: u64,
+
+    /// Launch the desktop app automatically (builds `redesmyn_desktop` if needed).
+    #[arg(long, default_value_t = false)]
+    launch: bool,
+
+    /// Artifacts directory for `--launch` mode (defaults to a temp dir).
+    #[arg(long)]
+    artifacts_dir: Option<PathBuf>,
+
+    /// Timeout waiting for the UI driver socket to appear (milliseconds, `--launch` mode).
+    #[arg(long, default_value_t = 10_000)]
+    startup_timeout_ms: u64,
+
+    /// Keep the desktop app running after the smoke flow completes (`--launch` mode).
+    #[arg(long, default_value_t = false)]
+    keep_open: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct SmokeReport {
     epic_slug: String,
@@ -89,9 +140,20 @@ struct SmokeReport {
     artifacts_dir: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct GraphSmokeReport {
+    epic_slug: String,
+    task_id: String,
+    socket_path: String,
+    screenshot_path: Option<String>,
+    ui_snapshot_path: Option<String>,
+    artifacts_dir: Option<String>,
+}
+
 pub(crate) fn ui_driver(cmd: UiDriverCommands, output: &Output) -> CommandOutcome {
     match cmd {
         UiDriverCommands::Smoke(args) => ui_driver_smoke(args, output),
+        UiDriverCommands::GraphSmoke(args) => ui_driver_graph_smoke(args, output),
     }
 }
 
@@ -215,6 +277,10 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
             primary_view: Some(UiPrimaryView::EpicWorkspace),
             epic_slug: args.epic.clone(),
             in_flight_empty: None,
+            selected_task_id: None,
+            graph_focus_mode: None,
+            graph_layout_settled: None,
+            graph_selection_settled: None,
         };
         if let Err(err) = require_ok_response(
             send_ui_driver_request(
@@ -321,6 +387,331 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
                 println!("epic_slug: {}", report.epic_slug);
                 println!("socket_path: {}", report.socket_path);
                 println!("chat_session_id: {}", report.chat_session_id);
+                if let Some(path) = report.screenshot_path.as_deref() {
+                    println!("screenshot_path: {path}");
+                }
+                if let Some(path) = report.ui_snapshot_path.as_deref() {
+                    println!("ui_snapshot_path: {path}");
+                }
+                if let Some(dir) = report.artifacts_dir.as_deref() {
+                    println!("artifacts_dir: {dir}");
+                }
+                CommandOutcome::Success
+            }
+            OutputFormat::Json => match output.print_json_stdout(&report) {
+                Ok(()) => CommandOutcome::Success,
+                Err(err) => CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                )),
+            },
+        }
+    }
+}
+
+fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> CommandOutcome {
+    #[cfg(not(unix))]
+    {
+        let _ = output;
+        let _ = args;
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "UI driver graph smoke is only supported on unix platforms.",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let mut desktop_child: Option<Child> = None;
+
+        let socket_path = match args.uds.clone() {
+            Some(path) => path,
+            None if args.launch => default_smoke_socket_path(),
+            None => match env::var_os("REDESMYN_UI_DRIVER_SOCKET_PATH") {
+                Some(path) => PathBuf::from(path),
+                None => {
+                    return CommandOutcome::Failure(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Missing --uds (or set REDESMYN_UI_DRIVER_SOCKET_PATH).",
+                    ));
+                }
+            },
+        };
+
+        let artifacts_dir = if args.launch {
+            Some(
+                args.artifacts_dir
+                    .clone()
+                    .unwrap_or_else(default_smoke_artifacts_dir),
+            )
+        } else {
+            None
+        };
+
+        if args.launch {
+            let workspace_root = match find_rust_workspace_root() {
+                Ok(root) => root,
+                Err(err) => return CommandOutcome::Failure(err),
+            };
+
+            if let Err(err) = build_desktop_app(&workspace_root) {
+                return CommandOutcome::Failure(err);
+            }
+
+            let Some(artifacts_dir) = artifacts_dir.as_ref() else {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "Expected artifacts_dir to be set in --launch mode.",
+                ));
+            };
+
+            if let Err(err) = std::fs::create_dir_all(artifacts_dir) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!(
+                        "Failed to create artifacts directory {}: {err}",
+                        artifacts_dir.display()
+                    ),
+                ));
+            }
+
+            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+                Ok(child) => desktop_child = Some(child),
+                Err(err) => return CommandOutcome::Failure(err),
+            }
+
+            if let Err(err) =
+                wait_for_path(&socket_path, Duration::from_millis(args.startup_timeout_ms))
+            {
+                if let Some(mut child) = desktop_child.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return CommandOutcome::Failure(err);
+            }
+        }
+
+        let mut conn = match UnixStream::connect(&socket_path) {
+            Ok(conn) => conn,
+            Err(err) => {
+                if let Some(mut child) = desktop_child.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!(
+                        "Failed to connect to UI driver socket {}: {err}",
+                        socket_path.display()
+                    ),
+                ));
+            }
+        };
+
+        let task_id = args
+            .task_id
+            .unwrap_or_else(|| TaskId::from_bytes([1_u8; 16]));
+
+        let timeout = Duration::from_millis(args.timeout_ms);
+        let wait_timeout = timeout + Duration::from_secs(2);
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::OpenEpic(OpenEpicRequest {
+                    epic_slug: args.epic.clone(),
+                }),
+                Duration::from_secs(2),
+            ),
+            "open_epic",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        let wait_workspace_predicate = UiSnapshotPredicate {
+            primary_view: Some(UiPrimaryView::EpicWorkspace),
+            epic_slug: args.epic.clone(),
+            in_flight_empty: None,
+            selected_task_id: None,
+            graph_focus_mode: None,
+            graph_layout_settled: Some(true),
+            graph_selection_settled: None,
+        };
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::WaitForSnapshot(WaitForUiSnapshotRequest {
+                    timeout_ms: args.timeout_ms,
+                    predicate: wait_workspace_predicate,
+                }),
+                wait_timeout,
+            ),
+            "wait_for_snapshot",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::GraphSelectNode(SelectGraphNodeRequest { task_id }),
+                wait_timeout,
+            ),
+            "graph_select_node",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        let wait_selection_predicate = UiSnapshotPredicate {
+            primary_view: None,
+            epic_slug: String::new(),
+            in_flight_empty: None,
+            selected_task_id: Some(task_id),
+            graph_focus_mode: None,
+            graph_layout_settled: None,
+            graph_selection_settled: Some(true),
+        };
+        let snapshot = match send_ui_driver_request(
+            &mut conn,
+            UiDriverRequestPayload::WaitForSnapshot(WaitForUiSnapshotRequest {
+                timeout_ms: args.timeout_ms,
+                predicate: wait_selection_predicate,
+            }),
+            wait_timeout,
+        ) {
+            Ok(UiDriverResponseResult::WaitForSnapshot(resp)) => resp.snapshot,
+            Ok(UiDriverResponseResult::Error(err)) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+            Ok(other) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    format!("Unexpected wait_for_snapshot response: {other:?}"),
+                ));
+            }
+            Err(err) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+        };
+
+        if !snapshot.graph.expanded_task_card_open
+            || snapshot.graph.expanded_task_id != Some(task_id)
+        {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                format!(
+                    "Expected expanded task card to be open for {task_id}; got open={} task_id={:?}",
+                    snapshot.graph.expanded_task_card_open, snapshot.graph.expanded_task_id
+                ),
+            ));
+        }
+
+        let focus_mode_before = snapshot.graph.focus_mode;
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::GraphToggleFocusMode(ToggleGraphFocusModeRequest {}),
+                wait_timeout,
+            ),
+            "graph_toggle_focus_mode",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        let wait_focus_predicate = UiSnapshotPredicate {
+            primary_view: None,
+            epic_slug: String::new(),
+            in_flight_empty: None,
+            selected_task_id: None,
+            graph_focus_mode: Some(!focus_mode_before),
+            graph_layout_settled: None,
+            graph_selection_settled: None,
+        };
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::WaitForSnapshot(WaitForUiSnapshotRequest {
+                    timeout_ms: args.timeout_ms,
+                    predicate: wait_focus_predicate,
+                }),
+                wait_timeout,
+            ),
+            "wait_for_snapshot",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::WaitForIdle(WaitForUiIdleRequest {
+                    timeout_ms: args.timeout_ms,
+                    quiescence_ms: args.quiescence_ms,
+                }),
+                wait_timeout,
+            ),
+            "wait_for_idle",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        let screenshot = match send_ui_driver_request(
+            &mut conn,
+            UiDriverRequestPayload::CaptureScreenshot(CaptureScreenshotRequest {
+                name_hint: args.label.clone(),
+                window: Some(UiScreenshotWindow::Primary),
+                include_decorations: Some(false),
+            }),
+            wait_timeout,
+        ) {
+            Ok(UiDriverResponseResult::CaptureScreenshot(resp)) => resp,
+            Ok(UiDriverResponseResult::Error(err)) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+            Ok(other) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    format!("Unexpected capture_screenshot response: {other:?}"),
+                ));
+            }
+            Err(err) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+        };
+
+        let (screenshot_path, ui_snapshot_path) =
+            infer_artifact_paths(&args.label, &screenshot).unwrap_or((None, None));
+
+        shutdown_desktop(&mut desktop_child, args.keep_open);
+
+        let report = GraphSmokeReport {
+            epic_slug: args.epic,
+            task_id: task_id.to_string(),
+            socket_path: socket_path.to_string_lossy().to_string(),
+            screenshot_path,
+            ui_snapshot_path,
+            artifacts_dir: artifacts_dir.map(|dir| dir.to_string_lossy().to_string()),
+        };
+
+        match output.format {
+            OutputFormat::Human => {
+                println!("ok: true");
+                println!("epic_slug: {}", report.epic_slug);
+                println!("task_id: {}", report.task_id);
+                println!("socket_path: {}", report.socket_path);
                 if let Some(path) = report.screenshot_path.as_deref() {
                     println!("screenshot_path: {path}");
                 }
@@ -481,7 +872,13 @@ fn require_ok_response(
         UiDriverResponseResult::Error(err) => Err(err),
         UiDriverResponseResult::OpenEpic(_)
         | UiDriverResponseResult::WaitForSnapshot(_)
-        | UiDriverResponseResult::WaitForIdle(_) => Ok(()),
+        | UiDriverResponseResult::WaitForIdle(_)
+        | UiDriverResponseResult::GraphSelectNode(_)
+        | UiDriverResponseResult::GraphClearSelection(_)
+        | UiDriverResponseResult::GraphToggleFocusMode(_)
+        | UiDriverResponseResult::GraphToggleExpandedTaskCard(_)
+        | UiDriverResponseResult::GraphMultiSelectAddNode(_)
+        | UiDriverResponseResult::GraphMultiSelectRemoveNode(_) => Ok(()),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::InvalidRequest,
             format!("Unexpected {op} response: {other:?}"),

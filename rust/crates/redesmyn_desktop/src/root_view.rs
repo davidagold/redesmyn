@@ -10,9 +10,11 @@ use gpui::{
 use tokio::sync::{mpsc, watch};
 
 use redesmyn_protocol::ui_driver::{
-    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse, UiComposerState,
-    UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
-    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
+    MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
+    ToggleExpandedTaskCardResponse, ToggleGraphFocusModeResponse, TriggerRefreshResponse,
+    UiComposerState, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
+    UiErrorCallout, UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
@@ -572,6 +574,23 @@ impl RootView {
             UiPrimaryView::EpicSelector
         };
 
+        let graph_view = workspace.graph_view.clone();
+        let graph_details = graph_view.read(cx).ui_graph_state();
+        let graph = redesmyn_protocol::ui_driver::UiGraphState {
+            load_state: workspace.graph_state,
+            node_count: workspace.graph_node_count,
+            edge_count: workspace.graph_edge_count,
+            ..graph_details
+        };
+
+        let selected_task_id = graph.selected_node.and_then(|node| match node {
+            redesmyn_protocol::ui_driver::UiGraphNodeId::Task(task_id) => Some(task_id),
+            redesmyn_protocol::ui_driver::UiGraphNodeId::Trunk => None,
+        });
+        let selected_task_slug = selected_task_id
+            .and_then(|task_id| graph_view.read(cx).task_slug_for_task_node(task_id))
+            .unwrap_or_default();
+
         let selection = UiSelectionState {
             epic_id: None,
             epic_slug: self
@@ -579,15 +598,9 @@ impl RootView {
                 .selected_epic_slug
                 .clone()
                 .unwrap_or_else(String::new),
-            task_id: None,
-            task_slug: String::new(),
+            task_id: selected_task_id,
+            task_slug: selected_task_slug,
             edge_id: None,
-        };
-
-        let graph = redesmyn_protocol::ui_driver::UiGraphState {
-            load_state: workspace.graph_state,
-            node_count: workspace.graph_node_count,
-            edge_count: workspace.graph_edge_count,
         };
 
         let mut errors = Vec::new();
@@ -723,6 +736,30 @@ fn snapshot_matches_predicate(snapshot: &UiSnapshot, predicate: &UiSnapshotPredi
         }
     }
 
+    if let Some(expected_task_id) = predicate.selected_task_id {
+        if snapshot.selection.task_id != Some(expected_task_id) {
+            return false;
+        }
+    }
+
+    if let Some(expected_focus_mode) = predicate.graph_focus_mode {
+        if snapshot.graph.focus_mode != expected_focus_mode {
+            return false;
+        }
+    }
+
+    if let Some(expected_layout_settled) = predicate.graph_layout_settled {
+        if snapshot.graph.layout_settled != expected_layout_settled {
+            return false;
+        }
+    }
+
+    if let Some(expected_selection_settled) = predicate.graph_selection_settled {
+        if snapshot.graph.selection_settled != expected_selection_settled {
+            return false;
+        }
+    }
+
     true
 }
 
@@ -748,6 +785,16 @@ async fn wait_for_snapshot(
         .and_then(Result::ok)
         .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
 
+    let (_idle_dummy_tx, idle_dummy_rx) = watch::channel(0_usize);
+    let mut idle_rx = cx
+        .update(|cx| {
+            cx.try_global::<UiContext>()
+                .map(|ui| ui.idle_tracker().subscribe())
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(idle_dummy_rx);
+
     let timeout_timer = gpui::Timer::after(timeout);
     tokio::pin!(timeout_timer);
 
@@ -771,6 +818,11 @@ async fn wait_for_snapshot(
             changed = updates_rx.changed() => {
                 if changed.is_err() {
                     return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI update channel closed."));
+                }
+            }
+            changed = idle_rx.changed() => {
+                if changed.is_err() {
+                    return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, "UI idle channel closed."));
                 }
             }
             _ = &mut timeout_timer => {
@@ -1116,6 +1168,276 @@ async fn handle_ui_driver_request(
             Ok(()) => UiDriverResponseResult::WaitForIdle(WaitForUiIdleResponse {}),
             Err(err) => UiDriverResponseResult::Error(err),
         },
+        UiDriverRequestPayload::GraphSelectNode(req) => {
+            let task_id = req.task_id;
+            let span =
+                redesmyn_logging::redesmyn_info_span!("ui_driver.graph_select_node", %task_id);
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                if !graph_view.read(cx).contains_task_node(task_id) {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        format!("Graph does not contain task node {task_id}."),
+                    ));
+                }
+
+                graph_view.update(cx, |this, cx| {
+                    this.driver_select_node_by_task_id(task_id, cx)
+                });
+
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphSelectNode(SelectGraphNodeResponse {}),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::GraphClearSelection(_req) => {
+            let span = redesmyn_logging::redesmyn_info_span!("ui_driver.graph_clear_selection");
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                graph_view.update(cx, |this, cx| this.driver_clear_selection(cx));
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphClearSelection(ClearGraphSelectionResponse {}),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::GraphToggleFocusMode(_req) => {
+            let span = redesmyn_logging::redesmyn_info_span!("ui_driver.graph_toggle_focus_mode");
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                graph_view.update(cx, |this, cx| this.driver_toggle_focus_mode(cx));
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphToggleFocusMode(ToggleGraphFocusModeResponse {}),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::GraphToggleExpandedTaskCard(req) => {
+            let task_id = req.task_id;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.graph_toggle_expanded_task_card",
+                %task_id
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                if !graph_view.read(cx).contains_task_node(task_id) {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        format!("Graph does not contain task node {task_id}."),
+                    ));
+                }
+
+                graph_view.update(cx, |this, cx| {
+                    this.driver_toggle_expanded_task_card(task_id, cx)
+                });
+
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphToggleExpandedTaskCard(
+                    ToggleExpandedTaskCardResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::GraphMultiSelectAddNode(req) => {
+            let task_id = req.task_id;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.graph_multi_select_add_node",
+                %task_id
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                if !graph_view.read(cx).contains_task_node(task_id) {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        format!("Graph does not contain task node {task_id}."),
+                    ));
+                }
+
+                graph_view.update(cx, |this, cx| this.driver_multi_select_add_node(task_id, cx));
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphMultiSelectAddNode(MultiSelectAddNodeResponse {}),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::GraphMultiSelectRemoveNode(req) => {
+            let task_id = req.task_id;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.graph_multi_select_remove_node",
+                %task_id
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                if !graph_view.read(cx).contains_task_node(task_id) {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        format!("Graph does not contain task node {task_id}."),
+                    ));
+                }
+
+                graph_view.update(cx, |this, cx| {
+                    this.driver_multi_select_remove_node(task_id, cx)
+                });
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::GraphMultiSelectRemoveNode(
+                    MultiSelectRemoveNodeResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
         other => UiDriverResponseResult::Error(ErrorEnvelope::new(
             ErrorCategory::InvalidRequest,
             format!("unimplemented ui driver request: {other:?}"),
