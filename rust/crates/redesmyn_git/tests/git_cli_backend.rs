@@ -166,6 +166,7 @@ async fn cli_backend_cancellation_short_circuits() {
 async fn cli_backend_worktree_list_parses_porcelain() {
     let (dir, _base) = setup_repo();
     let repo_root = dir.path();
+    let canonical_repo_root = std::fs::canonicalize(repo_root).expect("canonicalize repo root");
 
     let backend = GitCliBackend::new();
     let worktrees = backend
@@ -174,7 +175,13 @@ async fn cli_backend_worktree_list_parses_porcelain() {
         .unwrap();
 
     assert!(!worktrees.is_empty());
-    assert!(worktrees.iter().any(|wt| wt.path == repo_root));
+    // On macOS, `git worktree list --porcelain` may print paths rooted at `/private/var/...`
+    // while `tempfile` yields `/var/...`. Compare canonical paths to avoid false negatives.
+    assert!(worktrees.iter().any(|wt| {
+        std::fs::canonicalize(&wt.path)
+            .expect("canonicalize worktree path")
+            == canonical_repo_root
+    }));
 
     // Ensure the public enum is usable (T-27 uses this for worktree creation).
     let _ = GitWorktreeTarget::Head;
