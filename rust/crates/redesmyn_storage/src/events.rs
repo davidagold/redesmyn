@@ -142,6 +142,7 @@ pub async fn get_event<'e, E>(executor: E, id: EventId) -> Result<Option<EventRe
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         EventId,
         i64,
@@ -168,23 +169,18 @@ where
     .fetch_optional(executor)
     .await?;
 
-    Ok(row
-        .map(
-            |(id, created_at_ms, scope_kind, scope_workspace_id, scope_repo_id, kind, payload)| {
-                Ok::<EventRecord, StorageError>(EventRecord {
-                    id,
-                    created_at_ms,
-                    scope: scope_from_columns(
-                        scope_kind.as_str(),
-                        scope_workspace_id,
-                        scope_repo_id,
-                    )?,
-                    kind,
-                    payload,
-                })
-            },
-        )
-        .transpose()?)
+    row.map(
+        |(id, created_at_ms, scope_kind, scope_workspace_id, scope_repo_id, kind, payload)| {
+            Ok::<EventRecord, StorageError>(EventRecord {
+                id,
+                created_at_ms,
+                scope: scope_from_columns(scope_kind.as_str(), scope_workspace_id, scope_repo_id)?,
+                kind,
+                payload,
+            })
+        },
+    )
+    .transpose()
 }
 
 pub async fn get_event_rowid_and_scope<'e, E>(
@@ -194,6 +190,7 @@ pub async fn get_event_rowid_and_scope<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    #[allow(clippy::type_complexity)]
     let row: Option<(i64, String, Option<WorkspaceId>, Option<RepoId>)> = sqlx::query_as(
         r#"
         SELECT
@@ -209,14 +206,13 @@ where
     .fetch_optional(executor)
     .await?;
 
-    Ok(row
-        .map(|(rowid, scope_kind, scope_workspace_id, scope_repo_id)| {
-            Ok::<(i64, EventScope), StorageError>((
-                rowid,
-                scope_from_columns(scope_kind.as_str(), scope_workspace_id, scope_repo_id)?,
-            ))
-        })
-        .transpose()?)
+    row.map(|(rowid, scope_kind, scope_workspace_id, scope_repo_id)| {
+        Ok::<(i64, EventScope), StorageError>((
+            rowid,
+            scope_from_columns(scope_kind.as_str(), scope_workspace_id, scope_repo_id)?,
+        ))
+    })
+    .transpose()
 }
 
 pub async fn list_event_rows_in_scope_after_rowid<'e, E>(
@@ -228,6 +224,7 @@ pub async fn list_event_rows_in_scope_after_rowid<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         i64,
         EventId,

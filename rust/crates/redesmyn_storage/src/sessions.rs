@@ -292,7 +292,7 @@ where
     .fetch_optional(executor)
     .await?;
 
-    Ok(row.map(decode_agent_session_row).transpose()?)
+    row.map(decode_agent_session_row).transpose()
 }
 
 pub async fn create_chat_session<'e, E>(

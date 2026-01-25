@@ -245,6 +245,7 @@ async fn load_tasks<'e, E>(executor: E, epic_id: EpicId) -> Result<Vec<TaskRecor
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         TaskId,
         Option<TaskId>,
@@ -417,6 +418,7 @@ where
         "#,
     );
 
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         CommandUpdateId,
         CommandId,
@@ -456,6 +458,7 @@ where
 {
     const PRESENCE_LIMIT: i64 = 10;
 
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(
         HostInstanceId,
         HostId,
@@ -511,6 +514,7 @@ async fn load_session_summaries<'e, E>(
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(TaskId, SessionId, SessionEventId, i64, String, Option<String>, Option<String>)> =
         sqlx::query_as(
             r#"

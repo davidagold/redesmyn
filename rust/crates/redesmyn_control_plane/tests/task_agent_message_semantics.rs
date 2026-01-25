@@ -11,8 +11,8 @@ use redesmyn_protocol::agent_commands::{
     TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{
-    AgentKind, ClientFrame, ClientMessage, Request, RequestPayload, ResponseResult,
-    SendTaskAgentMessageRequest, TaskAgentMessageConflictAction, WaitForCommandRequest,
+    AgentKind, AgentMessageConflictAction, ClientFrame, ClientMessage, Request, RequestPayload,
+    ResponseResult, SendTaskAgentMessageRequest, WaitForCommandRequest,
 };
 use redesmyn_protocol::daemon::{
     CommandDispatch, CommandState as DaemonCommandState, CommandUpdate as DaemonCommandUpdate,
@@ -600,7 +600,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "hello".to_string(),
-            on_conflict: TaskAgentMessageConflictAction::Fail,
+            on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
             preferred_interface_mode: None,
@@ -647,7 +647,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "resume".to_string(),
-            on_conflict: TaskAgentMessageConflictAction::Fail,
+            on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
             preferred_interface_mode: None,
@@ -683,7 +683,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "should conflict".to_string(),
-            on_conflict: TaskAgentMessageConflictAction::Fail,
+            on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
             preferred_interface_mode: None,
@@ -718,7 +718,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "interrupt".to_string(),
-            on_conflict: TaskAgentMessageConflictAction::InterruptTurn,
+            on_conflict: AgentMessageConflictAction::InterruptTurn,
             interrupt: None,
             agent_kind: AgentKind::Codex,
             preferred_interface_mode: None,

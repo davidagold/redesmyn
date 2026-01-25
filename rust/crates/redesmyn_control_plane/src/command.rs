@@ -337,7 +337,7 @@ impl Commands {
         self.publish_update(&command, &update).await;
 
         let last_update = Some(command_update_summary_from_record(update.clone())?);
-        Ok(command_summary_from_records(command, last_update)?)
+        command_summary_from_records(command, last_update)
     }
 
     pub async fn wait_for_command(
@@ -577,24 +577,21 @@ fn to_optional_u64(value: i64) -> Option<u64> {
 }
 
 fn storage_error_is_unique_violation(err: &redesmyn_storage::StorageError) -> bool {
-    match err {
+    matches!(
+        err,
         redesmyn_storage::StorageError::Sqlx(sqlx::Error::Database(db))
-            if db.kind() == sqlx::error::ErrorKind::UniqueViolation =>
-        {
-            true
-        }
-        _ => false,
-    }
+            if db.kind() == sqlx::error::ErrorKind::UniqueViolation
+    )
 }
 
 trait IsTerminal {
-    fn is_terminal(self) -> bool;
+    fn is_terminal(&self) -> bool;
 }
 
 impl IsTerminal for StorageCommandState {
-    fn is_terminal(self) -> bool {
+    fn is_terminal(&self) -> bool {
         matches!(
-            self,
+            *self,
             StorageCommandState::Succeeded
                 | StorageCommandState::Failed
                 | StorageCommandState::Canceled

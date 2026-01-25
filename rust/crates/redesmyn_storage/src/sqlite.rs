@@ -316,16 +316,16 @@ pub async fn in_transaction<T>(
 ) -> Result<T, StorageError> {
     let mut conn = pool.acquire().await?;
 
-    sqlx::query("BEGIN").execute(&mut *conn).await?;
+    sqlx::query("BEGIN").execute(conn.as_mut()).await?;
 
-    let result = f(&mut *conn).await;
+    let result = f(conn.as_mut()).await;
     match result {
         Ok(value) => {
-            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            sqlx::query("COMMIT").execute(conn.as_mut()).await?;
             Ok(value)
         }
         Err(err) => {
-            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+            if let Err(rollback_err) = sqlx::query("ROLLBACK").execute(conn.as_mut()).await {
                 warn!(?rollback_err, "sqlite ROLLBACK failed");
             }
             Err(err)

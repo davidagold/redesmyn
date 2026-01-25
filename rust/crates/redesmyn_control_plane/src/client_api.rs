@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::ControlPlane;
+use crate::agent_orchestration::conflicts::{
+    CONFLICT_CODE_KEY, CONFLICT_CODE_SESSION_CONFLICT, CONFLICT_CODE_TURN_IN_PROGRESS,
+};
 use crate::error::ControlPlaneError;
 use crate::session_events::{
     SessionEventsResync, SessionEventsResyncReason, SessionEventsSubscriptionItem,
@@ -39,13 +42,6 @@ use redesmyn_storage::sessions::AgentSessionRecord;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
-
-const CONFLICT_CODE_KEY: &str = "conflict_code";
-const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
-// NOTE: `conflict_code` values are part of the client-visible contract.
-// `structured_session_conflict` is currently returned for any concurrent task session (even if the
-// conflicting session isn't structured). Consider renaming if we need semantic precision.
-const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
@@ -171,8 +167,7 @@ where
         "client.api.connection",
         peer = peer
             .as_ref()
-            .map(|addr| addr.as_pathname().map(|p| p.display().to_string()))
-            .flatten()
+            .and_then(|addr| addr.as_pathname().map(|p| p.display().to_string()))
             .unwrap_or_else(|| "<unknown>".to_string())
     );
     let _enter = span.enter();
@@ -795,7 +790,7 @@ async fn handle_request_result(
                         if other_active_task_session {
                             return Ok(ResponseResult::Error(conflict_error(
                                 session.session_id,
-                                CONFLICT_CODE_TASK_SESSION_CONFLICT,
+                                CONFLICT_CODE_SESSION_CONFLICT,
                                 "Another agent session is already running for this task.",
                             )));
                         }
@@ -821,9 +816,10 @@ async fn handle_request_result(
                     }
                     AgentMessageConflictAction::StopSessionAndStartNew => {
                         if turn_in_progress {
-                            return Ok(ResponseResult::Error(ErrorEnvelope::new(
-                                ErrorCategory::InvalidRequest,
-                                "Stop-and-start-new is not supported when a structured turn is in progress. Use interrupt_turn instead.",
+                            return Ok(ResponseResult::Error(conflict_error(
+                                session.session_id,
+                                CONFLICT_CODE_TURN_IN_PROGRESS,
+                                "A structured agent turn is currently in progress. Interrupt the current turn before starting a new session.",
                             )));
                         }
 
@@ -1597,7 +1593,7 @@ async fn wait_for_idle(
             .commands()
             .inflight_count(command_scope)
             .await
-            .map_err(|err| ErrorEnvelope::from(err))?;
+            .map_err(ErrorEnvelope::from)?;
 
         if inflight == 0 {
             let quiescence_deadline = tokio::time::Instant::now() + quiescence;
@@ -1608,7 +1604,7 @@ async fn wait_for_idle(
                         .commands()
                         .inflight_count(command_scope)
                         .await
-                        .map_err(|err| ErrorEnvelope::from(err))?;
+                        .map_err(ErrorEnvelope::from)?;
 
                     if inflight == 0 {
                         return Ok(());

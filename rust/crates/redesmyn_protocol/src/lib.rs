@@ -13,6 +13,7 @@ use redesmyn_ids::{MsgId, RepoId, WorkspaceId};
 
 #[doc(hidden)]
 pub mod pb {
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/redesmyn_protocol_pb.rs"));
 }
 
@@ -221,7 +222,7 @@ impl TraceId {
 
 impl fmt::Debug for TraceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TraceId({})", self)
+        write!(f, "TraceId({self})")
     }
 }
 
@@ -434,6 +435,12 @@ impl ProtocolEnvelope {
     pub fn with_trace_id(mut self, trace_id: TraceId) -> Self {
         self.trace_id = Some(trace_id);
         self
+    }
+}
+
+impl Default for ProtocolEnvelope {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

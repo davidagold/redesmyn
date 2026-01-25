@@ -235,9 +235,7 @@ fn build_rust_config(
                 bind: api_bind,
                 client_socket_path,
             },
-            auth: ControlPlaneAuthConfig {
-                daemon_token: daemon_token.into(),
-            },
+            auth: ControlPlaneAuthConfig { daemon_token },
         },
         daemon: DaemonConfig {
             repo_registry_dir,

@@ -95,6 +95,12 @@ macro_rules! ulid_id {
         #[repr(transparent)]
         pub struct $name(Ulid);
 
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+
         impl $name {
             pub const BYTE_LEN: usize = 16;
 

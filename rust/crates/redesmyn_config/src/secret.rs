@@ -4,7 +4,7 @@ use std::fmt;
 /// A string that should not be printed in logs or debug output.
 ///
 /// This is intentionally minimal: it only redacts `Debug`.
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct SecretString(String);
 
@@ -15,12 +15,6 @@ impl SecretString {
 
     pub fn expose(&self) -> &str {
         &self.0
-    }
-}
-
-impl Default for SecretString {
-    fn default() -> Self {
-        Self(String::new())
     }
 }
 

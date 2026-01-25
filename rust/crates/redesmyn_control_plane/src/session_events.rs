@@ -31,6 +31,7 @@ pub struct SessionEventsResync {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionEventsSubscriptionItem {
     Event(SessionEvent),
     ResyncRequired(SessionEventsResync),

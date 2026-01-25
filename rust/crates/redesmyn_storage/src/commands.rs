@@ -95,6 +95,7 @@ pub struct CommandRecord {
 
 impl CommandRecord {
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_now(
         command_id: CommandId,
         scope: CommandScope,
@@ -218,6 +219,7 @@ pub async fn get_command<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         CommandId,
         i64,
@@ -254,41 +256,36 @@ where
     .fetch_optional(executor)
     .await?;
 
-    Ok(row
-        .map(
-            |(
+    row.map(
+        |(
+            command_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            target_task_id,
+            kind,
+            state,
+            idempotency_key,
+            created_by,
+            payload,
+        )| {
+            Ok::<CommandRecord, StorageError>(CommandRecord {
                 command_id,
                 created_at_ms,
                 updated_at_ms,
-                scope_kind,
-                scope_workspace_id,
-                scope_repo_id,
+                scope: scope_from_columns(scope_kind.as_str(), scope_workspace_id, scope_repo_id)?,
                 target_task_id,
                 kind,
-                state,
+                state: decode_command_state(&state)?,
                 idempotency_key,
                 created_by,
                 payload,
-            )| {
-                Ok::<CommandRecord, StorageError>(CommandRecord {
-                    command_id,
-                    created_at_ms,
-                    updated_at_ms,
-                    scope: scope_from_columns(
-                        scope_kind.as_str(),
-                        scope_workspace_id,
-                        scope_repo_id,
-                    )?,
-                    target_task_id,
-                    kind,
-                    state: decode_command_state(&state)?,
-                    idempotency_key,
-                    created_by,
-                    payload,
-                })
-            },
-        )
-        .transpose()?)
+            })
+        },
+    )
+    .transpose()
 }
 
 pub async fn get_command_last_update<'e, E>(
@@ -298,6 +295,7 @@ pub async fn get_command_last_update<'e, E>(
 where
     E: Executor<'e, Database = Sqlite>,
 {
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         CommandUpdateId,
         CommandId,
@@ -328,31 +326,30 @@ where
     .fetch_optional(executor)
     .await?;
 
-    Ok(row
-        .map(
-            |(
+    row.map(
+        |(
+            update_id,
+            command_id,
+            created_at_ms,
+            state,
+            message,
+            progress_current,
+            progress_total,
+            detail,
+        )| {
+            Ok::<CommandUpdateRecord, StorageError>(CommandUpdateRecord {
                 update_id,
                 command_id,
                 created_at_ms,
-                state,
+                state: decode_command_state(&state)?,
                 message,
                 progress_current,
                 progress_total,
                 detail,
-            )| {
-                Ok::<CommandUpdateRecord, StorageError>(CommandUpdateRecord {
-                    update_id,
-                    command_id,
-                    created_at_ms,
-                    state: decode_command_state(&state)?,
-                    message,
-                    progress_current,
-                    progress_total,
-                    detail,
-                })
-            },
-        )
-        .transpose()?)
+            })
+        },
+    )
+    .transpose()
 }
 
 pub async fn find_command_by_idempotency_key<'e, E>(

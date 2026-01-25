@@ -846,6 +846,7 @@ pub struct Event {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum SubscriptionEvent {
     Subscribed(Subscribed),
     EventLog(EventLogEvent),

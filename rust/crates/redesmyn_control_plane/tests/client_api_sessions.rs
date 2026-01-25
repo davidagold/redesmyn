@@ -9,10 +9,10 @@ use redesmyn_ids::{
 };
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, ClientFrame, ClientMessage, CloseChatSessionRequest,
-    CreateChatSessionRequest,
-    GetEpicPinnedChatSessionRequest, GetSessionEventsRequest, ListChatSessionsRequest,
-    ListTaskSessionsRequest, PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
-    SendSessionMessageRequest, SessionEventsFilter, Subscribe, SubscriptionEvent, SubscriptionFilter,
+    CreateChatSessionRequest, GetEpicPinnedChatSessionRequest, GetSessionEventsRequest,
+    ListChatSessionsRequest, ListTaskSessionsRequest, PinChatSessionToEpicRequest, Request,
+    RequestPayload, ResponseResult, SendSessionMessageRequest, SessionEventsFilter, Subscribe,
+    SubscriptionEvent, SubscriptionFilter,
 };
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope, SessionEvent, Timestamp};

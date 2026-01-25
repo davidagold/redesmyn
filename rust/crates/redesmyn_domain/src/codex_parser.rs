@@ -36,21 +36,11 @@ impl Default for CodexTurnStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CodexParserCapabilities {
     pub can_stream_semantic_events: bool,
     pub can_detect_turn_complete: bool,
     pub can_resume_by_id: bool,
-}
-
-impl Default for CodexParserCapabilities {
-    fn default() -> Self {
-        Self {
-            can_stream_semantic_events: false,
-            can_detect_turn_complete: false,
-            can_resume_by_id: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -725,11 +715,7 @@ fn extract_external_id(text: &str, key: ExternalIdKey) -> Option<String> {
 
         let start_val = cursor;
         while let Some(b) = bytes.get(cursor).copied() {
-            let ok = (b'A'..=b'Z').contains(&b)
-                || (b'a'..=b'z').contains(&b)
-                || (b'0'..=b'9').contains(&b)
-                || b == b'_'
-                || b == b'-';
+            let ok = b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
             if !ok {
                 break;
             }
