@@ -550,6 +550,8 @@ impl GitBackend for GitCliBackend {
             match target {
                 GitWorktreeTarget::Head => {}
                 GitWorktreeTarget::Revision(rev) => {
+                    // Prevent option-like revs (e.g. `--help`) from being parsed as flags.
+                    args.push("--");
                     args.push(rev.as_str());
                 }
             }
@@ -586,7 +588,7 @@ impl GitBackend for GitCliBackend {
                 .run_git(
                     "worktree_remove",
                     repo_root,
-                    &["worktree", "remove", "--force", path_str],
+                    &["worktree", "remove", "--force", "--", path_str],
                     None,
                     options,
                 )

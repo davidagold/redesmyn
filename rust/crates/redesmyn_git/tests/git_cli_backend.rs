@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use redesmyn_git::{GitBackend, GitCliBackend, GitRevision, GitRunOptions, GitWorktreeTarget};
+use redesmyn_git::{
+    GitBackend, GitCliBackend, GitRevision, GitRunOptions, GitWorktreeAddOptions, GitWorktreeTarget,
+};
 use tempfile::TempDir;
 
 fn git(repo_root: &Path, args: &[&str]) -> std::process::Output {
@@ -178,11 +180,39 @@ async fn cli_backend_worktree_list_parses_porcelain() {
     // On macOS, `git worktree list --porcelain` may print paths rooted at `/private/var/...`
     // while `tempfile` yields `/var/...`. Compare canonical paths to avoid false negatives.
     assert!(worktrees.iter().any(|wt| {
-        std::fs::canonicalize(&wt.path)
-            .expect("canonicalize worktree path")
-            == canonical_repo_root
+        std::fs::canonicalize(&wt.path).expect("canonicalize worktree path") == canonical_repo_root
     }));
 
     // Ensure the public enum is usable (T-27 uses this for worktree creation).
     let _ = GitWorktreeTarget::Head;
+}
+
+#[tokio::test]
+async fn cli_backend_worktree_add_does_not_treat_revision_as_flag() {
+    let (dir, _base) = setup_repo();
+    let repo_root = dir.path();
+
+    let backend = GitCliBackend::new();
+    let worktree_path = repo_root.join("wt_bad_rev");
+    let target = GitWorktreeTarget::Revision(GitRevision::new("--help").unwrap());
+
+    let err = backend
+        .worktree_add(
+            repo_root,
+            &worktree_path,
+            &target,
+            GitWorktreeAddOptions::default(),
+            GitRunOptions::default(),
+        )
+        .await
+        .expect_err("should fail");
+
+    // With `--` argument separation, git treats `--help` as a revision and fails as "invalid ref"
+    // (exit 128), rather than printing help (exit 129).
+    match err {
+        redesmyn_git::GitError::CommandFailed { exit_code, .. } => assert_eq!(exit_code, 128),
+        other => panic!("unexpected error: {other}"),
+    }
+
+    assert!(!worktree_path.exists());
 }
