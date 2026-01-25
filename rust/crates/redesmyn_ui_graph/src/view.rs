@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AsyncApp, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent, Task,
-    TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
+    canvas, div, fill, prelude::*, px, quad, rems, App, AsyncApp, ClickEvent, Context, CursorStyle,
+    FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
+    ScrollHandle, ScrollWheelEvent, Task, TextRun, Window,
 };
 
 use redesmyn_ids::CommandId;
@@ -15,8 +15,8 @@ use redesmyn_ui::components::{
     TextButton,
 };
 use redesmyn_ui::utils::{
-    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
-    ui_test_mode_animation_duration,
+    theme_for_window, ui_idle_tracker, ui_test_mode_animation_duration, UiActivityGuard,
+    UserActionState,
 };
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
@@ -24,13 +24,69 @@ use crate::constants::{
     TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH,
 };
 use crate::geometry::{
-    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band,
-    edge_route_between_points_in_window, edge_route_in_window,
+    edge_lod_band, edge_route_between_points_in_window, edge_route_in_window, EdgeLodBand,
+    EdgeRoute, DEFAULT_EDGE_STROKE_PX,
 };
-use crate::hit_test::{GraphHit, hit_test};
+use crate::hit_test::{hit_test, GraphHit};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
 use redesmyn_protocol::client::{MergeReadiness, TaskState};
+
+#[derive(Debug, Clone)]
+struct FpsOverlay {
+    enabled: bool,
+    last_frame_at: Option<Instant>,
+    ema_frame_time_s: Option<f32>,
+    last_label_update: Option<Instant>,
+    label: gpui::SharedString,
+}
+
+impl FpsOverlay {
+    fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            last_frame_at: None,
+            ema_frame_time_s: None,
+            last_label_update: None,
+            label: "FPS: —".into(),
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn on_frame(&mut self) {
+        if !self.enabled {
+            return;
+        }
+
+        let now = Instant::now();
+        if let Some(prev) = self.last_frame_at {
+            let dt = (now - prev).as_secs_f32().max(0.0);
+            if dt > 0.0 {
+                const ALPHA: f32 = 0.12;
+                let ema = self
+                    .ema_frame_time_s
+                    .map(|ema| ema * (1.0 - ALPHA) + dt * ALPHA)
+                    .unwrap_or(dt);
+                self.ema_frame_time_s = Some(ema);
+            }
+        }
+        self.last_frame_at = Some(now);
+
+        let should_update_label = self
+            .last_label_update
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250));
+        if should_update_label {
+            if let Some(dt) = self.ema_frame_time_s {
+                let fps = (1.0 / dt).clamp(0.0, 999.0);
+                self.label = format!("FPS: {fps:.0}").into();
+            }
+            self.last_label_update = Some(now);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct PanDrag {
@@ -129,6 +185,7 @@ pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
     camera: GraphCamera,
+    fps_overlay: FpsOverlay,
     camera_animation: Option<CameraAnimation>,
     camera_animation_guard: Option<UiActivityGuard>,
     pan_drag: Option<PanDrag>,
@@ -154,10 +211,15 @@ impl GraphView {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_demo");
         let _guard = span.enter();
 
+        let fps_overlay_enabled = std::env::var("REDESMYN_UI_FPS_OVERLAY")
+            .ok()
+            .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
+
         Self {
             focus_handle: cx.focus_handle(),
             scene: GraphScene::demo(),
             camera: GraphCamera::new(GraphCameraLimits::default()),
+            fps_overlay: FpsOverlay::new(fps_overlay_enabled),
             camera_animation: None,
             camera_animation_guard: None,
             pan_drag: None,
@@ -1507,6 +1569,7 @@ impl GraphView {
 
 impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.fps_overlay.on_frame();
         self.step_camera_animation_for_render(window);
         let started_fit = self.try_initial_fit_for_render();
         let started_pan = self.try_pan_to_selection_for_render();
@@ -2026,6 +2089,26 @@ impl Render for GraphView {
             None
         };
 
+        let fps_overlay = if self.fps_overlay.enabled() {
+            Some(
+                div()
+                    .absolute()
+                    .right(theme.spacing.sm)
+                    .bottom(theme.spacing.sm)
+                    .px(theme.spacing.sm)
+                    .py(theme.spacing.xs)
+                    .rounded(theme.radius.md)
+                    .bg(theme.colors.background.opacity(0.72))
+                    .border_1()
+                    .border_color(theme.colors.border.opacity(0.5))
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child(self.fps_overlay.label.clone()),
+            )
+        } else {
+            None
+        };
+
         div()
             .id(("graph_view", cx.entity_id()))
             .flex()
@@ -2083,7 +2166,8 @@ impl Render for GraphView {
                     .child(nodes_layer)
                     .when_some(selection_bar, |this, selection_bar| {
                         this.child(selection_bar)
-                    }),
+                    })
+                    .when_some(fps_overlay, |this, overlay| this.child(overlay)),
             )
             .track_focus(&self.focus_handle(cx))
     }
