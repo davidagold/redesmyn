@@ -7,4 +7,6 @@ pub mod parser;
 pub mod supervisor;
 
 mod active_sessions;
+mod content_length_framing;
+mod jsonrpc;
 mod text_limits;

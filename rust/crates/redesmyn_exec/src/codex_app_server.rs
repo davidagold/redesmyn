@@ -1,287 +1,22 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::session::ExternalSessionRef;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::process::Command;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::app_server::{
     AppServerClient, AppServerConnection, AppServerEvent, AppServerProcess, AppServerProcessError,
     AppServerRequest, AppServerRequestError, AppServerResponse, BoxFuture,
 };
-
-const JSONRPC_VERSION: &str = "2.0";
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum JsonRpcId {
-    Number(i64),
-    String(String),
-}
-
-impl JsonRpcId {
-    fn to_json(&self) -> serde_json::Value {
-        match self {
-            Self::Number(n) => serde_json::Value::Number((*n).into()),
-            Self::String(s) => serde_json::Value::String(s.clone()),
-        }
-    }
-
-    fn try_from_json(value: &serde_json::Value) -> Option<Self> {
-        match value {
-            serde_json::Value::Number(n) => n.as_i64().map(Self::Number),
-            serde_json::Value::String(s) => Some(Self::String(s.clone())),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum JsonRpcError {
-    #[error("io: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("invalid utf-8")]
-    Utf8,
-    #[error("invalid json: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("jsonrpc error response: {message}")]
-    RemoteError { message: String },
-}
-
-#[derive(Debug, thiserror::Error)]
-enum FramingError {
-    #[error("missing Content-Length header")]
-    MissingContentLength,
-    #[error("invalid Content-Length value")]
-    InvalidContentLength,
-    #[error("header bytes are not valid ascii")]
-    NonAsciiHeader,
-}
-
-#[derive(Debug)]
-struct ContentLengthFramingDecoder {
-    buffer: Vec<u8>,
-    expected_len: Option<usize>,
-}
-
-impl ContentLengthFramingDecoder {
-    fn new() -> Self {
-        Self {
-            buffer: Vec::new(),
-            expected_len: None,
-        }
-    }
-
-    fn push(&mut self, chunk: &[u8]) -> Result<Vec<Vec<u8>>, FramingError> {
-        self.buffer.extend_from_slice(chunk);
-        self.drain_frames()
-    }
-
-    fn drain_frames(&mut self) -> Result<Vec<Vec<u8>>, FramingError> {
-        let mut out = Vec::new();
-        loop {
-            if self.expected_len.is_none() {
-                let Some((header_end, consumed)) = find_header_terminator(&self.buffer) else {
-                    break;
-                };
-
-                let header_bytes = &self.buffer[..header_end];
-                let header_str =
-                    std::str::from_utf8(header_bytes).map_err(|_| FramingError::NonAsciiHeader)?;
-                let len = parse_content_length(header_str)?;
-                self.expected_len = Some(len);
-                self.buffer.drain(..consumed);
-            }
-
-            let Some(expected) = self.expected_len else {
-                break;
-            };
-            if self.buffer.len() < expected {
-                break;
-            }
-
-            let payload = self.buffer.drain(..expected).collect::<Vec<u8>>();
-            self.expected_len = None;
-            out.push(payload);
-        }
-
-        Ok(out)
-    }
-}
-
-fn find_header_terminator(buf: &[u8]) -> Option<(usize, usize)> {
-    // Prefer strict LSP `\r\n\r\n`.
-    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-        return Some((pos, pos + 4));
-    }
-    // Accept `\n\n` as a fallback.
-    if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
-        return Some((pos, pos + 2));
-    }
-    None
-}
-
-fn parse_content_length(headers: &str) -> Result<usize, FramingError> {
-    for line in headers.lines() {
-        let Some((k, v)) = line.split_once(':') else {
-            continue;
-        };
-        if k.trim().eq_ignore_ascii_case("Content-Length") {
-            let value = v.trim();
-            let len = value
-                .parse::<usize>()
-                .map_err(|_| FramingError::InvalidContentLength)?;
-            return Ok(len);
-        }
-    }
-    Err(FramingError::MissingContentLength)
-}
-
-struct JsonRpcConnection {
-    writer: Mutex<Box<dyn AsyncWrite + Unpin + Send>>,
-    next_id: AtomicU64,
-    pending: Mutex<HashMap<JsonRpcId, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>,
-}
-
-impl std::fmt::Debug for JsonRpcConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JsonRpcConnection")
-            .field("next_id", &self.next_id.load(Ordering::Relaxed))
-            .field("writer", &"<writer>")
-            .field("pending", &"<pending>")
-            .finish()
-    }
-}
-
-impl JsonRpcConnection {
-    fn new(writer: Box<dyn AsyncWrite + Unpin + Send>) -> Self {
-        Self {
-            writer: Mutex::new(writer),
-            next_id: AtomicU64::new(1),
-            pending: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn next_request_id(&self) -> JsonRpcId {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        JsonRpcId::Number(id as i64)
-    }
-
-    async fn send_value(&self, value: &serde_json::Value) -> Result<(), JsonRpcError> {
-        let json = serde_json::to_vec(value)?;
-        let header = format!("Content-Length: {}\r\n\r\n", json.len());
-
-        let mut writer = self.writer.lock().await;
-        writer.write_all(header.as_bytes()).await?;
-        writer.write_all(&json).await?;
-        writer.flush().await?;
-        Ok(())
-    }
-
-    async fn request(
-        &self,
-        method: &'static str,
-        params: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value, AppServerRequestError> {
-        let request_id = self.next_request_id();
-        let (tx, rx) = oneshot::channel();
-
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(request_id.clone(), tx);
-        }
-
-        let mut payload = serde_json::json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "method": method,
-            "id": request_id.to_json(),
-        });
-        if let Some(params) = params {
-            payload["params"] = params;
-        }
-
-        if let Err(err) = self.send_value(&payload).await {
-            let mut pending = self.pending.lock().await;
-            pending.remove(&request_id);
-            return Err(AppServerRequestError::Failed {
-                reason: format!("send failed: {err}"),
-            });
-        }
-
-        match rx.await {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(err)) => Err(AppServerRequestError::Failed {
-                reason: format!("request failed: {err}"),
-            }),
-            Err(_) => Err(AppServerRequestError::Failed {
-                reason: "request response channel closed".to_owned(),
-            }),
-        }
-    }
-
-    async fn notify(
-        &self,
-        method: &'static str,
-        params: Option<serde_json::Value>,
-    ) -> Result<(), AppServerRequestError> {
-        let mut payload = serde_json::json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "method": method,
-        });
-        if let Some(params) = params {
-            payload["params"] = params;
-        }
-        self.send_value(&payload)
-            .await
-            .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("send failed: {err}"),
-            })
-    }
-
-    async fn deliver_response(
-        &self,
-        id: JsonRpcId,
-        payload: Result<serde_json::Value, JsonRpcError>,
-    ) {
-        let tx = {
-            let mut pending = self.pending.lock().await;
-            pending.remove(&id)
-        };
-        if let Some(tx) = tx {
-            let _ = tx.send(payload);
-        } else {
-            tracing::debug!(?id, "dropping response for unknown request id");
-        }
-    }
-
-    async fn respond_ok(&self, id: JsonRpcId, result: serde_json::Value) {
-        let response = serde_json::json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": id.to_json(),
-            "result": result,
-        });
-        if let Err(err) = self.send_value(&response).await {
-            tracing::warn!(error = %err, "failed to send jsonrpc response");
-        }
-    }
-
-    async fn respond_error(&self, id: JsonRpcId, code: i64, message: &str) {
-        let response = serde_json::json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": id.to_json(),
-            "error": { "code": code, "message": message }
-        });
-        if let Err(err) = self.send_value(&response).await {
-            tracing::warn!(error = %err, "failed to send jsonrpc error response");
-        }
-    }
-}
+use crate::content_length_framing::ContentLengthFramingDecoder;
+use crate::jsonrpc::{JsonRpcConnection, JsonRpcError, JsonRpcId};
 
 #[derive(Debug, Clone, Default)]
 pub struct CodexAppServerAuth {
@@ -653,7 +388,13 @@ impl CodexAppServerClient {
             reason: format!("newConversation params serialization failed: {err}"),
         })?;
 
-        let result = self.conn.request("newConversation", Some(params)).await?;
+        let result = self
+            .conn
+            .request("newConversation", Some(params))
+            .await
+            .map_err(|err| AppServerRequestError::Failed {
+                reason: format!("newConversation failed: {err}"),
+            })?;
         if let Some(conversation_id) = parse_conversation_id_from_new_conversation_result(&result) {
             self.state.set_conversation_id(conversation_id).await;
         }
@@ -679,7 +420,13 @@ impl CodexAppServerClient {
             reason: format!("userMessage params serialization failed: {err}"),
         })?;
 
-        let _ = self.conn.request("userMessage", Some(params)).await?;
+        let _ = self
+            .conn
+            .request("userMessage", Some(params))
+            .await
+            .map_err(|err| AppServerRequestError::Failed {
+                reason: format!("userMessage failed: {err}"),
+            })?;
         Ok(())
     }
 
@@ -698,7 +445,13 @@ impl CodexAppServerClient {
             reason: format!("cancel params serialization failed: {err}"),
         })?;
 
-        let _ = self.conn.request("cancel", Some(params)).await?;
+        let _ = self
+            .conn
+            .request("cancel", Some(params))
+            .await
+            .map_err(|err| AppServerRequestError::Failed {
+                reason: format!("cancel failed: {err}"),
+            })?;
         Ok(())
     }
 }
@@ -1299,29 +1052,5 @@ async fn handle_update_conversation(
 
     for event in events {
         let _ = events_tx.send(event).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn content_length_decoder_handles_chunked_reads() {
-        let payload = br#"{"jsonrpc":"2.0","method":"ping","id":1}"#;
-        let framed = format!("Content-Length: {}\r\n\r\n", payload.len());
-        let mut bytes = framed.into_bytes();
-        bytes.extend_from_slice(payload);
-
-        let mut decoder = ContentLengthFramingDecoder::new();
-        let mut out = Vec::new();
-
-        for chunk in bytes.chunks(3) {
-            let frames = decoder.push(chunk).expect("push");
-            out.extend(frames);
-        }
-
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0], payload);
     }
 }
