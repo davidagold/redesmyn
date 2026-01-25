@@ -217,12 +217,14 @@ where
     let mut accepted_protocol: Option<ProtocolVersion> = None;
     let mut subscriptions: HashMap<redesmyn_ids::SubscriptionId, tokio::task::JoinHandle<()>> =
         HashMap::new();
-    let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<ClientFrame>(128);
+    let mut request_tasks = tokio::task::JoinSet::new();
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel::<ClientFrame>(128);
 
     loop {
         tokio::select! {
             _ = shutdown.recv() => {
                 abort_subscriptions(&mut subscriptions);
+                request_tasks.abort_all();
                 return Ok(());
             }
             frame = conn.recv() => {
@@ -230,10 +232,12 @@ where
                     Ok(frame) => frame,
                     Err(ClientTransportError::ChannelClosed) => {
                         abort_subscriptions(&mut subscriptions);
+                        request_tasks.abort_all();
                         return Ok(());
                     }
                     Err(err) => {
                         abort_subscriptions(&mut subscriptions);
+                        request_tasks.abort_all();
                         return Err(err.into());
                     }
                 };
@@ -268,13 +272,24 @@ where
 
                 match frame.message {
                     ClientMessage::Request(req) => {
-                        let response =
-                            handle_request(req, accepted, &frame.envelope, &control_plane).await;
-                        let response_frame = ClientFrame::new(
-                            response_envelope(&frame.envelope, accepted),
-                            ClientMessage::Response(response),
-                        );
-                        conn.send(response_frame).await?;
+                        let request_envelope = frame.envelope.clone();
+                        let task_control_plane = control_plane.clone();
+                        let tx = outbound_tx.clone();
+
+                        request_tasks.spawn(async move {
+                            let response = handle_request(
+                                req,
+                                accepted,
+                                &request_envelope,
+                                &task_control_plane,
+                            )
+                            .await;
+                            let response_frame = ClientFrame::new(
+                                response_envelope(&request_envelope, accepted),
+                                ClientMessage::Response(response),
+                            );
+                            let _ = tx.send(response_frame).await;
+                        });
                     }
                     ClientMessage::Subscribe(sub) => {
                         let subscription_id = sub.subscription_id;
@@ -300,7 +315,7 @@ where
                                     let mut feed = control_plane
                                         .event_log()
                                         .subscribe(scope, filter.after_event_id);
-                                    let tx = events_tx.clone();
+                                    let tx = outbound_tx.clone();
                                     let request_envelope = frame.envelope.clone();
                                     let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -362,7 +377,7 @@ where
                                 let mut feed = control_plane
                                     .session_events()
                                     .subscribe(filter.session_id, filter.after);
-                                let tx = events_tx.clone();
+                                let tx = outbound_tx.clone();
                                 let request_envelope = frame.envelope.clone();
                                 let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -452,11 +467,16 @@ where
                     }
                 }
             }
-            maybe_event = events_rx.recv() => {
-                let Some(event) = maybe_event else {
+            Some(join_result) = request_tasks.join_next(), if !request_tasks.is_empty() => {
+                if let Err(err) = join_result {
+                    tracing::error!(error = %err, "client API request task panicked");
+                }
+            }
+            maybe_frame = outbound_rx.recv() => {
+                let Some(frame) = maybe_frame else {
                     continue;
                 };
-                conn.send(event).await?;
+                conn.send(frame).await?;
             }
         }
     }
