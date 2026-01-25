@@ -34,8 +34,6 @@ impl JsonRpcId {
 pub(crate) enum JsonRpcError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-    #[error("invalid utf-8")]
-    Utf8,
     #[error("invalid json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("jsonrpc error response: {message}")]
@@ -73,11 +71,12 @@ impl JsonRpcConnection {
     }
 
     async fn send_value(&self, value: &serde_json::Value) -> Result<(), JsonRpcError> {
-        let json = serde_json::to_vec(value)?;
-        let header = format!("Content-Length: {}\r\n\r\n", json.len());
+        // The codex app-server uses newline-delimited JSON-RPC frames rather than the
+        // Content-Length framing used by LSP.
+        let mut json = serde_json::to_vec(value)?;
+        json.push(b'\n');
 
         let mut writer = self.writer.lock().await;
-        writer.write_all(header.as_bytes()).await?;
         writer.write_all(&json).await?;
         writer.flush().await?;
         Ok(())

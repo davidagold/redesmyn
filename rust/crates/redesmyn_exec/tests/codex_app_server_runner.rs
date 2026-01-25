@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
@@ -15,77 +15,14 @@ use redesmyn_protocol::daemon::DaemonMessage;
 use redesmyn_protocol::session::{
     ExternalSessionRef, SessionEvent, SessionEventKind, SessionScope,
 };
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::sync::{Mutex, mpsc};
-
-#[derive(Debug, Default)]
-struct ContentLengthDecoder {
-    buffer: Vec<u8>,
-    expected_len: Option<usize>,
-}
-
-impl ContentLengthDecoder {
-    fn push(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
-        self.buffer.extend_from_slice(chunk);
-        let mut out = Vec::new();
-
-        loop {
-            if self.expected_len.is_none() {
-                let Some((header_end, consumed)) = find_header_terminator(&self.buffer) else {
-                    break;
-                };
-                let header = std::str::from_utf8(&self.buffer[..header_end]).expect("ascii header");
-                let len = parse_content_length(header);
-                self.expected_len = Some(len);
-                self.buffer.drain(..consumed);
-            }
-
-            let Some(expected) = self.expected_len else {
-                break;
-            };
-            if self.buffer.len() < expected {
-                break;
-            }
-
-            let payload = self.buffer.drain(..expected).collect::<Vec<u8>>();
-            self.expected_len = None;
-            out.push(payload);
-        }
-
-        out
-    }
-}
-
-fn find_header_terminator(buf: &[u8]) -> Option<(usize, usize)> {
-    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-        return Some((pos, pos + 4));
-    }
-    if let Some(pos) = buf.windows(2).position(|w| w == b"\n\n") {
-        return Some((pos, pos + 2));
-    }
-    None
-}
-
-fn parse_content_length(headers: &str) -> usize {
-    for line in headers.lines() {
-        let Some((k, v)) = line.split_once(':') else {
-            continue;
-        };
-        if k.trim().eq_ignore_ascii_case("Content-Length") {
-            return v.trim().parse::<usize>().expect("Content-Length int");
-        }
-    }
-    panic!("missing Content-Length header");
-}
 
 type Writer = Arc<Mutex<tokio::io::WriteHalf<tokio::io::DuplexStream>>>;
 
 async fn send_frame(writer: &Writer, value: serde_json::Value, chunk_size: usize) {
-    let json = serde_json::to_vec(&value).expect("json");
-    let header = format!("Content-Length: {}\r\n\r\n", json.len());
-
-    let mut bytes = header.into_bytes();
-    bytes.extend_from_slice(&json);
+    let mut bytes = serde_json::to_vec(&value).expect("json");
+    bytes.push(b'\n');
 
     let mut w = writer.lock().await;
     if chunk_size == 0 {
@@ -141,15 +78,18 @@ async fn send_error(writer: &Writer, id: serde_json::Value, code: i64, message: 
 struct FakeV2Counters {
     initialize_calls: AtomicUsize,
     new_conversation_calls: AtomicUsize,
-    user_message_calls: AtomicUsize,
-    cancel_calls: AtomicUsize,
+    resume_conversation_calls: AtomicUsize,
+    add_conversation_listener_calls: AtomicUsize,
+    send_user_message_calls: AtomicUsize,
+    turn_interrupt_calls: AtomicUsize,
 }
 
 struct FakeV2State {
     counters: Arc<FakeV2Counters>,
     next_turn: AtomicUsize,
     inflight: Mutex<Option<InflightTurn>>,
-    observed_user_message_resumes: Mutex<Vec<Option<String>>>,
+    listener_active: AtomicBool,
+    observed_send_user_message_conversation_ids: Mutex<Vec<String>>,
 }
 
 struct InflightTurn {
@@ -160,9 +100,10 @@ impl FakeV2State {
     fn new(counters: Arc<FakeV2Counters>) -> Arc<Self> {
         Arc::new(Self {
             counters,
-            next_turn: AtomicUsize::new(1),
+            next_turn: AtomicUsize::new(0),
             inflight: Mutex::new(None),
-            observed_user_message_resumes: Mutex::new(Vec::new()),
+            listener_active: AtomicBool::new(false),
+            observed_send_user_message_conversation_ids: Mutex::new(Vec::new()),
         })
     }
 
@@ -175,157 +116,233 @@ impl FakeV2State {
 async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2State>) {
     let session_id: &str = "session_test";
 
-    let (mut reader, writer) = tokio::io::split(stream);
+    let (reader, writer) = tokio::io::split(stream);
     let writer: Writer = Arc::new(Mutex::new(writer));
 
-    let mut decoder = ContentLengthDecoder::default();
-    let mut buf = vec![0u8; 4096];
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
 
     loop {
-        let read = match reader.read(&mut buf).await {
+        line.clear();
+        let read = match reader.read_line(&mut line).await {
             Ok(0) => return,
             Ok(n) => n,
             Err(_) => return,
         };
 
-        let frames = decoder.push(&buf[..read]);
-        for frame in frames {
-            let msg: serde_json::Value =
-                serde_json::from_slice(&frame).unwrap_or(serde_json::Value::Null);
+        if read == 0 {
+            continue;
+        }
 
-            let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
-                continue;
-            };
-            let id = msg.get("id").cloned();
-            let params = msg
-                .get("params")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
+        let frame = line.trim_end_matches(|c| c == '\n' || c == '\r');
+        if frame.is_empty() {
+            continue;
+        }
 
-            match (method, id) {
-                ("initialize", Some(id)) => {
-                    state
-                        .counters
-                        .initialize_calls
-                        .fetch_add(1, Ordering::Relaxed);
-                    send_response(&writer, id, serde_json::json!({ "ok": true })).await;
+        let msg: serde_json::Value =
+            serde_json::from_str(frame).unwrap_or(serde_json::Value::Null);
+
+        let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
+            continue;
+        };
+        let id = msg.get("id").cloned();
+        let params = msg
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
+        match method {
+            "initialize" => {
+                let Some(id) = id else { continue };
+                state
+                    .counters
+                    .initialize_calls
+                    .fetch_add(1, Ordering::Relaxed);
+                send_response(&writer, id, serde_json::json!({ "ok": true })).await;
+            }
+            "newConversation" => {
+                let Some(id) = id else { continue };
+                state
+                    .counters
+                    .new_conversation_calls
+                    .fetch_add(1, Ordering::Relaxed);
+                send_response(
+                    &writer,
+                    id,
+                    serde_json::json!({ "conversationId": session_id }),
+                )
+                .await;
+            }
+            "resumeConversation" => {
+                let Some(id) = id else { continue };
+                state
+                    .counters
+                    .resume_conversation_calls
+                    .fetch_add(1, Ordering::Relaxed);
+                send_response(
+                    &writer,
+                    id,
+                    serde_json::json!({ "conversationId": session_id }),
+                )
+                .await;
+            }
+            "addConversationListener" => {
+                let Some(id) = id else { continue };
+                state
+                    .counters
+                    .add_conversation_listener_calls
+                    .fetch_add(1, Ordering::Relaxed);
+                state.listener_active.store(true, Ordering::Relaxed);
+                send_response(
+                    &writer,
+                    id,
+                    serde_json::json!({ "subscriptionId": "sub_test" }),
+                )
+                .await;
+            }
+            "sendUserMessage" => {
+                let Some(id) = id else { continue };
+                state
+                    .counters
+                    .send_user_message_calls
+                    .fetch_add(1, Ordering::Relaxed);
+
+                let conversation_id = params
+                    .get("conversationId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(session_id)
+                    .to_owned();
+
+                state
+                    .observed_send_user_message_conversation_ids
+                    .lock()
+                    .await
+                    .push(conversation_id.clone());
+
+                let prompt = params
+                    .get("items")
+                    .and_then(|v| v.as_array())
+                    .and_then(|items| {
+                        items.iter().find_map(|item| {
+                            if item.get("type")?.as_str()? != "text" {
+                                return None;
+                            }
+                            item.get("data")?
+                                .get("text")?
+                                .as_str()
+                                .map(ToOwned::to_owned)
+                        })
+                    })
+                    .unwrap_or_default();
+
+                send_response(&writer, id, serde_json::json!({})).await;
+
+                if !state.listener_active.load(Ordering::Relaxed) {
+                    continue;
                 }
-                ("newConversation", Some(id)) => {
-                    state
-                        .counters
-                        .new_conversation_calls
-                        .fetch_add(1, Ordering::Relaxed);
-                    send_response(
-                        &writer,
-                        id,
-                        serde_json::json!({ "conversationId": session_id }),
+
+                let turn_id = state.alloc_turn_id();
+                let cancel = Arc::new(tokio::sync::Notify::new());
+
+                {
+                    let mut inflight = state.inflight.lock().await;
+                    *inflight = Some(InflightTurn {
+                        cancel: Arc::clone(&cancel),
+                    });
+                }
+
+                let writer_for_turn = Arc::clone(&writer);
+                let state_for_turn = Arc::clone(&state);
+                tokio::spawn(async move {
+                    let user_message_id = format!("user_{turn_id}");
+                    let assistant_message_id = format!("assistant_{turn_id}");
+
+                    send_notification(
+                        &writer_for_turn,
+                        "item/started",
+                        serde_json::json!({
+                            "threadId": conversation_id.clone(),
+                            "turnId": turn_id.clone(),
+                            "item": {
+                                "type": "userMessage",
+                                "id": user_message_id,
+                                "content": [
+                                    { "type": "text", "text": prompt.clone() }
+                                ]
+                            }
+                        }),
                     )
                     .await;
-                }
-                ("userMessage", Some(id)) => {
-                    state
-                        .counters
-                        .user_message_calls
-                        .fetch_add(1, Ordering::Relaxed);
 
-                    let prompt = params
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_owned();
-                    let resume = params
-                        .get("resume")
-                        .and_then(|v| v.as_str())
-                        .map(ToOwned::to_owned);
-
-                    state
-                        .observed_user_message_resumes
-                        .lock()
-                        .await
-                        .push(resume.clone());
-
-                    send_response(&writer, id, serde_json::json!({})).await;
-
-                    let turn_id = state.alloc_turn_id();
-                    let cancel = Arc::new(tokio::sync::Notify::new());
-
-                    {
-                        let mut inflight = state.inflight.lock().await;
-                        *inflight = Some(InflightTurn {
-                            cancel: Arc::clone(&cancel),
-                        });
-                    }
-
-                    let writer_for_turn = Arc::clone(&writer);
-                    let state_for_turn = Arc::clone(&state);
-                    tokio::spawn(async move {
-                        let user_message_id = format!("user_{turn_id}");
-                        let assistant_message_id = format!("assistant_{turn_id}");
-
+                    if prompt.contains("block") {
+                        cancel.notified().await;
                         send_notification(
                             &writer_for_turn,
-                            "updateConversation",
+                            "turn/completed",
                             serde_json::json!({
-                                "diff": [
-                                    { "type": "newConversation", "conversationId": session_id },
-                                    { "type": "newTurn", "turnId": turn_id },
-                                    { "type": "newMessage", "messageId": user_message_id, "role": "user", "content": prompt, "done": true }
-                                ]
+                                "threadId": conversation_id.clone(),
+                                "turn": { "id": turn_id.clone(), "status": "cancelled", "error": null }
                             }),
                         )
                         .await;
-
-                        if prompt.contains("block") {
-                            cancel.notified().await;
-                            send_notification(
-                                &writer_for_turn,
-                                "updateConversation",
-                                serde_json::json!({
-                                    "diff": [
-                                        { "type": "turnCompleted", "turnId": turn_id, "status": "canceled" }
-                                    ]
-                                }),
-                            )
-                            .await;
-                        } else {
-                            send_notification(
-                                &writer_for_turn,
-                                "updateConversation",
-                                serde_json::json!({
-                                    "diff": [
-                                        { "type": "newMessage", "messageId": assistant_message_id, "role": "assistant", "content": format!("echo: {prompt}"), "done": true },
-                                        { "type": "turnCompleted", "turnId": turn_id, "status": "completed" }
-                                    ]
-                                }),
-                            )
-                            .await;
-                        }
-
-                        let mut inflight = state_for_turn.inflight.lock().await;
-                        *inflight = None;
-                    });
-                }
-                ("cancel", Some(id)) => {
-                    state.counters.cancel_calls.fetch_add(1, Ordering::Relaxed);
-                    send_response(&writer, id, serde_json::json!({})).await;
-
-                    let inflight = state.inflight.lock().await;
-                    if let Some(turn) = inflight.as_ref() {
-                        turn.cancel.notify_waiters();
+                    } else {
+                        send_notification(
+                            &writer_for_turn,
+                            "item/completed",
+                            serde_json::json!({
+                                "threadId": conversation_id.clone(),
+                                "turnId": turn_id.clone(),
+                                "item": {
+                                    "type": "agentMessage",
+                                    "id": assistant_message_id,
+                                    "text": format!("echo: {prompt}")
+                                }
+                            }),
+                        )
+                        .await;
+                        send_notification(
+                            &writer_for_turn,
+                            "turn/completed",
+                            serde_json::json!({
+                                "threadId": conversation_id,
+                                "turn": { "id": turn_id, "status": "completed", "error": null }
+                            }),
+                        )
+                        .await;
                     }
-                }
-                ("commandExecutionApproval", Some(id)) => {
+
+                    let mut inflight = state_for_turn.inflight.lock().await;
+                    *inflight = None;
+                });
+            }
+            "turn/interrupt" => {
+                state
+                    .counters
+                    .turn_interrupt_calls
+                    .fetch_add(1, Ordering::Relaxed);
+
+                if let Some(id) = id {
                     send_response(&writer, id, serde_json::json!({})).await;
                 }
-                ("fileChangeApproval", Some(id)) => {
-                    send_response(&writer, id, serde_json::json!({})).await;
+
+                let inflight = state.inflight.lock().await;
+                if let Some(turn) = inflight.as_ref() {
+                    turn.cancel.notify_waiters();
                 }
-                ("initialized", None) => {}
-                ("exit", None) => {}
-                (_other, Some(id)) => {
+            }
+            "commandExecutionApproval" => {
+                let Some(id) = id else { continue };
+                send_response(&writer, id, serde_json::json!({})).await;
+            }
+            "fileChangeApproval" => {
+                let Some(id) = id else { continue };
+                send_response(&writer, id, serde_json::json!({})).await;
+            }
+            "initialized" | "exit" => {}
+            _ => {
+                if let Some(id) = id {
                     send_error(&writer, id, -32601, "method not supported").await;
                 }
-                (_other, None) => {}
             }
         }
     }
@@ -456,10 +473,12 @@ async fn collect_until_turn_started(
 fn find_latest_codex_session(events: &[SessionEvent]) -> Option<(String, Option<String>)> {
     events.iter().rev().find_map(|ev| match &ev.kind {
         SessionEventKind::TurnStarted(ts) => match ts.external_session_ref.as_ref()? {
-            ExternalSessionRef::CodexSession {
-                session_id,
-                turn_id,
-            } => Some((session_id.clone(), turn_id.clone())),
+            ExternalSessionRef::CodexThread { thread_id, turn_id } => {
+                Some((thread_id.clone(), turn_id.clone()))
+            }
+            ExternalSessionRef::CodexSession { session_id, turn_id } => {
+                Some((session_id.clone(), turn_id.clone()))
+            }
             _ => None,
         },
         _ => None,
@@ -534,7 +553,7 @@ async fn initialize_new_session_user_message_emits_codex_session_ref() {
 }
 
 #[tokio::test]
-async fn resume_sets_user_message_resume_field() {
+async fn resume_reuses_conversation_and_skips_reinitialize() {
     let (frames_tx, mut frames_rx) = mpsc::channel(256);
     let tmp = tempfile::tempdir().expect("tempdir");
     let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
@@ -584,16 +603,16 @@ async fn resume_sets_user_message_resume_field() {
     let first_events =
         collect_until_turn_completed(&mut frames_rx, daemon_session_id, Duration::from_secs(5))
             .await;
-    let (codex_session_id, _turn_id) =
+    let (codex_session_id, turn_id) =
         find_latest_codex_session(&first_events).expect("session id");
 
     let _ = supervisor
         .send_message(
             daemon_session_id,
             AppServerTurnIntent::Resume {
-                external: DomainExternalSessionRef::CodexSession {
-                    session_id: codex_session_id.clone(),
-                    turn_id: None,
+                external: DomainExternalSessionRef::CodexThread {
+                    thread_id: codex_session_id.clone(),
+                    turn_id,
                 },
                 prompt: "again".to_owned(),
             },
@@ -609,17 +628,24 @@ async fn resume_sets_user_message_resume_field() {
         SessionEventKind::AssistantMessage(m) if m.text == "echo: again"
     )));
 
-    let resumes = server_state
-        .observed_user_message_resumes
+    let conversations = server_state
+        .observed_send_user_message_conversation_ids
         .lock()
         .await
         .clone();
-    assert_eq!(resumes.len(), 2);
-    assert_eq!(resumes[0], None);
-    assert_eq!(resumes[1], Some(codex_session_id));
+    assert_eq!(conversations.len(), 2);
+    assert_eq!(conversations[0], codex_session_id);
+    assert_eq!(conversations[1], codex_session_id);
 
     assert_eq!(counters.new_conversation_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(counters.user_message_calls.load(Ordering::Relaxed), 2);
+    assert_eq!(counters.resume_conversation_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        counters
+            .add_conversation_listener_calls
+            .load(Ordering::Relaxed),
+        1
+    );
+    assert_eq!(counters.send_user_message_calls.load(Ordering::Relaxed), 2);
 
     supervisor
         .stop_session(daemon_session_id)
@@ -692,7 +718,7 @@ async fn cancel_mid_turn_emits_turn_completed() {
             .any(|e| matches!(&e.kind, SessionEventKind::TurnCompleted(_)))
     );
 
-    assert_eq!(counters.cancel_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(counters.turn_interrupt_calls.load(Ordering::Relaxed), 1);
 
     supervisor
         .stop_session(session_id)
