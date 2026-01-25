@@ -368,6 +368,7 @@ pub(super) async fn execute_structured_resume(
 
     let json_payload = payloads::resume_by_id_turn(
         plan.session_id,
+        Some(task_id),
         message.to_string(),
         plan.external_session_ref,
         plan.interrupt_turn,

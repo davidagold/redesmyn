@@ -53,12 +53,14 @@ pub(super) fn start_task_session(
 
 pub(super) fn resume_by_id_turn(
     session_id: SessionId,
+    task_id: Option<TaskId>,
     prompt: String,
     external_session_ref: ExternalSessionRef,
     interrupt_turn: bool,
 ) -> Result<Vec<u8>, ErrorEnvelope> {
     encode_payload(&ResumeByIdTaskAgentTurnCommand {
         session_id,
+        task_id,
         prompt,
         external_session_ref,
         interrupt_turn,

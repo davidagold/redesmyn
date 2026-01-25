@@ -993,6 +993,7 @@ async fn handle_request_result(
                         let json_payload = match encode_agent_command_payload(
                             &ResumeByIdTaskAgentTurnCommand {
                                 session_id,
+                                task_id,
                                 prompt: text.to_string(),
                                 external_session_ref,
                                 interrupt_turn,
@@ -1304,14 +1305,14 @@ async fn handle_request_result(
             };
 
             // TODO: Plumb agent kind / interface mode from the request (or client identity).
-            // For now we default to Codex + structured-exec because those are the only supported
-            // interactive chat semantics.
+            // For now we default to Codex + app-server so chat sessions can stream structured
+            // events back into the durable session log.
             let session_id = redesmyn_storage::sessions::create_chat_session(
                 control_plane.pool(),
                 workspace_id,
                 repo_id,
                 StorageAgentKind::Codex,
-                StorageAgentInterfaceMode::StructuredExec,
+                StorageAgentInterfaceMode::AppServer,
                 create.title.as_deref(),
             )
             .await?;

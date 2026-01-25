@@ -76,6 +76,8 @@ pub struct SendTaskAgentMessageCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResumeByIdTaskAgentTurnCommand {
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
     pub prompt: String,
     pub external_session_ref: ExternalSessionRef,
     #[serde(default)]
