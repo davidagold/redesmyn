@@ -13,5 +13,10 @@ redesmyn_protocol.workspace = true
 redesmyn_transport.workspace = true
 tokio = { workspace = true, features = ["macros", "sync"] }
 
+[features]
+uds = ["tokio/io-util", "tokio/net", "tokio/rt", "tokio/time"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
+tempfile.workspace = true
+redesmyn_control_plane.workspace = true

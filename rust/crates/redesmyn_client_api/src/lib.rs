@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(all(unix, feature = "uds"))]
+pub mod uds;
+
 use std::collections::HashMap;
 
 use tokio::sync::{mpsc, oneshot};
