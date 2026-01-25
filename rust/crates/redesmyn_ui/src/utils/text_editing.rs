@@ -12,6 +12,46 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
+pub(crate) fn word_range_at(text: &str, offset: usize) -> std::ops::Range<usize> {
+    if text.is_empty() {
+        return 0..0;
+    }
+
+    let mut offset = clamp_to_char_boundary(text, offset);
+    if offset == text.len() {
+        offset = clamp_to_char_boundary(text, offset.saturating_sub(1));
+    }
+
+    let Some(ch) = text[offset..].chars().next() else {
+        return 0..0;
+    };
+    if ch == '\n' {
+        return offset..offset;
+    }
+
+    let target_is_word = is_word_char(ch);
+
+    let mut start = offset;
+    while start > 0 {
+        let prev = text[..start].chars().next_back().unwrap();
+        if prev == '\n' || is_word_char(prev) != target_is_word {
+            break;
+        }
+        start -= prev.len_utf8();
+    }
+
+    let mut end = offset;
+    while end < text.len() {
+        let next = text[end..].chars().next().unwrap();
+        if next == '\n' || is_word_char(next) != target_is_word {
+            break;
+        }
+        end += next.len_utf8();
+    }
+
+    start..end
+}
+
 pub(crate) fn previous_grapheme_boundary(text: &str, offset: usize) -> usize {
     let offset = clamp_to_char_boundary(text, offset);
     if offset == 0 {

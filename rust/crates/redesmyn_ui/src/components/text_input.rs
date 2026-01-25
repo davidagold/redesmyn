@@ -4,17 +4,18 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, IntoElement,
-    KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point, Render, ScrollHandle, ShapedLine,
-    SharedString, Size, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine,
-    actions, div, fill, point, prelude::*, px, relative, size,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point,
+    Render, ScrollHandle, ShapedLine, SharedString, Size, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative,
+    size,
 };
 
 use crate::utils::{
     text_editing::{
         line_end_offset, line_start_offset, next_grapheme_boundary, next_word_boundary,
-        previous_grapheme_boundary, previous_word_boundary,
+        previous_grapheme_boundary, previous_word_boundary, word_range_at,
     },
     theme_for_window,
 };
@@ -613,8 +614,24 @@ impl TextInput {
         }
     }
 
-    fn on_mouse_up(&mut self, _: &gpui::MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, event: &gpui::MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = false;
+
+        if event.click_count < 2 {
+            return;
+        }
+
+        let offset = self.index_for_mouse_position(event.position);
+        let range = if event.click_count == 2 {
+            word_range_at(&self.content, offset)
+        } else {
+            line_start_offset(&self.content, offset)..line_end_offset(&self.content, offset)
+        };
+
+        self.selection_reversed = false;
+        self.selected_range = range;
+        self.history.break_group();
+        cx.notify();
     }
 
     fn on_mouse_move(
@@ -2139,9 +2156,25 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
-    fn on_mouse_up(&mut self, _: &gpui::MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
+    fn on_mouse_up(&mut self, event: &gpui::MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.preferred_vertical_x = None;
         self.is_selecting = false;
+        if event.click_count < 2 {
+            return;
+        }
+
+        let offset = self.index_for_mouse_position(event.position, window);
+        let range = if event.click_count == 2 {
+            word_range_at(&self.content, offset)
+        } else {
+            line_start_offset(&self.content, offset)..line_end_offset(&self.content, offset)
+        };
+
+        self.selection_reversed = false;
+        self.selected_range = range;
+        self.history.break_group();
+        cx.notify();
+        self.scroll_caret_into_view(window, cx);
     }
 
     fn on_mouse_move(
@@ -2152,7 +2185,31 @@ impl TextArea {
     ) {
         if self.is_selecting {
             self.preferred_vertical_x = None;
-            self.select_to(self.index_for_mouse_position(event.position, window), cx);
+            let viewport = self.scroll_handle.bounds();
+            let mut position = event.position;
+
+            let offset = self.scroll_handle.offset();
+            let max_offset_y = self.scroll_handle.max_offset().height;
+            let mut new_offset_y = offset.y;
+
+            if position.y < viewport.top() {
+                let overshoot = viewport.top() - position.y;
+                let delta = px(f32::from(overshoot).min(24.0));
+                new_offset_y = (new_offset_y + delta).min(px(0.0));
+                position.y = viewport.top() + px(1.0);
+            } else if position.y > viewport.bottom() {
+                let overshoot = position.y - viewport.bottom();
+                let delta = px(f32::from(overshoot).min(24.0));
+                new_offset_y = (new_offset_y - delta).max(-max_offset_y);
+                position.y = viewport.bottom() - px(1.0);
+            }
+
+            if new_offset_y != offset.y {
+                self.scroll_handle
+                    .set_offset(gpui::point(offset.x, new_offset_y));
+            }
+
+            self.select_to(self.index_for_mouse_position(position, window), cx);
             self.scroll_caret_into_view(window, cx);
         }
     }
@@ -2216,9 +2273,20 @@ impl TextArea {
         let Some(layout) = self.layout_cache.as_ref() else {
             return 0;
         };
-        let Some(local) = bounds.localize(&position) else {
-            return 0;
-        };
+
+        let mut local_x = position.x - bounds.left();
+        let mut local_y = position.y - bounds.top();
+        if local_x < px(0.0) {
+            local_x = px(0.0);
+        } else if local_x > bounds.size.width {
+            local_x = bounds.size.width;
+        }
+        if local_y < px(0.0) {
+            local_y = px(0.0);
+        } else if local_y > bounds.size.height {
+            local_y = bounds.size.height;
+        }
+        let local = gpui::point(local_x, local_y);
 
         let line_height = layout.line_height;
         let mut line_origin_y = px(0.0);
