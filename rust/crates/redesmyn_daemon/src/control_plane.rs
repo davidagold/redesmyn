@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::DaemonHello;
-use redesmyn_protocol::daemon::{ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
+use redesmyn_protocol::daemon::{CommandDispatch, ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion};
 use redesmyn_transport::{DaemonConnection, TransportError};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::DaemonCapabilities;
 use crate::backoff::Backoff;
@@ -88,6 +88,8 @@ pub async fn run_control_plane_connection_manager(
     capabilities: DaemonCapabilities,
     supported_protocol: ProtocolVersion,
     backoff: Backoff,
+    command_dispatch_tx: mpsc::Sender<CommandDispatch>,
+    mut outbound_rx: mpsc::Receiver<DaemonFrame>,
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
     state_tx: watch::Sender<ConnectionState>,
@@ -147,7 +149,15 @@ pub async fn run_control_plane_connection_manager(
                 }
                 let _ = state_tx.send(ConnectionState::Connected { accepted_protocol });
 
-                match run_connected_session(&mut *conn, &mut shutdown_rx).await {
+                match run_connected_session(
+                    &mut *conn,
+                    accepted_protocol,
+                    &command_dispatch_tx,
+                    &mut outbound_rx,
+                    &mut shutdown_rx,
+                )
+                .await
+                {
                     Ok(()) => {
                         let _ = state_tx.send(ConnectionState::Disconnected);
                     }
@@ -259,6 +269,9 @@ async fn perform_handshake(
 
 async fn run_connected_session(
     conn: &mut dyn DaemonConnection,
+    accepted_protocol: ProtocolVersion,
+    command_dispatch_tx: &mpsc::Sender<CommandDispatch>,
+    outbound_rx: &mut mpsc::Receiver<DaemonFrame>,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> Result<(), TransportError> {
     loop {
@@ -268,11 +281,34 @@ async fn run_connected_session(
 
         tokio::select! {
             _ = shutdown_rx.changed() => {}
+            outbound = outbound_rx.recv() => {
+                let Some(mut outbound) = outbound else {
+                    // Sender dropped; remain connected but we can't send anything.
+                    continue;
+                };
+
+                outbound.envelope.protocol_major = accepted_protocol.major;
+                outbound.envelope.protocol_minor = accepted_protocol.minor;
+
+                match conn.send(outbound).await {
+                    Ok(()) => {}
+                    Err(TransportError::ChannelClosed) => return Ok(()),
+                    Err(err) => return Err(err),
+                }
+            }
             frame = conn.recv() => {
                 match frame {
-                    Ok(_frame) => {
-                        // Domain 3 skeleton: no command routing yet.
-                        // Keep the connection open and drain inbound messages.
+                    Ok(frame) => {
+                        match frame.message {
+                            DaemonMessage::CommandDispatch(dispatch) => {
+                                if command_dispatch_tx.send(dispatch).await.is_err() {
+                                    tracing::warn!("dropping command dispatch: command router is unavailable");
+                                }
+                            }
+                            _ => {
+                                // Keep the connection open and drain inbound messages.
+                            }
+                        }
                     }
                     Err(TransportError::ChannelClosed) => return Ok(()),
                     Err(err) => return Err(err),

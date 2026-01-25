@@ -4761,10 +4761,14 @@ name = "redesmyn_daemon"
 version = "0.1.0"
 dependencies = [
  "redesmyn_config",
+ "redesmyn_domain",
+ "redesmyn_exec",
  "redesmyn_ids",
  "redesmyn_logging",
  "redesmyn_protocol",
  "redesmyn_transport",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

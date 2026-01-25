@@ -5,11 +5,13 @@ use redesmyn_config::DaemonConfig;
 use redesmyn_logging::tracing;
 use redesmyn_protocol::ProtocolVersion;
 use redesmyn_protocol::RepoScope;
+use redesmyn_protocol::daemon::{CommandDispatch, DaemonFrame};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::DaemonCapabilities;
 use crate::backoff::Backoff;
+use crate::command_router::run_command_router;
 use crate::control_plane::{
     ConnectionState, ControlPlaneConnector, run_control_plane_connection_manager,
 };
@@ -55,7 +57,7 @@ impl DaemonRuntimeConfig {
                 supports_repo_execution: true,
                 supports_worktrees: false,
                 supports_git_observation: false,
-                supports_session_exec: false,
+                supports_session_exec: true,
                 supports_session_attach_tmux: false,
                 supports_artifacts: false,
             },
@@ -105,6 +107,9 @@ impl Daemon {
             }
         });
 
+        let (command_dispatch_tx, command_dispatch_rx) = mpsc::channel::<CommandDispatch>(32);
+        let (frames_tx, frames_rx) = mpsc::channel::<DaemonFrame>(256);
+
         let control_plane_task = tokio::spawn(run_control_plane_connection_manager(
             connector,
             host_identity,
@@ -115,9 +120,20 @@ impl Daemon {
                 config.backoff.max,
                 config.backoff.factor,
             ),
+            command_dispatch_tx,
+            frames_rx,
             shutdown_tx.clone(),
             shutdown_rx.clone(),
             connection_state_tx,
+        ));
+
+        let command_router_task = tokio::spawn(run_command_router(
+            host_identity,
+            config.daemon.clone(),
+            config.repo_registry.clone(),
+            command_dispatch_rx,
+            frames_tx,
+            shutdown_rx.clone(),
         ));
 
         let (repo_cmd_tx, repo_cmd_rx) = mpsc::channel::<RepoCommand>(32);
@@ -130,7 +146,7 @@ impl Daemon {
 
         DaemonHandle {
             shutdown_tx,
-            tasks: vec![control_plane_task, repo_manager_task],
+            tasks: vec![control_plane_task, command_router_task, repo_manager_task],
             repo_cmd_tx,
             connection_state_rx,
         }
