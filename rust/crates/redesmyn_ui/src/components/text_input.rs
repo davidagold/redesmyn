@@ -2838,6 +2838,98 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct TestEditor {
+        content: SharedString,
+        selected_range: Range<usize>,
+        selection_reversed: bool,
+        marked_range: Option<Range<usize>>,
+        history: EditHistory,
+    }
+
+    impl TestEditor {
+        fn new(text: &str) -> Self {
+            let content: SharedString = text.to_string().into();
+            let cursor = content.len();
+            Self {
+                content,
+                selected_range: cursor..cursor,
+                selection_reversed: false,
+                marked_range: None,
+                history: EditHistory::default(),
+            }
+        }
+
+        fn snapshot(&self) -> EditSnapshot {
+            EditSnapshot::capture(
+                &self.content,
+                &self.selected_range,
+                self.selection_reversed,
+                &self.marked_range,
+            )
+        }
+
+        fn restore_snapshot(&mut self, snapshot: EditSnapshot) {
+            self.content = snapshot.content;
+            self.selected_range = snapshot.selected_range;
+            self.selection_reversed = snapshot.selection_reversed;
+            self.marked_range = snapshot.marked_range;
+        }
+
+        fn apply_edit(
+            &mut self,
+            replacement_range: Range<usize>,
+            text: &str,
+            kind_override: Option<EditKind>,
+            now: Instant,
+        ) {
+            let kind = kind_override.unwrap_or_else(|| {
+                if text.is_empty() {
+                    EditKind::Delete
+                } else if !replacement_range.is_empty() {
+                    EditKind::ReplaceSelection
+                } else if text.contains('\n') {
+                    EditKind::Newline
+                } else {
+                    EditKind::TypingInsert
+                }
+            });
+
+            let before = self.snapshot();
+            let insertion_point = replacement_range.start;
+            let cursor_after = replacement_range.start + text.len();
+            self.history.record_undo_step_at(
+                now,
+                before,
+                kind,
+                insertion_point,
+                cursor_after,
+            );
+
+            let mut content = self.content.to_string();
+            content.replace_range(replacement_range, text);
+            self.content = content.into();
+
+            self.selected_range = cursor_after..cursor_after;
+            self.selection_reversed = false;
+            self.marked_range = None;
+        }
+
+        fn undo(&mut self) {
+            let current = self.snapshot();
+            if let Some(prev) = self.history.undo(current) {
+                self.restore_snapshot(prev);
+            }
+        }
+
+        fn redo(&mut self) {
+            let current = self.snapshot();
+            if let Some(next) = self.history.redo(current) {
+                self.restore_snapshot(next);
+            }
+        }
+    }
+
     #[test]
     fn scroll_offset_y_to_reveal_scrolls_up() {
         let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
@@ -2943,5 +3035,124 @@ mod tests {
             move_vertically_in_lines(&lines, content_len, 5, &mut preferred_x, 1, line_height),
             None
         );
+    }
+
+    #[test]
+    fn undo_redo_groups_typed_inserts() {
+        let mut editor = TestEditor::new("");
+        let t0 = Instant::now();
+
+        editor.apply_edit(0..0, "h", None, t0);
+        editor.apply_edit(1..1, "i", None, t0 + Duration::from_millis(100));
+        assert_eq!(editor.content.as_ref(), "hi");
+        assert_eq!(editor.history.undo.len(), 1);
+
+        editor.apply_edit(2..2, "!", None, t0 + Duration::from_secs(2));
+        assert_eq!(editor.content.as_ref(), "hi!");
+        assert_eq!(editor.history.undo.len(), 2);
+
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "hi");
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "");
+
+        editor.redo();
+        assert_eq!(editor.content.as_ref(), "hi");
+        editor.redo();
+        assert_eq!(editor.content.as_ref(), "hi!");
+    }
+
+    #[test]
+    fn undo_redo_paste_is_hard_boundary() {
+        let mut editor = TestEditor::new("");
+        let t0 = Instant::now();
+
+        editor.apply_edit(0..0, "hello", Some(EditKind::Paste), t0);
+        editor.apply_edit(5..5, "!", None, t0 + Duration::from_millis(50));
+        assert_eq!(editor.history.undo.len(), 2);
+
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "hello");
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "");
+    }
+
+    #[test]
+    fn undo_redo_selection_replace_is_hard_boundary() {
+        let mut editor = TestEditor::new("hello");
+        editor.selected_range = 2..5; // "llo"
+
+        let t0 = Instant::now();
+        editor.apply_edit(2..5, "y", None, t0);
+        assert_eq!(editor.content.as_ref(), "hey");
+
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "hello");
+        editor.redo();
+        assert_eq!(editor.content.as_ref(), "hey");
+    }
+
+    #[test]
+    fn undo_respects_deletion_boundaries() {
+        let mut editor = TestEditor::new("");
+        let t0 = Instant::now();
+
+        editor.apply_edit(0..0, "a", None, t0);
+        editor.apply_edit(1..1, "b", None, t0 + Duration::from_millis(100));
+        editor.apply_edit(1..2, "", None, t0 + Duration::from_millis(200)); // delete "b"
+        editor.apply_edit(1..1, "c", None, t0 + Duration::from_millis(300));
+        assert_eq!(editor.content.as_ref(), "ac");
+
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "a");
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "ab");
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "");
+    }
+
+    #[test]
+    fn redo_stack_is_cleared_on_new_edit() {
+        let mut editor = TestEditor::new("");
+        let t0 = Instant::now();
+
+        editor.apply_edit(0..0, "h", None, t0);
+        editor.apply_edit(1..1, "i", None, t0 + Duration::from_millis(100));
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "");
+        editor.redo();
+        assert_eq!(editor.content.as_ref(), "hi");
+
+        editor.undo();
+        editor.apply_edit(0..0, "x", None, t0 + Duration::from_millis(200));
+        assert_eq!(editor.content.as_ref(), "x");
+        editor.redo();
+        assert_eq!(editor.content.as_ref(), "x");
+    }
+
+    fn move_vertical_monospaced(
+        line_lengths: &[usize],
+        current_line: usize,
+        current_col: usize,
+        desired_col: Option<usize>,
+        delta_lines: i32,
+    ) -> (usize, usize, usize) {
+        let desired_col = desired_col.unwrap_or(current_col);
+        let max_line = line_lengths.len().saturating_sub(1) as i32;
+        let target_line = (current_line as i32 + delta_lines).clamp(0, max_line) as usize;
+
+        let target_col = desired_col.min(line_lengths[target_line]);
+        (target_line, target_col, desired_col)
+    }
+
+    #[test]
+    fn vertical_nav_preserves_desired_column_across_short_lines() {
+        let lines = [5, 2, 5];
+
+        let (line1, col1, desired) = move_vertical_monospaced(&lines, 0, 4, None, 1);
+        assert_eq!((line1, col1, desired), (1, 2, 4));
+
+        let (line2, col2, desired2) = move_vertical_monospaced(&lines, line1, col1, Some(desired), 1);
+        assert_eq!((line2, col2, desired2), (2, 4, 4));
     }
 }
