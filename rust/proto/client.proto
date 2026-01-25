@@ -153,6 +153,8 @@ message SendSessionMessageResponse {
   SessionEvent event = 1;
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 2;
+  // Optional command lifecycle for this send (T-41).
+  CommandSummary command = 3;
 }
 
 message HealthRequest {}

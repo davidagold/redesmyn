@@ -477,6 +477,8 @@ pub struct SendSessionMessageRequest {
 pub struct SendSessionMessageResponse {
     pub event: SessionEvent,
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
 }
 
 // Agent orchestration (T-41).

@@ -10,13 +10,30 @@ use redesmyn_ids::{SessionId, TaskId};
 use crate::client::{AgentInterfaceMode, AgentKind};
 use crate::session::ExternalSessionRef;
 
+pub const SESSION_AGENT_START: &str = "session.agent.start";
+pub const SESSION_AGENT_STOP: &str = "session.agent.stop";
+pub const SESSION_AGENT_INTERRUPT_TURN: &str = "session.agent.interrupt_turn";
+pub const SESSION_AGENT_SEND_MESSAGE: &str = "session.agent.send_message";
+pub const SESSION_AGENT_RESUME_BY_ID_TURN: &str = "session.agent.resume_by_id_turn";
+pub const SESSION_AGENT_ATTACH_SESSION: &str = "session.agent.attach_session";
+
 pub const TASK_AGENT_START: &str = "task.agent.start";
 pub const TASK_AGENT_STOP: &str = "task.agent.stop";
 pub const TASK_AGENT_RESTART: &str = "task.agent.restart";
-pub const TASK_AGENT_INTERRUPT_TURN: &str = "task.agent.interrupt_turn";
-pub const TASK_AGENT_SEND_MESSAGE: &str = "task.agent.send_message";
-pub const TASK_AGENT_RESUME_BY_ID_TURN: &str = "task.agent.resume_by_id_turn";
-pub const TASK_AGENT_ATTACH_SESSION: &str = "task.agent.attach_session";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StartAgentSessionCommand {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    pub agent_kind: AgentKind,
+    pub interface_mode: AgentInterfaceMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
+    /// Session ids to stop before starting this session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stop_session_ids: Vec<SessionId>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StartTaskAgentSessionCommand {

@@ -3369,6 +3369,7 @@ impl crate::client::SendSessionMessageResponse {
         pbv1::SendSessionMessageResponse {
             event: Some(self.event.to_protobuf()),
             session_id: self.session_id.to_bytes().to_vec(),
+            command: self.command.as_ref().map(crate::client::CommandSummary::to_protobuf),
         }
     }
 
@@ -3380,6 +3381,10 @@ impl crate::client::SendSessionMessageResponse {
         Ok(Self {
             event,
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
         })
     }
 }
