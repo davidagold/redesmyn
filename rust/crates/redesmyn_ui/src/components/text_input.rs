@@ -47,6 +47,8 @@ actions!(
         DeleteWordForward,
         DeleteToLineStart,
         DeleteToLineEnd,
+        PageUp,
+        PageDown,
         InsertNewline,
         Paste,
         Cut,
@@ -73,6 +75,8 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("shift-right", SelectRight, Some("TextArea")),
         KeyBinding::new("shift-up", SelectUp, Some("TextArea")),
         KeyBinding::new("shift-down", SelectDown, Some("TextArea")),
+        KeyBinding::new("pageup", PageUp, Some("TextArea")),
+        KeyBinding::new("pagedown", PageDown, Some("TextArea")),
         KeyBinding::new("enter", Submit, Some("TextInput")),
         KeyBinding::new("enter", InsertNewline, Some("TextArea")),
     ]);
@@ -1873,6 +1877,24 @@ impl TextArea {
         self.move_vertically(1, true, window, cx);
     }
 
+    fn page_up(&mut self, _: &PageUp, window: &mut Window, cx: &mut Context<Self>) {
+        let viewport = self.scroll_handle.bounds();
+        let line_height = window.line_height();
+        let lines = (f32::from(viewport.size.height) / f32::from(line_height))
+            .floor()
+            .max(1.0) as i32;
+        self.move_vertically(-lines, false, window, cx);
+    }
+
+    fn page_down(&mut self, _: &PageDown, window: &mut Window, cx: &mut Context<Self>) {
+        let viewport = self.scroll_handle.bounds();
+        let line_height = window.line_height();
+        let lines = (f32::from(viewport.size.height) / f32::from(line_height))
+            .floor()
+            .max(1.0) as i32;
+        self.move_vertically(lines, false, window, cx);
+    }
+
     fn select_word_left(
         &mut self,
         _: &SelectWordLeft,
@@ -2580,6 +2602,8 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::up))
             .on_action(cx.listener(Self::down))
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
             .on_action(cx.listener(Self::move_word_left))
             .on_action(cx.listener(Self::move_word_right))
             .on_action(cx.listener(Self::select_left))
