@@ -10,6 +10,7 @@ publish = false
 gpui.workspace = true
 prost.workspace = true
 raw-window-handle = "0.6.2"
+redesmyn_client_api.workspace = true
 redesmyn_config.workspace = true
 redesmyn_control_plane.workspace = true
 redesmyn_daemon.workspace = true

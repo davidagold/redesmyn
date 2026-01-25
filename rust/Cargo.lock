@@ -4778,6 +4778,7 @@ dependencies = [
  "objc2-foundation",
  "prost",
  "raw-window-handle",
+ "redesmyn_client_api",
  "redesmyn_config",
  "redesmyn_control_plane",
  "redesmyn_daemon",

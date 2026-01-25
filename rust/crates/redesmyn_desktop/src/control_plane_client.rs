@@ -1,27 +1,25 @@
-use std::sync::Arc;
-
-use redesmyn_ids::{EpicId, RequestId, SessionId};
+use redesmyn_client_api::Client;
+use redesmyn_ids::{EpicId, SessionId};
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
-    CreateChatSessionResponse, GetEpicGraphRequest, GetEpicPinnedChatSessionRequest,
-    ListChatSessionsRequest, ListEpicsRequest, PinChatSessionToEpicRequest, Request,
-    RequestPayload, ResponseResult, StatusRequest, StatusResponse, UnpinChatSessionFromEpicRequest,
+    CloseChatSessionRequest, CreateChatSessionRequest, CreateChatSessionResponse,
+    GetEpicGraphRequest, GetEpicPinnedChatSessionRequest, ListChatSessionsRequest,
+    ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult, StatusRequest,
+    StatusResponse, UnpinChatSessionFromEpicRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
-use redesmyn_transport::client::{ClientConnection, ClientTransportError};
+use redesmyn_transport::client::in_proc::InProcEndpoint;
 use tokio::runtime::Handle;
-use tokio::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct ControlPlaneClient {
     tokio: Handle,
-    conn: Arc<Mutex<redesmyn_transport::client::in_proc::InProcEndpoint>>,
+    client: Client,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneClientError {
-    #[error(transparent)]
-    Transport(#[from] ClientTransportError),
+    #[error("control plane client error: {message}")]
+    Client { message: String },
     #[error("control plane returned an error: {message}")]
     Server { message: String },
     #[error("control plane sent an unexpected message")]
@@ -29,11 +27,11 @@ pub enum ControlPlaneClientError {
 }
 
 impl ControlPlaneClient {
-    pub fn new(tokio: Handle, conn: redesmyn_transport::client::in_proc::InProcEndpoint) -> Self {
-        Self {
-            tokio,
-            conn: Arc::new(Mutex::new(conn)),
-        }
+    pub fn new(tokio: Handle, conn: InProcEndpoint) -> Self {
+        let (client, task) = Client::connect(conn, 64);
+        tokio.spawn(task.run());
+
+        Self { tokio, client }
     }
 
     pub fn tokio(&self) -> &Handle {
@@ -240,34 +238,11 @@ impl ControlPlaneClient {
         envelope: ProtocolEnvelope,
         payload: RequestPayload,
     ) -> Result<ResponseResult, ControlPlaneClientError> {
-        let request_id = RequestId::new();
-        let frame = ClientFrame::new(
-            envelope,
-            ClientMessage::Request(Request {
-                request_id,
-                payload,
-            }),
-        );
-
-        let mut conn = self.conn.lock().await;
-        conn.send(frame).await?;
-
-        loop {
-            let frame = conn.recv().await?;
-            match frame.message {
-                ClientMessage::Response(resp) if resp.request_id == request_id => {
-                    return Ok(resp.result);
-                }
-                ClientMessage::Response(_) => continue,
-                ClientMessage::Event(_)
-                | ClientMessage::Subscribe(_)
-                | ClientMessage::Unsubscribe(_) => {
-                    return Err(ControlPlaneClientError::UnexpectedMessage);
-                }
-                ClientMessage::Request(_) => {
-                    return Err(ControlPlaneClientError::UnexpectedMessage);
-                }
-            }
-        }
+        self.client
+            .request_with_envelope(envelope, payload)
+            .await
+            .map_err(|err| ControlPlaneClientError::Client {
+                message: err.message,
+            })
     }
 }
