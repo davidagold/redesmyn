@@ -1126,4 +1126,140 @@ mod tests {
         let trunk_base_anchor_y = trunk_pos.y + trunk_layout.base_offset;
         assert_eq!(root_center_y, trunk_base_anchor_y);
     }
+
+    #[test]
+    fn replace_from_epic_graph_preserves_selection_when_possible() {
+        let a_id = TaskId::from_bytes([1; 16]);
+        let b_id = TaskId::from_bytes([2; 16]);
+
+        let mut graph = redesmyn_protocol::client::EpicGraph {
+            epic_slug: "demo".to_string(),
+            nodes: vec![
+                redesmyn_protocol::client::EpicTaskNode {
+                    task_slug: "T-1".to_string(),
+                    title: "First".to_string(),
+                    task_id: Some(a_id),
+                    parent_task_id: None,
+                    state: TaskState::Todo,
+                    branch_name: None,
+                    merge_readiness: MergeReadiness::Unknown,
+                },
+                redesmyn_protocol::client::EpicTaskNode {
+                    task_slug: "T-2".to_string(),
+                    title: "Second".to_string(),
+                    task_id: Some(b_id),
+                    parent_task_id: Some(a_id),
+                    state: TaskState::Todo,
+                    branch_name: None,
+                    merge_readiness: MergeReadiness::Unknown,
+                },
+            ],
+            edges: vec![redesmyn_protocol::client::EpicTaskEdge {
+                from_task_slug: "T-1".to_string(),
+                to_task_slug: "T-2".to_string(),
+                from_task_id: Some(a_id),
+                to_task_id: Some(b_id),
+            }],
+            epic_id: None,
+            epic_title: None,
+            workspace_id: None,
+            repo_id: None,
+            command_summaries: Vec::new(),
+            daemon_presences: Vec::new(),
+            session_summaries: Vec::new(),
+            as_of_event_id: None,
+        };
+
+        let mut scene = GraphScene::empty_demo();
+        scene.replace_from_epic_graph(&graph);
+        let selected = GraphNodeId::Task(a_id);
+        scene.select_node(selected);
+
+        graph.nodes[0].title = "First (updated)".to_string();
+        scene.replace_from_epic_graph(&graph);
+
+        assert_eq!(scene.selection().selected_node, Some(selected));
+        assert!(scene.selection().selected_nodes.contains(&selected));
+    }
+
+    #[test]
+    fn replace_from_epic_graph_clears_selection_when_node_missing() {
+        let a_id = TaskId::from_bytes([1; 16]);
+
+        let mut scene = GraphScene::empty_demo();
+        let graph = redesmyn_protocol::client::EpicGraph {
+            epic_slug: "demo".to_string(),
+            nodes: vec![redesmyn_protocol::client::EpicTaskNode {
+                task_slug: "T-1".to_string(),
+                title: "First".to_string(),
+                task_id: Some(a_id),
+                parent_task_id: None,
+                state: TaskState::Todo,
+                branch_name: None,
+                merge_readiness: MergeReadiness::Unknown,
+            }],
+            edges: Vec::new(),
+            epic_id: None,
+            epic_title: None,
+            workspace_id: None,
+            repo_id: None,
+            command_summaries: Vec::new(),
+            daemon_presences: Vec::new(),
+            session_summaries: Vec::new(),
+            as_of_event_id: None,
+        };
+
+        scene.replace_from_epic_graph(&graph);
+        scene.select_node(GraphNodeId::Task(a_id));
+
+        let empty = redesmyn_protocol::client::EpicGraph {
+            epic_slug: "demo".to_string(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            epic_id: None,
+            epic_title: None,
+            workspace_id: None,
+            repo_id: None,
+            command_summaries: Vec::new(),
+            daemon_presences: Vec::new(),
+            session_summaries: Vec::new(),
+            as_of_event_id: None,
+        };
+
+        scene.replace_from_epic_graph(&empty);
+        assert!(scene.selection().selected_node.is_none());
+        assert!(scene.selection().selected_nodes.is_empty());
+    }
+
+    #[test]
+    fn replace_from_epic_graph_single_node_has_bounds() {
+        let a_id = TaskId::from_bytes([1; 16]);
+        let mut scene = GraphScene::empty_demo();
+        let graph = redesmyn_protocol::client::EpicGraph {
+            epic_slug: "demo".to_string(),
+            nodes: vec![redesmyn_protocol::client::EpicTaskNode {
+                task_slug: "T-1".to_string(),
+                title: "First".to_string(),
+                task_id: Some(a_id),
+                parent_task_id: None,
+                state: TaskState::Todo,
+                branch_name: None,
+                merge_readiness: MergeReadiness::Unknown,
+            }],
+            edges: Vec::new(),
+            epic_id: None,
+            epic_title: None,
+            workspace_id: None,
+            repo_id: None,
+            command_summaries: Vec::new(),
+            daemon_presences: Vec::new(),
+            session_summaries: Vec::new(),
+            as_of_event_id: None,
+        };
+
+        scene.replace_from_epic_graph(&graph);
+        let bounds = scene.layout_bounds();
+        assert!(bounds.size.width > 0);
+        assert!(bounds.size.height > 0);
+    }
 }

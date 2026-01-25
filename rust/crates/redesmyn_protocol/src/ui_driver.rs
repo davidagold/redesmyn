@@ -330,6 +330,33 @@ pub struct UiSelectionState {
     pub edge_id: Option<TaskRelationId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiGraphLoadState {
+    Unselected,
+    Loading,
+    Loaded,
+    Empty,
+    Error,
+    /// A state not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+impl Default for UiGraphLoadState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct UiGraphState {
+    #[serde(default)]
+    pub load_state: UiGraphLoadState,
+    pub node_count: u32,
+    pub edge_count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UiInFlightAction {
     pub label: String,
@@ -356,6 +383,8 @@ pub struct UiSnapshot {
     pub primary_view: UiPrimaryView,
     pub left_pane: UiLeftPaneState,
     pub selection: UiSelectionState,
+    #[serde(default)]
+    pub graph: UiGraphState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub in_flight: Vec<UiInFlightAction>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

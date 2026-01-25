@@ -260,6 +260,21 @@ message UiSelectionState {
   bytes edge_id = 5;
 }
 
+enum UiGraphLoadState {
+  UI_GRAPH_LOAD_STATE_UNSPECIFIED = 0;
+  UI_GRAPH_LOAD_STATE_UNSELECTED = 1;
+  UI_GRAPH_LOAD_STATE_LOADING = 2;
+  UI_GRAPH_LOAD_STATE_LOADED = 3;
+  UI_GRAPH_LOAD_STATE_EMPTY = 4;
+  UI_GRAPH_LOAD_STATE_ERROR = 5;
+}
+
+message UiGraphState {
+  UiGraphLoadState load_state = 1;
+  uint32 node_count = 2;
+  uint32 edge_count = 3;
+}
+
 message UiInFlightAction {
   string label = 1;
   // CommandId (ULID bytes, length = 16).
@@ -288,4 +303,5 @@ message UiSnapshot {
   // SessionId (ULID bytes, length = 16). Empty means "no pinned chat".
   bytes pinned_chat_session_id = 7;
   UiComposerState pinned_chat_composer = 8;
+  UiGraphState graph = 9;
 }

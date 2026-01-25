@@ -3702,6 +3702,30 @@ fn decode_ui_primary_view(value: i32) -> Result<crate::ui_driver::UiPrimaryView,
     }
 }
 
+fn encode_ui_graph_load_state(value: crate::ui_driver::UiGraphLoadState) -> i32 {
+    match value {
+        crate::ui_driver::UiGraphLoadState::Unselected => pbv1::UiGraphLoadState::Unselected as i32,
+        crate::ui_driver::UiGraphLoadState::Loading => pbv1::UiGraphLoadState::Loading as i32,
+        crate::ui_driver::UiGraphLoadState::Loaded => pbv1::UiGraphLoadState::Loaded as i32,
+        crate::ui_driver::UiGraphLoadState::Empty => pbv1::UiGraphLoadState::Empty as i32,
+        crate::ui_driver::UiGraphLoadState::Error => pbv1::UiGraphLoadState::Error as i32,
+        crate::ui_driver::UiGraphLoadState::Unknown => pbv1::UiGraphLoadState::Unspecified as i32,
+    }
+}
+
+fn decode_ui_graph_load_state(value: i32) -> crate::ui_driver::UiGraphLoadState {
+    match pbv1::UiGraphLoadState::try_from(value) {
+        Ok(pbv1::UiGraphLoadState::Unselected) => crate::ui_driver::UiGraphLoadState::Unselected,
+        Ok(pbv1::UiGraphLoadState::Loading) => crate::ui_driver::UiGraphLoadState::Loading,
+        Ok(pbv1::UiGraphLoadState::Loaded) => crate::ui_driver::UiGraphLoadState::Loaded,
+        Ok(pbv1::UiGraphLoadState::Empty) => crate::ui_driver::UiGraphLoadState::Empty,
+        Ok(pbv1::UiGraphLoadState::Error) => crate::ui_driver::UiGraphLoadState::Error,
+        Ok(pbv1::UiGraphLoadState::Unspecified) | Err(_) => {
+            crate::ui_driver::UiGraphLoadState::Unknown
+        }
+    }
+}
+
 impl crate::ui_driver::UiDriverFrame {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiDriverFrame {
@@ -4601,6 +4625,26 @@ impl crate::ui_driver::UiSelectionState {
     }
 }
 
+impl crate::ui_driver::UiGraphState {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UiGraphState {
+        pbv1::UiGraphState {
+            load_state: encode_ui_graph_load_state(self.load_state),
+            node_count: self.node_count,
+            edge_count: self.edge_count,
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UiGraphState) -> Self {
+        Self {
+            load_state: decode_ui_graph_load_state(proto.load_state),
+            node_count: proto.node_count,
+            edge_count: proto.edge_count,
+        }
+    }
+}
+
 impl crate::ui_driver::UiInFlightAction {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiInFlightAction {
@@ -4663,6 +4707,7 @@ impl crate::ui_driver::UiSnapshot {
             primary_view: encode_ui_primary_view(self.primary_view),
             left_pane: Some(self.left_pane.to_protobuf()),
             selection: Some(self.selection.to_protobuf()),
+            graph: Some(self.graph.to_protobuf()),
             in_flight: self
                 .in_flight
                 .iter()
@@ -4695,6 +4740,10 @@ impl crate::ui_driver::UiSnapshot {
                     .selection
                     .ok_or_else(|| missing_required("selection"))?,
             )?,
+            graph: proto
+                .graph
+                .map(crate::ui_driver::UiGraphState::from_protobuf)
+                .unwrap_or_default(),
             in_flight: proto
                 .in_flight
                 .into_iter()

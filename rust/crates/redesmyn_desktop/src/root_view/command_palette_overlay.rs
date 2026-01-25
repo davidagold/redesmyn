@@ -314,37 +314,12 @@ impl CommandPaletteOverlay {
                 cx.notify();
             }
             CommandId::RefreshGraph => {
-                let epic_slug = self
-                    .selected_epic_slug
-                    .clone()
-                    .unwrap_or_else(|| "<none>".into());
-
-                redesmyn_logging::tracing::info!(epic_slug = %epic_slug, "refreshing graph");
-
-                self.running_task = Some(cx.spawn(
-                    move |weak: gpui::WeakEntity<RootView>, cx: &mut AsyncApp| {
-                        let cx = cx.clone();
-                        async move {
-                            gpui::Timer::after(Duration::from_millis(900)).await;
-                            let Some(entity) = weak.upgrade() else {
-                                return;
-                            };
-
-                            let _ = cx.update(|cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.command_palette.running_task = None;
-                                    this.command_palette.graph_refresh_count += 1;
-                                    this.command_palette
-                                        .workspace_pane
-                                        .update(cx, |pane, cx| pane.refresh_graph(cx));
-                                    this.command_palette.action.succeed();
-                                    this.command_palette.running_command = None;
-                                    this.notify_ui_updated(cx);
-                                });
-                            });
-                        }
-                    },
-                ));
+                self.graph_refresh_count += 1;
+                self.workspace_pane
+                    .update(cx, |pane, cx| pane.refresh_graph(cx));
+                self.action.succeed();
+                self.running_command = None;
+                cx.notify();
             }
             CommandId::OpenEpic => {}
         }

@@ -10,9 +10,9 @@ use gpui::{
 use tokio::sync::{mpsc, watch};
 
 use redesmyn_protocol::ui_driver::{
-    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse,
-    UiComposerState, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
-    UiErrorCallout, UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    CaptureScreenshotResponse, CreateChatSessionResponse, TriggerRefreshResponse, UiComposerState,
+    UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
+    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
@@ -129,9 +129,16 @@ impl RootView {
             .map(|ui| ui.main_split_pane_state())
             .unwrap_or_else(SplitPaneState::default);
 
+        let ui_updates = UiUpdateCounter::new();
         let session_pane = cx.new(|cx| EpicSessionPaneHost::new(model.clone(), cx));
-        let workspace_pane =
-            cx.new(|cx| WorkspacePaneHost::new(model.clone(), initial_split_state.collapsed, cx));
+        let workspace_pane = cx.new(|cx| {
+            WorkspacePaneHost::new(
+                model.clone(),
+                initial_split_state.collapsed,
+                ui_updates.clone(),
+                cx,
+            )
+        });
 
         let split_pane_state = initial_split_state;
         let split_primary = session_pane.clone();
@@ -184,7 +191,7 @@ impl RootView {
             focus_handle,
             command_palette,
             chrome: ChromeState::new(),
-            ui_updates: UiUpdateCounter::new(),
+            ui_updates,
             ui_driver_action: UserActionState::default(),
             ui_driver_action_label: None,
             _subscriptions: subscriptions,
@@ -341,6 +348,9 @@ impl RootView {
 
         self.session_pane
             .update(cx, |pane, cx| pane.set_selected_epic(selected, cx));
+        self.workspace_pane.update(cx, |pane, cx| {
+            pane.set_selected_epic(Some(slug.clone()), selected, cx)
+        });
         self.notify_ui_updated(cx);
     }
 
@@ -497,8 +507,12 @@ impl RootView {
                                             this.chrome.epics.iter().find(|epic| epic.slug == slug)
                                         })
                                         .cloned();
+                                    let selected_slug = this.chrome.selected_epic_slug.clone();
                                     this.session_pane.update(cx, |pane, cx| {
                                         pane.set_selected_epic(selected, cx);
+                                    });
+                                    this.workspace_pane.update(cx, |pane, cx| {
+                                        pane.set_selected_epic(selected_slug, selected, cx);
                                     });
                                 }
                                 Err(error) => {
@@ -533,6 +547,7 @@ impl RootView {
             .session_view
             .read(cx)
             .ui_composer_state();
+        let workspace = self.workspace_pane.read(cx);
 
         let primary_view = if self.chrome.selected_epic_slug.is_some() {
             UiPrimaryView::EpicWorkspace
@@ -552,11 +567,24 @@ impl RootView {
             edge_id: None,
         };
 
+        let graph = redesmyn_protocol::ui_driver::UiGraphState {
+            load_state: workspace.graph_state,
+            node_count: workspace.graph_node_count,
+            edge_count: workspace.graph_edge_count,
+        };
+
         let mut errors = Vec::new();
-        if let Some(err) = self.workspace_pane.read(cx).ui_settings_error.clone() {
+        if let Some(err) = workspace.ui_settings_error.clone() {
             errors.push(UiErrorCallout {
                 message: err.to_string(),
             });
+        }
+        if workspace.graph_state == redesmyn_protocol::ui_driver::UiGraphLoadState::Error {
+            if let Some(err) = workspace.graph_error.clone() {
+                errors.push(UiErrorCallout {
+                    message: err.to_string(),
+                });
+            }
         }
         if let Some(err) = self.chrome.refresh.error.clone() {
             errors.push(UiErrorCallout {
@@ -580,6 +608,12 @@ impl RootView {
         }
 
         let mut in_flight = Vec::new();
+        if workspace.graph_state == redesmyn_protocol::ui_driver::UiGraphLoadState::Loading {
+            in_flight.push(UiInFlightAction {
+                label: "Loading graph…".to_string(),
+                command_id: None,
+            });
+        }
         if self.chrome.refresh.in_flight {
             in_flight.push(UiInFlightAction {
                 label: "Refreshing…".to_string(),
@@ -619,6 +653,7 @@ impl RootView {
                 width: split_state.primary_size_px.round().max(0.0) as u32,
             },
             selection,
+            graph,
             in_flight,
             errors,
             pinned_chat_session_id,
@@ -643,6 +678,7 @@ fn ui_unavailable_snapshot() -> UiSnapshot {
             task_slug: String::new(),
             edge_id: None,
         },
+        graph: redesmyn_protocol::ui_driver::UiGraphState::default(),
         in_flight: Vec::new(),
         errors: vec![UiErrorCallout {
             message: "UI unavailable.".to_string(),
@@ -2066,10 +2102,9 @@ impl EpicSessionPaneHost {
         if self.selection_generation != generation {
             return false;
         }
-        matches!(
-            self.selected_epic.as_ref(),
-            Some(epic) if epic.slug == epic_slug
-        )
+        self.selected_epic_slug
+            .as_deref()
+            .is_some_and(|slug| slug == epic_slug)
     }
 
     fn emit_demo_message(
@@ -3040,11 +3075,19 @@ impl Render for EpicSessionPaneHost {
 
 struct WorkspacePaneHost {
     focus_handle: FocusHandle,
-    #[allow(dead_code)]
+    ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
     graph_view: Entity<GraphView>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
+    selected_epic_slug: Option<String>,
+    selected_epic: Option<redesmyn_protocol::client::EpicSummary>,
+    graph_state: redesmyn_protocol::ui_driver::UiGraphLoadState,
+    graph_node_count: u32,
+    graph_edge_count: u32,
+    graph_error: Option<SharedString>,
+    graph_task: Option<Task<()>>,
+    selection_generation: u64,
 }
 
 impl Focusable for WorkspacePaneHost {
@@ -3054,14 +3097,63 @@ impl Focusable for WorkspacePaneHost {
 }
 
 impl WorkspacePaneHost {
-    fn new(model: Entity<DesktopModel>, sessions_collapsed: bool, cx: &mut Context<Self>) -> Self {
+    fn new(
+        model: Entity<DesktopModel>,
+        sessions_collapsed: bool,
+        ui_updates: UiUpdateCounter,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
+            ui_updates,
             model,
-            graph_view: cx.new(GraphView::new_demo),
+            graph_view: cx.new(GraphView::new_empty),
             sessions_collapsed,
             ui_settings_error: None,
+            selected_epic_slug: None,
+            selected_epic: None,
+            graph_state: redesmyn_protocol::ui_driver::UiGraphLoadState::Unselected,
+            graph_node_count: 0,
+            graph_edge_count: 0,
+            graph_error: None,
+            graph_task: None,
+            selection_generation: 0,
         }
+    }
+
+    fn set_selected_epic(
+        &mut self,
+        epic_slug: Option<String>,
+        epic: Option<redesmyn_protocol::client::EpicSummary>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_epic_slug == epic_slug && self.selected_epic == epic {
+            return;
+        }
+
+        let slug_changed = self.selected_epic_slug != epic_slug;
+        self.selected_epic_slug = epic_slug;
+        self.selected_epic = epic;
+        if slug_changed {
+            self.selection_generation = self.selection_generation.wrapping_add(1);
+            self.graph_task = None;
+            self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Unselected;
+            self.graph_node_count = 0;
+            self.graph_edge_count = 0;
+            self.graph_error = None;
+            self.graph_view = cx.new(GraphView::new_empty);
+
+            if self.selected_epic_slug.is_some() {
+                self.refresh_graph(cx);
+            } else {
+                self.ui_updates.bump();
+                cx.notify();
+            }
+            return;
+        }
+
+        self.ui_updates.bump();
+        cx.notify();
     }
 
     fn set_sessions_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
@@ -3072,16 +3164,108 @@ impl WorkspacePaneHost {
         cx.notify();
     }
 
+    fn is_current_selection(&self, generation: u64, epic_slug: &str) -> bool {
+        if self.selection_generation != generation {
+            return false;
+        }
+        matches!(
+            self.selected_epic.as_ref(),
+            Some(epic) if epic.slug == epic_slug
+        )
+    }
+
     fn set_ui_settings_error(&mut self, error: Option<SharedString>, cx: &mut Context<Self>) {
         if self.ui_settings_error == error {
             return;
         }
         self.ui_settings_error = error;
+        self.ui_updates.bump();
         cx.notify();
     }
 
     fn refresh_graph(&mut self, cx: &mut Context<Self>) {
-        self.graph_view = cx.new(GraphView::new_demo);
+        if self.graph_task.is_some() {
+            return;
+        }
+
+        let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
+            self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Error;
+            self.graph_error = Some("Control plane client unavailable.".into());
+            self.ui_updates.bump();
+            cx.notify();
+            return;
+        };
+
+        let Some(epic_slug) = self.selected_epic_slug.clone() else {
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug_for_task = epic_slug.clone();
+
+        let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.graph.refresh", epic_slug = %epic_slug);
+        let _guard = span.enter();
+
+        self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Loading;
+        self.graph_error = None;
+        self.ui_updates.bump();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.graph_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task =
+                    tokio.spawn(async move { client.get_epic_graph(epic_slug_for_task).await });
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => Err(ControlPlaneClientError::Server {
+                        message: format!("Graph request failed: {error}"),
+                    }),
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.graph_task = None;
+
+                        match result {
+                            Ok(graph) => {
+                                this.graph_node_count =
+                                    graph.nodes.len().min(u32::MAX as usize) as u32;
+                                this.graph_edge_count =
+                                    graph.edges.len().min(u32::MAX as usize) as u32;
+                                this.graph_state = if graph.nodes.is_empty() {
+                                    redesmyn_protocol::ui_driver::UiGraphLoadState::Empty
+                                } else {
+                                    redesmyn_protocol::ui_driver::UiGraphLoadState::Loaded
+                                };
+                                this.graph_error = None;
+                                this.graph_view.update(cx, |view, cx| {
+                                    view.replace_from_epic_graph(&graph, cx);
+                                });
+                            }
+                            Err(err) => {
+                                this.graph_state =
+                                    redesmyn_protocol::ui_driver::UiGraphLoadState::Error;
+                                this.graph_error = Some(err.to_string().into());
+                            }
+                        }
+
+                        this.ui_updates.bump();
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+        self.ui_updates.bump();
         cx.notify();
     }
 }
@@ -3102,12 +3286,127 @@ impl Render for WorkspacePaneHost {
             );
         }
 
+        let entity_id = cx.entity_id();
+        let graph_host = {
+            let mut host = div()
+                .flex_1()
+                .min_h(px(0.0))
+                .relative()
+                .child(self.graph_view.clone());
+
+            host = match self.graph_state {
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Unselected => host.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .px(theme.spacing.lg)
+                        .py(theme.spacing.lg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div().max_w(px(520.0)).child(
+                                Callout::new("Select an epic to load its task graph.")
+                                    .kind(CalloutKind::Info)
+                                    .title("No epic selected"),
+                            ),
+                        ),
+                ),
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Loading => host.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .px(theme.spacing.lg)
+                        .py(theme.spacing.lg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(ProgressPill::new("Loading graph")),
+                ),
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Empty => host.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .px(theme.spacing.lg)
+                        .py(theme.spacing.lg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div().max_w(px(560.0)).child(
+                                Callout::new("This epic has no tasks yet.")
+                                    .kind(CalloutKind::Info)
+                                    .title("No tasks")
+                                    .action(
+                                        TextButton::new(
+                                            ("graph_empty_reload", entity_id),
+                                            "Reload",
+                                        )
+                                        .kind(ButtonKind::Secondary)
+                                        .on_click({
+                                            let graph = cx.entity();
+                                            move |_, _, cx| {
+                                                graph.update(cx, |this, cx| this.refresh_graph(cx))
+                                            }
+                                        }),
+                                    ),
+                            ),
+                        ),
+                ),
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Error => {
+                    let message = self
+                        .graph_error
+                        .clone()
+                        .unwrap_or_else(|| "Graph load failed.".into());
+
+                    host.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .px(theme.spacing.lg)
+                            .py(theme.spacing.lg)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div().max_w(px(560.0)).child(
+                                    Callout::new(message)
+                                        .kind(CalloutKind::Danger)
+                                        .title("Unable to load graph")
+                                        .action(
+                                            TextButton::new(
+                                                ("graph_error_retry", entity_id),
+                                                "Retry",
+                                            )
+                                            .kind(ButtonKind::Secondary)
+                                            .on_click(
+                                                {
+                                                    let graph = cx.entity();
+                                                    move |_, _, cx| {
+                                                        graph.update(cx, |this, cx| {
+                                                            this.refresh_graph(cx)
+                                                        })
+                                                    }
+                                                },
+                                            ),
+                                        ),
+                                ),
+                            ),
+                    )
+                }
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Loaded
+                | redesmyn_protocol::ui_driver::UiGraphLoadState::Unknown => host,
+            };
+
+            host
+        };
+
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(theme.colors.background)
-            .child(body.child(self.graph_view.clone()))
+            .child(body.child(graph_host))
             .track_focus(&self.focus_handle(cx))
     }
 }

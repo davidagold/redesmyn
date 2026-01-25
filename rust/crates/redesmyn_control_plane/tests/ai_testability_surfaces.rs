@@ -377,6 +377,7 @@ impl UiDriverHarness {
                 task_slug: state.selected_task_slug.clone(),
                 edge_id: None,
             },
+            graph: redesmyn_protocol::ui_driver::UiGraphState::default(),
             in_flight: state
                 .in_flight
                 .iter()

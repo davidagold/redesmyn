@@ -207,17 +207,28 @@ pub struct GraphView {
 }
 
 impl GraphView {
+    pub fn new_empty(cx: &mut Context<Self>) -> Self {
+        let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_empty");
+        let _guard = span.enter();
+
+        Self::new_with_scene(GraphScene::empty_demo(), cx)
+    }
+
     pub fn new_demo(cx: &mut Context<Self>) -> Self {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_demo");
         let _guard = span.enter();
 
+        Self::new_with_scene(GraphScene::demo(), cx)
+    }
+
+    fn new_with_scene(scene: GraphScene, cx: &mut Context<Self>) -> Self {
         let fps_overlay_enabled = std::env::var("REDESMYN_UI_FPS_OVERLAY")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
 
         Self {
             focus_handle: cx.focus_handle(),
-            scene: GraphScene::demo(),
+            scene,
             camera: GraphCamera::new(GraphCameraLimits::default()),
             fps_overlay: FpsOverlay::new(fps_overlay_enabled),
             camera_animation: None,
@@ -239,6 +250,48 @@ impl GraphView {
             selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
         }
+    }
+
+    pub fn replace_from_epic_graph(
+        &mut self,
+        graph: &redesmyn_protocol::client::EpicGraph,
+        cx: &mut Context<Self>,
+    ) {
+        let previous_selection = self.scene.selection().clone();
+        let from_layout = self.snapshot_displayed_layout();
+
+        self.scene.replace_from_epic_graph(graph);
+
+        self.pan_drag = None;
+        self.edge_label_cache.borrow_mut().clear();
+
+        let next_selection = self.scene.selection().clone();
+        if previous_selection.selected_node != next_selection.selected_node {
+            self.reset_expanded_card_state();
+        }
+
+        let did_start_layout_animation = self.start_layout_animation(
+            from_layout,
+            self.snapshot_scene_layout(),
+            previous_selection.selected_node,
+            next_selection.selected_node,
+        );
+        if did_start_layout_animation {
+            self.layout_animation_guard =
+                ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
+        } else {
+            self.layout_animation_guard = None;
+        }
+
+        if previous_selection.selected_node != next_selection.selected_node {
+            if !self.did_initial_fit {
+                self.fit_suppressed = true;
+            }
+            self.pending_pan_to_selection = next_selection.selected_node;
+        }
+
+        self.update_selection_bar_target(cx);
+        cx.notify();
     }
 
     fn visual_selected_node(&self) -> Option<GraphNodeId> {
