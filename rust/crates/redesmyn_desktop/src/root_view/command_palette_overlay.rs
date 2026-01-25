@@ -1,8 +1,6 @@
-use std::time::Duration;
-
 use gpui::{
-    App, AsyncApp, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Task,
-    Window, div, prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Task, Window, div,
+    prelude::*, px,
 };
 
 use redesmyn_ui::UiContext;

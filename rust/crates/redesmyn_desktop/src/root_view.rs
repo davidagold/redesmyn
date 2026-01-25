@@ -346,10 +346,13 @@ impl RootView {
             .find(|epic| epic.slug == slug)
             .cloned();
 
+        let selected_for_session_pane = selected.clone();
+        let slug_for_workspace = slug.clone();
+
         self.session_pane
-            .update(cx, |pane, cx| pane.set_selected_epic(selected, cx));
-        self.workspace_pane.update(cx, |pane, cx| {
-            pane.set_selected_epic(Some(slug.clone()), selected, cx)
+            .update(cx, move |pane, cx| pane.set_selected_epic(selected_for_session_pane, cx));
+        self.workspace_pane.update(cx, move |pane, cx| {
+            pane.set_selected_epic(Some(slug_for_workspace), selected, cx)
         });
         self.notify_ui_updated(cx);
     }
@@ -508,10 +511,11 @@ impl RootView {
                                         })
                                         .cloned();
                                     let selected_slug = this.chrome.selected_epic_slug.clone();
-                                    this.session_pane.update(cx, |pane, cx| {
-                                        pane.set_selected_epic(selected, cx);
+                                    let selected_for_session_pane = selected.clone();
+                                    this.session_pane.update(cx, move |pane, cx| {
+                                        pane.set_selected_epic(selected_for_session_pane, cx);
                                     });
-                                    this.workspace_pane.update(cx, |pane, cx| {
+                                    this.workspace_pane.update(cx, move |pane, cx| {
                                         pane.set_selected_epic(selected_slug, selected, cx);
                                     });
                                 }
@@ -2102,9 +2106,10 @@ impl EpicSessionPaneHost {
         if self.selection_generation != generation {
             return false;
         }
-        self.selected_epic_slug
-            .as_deref()
-            .is_some_and(|slug| slug == epic_slug)
+        matches!(
+            self.selected_epic.as_ref(),
+            Some(epic) if epic.slug == epic_slug
+        )
     }
 
     fn emit_demo_message(
