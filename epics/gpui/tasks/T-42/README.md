@@ -64,6 +64,11 @@ Tests must assert:
 - durable session events were persisted (no deltas),
 - query surfaces can retrieve conversation history with pagination.
 
+Important: validate the daemon→control-plane event path:
+
+- mock runners emit `DaemonMessage::SessionEventBatch` frames over the daemon stream protocol,
+- the control plane persists them (T-40) and surfaces them via session event subscriptions (T-59).
+
 ### 4) Tooling hooks
 
 When failures occur:

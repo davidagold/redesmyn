@@ -69,6 +69,10 @@ When the user sends a message:
 - assistant responses become durable `AssistantMessage` events,
 - delta/chunk emissions (if any) may render live but are not persisted.
 
+Event source note:
+
+- For structured agents, assistant/turn events arrive via the session event subscription stream (T-59), sourced from daemon-emitted `DaemonMessage::SessionEventBatch` frames (not as inline responses to `SendSessionMessage`).
+
 ### 5) Agent defaults for chat sessions (recommendation)
 
 For user-managed chats (left pane), prefer a separate “chat harness” default so we can keep tasks Shell/tmux-compatible while keeping the epic chat structured:

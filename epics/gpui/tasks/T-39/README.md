@@ -57,6 +57,11 @@ Define the minimal interfaces needed for future work:
   - tool invocations/results,
   - artifacts.
 
+Delivery path (important):
+
+- The daemon delivers structured session events to the control plane over the daemon stream protocol as `DaemonMessage::SessionEventBatch`.
+- The daemon does not persist session events directly to the control plane DB.
+
 ### 3) Transport constraints
 
 - Keep all repo-local filesystem knowledge inside the daemon.

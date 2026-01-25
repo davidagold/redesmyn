@@ -121,6 +121,10 @@ Define a deterministic mapping to Redesmyn `SessionEvent` (T-14) such that:
   - turn completion/failure is emitted deterministically (based on diff sequence).
 - All non-chunk/delta emissions required for native history are persisted (same rule as exec-based Codex).
 
+Delivery path (important):
+
+- The runner emits `SessionEvent` updates to the control plane as `DaemonMessage::SessionEventBatch` frames; persistence happens in the control plane (T-40).
+
 Where Codex uses “update*” diff items, prefer to emit:
 
 - a durable “final” event when the item stabilizes (e.g., a message is complete),

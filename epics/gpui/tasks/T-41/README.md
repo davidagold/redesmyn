@@ -108,6 +108,12 @@ Ensure that, as part of these flows:
 - and are persisted (T-40),
 - while delta/chunk events are not persisted.
 
+Delivery path (important):
+
+- The daemon must emit `SessionEvent` batches over the daemon stream protocol as `DaemonMessage::SessionEventBatch`.
+- The control plane ingests those frames and persists events via the `SessionEvents` store, which also publishes them to session event subscriptions.
+- The daemon must not write to the control plane DB directly (remote-daemon readiness; separation by construction).
+
 Also ensure we follow the “session == conversation; turns are events” rule:
 
 - continuing a structured conversation updates/extends the existing session,
