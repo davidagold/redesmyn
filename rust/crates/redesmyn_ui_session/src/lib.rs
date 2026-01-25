@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
 use std::str::FromStr as _;
 use std::time::Duration;
 
@@ -10,21 +9,18 @@ use gpui::{
     App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
     SharedString, Subscription, Task, WeakEntity, Window, div, px,
 };
-use tokio::sync::{mpsc, oneshot};
 
 use gpui::prelude::*;
 
-use redesmyn_ids::{RequestId, SessionEventId, SessionId, SubscriptionId};
-use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_client_api::Client;
+use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
 use redesmyn_protocol::client::{
-    AgentMessageConflictAction, ClientFrame, ClientMessage, GetSessionEventsRequest,
-    GetSessionEventsResponse, Request, RequestPayload, ResponseResult, SendSessionMessageRequest,
-    SendSessionMessageResponse, SessionEventCursor, SessionEventsFilter, Subscribe,
-    SubscriptionEvent, SubscriptionFilter, Unsubscribe,
+    AgentMessageConflictAction, GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
+    ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
+    SubscriptionEvent,
 };
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
-use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
@@ -45,252 +41,64 @@ const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
 // conflicting session isn't structured). Consider renaming if we need semantic precision.
 const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
 
-#[derive(Clone)]
-struct ClientApi {
-    tx: mpsc::Sender<ClientCommand>,
+fn start_client(conn: ClientInProcEndpoint, cx: &mut Context<SessionView>) -> (Client, Task<()>) {
+    let (client, client_task) = Client::connect(conn, 64);
+    let task = cx.spawn(
+        move |_: WeakEntity<SessionView>, _cx: &mut AsyncApp| async move {
+            client_task.run().await;
+        },
+    );
+    (client, task)
 }
 
-enum ClientCommand {
-    Request {
-        request: Request,
-        respond_to: oneshot::Sender<ResponseResult>,
-    },
-    SubscribeSessionEvents {
-        subscription_id: SubscriptionId,
-        filter: SessionEventsFilter,
-        events_tx: mpsc::Sender<SubscriptionEvent>,
-        ack: oneshot::Sender<Result<(), ErrorEnvelope>>,
-    },
-    Unsubscribe {
-        subscription_id: SubscriptionId,
-    },
+async fn get_session_events(
+    client: &Client,
+    session_id: SessionId,
+    before: Option<SessionEventCursor>,
+    limit: u32,
+) -> Result<GetSessionEventsResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::GetSessionEvents(GetSessionEventsRequest {
+            session_id,
+            before,
+            limit,
+            kinds: Vec::new(),
+        }))
+        .await?;
+
+    match response {
+        ResponseResult::GetSessionEvents(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
 }
 
-impl ClientApi {
-    fn start(conn: ClientInProcEndpoint, cx: &mut Context<SessionView>) -> (Self, Task<()>) {
-        let (tx, rx) = mpsc::channel(64);
-        let api = Self { tx };
-
-        let task = cx.spawn(
-            move |_: WeakEntity<SessionView>, _cx: &mut AsyncApp| async move {
-                run_client_loop(conn, rx).await;
-            },
-        );
-
-        (api, task)
-    }
-
-    async fn request(&self, payload: RequestPayload) -> Result<ResponseResult, ErrorEnvelope> {
-        let request_id = RequestId::new();
-        let request = Request {
-            request_id,
-            payload,
-        };
-        let (tx, rx) = oneshot::channel();
-
-        self.tx
-            .send(ClientCommand::Request {
-                request,
-                respond_to: tx,
-            })
-            .await
-            .map_err(|_| {
-                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
-            })?;
-
-        rx.await.map_err(|_| {
-            ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                "Client API response channel closed.",
-            )
-        })
-    }
-
-    async fn get_session_events(
-        &self,
-        session_id: SessionId,
-        before: Option<SessionEventCursor>,
-        limit: u32,
-    ) -> Result<GetSessionEventsResponse, ErrorEnvelope> {
-        let response = self
-            .request(RequestPayload::GetSessionEvents(GetSessionEventsRequest {
+async fn send_session_message(
+    client: &Client,
+    session_id: SessionId,
+    message: String,
+    on_conflict: AgentMessageConflictAction,
+) -> Result<SendSessionMessageResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::SendSessionMessage(
+            SendSessionMessageRequest {
                 session_id,
-                before,
-                limit,
-                kinds: Vec::new(),
-            }))
-            .await?;
-
-        match response {
-            ResponseResult::GetSessionEvents(resp) => Ok(resp),
-            ResponseResult::Error(err) => Err(err),
-            other => Err(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("Unexpected response: {other:?}"),
-            )),
-        }
-    }
-
-    async fn send_session_message(
-        &self,
-        session_id: SessionId,
-        message: String,
-        on_conflict: AgentMessageConflictAction,
-    ) -> Result<SendSessionMessageResponse, ErrorEnvelope> {
-        let response = self
-            .request(RequestPayload::SendSessionMessage(
-                SendSessionMessageRequest {
-                    session_id,
-                    message,
-                    on_conflict,
-                },
-            ))
-            .await?;
-
-        match response {
-            ResponseResult::SendSessionMessage(resp) => Ok(resp),
-            ResponseResult::Error(err) => Err(err),
-            other => Err(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("Unexpected response: {other:?}"),
-            )),
-        }
-    }
-
-    async fn subscribe_session_events(
-        &self,
-        session_id: SessionId,
-        after: Option<SessionEventCursor>,
-    ) -> Result<(SubscriptionId, mpsc::Receiver<SubscriptionEvent>), ErrorEnvelope> {
-        let subscription_id = SubscriptionId::new();
-        let (events_tx, events_rx) = mpsc::channel(256);
-        let (ack_tx, ack_rx) = oneshot::channel();
-
-        self.tx
-            .send(ClientCommand::SubscribeSessionEvents {
-                subscription_id,
-                filter: SessionEventsFilter { session_id, after },
-                events_tx,
-                ack: ack_tx,
-            })
-            .await
-            .map_err(|_| {
-                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
-            })?;
-
-        ack_rx.await.map_err(|_| {
-            ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                "Client API subscription closed.",
-            )
-        })??;
-
-        Ok((subscription_id, events_rx))
-    }
-
-    async fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ErrorEnvelope> {
-        self.tx
-            .send(ClientCommand::Unsubscribe { subscription_id })
-            .await
-            .map_err(|_| {
-                ErrorEnvelope::new(ErrorCategory::Unavailable, "Client API channel closed.")
-            })?;
-        Ok(())
-    }
-}
-
-async fn run_client_loop(mut conn: ClientInProcEndpoint, mut rx: mpsc::Receiver<ClientCommand>) {
-    let mut pending_requests: HashMap<RequestId, oneshot::Sender<ResponseResult>> = HashMap::new();
-    let mut subscriptions: HashMap<SubscriptionId, mpsc::Sender<SubscriptionEvent>> =
-        HashMap::new();
-    let mut subscribe_acks: HashMap<SubscriptionId, oneshot::Sender<Result<(), ErrorEnvelope>>> =
-        HashMap::new();
-
-    loop {
-        tokio::select! {
-            Some(cmd) = rx.recv() => match cmd {
-                ClientCommand::Request { request, respond_to } => {
-                    pending_requests.insert(request.request_id, respond_to);
-                    let frame = ClientFrame::new(ProtocolEnvelope::new(), ClientMessage::Request(request));
-                    if conn.send(frame).await.is_err() {
-                        break;
-                    }
-                }
-                ClientCommand::SubscribeSessionEvents { subscription_id, filter, events_tx, ack } => {
-                    subscriptions.insert(subscription_id, events_tx);
-                    subscribe_acks.insert(subscription_id, ack);
-                    let frame = ClientFrame::new(
-                        ProtocolEnvelope::new(),
-                        ClientMessage::Subscribe(Subscribe { subscription_id, filter: SubscriptionFilter::SessionEvents(filter) }),
-                    );
-                    if conn.send(frame).await.is_err() {
-                        break;
-                    }
-                }
-                ClientCommand::Unsubscribe { subscription_id } => {
-                    subscriptions.remove(&subscription_id);
-                    if let Some(ack) = subscribe_acks.remove(&subscription_id) {
-                        let _ = ack.send(Err(ErrorEnvelope::new(
-                            ErrorCategory::Unavailable,
-                            "Subscription canceled.",
-                        )));
-                    }
-                    let frame = ClientFrame::new(
-                        ProtocolEnvelope::new(),
-                        ClientMessage::Unsubscribe(Unsubscribe { subscription_id }),
-                    );
-                    if conn.send(frame).await.is_err() {
-                        break;
-                    }
-                }
+                message,
+                on_conflict,
             },
-            frame = conn.recv() => {
-                let frame = match frame {
-                    Ok(frame) => frame,
-                    Err(_) => break,
-                };
+        ))
+        .await?;
 
-                match frame.message {
-                    ClientMessage::Response(response) => {
-                        if let Some(tx) = pending_requests.remove(&response.request_id) {
-                            let _ = tx.send(response.result);
-                        }
-                    }
-                    ClientMessage::Event(event) => {
-                        if let Some(tx) = subscriptions.get(&event.subscription_id) {
-                            if let SubscriptionEvent::Subscribed(_) = &event.event {
-                                if let Some(ack) = subscribe_acks.remove(&event.subscription_id) {
-                                    let _ = ack.send(Ok(()));
-                                }
-                            }
-
-                            if let SubscriptionEvent::Error(err) = &event.event {
-                                if let Some(ack) = subscribe_acks.remove(&event.subscription_id) {
-                                    let _ = ack.send(Err(err.clone()));
-                                }
-                            }
-
-                            let _ = tx.send(event.event).await;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    for (_, tx) in pending_requests.drain() {
-        let _ = tx.send(ResponseResult::Error(ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Client API connection closed.",
-        )));
-    }
-
-    for (_, tx) in subscribe_acks.drain() {
-        let _ = tx.send(Err(ErrorEnvelope::new(
-            ErrorCategory::Unavailable,
-            "Client API connection closed.",
-        )));
+    match response {
+        ResponseResult::SendSessionMessage(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
     }
 }
 
@@ -329,7 +137,7 @@ pub struct SessionView {
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
-    client: Option<ClientApi>,
+    client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
     subscription_id: Option<SubscriptionId>,
@@ -383,7 +191,7 @@ impl SessionView {
 
         let (client, client_task) = match control_plane_client {
             Some(conn) => {
-                let (client, task) = ClientApi::start(conn, cx);
+                let (client, task) = start_client(conn, cx);
                 (Some(client), Some(task))
             }
             None => (None, None),
@@ -509,7 +317,7 @@ impl SessionView {
             let client = client.clone();
             let cx = cx.clone();
             async move {
-                let response = client.get_session_events(session_id, None, 50).await;
+                let response = get_session_events(&client, session_id, None, 50).await;
                 let _ = cx
                     .update(|cx| view.update(cx, |this, cx| this.on_history_loaded(response, cx)));
             }
@@ -549,9 +357,7 @@ impl SessionView {
         self.send_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let result = client
-                    .send_session_message(session_id, message, on_conflict)
-                    .await;
+                let result = send_session_message(&client, session_id, message, on_conflict).await;
                 let _ =
                     cx.update(|cx| view.update(cx, |this, cx| this.on_send_completed(result, cx)));
             }
@@ -796,9 +602,7 @@ impl SessionView {
         self.load_older_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let response = client
-                    .get_session_events(session_id, Some(before), 50)
-                    .await;
+                let response = get_session_events(&client, session_id, Some(before), 50).await;
                 let _ =
                     cx.update(|cx| view.update(cx, |this, cx| this.on_older_loaded(response, cx)));
             }

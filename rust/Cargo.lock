@@ -4953,6 +4953,7 @@ name = "redesmyn_ui_session"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "redesmyn_client_api",
  "redesmyn_ids",
  "redesmyn_protocol",
  "redesmyn_session_view_model",

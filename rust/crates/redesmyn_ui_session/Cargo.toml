@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
+redesmyn_client_api.workspace = true
 redesmyn_ids.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_session_view_model.workspace = true
