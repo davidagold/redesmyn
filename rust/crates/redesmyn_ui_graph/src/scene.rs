@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use gpui::SharedString;
-use redesmyn_graph_layout::{LayoutConfig, LayoutNode, layout_forest};
+use redesmyn_graph_layout::{ForestLayoutEngine, LayoutConfig, LayoutNode, LayoutOptions};
 use redesmyn_ids::TaskId;
 use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 
@@ -140,6 +140,8 @@ pub struct GraphScene {
     trunk_timeline: Option<TrunkTimeline>,
     trunk_layout: Option<TrunkLayout>,
     layout_nodes_scratch: Vec<LayoutNode<GraphNodeId>>,
+    layout_engine: Option<ForestLayoutEngine<GraphNodeId>>,
+    layout_engine_dirty: bool,
 }
 
 impl GraphScene {
@@ -223,6 +225,8 @@ impl GraphScene {
             trunk_timeline: None,
             trunk_layout: None,
             layout_nodes_scratch: Vec::new(),
+            layout_engine: None,
+            layout_engine_dirty: true,
         }
     }
 
@@ -509,6 +513,7 @@ impl GraphScene {
         self.nodes = nodes;
         self.edges = edges;
         self.sync_trunk_overlay();
+        self.layout_engine_dirty = true;
 
         self.selection
             .selected_nodes
@@ -574,6 +579,7 @@ impl GraphScene {
         let id = node.id;
         self.nodes.insert(id, node);
         self.node_sizes.entry(id).or_insert_with(default_node_size);
+        self.layout_engine_dirty = true;
     }
 
     fn insert_edge(&mut self, id: GraphEdgeId, commit_count: Option<u32>) {
@@ -647,28 +653,6 @@ impl GraphScene {
             .map(|layout| layout_anchor_y(layout.base_offset))
             .unwrap_or(GRAPH_PADDING);
 
-        self.layout_nodes_scratch.clear();
-        self.layout_nodes_scratch.reserve(
-            self.nodes
-                .len()
-                .saturating_sub(self.layout_nodes_scratch.capacity()),
-        );
-
-        for node in self.nodes.values() {
-            if node.id == GraphNodeId::Trunk {
-                continue;
-            }
-            self.layout_nodes_scratch.push(LayoutNode {
-                id: node.id,
-                parent_id: node.parent_id,
-                size: self
-                    .node_sizes
-                    .get(&node.id)
-                    .copied()
-                    .unwrap_or_else(default_node_size),
-            });
-        }
-
         let config = LayoutConfig {
             origin: redesmyn_graph_layout::Point {
                 x: x_offset,
@@ -677,47 +661,103 @@ impl GraphScene {
             ..LayoutConfig::default()
         };
 
-        match layout_forest(self.layout_nodes_scratch.iter().copied(), config) {
-            Ok(output) => {
-                self.node_positions = output.positions;
-                self.bounds = output.bounds;
+        if self.layout_engine_dirty || self.layout_engine.is_none() {
+            self.layout_nodes_scratch.clear();
+            self.layout_nodes_scratch.reserve(
+                self.nodes
+                    .len()
+                    .saturating_sub(self.layout_nodes_scratch.capacity()),
+            );
 
-                if let Some(layout) = trunk_layout {
-                    let trunk_span_height = layout.span_height;
-                    self.trunk_layout = Some(layout);
-                    self.node_positions.insert(
-                        GraphNodeId::Trunk,
-                        redesmyn_graph_layout::Point {
-                            x: GRAPH_PADDING,
-                            y: GRAPH_PADDING,
-                        },
-                    );
+            for node in self.nodes.values() {
+                if node.id == GraphNodeId::Trunk {
+                    continue;
+                }
+                self.layout_nodes_scratch.push(LayoutNode {
+                    id: node.id,
+                    parent_id: node.parent_id,
+                    size: self
+                        .node_sizes
+                        .get(&node.id)
+                        .copied()
+                        .unwrap_or_else(default_node_size),
+                });
+            }
 
-                    let trunk_height = trunk_height_for_scene(
-                        &self.node_positions,
-                        &self.node_sizes,
-                        trunk_span_height,
+            match ForestLayoutEngine::new(
+                self.layout_nodes_scratch.iter().copied(),
+                LayoutOptions::default(),
+            ) {
+                Ok(engine) => {
+                    self.layout_engine = Some(engine);
+                    self.layout_engine_dirty = false;
+                }
+                Err(error) => {
+                    redesmyn_logging::tracing::error!(
+                        ?error,
+                        "graph layout engine build failed; keeping previous positions"
                     );
-                    self.node_sizes.insert(
-                        GraphNodeId::Trunk,
-                        redesmyn_graph_layout::Size {
-                            width: trunk_column_width(),
-                            height: trunk_height,
-                        },
-                    );
-
-                    self.bounds =
-                        bounds_with_trunk(self.bounds, trunk_column_width(), trunk_height);
-                } else {
-                    self.trunk_layout = None;
+                    return;
                 }
             }
-            Err(error) => {
-                redesmyn_logging::tracing::error!(
-                    ?error,
-                    "graph layout failed; keeping previous positions"
-                );
+        }
+
+        let Some(engine) = self.layout_engine.as_mut() else {
+            return;
+        };
+
+        if let Err(error) = engine.set_sizes(self.nodes.values().filter_map(|node| {
+            if node.id == GraphNodeId::Trunk {
+                return None;
             }
+
+            Some((
+                node.id,
+                self.node_sizes
+                    .get(&node.id)
+                    .copied()
+                    .unwrap_or_else(default_node_size),
+            ))
+        })) {
+            redesmyn_logging::tracing::error!(
+                ?error,
+                "graph layout engine rejected node sizes; keeping previous positions"
+            );
+            return;
+        }
+
+        engine.layout_in_place(config);
+        let view = engine.output_view();
+        self.node_positions.clear();
+        for (id, point) in view.ids.iter().copied().zip(view.positions.iter().copied()) {
+            self.node_positions.insert(id, point);
+        }
+        self.bounds = view.bounds;
+
+        if let Some(layout) = trunk_layout {
+            let trunk_span_height = layout.span_height;
+            self.trunk_layout = Some(layout);
+            self.node_positions.insert(
+                GraphNodeId::Trunk,
+                redesmyn_graph_layout::Point {
+                    x: GRAPH_PADDING,
+                    y: GRAPH_PADDING,
+                },
+            );
+
+            let trunk_height =
+                trunk_height_for_scene(&self.node_positions, &self.node_sizes, trunk_span_height);
+            self.node_sizes.insert(
+                GraphNodeId::Trunk,
+                redesmyn_graph_layout::Size {
+                    width: trunk_column_width(),
+                    height: trunk_height,
+                },
+            );
+
+            self.bounds = bounds_with_trunk(self.bounds, trunk_column_width(), trunk_height);
+        } else {
+            self.trunk_layout = None;
         }
     }
 }

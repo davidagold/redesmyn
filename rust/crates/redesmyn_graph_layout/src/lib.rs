@@ -1,15 +1,14 @@
 //! Deterministic layout for a rooted forest of variable-size nodes.
 //!
-//! v1 focuses on the primary structure we have today: a forest defined by a
-//! `parent_id` pointer (tree edges). The layout is pure and deterministic:
+//! This crate focuses on the primary structure we have today: a forest defined
+//! by a `parent_id` pointer (tree edges). The layout is pure and deterministic:
 //! identical inputs produce identical outputs.
 //!
 //! For high-performance use (e.g. per-frame expand/collapse relayout), prefer
-//! [`ForestLayoutEngine`]: build topology once, update sizes cheaply, and rerun
-//! layout without heap allocations.
-//!
-//! [`layout_forest`] remains available as a convenience wrapper that allocates
-//! and rebuilds topology each call.
+//! [`ForestLayoutEngine`]:
+//! - build and validate topology once,
+//! - update node sizes/visibility cheaply,
+//! - recompute layout without heap allocations.
 
 #![cfg_attr(not(test), forbid(unsafe_code))]
 
@@ -18,7 +17,7 @@ use std::ops::Range;
 
 /// A 2D point in logical pixels.
 ///
-/// In [`LayoutOutput`], points represent the top-left origin of a node's rectangle.
+/// In layout outputs, points represent the top-left origin of a node's rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,
@@ -110,10 +109,12 @@ pub struct LayoutNode<Id> {
     pub size: Size,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LayoutOutput<Id> {
-    pub positions: BTreeMap<Id, Point>,
-    pub bounds: Rect,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutEdge<Id> {
+    pub from: Id,
+    pub to: Id,
+    /// Number of hidden intermediate nodes skipped between `from` and `to`.
+    pub elided_hops: u32,
 }
 
 /// A stable, allocation-free view into a computed layout.
@@ -124,11 +125,16 @@ pub struct LayoutOutput<Id> {
 /// The id at index `i` corresponds to `positions[i]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayoutOutputView<'a, Id> {
-    /// Stable node order (sorted by id).
+    /// Stable node order (sorted by id) of *visible* nodes.
     ///
     /// The position for `ids[i]` is `positions[i]`.
     pub ids: &'a [Id],
     pub positions: &'a [Point],
+    /// Derived parent→child edges between visible nodes.
+    ///
+    /// If intermediate ancestors are hidden, edges connect to the nearest
+    /// visible ancestor and expose `elided_hops`.
+    pub edges: &'a [LayoutEdge<Id>],
     pub bounds: Rect,
 }
 
@@ -163,24 +169,76 @@ pub struct ForestLayoutEngine<Id> {
     children: Vec<usize>,
     child_range: Vec<Range<usize>>,
 
-    postorder: Vec<usize>,
-
     sizes: Vec<Size>,
 
-    subtree_heights: Vec<i32>,
-    children_block_heights: Vec<i32>,
-    positions: Vec<Point>,
+    /// Whether a node is present in the derived view forest.
+    visible: Vec<bool>,
+    /// Whether a *visible* node prunes its descendants in the view forest.
+    collapsed: Vec<bool>,
+
+    /// Per-node derived parent after applying visibility/collapse.
+    view_parent_original: Vec<Option<usize>>,
+    /// Per-node hop count between derived parent and node (only meaningful when visible).
+    view_elided_hops_original: Vec<u32>,
+    /// Per-node flag indicating inclusion in the view (visible and not pruned by a collapsed
+    /// visible ancestor).
+    view_active_original: Vec<bool>,
+
+    /// Visible nodes (original indices) in stable id order.
+    view_nodes: Vec<usize>,
+    /// Mapping original index → view index (or -1 if not visible).
+    view_index_by_original: Vec<i32>,
+
+    /// View parent index (view indices).
+    view_parent: Vec<Option<usize>>,
+    /// Hop count for each view node to its derived parent (roots have 0).
+    view_elided_hops: Vec<u32>,
+    view_roots: Vec<usize>,
+
+    view_children: Vec<usize>,
+    view_child_range: Vec<Range<usize>>,
+    view_child_counts: Vec<usize>,
+    view_next_child_slot: Vec<usize>,
+
+    view_left_sibling: Vec<Option<usize>>,
+    view_number: Vec<usize>,
+
+    view_depth: Vec<usize>,
+    depth_max_width: Vec<i32>,
+    depth_x: Vec<i32>,
+
+    // Tidy layout (Buchheim) working state.
+    prelim: Vec<i32>,
+    modifier: Vec<i32>,
+    change: Vec<i32>,
+    shift: Vec<i32>,
+    ancestor: Vec<usize>,
+    thread: Vec<Option<usize>>,
+    y_center: Vec<i32>,
+
+    // Output buffers (visible nodes only).
+    view_ids: Vec<Id>,
+    view_positions: Vec<Point>,
+    view_edges: Vec<LayoutEdge<Id>>,
     bounds: Rect,
 
-    layout_stack: Vec<LayoutFrame>,
+    // Scratch stacks for derived-view building and subtree traversals.
+    walk_stack: Vec<ViewWalkItem>,
+    subtree_nodes: Vec<usize>,
+    depth_stack: Vec<DepthItem>,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct LayoutFrame {
+struct ViewWalkItem {
     node_index: usize,
-    next_child_pos: usize,
-    next_child_top_y: i32,
-    child_x: i32,
+    current_visible_ancestor: Option<usize>,
+    hidden_hops: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DepthItem {
+    node_index: usize,
+    depth: usize,
 }
 
 impl<Id> ForestLayoutEngine<Id>
@@ -218,8 +276,6 @@ where
         let (children, child_range) = build_children_adjacency(&parent_index, node_count);
         detect_cycles(&ids, &children, &child_range)?;
 
-        let postorder = build_postorder(&roots, &children, &child_range, node_count);
-
         Ok(Self {
             ids,
             index_by_id,
@@ -227,11 +283,36 @@ where
             roots,
             children,
             child_range,
-            postorder,
             sizes,
-            subtree_heights: vec![0; node_count],
-            children_block_heights: vec![0; node_count],
-            positions: vec![Point { x: 0, y: 0 }; node_count],
+            visible: vec![true; node_count],
+            collapsed: vec![false; node_count],
+            view_parent_original: vec![None; node_count],
+            view_elided_hops_original: vec![0; node_count],
+            view_active_original: vec![false; node_count],
+            view_nodes: Vec::with_capacity(node_count),
+            view_index_by_original: vec![-1; node_count],
+            view_parent: Vec::with_capacity(node_count),
+            view_elided_hops: Vec::with_capacity(node_count),
+            view_roots: Vec::with_capacity(node_count),
+            view_children: Vec::with_capacity(node_count),
+            view_child_range: Vec::with_capacity(node_count),
+            view_child_counts: vec![0; node_count],
+            view_next_child_slot: vec![0; node_count],
+            view_left_sibling: Vec::with_capacity(node_count),
+            view_number: Vec::with_capacity(node_count),
+            view_depth: Vec::with_capacity(node_count),
+            depth_max_width: Vec::with_capacity(node_count),
+            depth_x: Vec::with_capacity(node_count),
+            prelim: Vec::with_capacity(node_count),
+            modifier: Vec::with_capacity(node_count),
+            change: Vec::with_capacity(node_count),
+            shift: Vec::with_capacity(node_count),
+            ancestor: Vec::with_capacity(node_count),
+            thread: Vec::with_capacity(node_count),
+            y_center: Vec::with_capacity(node_count),
+            view_ids: Vec::with_capacity(node_count),
+            view_positions: Vec::with_capacity(node_count),
+            view_edges: Vec::with_capacity(node_count),
             bounds: Rect {
                 origin: Point { x: 0, y: 0 },
                 size: Size {
@@ -239,7 +320,9 @@ where
                     height: 0,
                 },
             },
-            layout_stack: Vec::with_capacity(node_count),
+            walk_stack: Vec::with_capacity(node_count),
+            subtree_nodes: Vec::with_capacity(node_count),
+            depth_stack: Vec::with_capacity(node_count),
         })
     }
 
@@ -254,6 +337,11 @@ where
     }
 
     #[must_use]
+    pub fn visible(&self) -> &[bool] {
+        &self.visible
+    }
+
+    #[must_use]
     pub fn bounds(&self) -> Rect {
         self.bounds
     }
@@ -263,11 +351,6 @@ where
         &self.parent_index
     }
 
-    #[must_use]
-    pub fn positions(&self) -> &[Point] {
-        &self.positions
-    }
-
     /// Returns a lightweight view into the most recently computed layout.
     ///
     /// Prefer `layout_in_place(...); output_view()` if you want to compute layout
@@ -275,8 +358,9 @@ where
     #[must_use]
     pub fn output_view(&self) -> LayoutOutputView<'_, Id> {
         LayoutOutputView {
-            ids: &self.ids,
-            positions: &self.positions,
+            ids: &self.view_ids,
+            positions: &self.view_positions,
+            edges: &self.view_edges,
             bounds: self.bounds,
         }
     }
@@ -304,20 +388,43 @@ where
         Ok(())
     }
 
-    /// Recomputes heights + positions in-place and returns the forest bounds.
+    pub fn set_visible(&mut self, id: Id, visible: bool) -> Result<(), LayoutError<Id>> {
+        let Some(&index) = self.index_by_id.get(&id) else {
+            return Err(LayoutError::UnknownNodeId { id });
+        };
+        self.visible[index] = visible;
+        Ok(())
+    }
+
+    pub fn set_collapsed(&mut self, id: Id, collapsed: bool) -> Result<(), LayoutError<Id>> {
+        let Some(&index) = self.index_by_id.get(&id) else {
+            return Err(LayoutError::UnknownNodeId { id });
+        };
+        self.collapsed[index] = collapsed;
+        Ok(())
+    }
+
+    /// Recomputes positions in-place and returns the derived-view bounds.
     ///
     /// This is allocation-free after engine construction.
     pub fn layout_in_place(&mut self, config: LayoutConfig) -> Rect {
-        self.recompute_subtree_heights(config);
-        self.recompute_positions(config);
-        self.bounds = compute_bounds(self.sizes.iter().copied(), self.positions.iter().copied())
-            .unwrap_or(Rect {
-                origin: config.origin,
-                size: Size {
-                    width: 0,
-                    height: 0,
-                },
-            });
+        self.rebuild_view();
+        self.recompute_depths_and_x(config);
+        self.recompute_y_positions(config);
+        self.bounds = compute_bounds(
+            self.view_nodes
+                .iter()
+                .copied()
+                .map(|original| self.sizes[original]),
+            self.view_positions.iter().copied(),
+        )
+        .unwrap_or(Rect {
+            origin: config.origin,
+            size: Size {
+                width: 0,
+                height: 0,
+            },
+        });
         self.bounds
     }
 
@@ -330,144 +437,478 @@ where
         self.layout_in_place(config);
         self.output_view()
     }
+    fn rebuild_view(&mut self) {
+        let node_count = self.ids.len();
 
-    fn recompute_subtree_heights(&mut self, config: LayoutConfig) {
-        for &node_index in &self.postorder {
-            let range = self.child_range[node_index].clone();
-            let mut children_total_height = 0_i32;
-            let mut child_count = 0_usize;
-            for &child_index in &self.children[range] {
-                if child_count > 0 {
-                    children_total_height =
-                        children_total_height.saturating_add(config.sibling_spacing);
-                }
-                children_total_height =
-                    children_total_height.saturating_add(self.subtree_heights[child_index]);
-                child_count += 1;
-            }
+        self.view_active_original.fill(false);
+        self.view_parent_original.fill(None);
+        self.view_elided_hops_original.fill(0);
 
-            self.children_block_heights[node_index] = children_total_height;
-            let node_height = self.sizes[node_index].height;
-            self.subtree_heights[node_index] = node_height.max(children_total_height);
+        self.walk_stack.clear();
+        for &root in &self.roots {
+            self.walk_stack.push(ViewWalkItem {
+                node_index: root,
+                current_visible_ancestor: None,
+                hidden_hops: 0,
+            });
         }
-    }
 
-    fn recompute_positions(&mut self, config: LayoutConfig) {
-        self.layout_stack.clear();
+        while let Some(item) = self.walk_stack.pop() {
+            let node_index = item.node_index;
+            let is_visible = self.visible[node_index];
 
-        let roots_len = self.roots.len();
-        let mut next_root_top_y = config.origin.y;
-        for root_slot in 0..roots_len {
-            let root_index = self.roots[root_slot];
-            self.push_layout_frame(root_index, config.origin.x, next_root_top_y, config);
-
-            while !self.layout_stack.is_empty() {
-                let next_child = {
-                    let frame = self.layout_stack.last_mut().expect("not empty");
-                    let node_index = frame.node_index;
-                    let child_end = self.child_range[node_index].end;
-                    if frame.next_child_pos >= child_end {
-                        None
+            if is_visible {
+                self.view_active_original[node_index] = true;
+                self.view_parent_original[node_index] = item.current_visible_ancestor;
+                self.view_elided_hops_original[node_index] =
+                    if item.current_visible_ancestor.is_some() {
+                        item.hidden_hops
                     } else {
-                        let child_index = self.children[frame.next_child_pos];
-                        frame.next_child_pos += 1;
-                        let child_x = frame.child_x;
-                        let child_subtree_top_y = frame.next_child_top_y;
-                        frame.next_child_top_y = frame.next_child_top_y.saturating_add(
-                            self.subtree_heights[child_index]
-                                .saturating_add(config.sibling_spacing),
-                        );
-                        Some((child_index, child_x, child_subtree_top_y))
-                    }
-                };
-
-                match next_child {
-                    Some((child_index, child_x, child_subtree_top_y)) => {
-                        self.push_layout_frame(child_index, child_x, child_subtree_top_y, config);
-                    }
-                    None => {
-                        self.layout_stack.pop();
-                    }
-                }
+                        0
+                    };
             }
 
-            next_root_top_y = next_root_top_y.saturating_add(
-                self.subtree_heights[root_index].saturating_add(config.root_spacing),
-            );
+            let next_visible_ancestor = if is_visible {
+                Some(node_index)
+            } else {
+                item.current_visible_ancestor
+            };
+
+            let next_hidden_hops = if is_visible {
+                0
+            } else if item.current_visible_ancestor.is_some() {
+                item.hidden_hops.saturating_add(1)
+            } else {
+                0
+            };
+
+            let prune_descendants = is_visible && self.collapsed[node_index];
+            if prune_descendants {
+                continue;
+            }
+
+            let range = self.child_range[node_index].clone();
+            for &child in self.children[range].iter().rev() {
+                self.walk_stack.push(ViewWalkItem {
+                    node_index: child,
+                    current_visible_ancestor: next_visible_ancestor,
+                    hidden_hops: next_hidden_hops,
+                });
+            }
+        }
+
+        self.view_nodes.clear();
+        self.view_ids.clear();
+        self.view_index_by_original.fill(-1);
+
+        for original_index in 0..node_count {
+            if !self.view_active_original[original_index] {
+                continue;
+            }
+            let view_index = self.view_nodes.len();
+            self.view_nodes.push(original_index);
+            self.view_ids.push(self.ids[original_index]);
+            self.view_index_by_original[original_index] = view_index as i32;
+        }
+
+        let view_count = self.view_nodes.len();
+        self.view_parent.clear();
+        self.view_parent.resize(view_count, None);
+        self.view_elided_hops.clear();
+        self.view_elided_hops.resize(view_count, 0);
+        self.view_edges.clear();
+
+        for view_index in 0..view_count {
+            let original_index = self.view_nodes[view_index];
+            let parent_original = self.view_parent_original[original_index];
+            let parent_view = parent_original.and_then(|original_parent| {
+                let idx = self.view_index_by_original[original_parent];
+                if idx >= 0 { Some(idx as usize) } else { None }
+            });
+
+            self.view_parent[view_index] = parent_view;
+            let elided_hops = self.view_elided_hops_original[original_index];
+            self.view_elided_hops[view_index] = elided_hops;
+
+            if let Some(parent_view) = parent_view {
+                self.view_edges.push(LayoutEdge {
+                    from: self.view_ids[parent_view],
+                    to: self.view_ids[view_index],
+                    elided_hops,
+                });
+            }
+        }
+
+        self.view_roots.clear();
+        self.view_child_counts[..view_count].fill(0);
+
+        for (child, parent) in self.view_parent.iter().copied().enumerate() {
+            match parent {
+                Some(parent) => self.view_child_counts[parent] += 1,
+                None => self.view_roots.push(child),
+            }
+        }
+
+        self.view_child_range.clear();
+        self.view_child_range.resize(view_count, 0..0);
+        self.view_next_child_slot[..view_count].fill(0);
+
+        let mut total_children = 0_usize;
+        for parent in 0..view_count {
+            let count = self.view_child_counts[parent];
+            let start = total_children;
+            total_children += count;
+            self.view_child_range[parent] = start..total_children;
+            self.view_next_child_slot[parent] = start;
+        }
+
+        self.view_children.clear();
+        self.view_children.resize(total_children, 0);
+        for child in 0..view_count {
+            let Some(parent) = self.view_parent[child] else {
+                continue;
+            };
+            let slot = &mut self.view_next_child_slot[parent];
+            self.view_children[*slot] = child;
+            *slot += 1;
+        }
+
+        self.view_left_sibling.clear();
+        self.view_left_sibling.resize(view_count, None);
+        self.view_number.clear();
+        self.view_number.resize(view_count, 1);
+
+        for parent in 0..view_count {
+            let range = self.view_child_range[parent].clone();
+            let mut prev = None;
+            let mut number = 1_usize;
+            for slot in range {
+                let child = self.view_children[slot];
+                self.view_left_sibling[child] = prev;
+                self.view_number[child] = number;
+                prev = Some(child);
+                number += 1;
+            }
         }
     }
 
-    fn push_layout_frame(
-        &mut self,
-        node_index: usize,
-        x: i32,
-        subtree_top_y: i32,
-        config: LayoutConfig,
-    ) {
-        let subtree_height = self.subtree_heights[node_index];
-        let node_height = self.sizes[node_index].height;
-        let node_y = subtree_top_y.saturating_add((subtree_height - node_height) / 2);
-        self.positions[node_index] = Point { x, y: node_y };
+    fn recompute_depths_and_x(&mut self, config: LayoutConfig) {
+        let view_count = self.view_nodes.len();
+        self.view_depth.clear();
+        self.view_depth.resize(view_count, 0);
 
-        let range = self.child_range[node_index].clone();
-        if range.start == range.end {
+        self.depth_stack.clear();
+        for &root in &self.view_roots {
+            self.depth_stack.push(DepthItem {
+                node_index: root,
+                depth: 0,
+            });
+        }
+
+        let mut max_depth = 0_usize;
+        while let Some(item) = self.depth_stack.pop() {
+            self.view_depth[item.node_index] = item.depth;
+            max_depth = max_depth.max(item.depth);
+
+            let range = self.view_child_range[item.node_index].clone();
+            for slot in range.rev() {
+                let child = self.view_children[slot];
+                self.depth_stack.push(DepthItem {
+                    node_index: child,
+                    depth: item.depth + 1,
+                });
+            }
+        }
+
+        self.depth_max_width.clear();
+        self.depth_max_width.resize(max_depth.saturating_add(1), 0);
+        for view_index in 0..view_count {
+            let depth = self.view_depth[view_index];
+            let width = self.sizes[self.view_nodes[view_index]].width;
+            if width > self.depth_max_width[depth] {
+                self.depth_max_width[depth] = width;
+            }
+        }
+
+        self.depth_x.clear();
+        self.depth_x.resize(max_depth.saturating_add(1), 0);
+        let mut x = config.origin.x;
+        for depth in 0..=max_depth {
+            self.depth_x[depth] = x;
+            let step = self
+                .depth_max_width
+                .get(depth)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(config.layer_spacing);
+            x = x.saturating_add(step);
+        }
+
+        self.view_positions.clear();
+        self.view_positions.resize(
+            view_count,
+            Point {
+                x: config.origin.x,
+                y: config.origin.y,
+            },
+        );
+        for view_index in 0..view_count {
+            let depth = self.view_depth[view_index];
+            self.view_positions[view_index].x = self.depth_x[depth];
+        }
+    }
+
+    fn recompute_y_positions(&mut self, config: LayoutConfig) {
+        let view_count = self.view_nodes.len();
+        if view_count == 0 {
             return;
         }
 
-        let children_total_height = self.children_block_heights[node_index];
-        let next_child_top_y =
-            subtree_top_y.saturating_add((subtree_height - children_total_height) / 2);
-        let child_x = x.saturating_add(
-            self.sizes[node_index]
-                .width
-                .saturating_add(config.layer_spacing),
-        );
+        self.prelim.clear();
+        self.prelim.resize(view_count, 0);
+        self.modifier.clear();
+        self.modifier.resize(view_count, 0);
+        self.change.clear();
+        self.change.resize(view_count, 0);
+        self.shift.clear();
+        self.shift.resize(view_count, 0);
+        self.ancestor.clear();
+        self.ancestor.resize_with(view_count, || 0);
+        for i in 0..view_count {
+            self.ancestor[i] = i;
+        }
+        self.thread.clear();
+        self.thread.resize(view_count, None);
+        self.y_center.clear();
+        self.y_center.resize(view_count, 0);
 
-        self.layout_stack.push(LayoutFrame {
-            node_index,
-            next_child_pos: range.start,
-            next_child_top_y,
-            child_x,
+        let roots_len = self.view_roots.len();
+        let mut next_root_top = config.origin.y;
+        for root_slot in 0..roots_len {
+            let root = self.view_roots[root_slot];
+            self.first_walk(root, config);
+            self.second_walk(root, 0);
+
+            self.subtree_nodes.clear();
+            self.collect_subtree_nodes(root);
+
+            let mut min_top = i32::MAX;
+            let mut max_bottom = i32::MIN;
+            for &node in &self.subtree_nodes {
+                let (top, bottom) = self.node_vertical_bounds(node, self.y_center[node]);
+                min_top = min_top.min(top);
+                max_bottom = max_bottom.max(bottom);
+            }
+
+            let offset = next_root_top.saturating_sub(min_top);
+            for &node in &self.subtree_nodes {
+                let shifted_center = self.y_center[node].saturating_add(offset);
+                let size = self.node_size(node);
+                self.view_positions[node].y = shifted_center.saturating_sub(size.height / 2);
+            }
+
+            next_root_top = max_bottom
+                .saturating_add(offset)
+                .saturating_add(config.root_spacing);
+        }
+    }
+
+    fn node_size(&self, view_index: usize) -> Size {
+        self.sizes[self.view_nodes[view_index]]
+    }
+
+    fn node_vertical_bounds(&self, view_index: usize, y_center: i32) -> (i32, i32) {
+        let size = self.node_size(view_index);
+        let top = y_center.saturating_sub(size.height / 2);
+        let bottom = top.saturating_add(size.height);
+        (top, bottom)
+    }
+
+    fn sibling_separation(&self, a: usize, b: usize, config: LayoutConfig) -> i32 {
+        let a_height = self.node_size(a).height;
+        let b_height = self.node_size(b).height;
+        (a_height / 2)
+            .saturating_add(b_height / 2)
+            .saturating_add(config.sibling_spacing)
+    }
+
+    fn leftmost_child(&self, v: usize) -> Option<usize> {
+        let range = self.view_child_range[v].clone();
+        (range.start < range.end).then(|| self.view_children[range.start])
+    }
+
+    fn rightmost_child(&self, v: usize) -> Option<usize> {
+        let range = self.view_child_range[v].clone();
+        (range.start < range.end).then(|| self.view_children[range.end - 1])
+    }
+
+    fn next_left(&self, v: usize) -> Option<usize> {
+        self.leftmost_child(v).or(self.thread[v])
+    }
+
+    fn next_right(&self, v: usize) -> Option<usize> {
+        self.rightmost_child(v).or(self.thread[v])
+    }
+
+    fn leftmost_sibling(&self, v: usize) -> Option<usize> {
+        let parent = self.view_parent[v]?;
+        self.leftmost_child(parent)
+    }
+
+    fn first_walk(&mut self, v: usize, config: LayoutConfig) {
+        let range = self.view_child_range[v].clone();
+        if range.start == range.end {
+            if let Some(left) = self.view_left_sibling[v] {
+                self.prelim[v] =
+                    self.prelim[left].saturating_add(self.sibling_separation(left, v, config));
+            } else {
+                self.prelim[v] = 0;
+            }
+            return;
+        }
+
+        let mut default_ancestor = self.view_children[range.start];
+        for slot in range.clone() {
+            let w = self.view_children[slot];
+            self.first_walk(w, config);
+            default_ancestor = self.apportion(w, default_ancestor, config);
+        }
+        self.execute_shifts(v);
+
+        let first = self.view_children[range.start];
+        let last = self.view_children[range.end - 1];
+        let midpoint = (self.prelim[first] + self.prelim[last]) / 2;
+
+        if let Some(left) = self.view_left_sibling[v] {
+            let prelim = self.prelim[left].saturating_add(self.sibling_separation(left, v, config));
+            self.prelim[v] = prelim;
+            self.modifier[v] = prelim.saturating_sub(midpoint);
+        } else {
+            self.prelim[v] = midpoint;
+        }
+    }
+
+    fn apportion(&mut self, v: usize, default_ancestor: usize, config: LayoutConfig) -> usize {
+        let Some(w) = self.view_left_sibling[v] else {
+            return default_ancestor;
+        };
+
+        let mut vir = v;
+        let mut vor = v;
+        let mut vil = w;
+        let mut vol = self.leftmost_sibling(v).unwrap_or(w);
+
+        let mut sir = self.modifier[vir];
+        let mut sor = self.modifier[vor];
+        let mut sil = self.modifier[vil];
+        let mut sol = self.modifier[vol];
+
+        let mut default_ancestor = default_ancestor;
+
+        while self.next_right(vil).is_some() && self.next_left(vir).is_some() {
+            vil = self.next_right(vil).expect("checked");
+            vir = self.next_left(vir).expect("checked");
+            vol = self.next_left(vol).unwrap_or(vol);
+            vor = self.next_right(vor).unwrap_or(vor);
+
+            self.ancestor[vor] = v;
+
+            let required = self.sibling_separation(vil, vir, config);
+            let shift = (self.prelim[vil] as i64 + sil as i64 + required as i64)
+                - (self.prelim[vir] as i64 + sir as i64);
+
+            if shift > 0 {
+                let a = self.ancestor_for(vil, v, default_ancestor);
+                self.move_subtree(a, v, shift as i32);
+                sir = sir.saturating_add(shift as i32);
+                sor = sor.saturating_add(shift as i32);
+            }
+
+            sil = sil.saturating_add(self.modifier[vil]);
+            sir = sir.saturating_add(self.modifier[vir]);
+            sol = sol.saturating_add(self.modifier[vol]);
+            sor = sor.saturating_add(self.modifier[vor]);
+        }
+
+        if self.next_right(vil).is_some() && self.next_right(vor).is_none() {
+            self.thread[vor] = self.next_right(vil);
+            self.modifier[vor] = self.modifier[vor].saturating_add(sil.saturating_sub(sor));
+        }
+
+        if self.next_left(vir).is_some() && self.next_left(vol).is_none() {
+            self.thread[vol] = self.next_left(vir);
+            self.modifier[vol] = self.modifier[vol].saturating_add(sir.saturating_sub(sol));
+            default_ancestor = v;
+        }
+
+        default_ancestor
+    }
+
+    fn ancestor_for(&self, vil: usize, v: usize, default_ancestor: usize) -> usize {
+        let candidate = self.ancestor[vil];
+        if self.view_parent.get(candidate).copied().flatten() == self.view_parent[v] {
+            candidate
+        } else {
+            default_ancestor
+        }
+    }
+
+    fn move_subtree(&mut self, wl: usize, wr: usize, shift: i32) {
+        let subtrees = self.view_number[wr].saturating_sub(self.view_number[wl]);
+        if subtrees == 0 {
+            return;
+        }
+
+        let shift_per_subtree = shift / subtrees as i32;
+        self.change[wr] = self.change[wr].saturating_sub(shift_per_subtree);
+        self.shift[wr] = self.shift[wr].saturating_add(shift);
+        self.change[wl] = self.change[wl].saturating_add(shift_per_subtree);
+        self.prelim[wr] = self.prelim[wr].saturating_add(shift);
+        self.modifier[wr] = self.modifier[wr].saturating_add(shift);
+    }
+
+    fn execute_shifts(&mut self, v: usize) {
+        let range = self.view_child_range[v].clone();
+        let mut shift = 0_i32;
+        let mut change = 0_i32;
+        for slot in range.rev() {
+            let w = self.view_children[slot];
+            self.prelim[w] = self.prelim[w].saturating_add(shift);
+            self.modifier[w] = self.modifier[w].saturating_add(shift);
+            change = change.saturating_add(self.change[w]);
+            shift = shift.saturating_add(self.shift[w]).saturating_add(change);
+        }
+    }
+
+    fn second_walk(&mut self, v: usize, m: i32) {
+        self.y_center[v] = self.prelim[v].saturating_add(m);
+        let range = self.view_child_range[v].clone();
+        let next_m = m.saturating_add(self.modifier[v]);
+        for slot in range {
+            let w = self.view_children[slot];
+            self.second_walk(w, next_m);
+        }
+    }
+
+    fn collect_subtree_nodes(&mut self, root: usize) {
+        self.subtree_nodes.clear();
+        self.depth_stack.clear();
+        self.depth_stack.push(DepthItem {
+            node_index: root,
+            depth: 0,
         });
+        while let Some(item) = self.depth_stack.pop() {
+            self.subtree_nodes.push(item.node_index);
+            let range = self.view_child_range[item.node_index].clone();
+            for slot in range.rev() {
+                let child = self.view_children[slot];
+                self.depth_stack.push(DepthItem {
+                    node_index: child,
+                    depth: 0,
+                });
+            }
+        }
     }
-}
-
-/// Computes a deterministic layout for a rooted forest.
-///
-/// Nodes whose `parent_id` is not present in the input are treated as roots. Use
-/// [`layout_forest_with_options`] with [`UnknownParentPolicy::Error`] to reject such inputs.
-#[must_use]
-pub fn layout_forest<Id>(
-    nodes: impl IntoIterator<Item = LayoutNode<Id>>,
-    config: LayoutConfig,
-) -> Result<LayoutOutput<Id>, LayoutError<Id>>
-where
-    Id: Copy + Ord + std::fmt::Debug,
-{
-    layout_forest_with_options(nodes, config, LayoutOptions::default())
-}
-
-#[must_use]
-pub fn layout_forest_with_options<Id>(
-    nodes: impl IntoIterator<Item = LayoutNode<Id>>,
-    config: LayoutConfig,
-    options: LayoutOptions,
-) -> Result<LayoutOutput<Id>, LayoutError<Id>>
-where
-    Id: Copy + Ord + std::fmt::Debug,
-{
-    let mut engine = ForestLayoutEngine::new(nodes, options)?;
-    let bounds = engine.layout_in_place(config);
-    let mut positions = BTreeMap::new();
-    for (id, point) in engine
-        .ids()
-        .iter()
-        .copied()
-        .zip(engine.positions().iter().copied())
-    {
-        positions.insert(id, point);
-    }
-    Ok(LayoutOutput { positions, bounds })
 }
 
 fn validate_node_sizes<Id: Copy>(nodes: &[LayoutNode<Id>]) -> Result<(), LayoutError<Id>> {
@@ -646,48 +1087,6 @@ struct CycleFrame {
     next_child_pos: usize,
 }
 
-fn build_postorder(
-    roots: &[usize],
-    children: &[usize],
-    child_range: &[Range<usize>],
-    node_count: usize,
-) -> Vec<usize> {
-    let mut postorder = Vec::with_capacity(node_count);
-    let mut stack: Vec<PostorderFrame> = Vec::with_capacity(node_count);
-
-    for &root_index in roots {
-        stack.push(PostorderFrame {
-            node_index: root_index,
-            next_child_pos: child_range[root_index].start,
-        });
-
-        while let Some(frame) = stack.last_mut() {
-            let node_index = frame.node_index;
-            let child_end = child_range[node_index].end;
-            if frame.next_child_pos >= child_end {
-                postorder.push(node_index);
-                stack.pop();
-                continue;
-            }
-
-            let child_index = children[frame.next_child_pos];
-            frame.next_child_pos += 1;
-            stack.push(PostorderFrame {
-                node_index: child_index,
-                next_child_pos: child_range[child_index].start,
-            });
-        }
-    }
-
-    postorder
-}
-
-#[derive(Clone, Copy)]
-struct PostorderFrame {
-    node_index: usize,
-    next_child_pos: usize,
-}
-
 fn compute_bounds(
     sizes: impl IntoIterator<Item = Size>,
     positions: impl IntoIterator<Item = Point>,
@@ -812,74 +1211,6 @@ mod tests {
     }
 
     #[test]
-    fn lays_out_a_tree_with_variable_sizes_deterministically() {
-        let config = LayoutConfig {
-            layer_spacing: 20,
-            sibling_spacing: 10,
-            root_spacing: 15,
-            origin: Point { x: 0, y: 0 },
-        };
-
-        let nodes = vec![
-            LayoutNode {
-                id: 1_u32,
-                parent_id: None,
-                size: Size {
-                    width: 100,
-                    height: 50,
-                },
-            },
-            LayoutNode {
-                id: 2_u32,
-                parent_id: Some(1),
-                size: Size {
-                    width: 80,
-                    height: 40,
-                },
-            },
-            LayoutNode {
-                id: 3_u32,
-                parent_id: Some(1),
-                size: Size {
-                    width: 120,
-                    height: 60,
-                },
-            },
-            LayoutNode {
-                id: 4_u32,
-                parent_id: Some(2),
-                size: Size {
-                    width: 70,
-                    height: 30,
-                },
-            },
-        ];
-
-        let output = layout_forest(nodes, config).expect("layout should succeed");
-
-        let expected_positions: BTreeMap<u32, Point> = [
-            (1, Point { x: 0, y: 30 }),
-            (2, Point { x: 120, y: 0 }),
-            (3, Point { x: 120, y: 50 }),
-            (4, Point { x: 220, y: 5 }),
-        ]
-        .into_iter()
-        .collect();
-
-        assert_eq!(output.positions, expected_positions);
-        assert_eq!(
-            output.bounds,
-            Rect {
-                origin: Point { x: 0, y: 0 },
-                size: Size {
-                    width: 290,
-                    height: 110
-                }
-            }
-        );
-    }
-
-    #[test]
     fn output_is_stable_across_input_ordering() {
         let config = LayoutConfig {
             layer_spacing: 20,
@@ -925,11 +1256,11 @@ mod tests {
 
         let nodes_b = vec![nodes_a[2], nodes_a[3], nodes_a[1], nodes_a[0]];
 
-        let output_a = layout_forest(nodes_a.clone(), config).expect("layout should succeed");
-        let output_a_second_run = layout_forest(nodes_a, config).expect("layout should succeed");
-        let output_b = layout_forest(nodes_b, config).expect("layout should succeed");
-        assert_eq!(output_a, output_a_second_run);
-        assert_eq!(output_a, output_b);
+        let snapshot_a = layout_snapshot(nodes_a.clone(), config);
+        let snapshot_a_second = layout_snapshot(nodes_a, config);
+        let snapshot_b = layout_snapshot(nodes_b, config);
+        assert_eq!(snapshot_a, snapshot_a_second);
+        assert_eq!(snapshot_a, snapshot_b);
     }
 
     #[test]
@@ -986,25 +1317,8 @@ mod tests {
 
         let sizes_by_id: BTreeMap<u32, Size> =
             nodes.iter().map(|node| (node.id, node.size)).collect();
-        let output = layout_forest(nodes, config).expect("layout should succeed");
-        let mut ids: Vec<u32> = output.positions.keys().copied().collect();
-        ids.sort_unstable();
-
-        for i in 0..ids.len() {
-            for j in (i + 1)..ids.len() {
-                let a_id = ids[i];
-                let b_id = ids[j];
-                let a_node = output.positions.get(&a_id).copied().unwrap();
-                let b_node = output.positions.get(&b_id).copied().unwrap();
-                let a_size = sizes_by_id[&a_id];
-                let b_size = sizes_by_id[&b_id];
-
-                assert!(
-                    !rect_intersects(a_node, a_size, b_node, b_size),
-                    "nodes {a_id} and {b_id} overlap: {a_node:?} {a_size:?} vs {b_node:?} {b_size:?}",
-                );
-            }
-        }
+        let snapshot = layout_snapshot(nodes, config);
+        assert_no_overlaps_view(&snapshot.ids, &snapshot.positions, &sizes_by_id);
     }
 
     #[test]
@@ -1028,7 +1342,8 @@ mod tests {
             },
         ];
 
-        let err = layout_forest(nodes, LayoutConfig::default()).expect_err("should detect cycle");
+        let err = ForestLayoutEngine::new(nodes, LayoutOptions::default())
+            .expect_err("should detect cycle");
         assert_eq!(err, LayoutError::CycleDetected { id: 1 });
     }
 
@@ -1043,9 +1358,8 @@ mod tests {
             },
         }];
 
-        let err = layout_forest_with_options(
+        let err = ForestLayoutEngine::new(
             nodes,
-            LayoutConfig::default(),
             LayoutOptions {
                 unknown_parent_policy: UnknownParentPolicy::Error,
             },
@@ -1126,22 +1440,15 @@ mod tests {
 
         alloc_counter::CountingAllocator::begin();
         engine.layout_in_place(config);
-        let (idx_3, idx_4, idx_10, baseline_pos_3, baseline_pos_4, baseline_pos_10) = {
-            let ids = engine.ids();
-            let positions = engine.positions();
-            assert_no_overlaps(ids, positions, engine.sizes());
-            let idx_3 = index_of_id(ids, 3);
-            let idx_4 = index_of_id(ids, 4);
-            let idx_10 = index_of_id(ids, 10);
-            (
-                idx_3,
-                idx_4,
-                idx_10,
-                positions[idx_3],
-                positions[idx_4],
-                positions[idx_10],
-            )
-        };
+        let view = engine.output_view();
+        assert_eq!(view.ids, engine.ids());
+        assert_no_overlaps_aligned(view.ids, view.positions, engine.sizes());
+        let idx_3 = index_of_id(view.ids, 3);
+        let idx_4 = index_of_id(view.ids, 4);
+        let idx_10 = index_of_id(view.ids, 10);
+        let baseline_pos_3 = view.positions[idx_3];
+        let baseline_pos_4 = view.positions[idx_4];
+        let baseline_pos_10 = view.positions[idx_10];
 
         let mut saw_sibling_push_away = false;
         let mut saw_child_push_away = false;
@@ -1168,11 +1475,12 @@ mod tests {
             engine.set_size(2, size).expect("set_size should succeed");
             engine.layout_in_place(config);
             {
-                let positions = engine.positions();
-                assert_no_overlaps(engine.ids(), positions, engine.sizes());
-                let pos_3 = positions[idx_3];
-                let pos_4 = positions[idx_4];
-                let pos_10 = positions[idx_10];
+                let view = engine.output_view();
+                assert_eq!(view.ids, engine.ids());
+                assert_no_overlaps_aligned(view.ids, view.positions, engine.sizes());
+                let pos_3 = view.positions[idx_3];
+                let pos_4 = view.positions[idx_4];
+                let pos_10 = view.positions[idx_10];
                 saw_sibling_push_away |= pos_3.y != baseline_pos_3.y;
                 saw_child_push_away |= pos_4.x != baseline_pos_4.x;
                 saw_root_stack_push_away |= pos_10.y != baseline_pos_10.y;
@@ -1188,13 +1496,294 @@ mod tests {
         assert_eq!(alloc_counter::CountingAllocator::count(), 0);
     }
 
+    #[test]
+    fn hiding_intermediate_ancestors_elides_hops() {
+        let config = LayoutConfig {
+            layer_spacing: 20,
+            sibling_spacing: 10,
+            root_spacing: 15,
+            origin: Point { x: 0, y: 0 },
+        };
+
+        let nodes = vec![
+            LayoutNode {
+                id: 1_u32,
+                parent_id: None,
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 2_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 3_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 4_u32,
+                parent_id: Some(3),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+        ];
+
+        let mut engine =
+            ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
+        engine
+            .set_visible(2, false)
+            .expect("set_visible should succeed");
+        engine
+            .set_visible(3, false)
+            .expect("set_visible should succeed");
+        engine.layout_in_place(config);
+        let view = engine.output_view();
+
+        assert_eq!(view.ids, &[1, 4]);
+        assert_eq!(
+            view.edges,
+            &[LayoutEdge {
+                from: 1,
+                to: 4,
+                elided_hops: 2,
+            }]
+        );
+    }
+
+    #[test]
+    fn collapsing_a_visible_node_prunes_descendants() {
+        let config = LayoutConfig::default();
+        let nodes = vec![
+            LayoutNode {
+                id: 1_u32,
+                parent_id: None,
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 2_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 3_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+        ];
+
+        let mut engine =
+            ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
+        engine
+            .set_collapsed(2, true)
+            .expect("set_collapsed should succeed");
+        engine.layout_in_place(config);
+        let view = engine.output_view();
+
+        assert_eq!(view.ids, &[1, 2]);
+        assert_eq!(
+            view.edges,
+            &[LayoutEdge {
+                from: 1,
+                to: 2,
+                elided_hops: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn collapsing_a_hidden_node_does_not_prune_descendants() {
+        let config = LayoutConfig::default();
+        let nodes = vec![
+            LayoutNode {
+                id: 1_u32,
+                parent_id: None,
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 2_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+            LayoutNode {
+                id: 3_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 10,
+                    height: 10,
+                },
+            },
+        ];
+
+        let mut engine =
+            ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
+        engine
+            .set_visible(2, false)
+            .expect("set_visible should succeed");
+        engine
+            .set_collapsed(2, true)
+            .expect("set_collapsed should succeed");
+        engine.layout_in_place(config);
+        let view = engine.output_view();
+
+        assert_eq!(view.ids, &[1, 3]);
+        assert_eq!(
+            view.edges,
+            &[LayoutEdge {
+                from: 1,
+                to: 3,
+                elided_hops: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn can_overlap_vertically_across_depths_when_x_is_disjoint() {
+        let config = LayoutConfig {
+            layer_spacing: 20,
+            sibling_spacing: 10,
+            root_spacing: 15,
+            origin: Point { x: 0, y: 0 },
+        };
+
+        // 1
+        // ├── 2
+        // │   ├── 4
+        // │   └── 5
+        // └── 3
+        let nodes = vec![
+            LayoutNode {
+                id: 1_u32,
+                parent_id: None,
+                size: Size {
+                    width: 100,
+                    height: 30,
+                },
+            },
+            LayoutNode {
+                id: 2_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+            },
+            LayoutNode {
+                id: 3_u32,
+                parent_id: Some(1),
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+            },
+            LayoutNode {
+                id: 4_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+            },
+            LayoutNode {
+                id: 5_u32,
+                parent_id: Some(2),
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+            },
+        ];
+
+        let sizes_by_id: BTreeMap<u32, Size> =
+            nodes.iter().map(|node| (node.id, node.size)).collect();
+        let snapshot = layout_snapshot(nodes, config);
+
+        let idx_3 = index_of_id(&snapshot.ids, 3);
+        let idx_4 = index_of_id(&snapshot.ids, 4);
+        let idx_5 = index_of_id(&snapshot.ids, 5);
+
+        let rect_3 = rect_for(&snapshot.ids, &snapshot.positions, &sizes_by_id, idx_3);
+        let rect_4 = rect_for(&snapshot.ids, &snapshot.positions, &sizes_by_id, idx_4);
+        let rect_5 = rect_for(&snapshot.ids, &snapshot.positions, &sizes_by_id, idx_5);
+
+        let overlaps_y = intervals_overlap(
+            (rect_3.origin.y, rect_3.bottom()),
+            (rect_4.origin.y, rect_4.bottom()),
+        ) || intervals_overlap(
+            (rect_3.origin.y, rect_3.bottom()),
+            (rect_5.origin.y, rect_5.bottom()),
+        );
+        assert!(
+            overlaps_y,
+            "expected node 3 (depth 1) to overlap vertically with at least one grandchild (depth 2)"
+        );
+
+        // Even if Y overlaps, the rectangles should not intersect because their depth columns
+        // are disjoint in X.
+        assert!(
+            !rect_intersects(rect_3.origin, rect_3.size, rect_4.origin, rect_4.size),
+            "expected node 3 and node 4 to be disjoint in 2D"
+        );
+        assert!(
+            !rect_intersects(rect_3.origin, rect_3.size, rect_5.origin, rect_5.size),
+            "expected node 3 and node 5 to be disjoint in 2D"
+        );
+    }
+
+    fn layout_snapshot(nodes: Vec<LayoutNode<u32>>, config: LayoutConfig) -> LayoutSnapshot<u32> {
+        let mut engine =
+            ForestLayoutEngine::new(nodes, LayoutOptions::default()).expect("engine should build");
+        engine.layout_in_place(config);
+        let view = engine.output_view();
+        LayoutSnapshot {
+            ids: view.ids.to_vec(),
+            positions: view.positions.to_vec(),
+            edges: view.edges.to_vec(),
+            bounds: view.bounds,
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct LayoutSnapshot<Id> {
+        ids: Vec<Id>,
+        positions: Vec<Point>,
+        edges: Vec<LayoutEdge<Id>>,
+        bounds: Rect,
+    }
+
     fn index_of_id(ids: &[u32], id: u32) -> usize {
         ids.iter()
             .position(|candidate| *candidate == id)
             .expect("id should exist")
     }
 
-    fn assert_no_overlaps(ids: &[u32], positions: &[Point], sizes: &[Size]) {
+    fn assert_no_overlaps_aligned(ids: &[u32], positions: &[Point], sizes: &[Size]) {
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
                 let a_id = ids[i];
@@ -1209,5 +1798,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn assert_no_overlaps_view(
+        ids: &[u32],
+        positions: &[Point],
+        sizes_by_id: &BTreeMap<u32, Size>,
+    ) {
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let a_id = ids[i];
+                let b_id = ids[j];
+                let a_pos = positions[i];
+                let b_pos = positions[j];
+                let a_size = sizes_by_id[&a_id];
+                let b_size = sizes_by_id[&b_id];
+                assert!(
+                    !rect_intersects(a_pos, a_size, b_pos, b_size),
+                    "nodes {a_id} and {b_id} overlap: {a_pos:?} {a_size:?} vs {b_pos:?} {b_size:?}",
+                );
+            }
+        }
+    }
+
+    fn rect_for(
+        ids: &[u32],
+        positions: &[Point],
+        sizes_by_id: &BTreeMap<u32, Size>,
+        index: usize,
+    ) -> Rect {
+        let id = ids[index];
+        Rect {
+            origin: positions[index],
+            size: sizes_by_id[&id],
+        }
+    }
+
+    fn intervals_overlap(a: (i32, i32), b: (i32, i32)) -> bool {
+        a.0 < b.1 && a.1 > b.0
     }
 }
