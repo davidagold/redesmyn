@@ -5003,6 +5003,8 @@ dependencies = [
  "gpui",
  "redesmyn_client_api",
  "redesmyn_ids",
+ "redesmyn_logging",
+ "redesmyn_markdown",
  "redesmyn_protocol",
  "redesmyn_session_view_model",
  "redesmyn_transport",

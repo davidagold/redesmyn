@@ -2,16 +2,19 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::str::FromStr as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
-    SharedString, Subscription, Task, WeakEntity, Window, div, px,
+    App, AsyncApp, ClipboardItem, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
+    Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window, div, px,
 };
 
 use gpui::prelude::*;
 
+use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_client_api::Client;
 use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
 use redesmyn_protocol::client::{
@@ -19,13 +22,15 @@ use redesmyn_protocol::client::{
     ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
     SubscriptionEvent,
 };
+use redesmyn_protocol::session::SessionEventKind;
 use redesmyn_protocol::ui_driver::UiComposerState;
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, SessionEvent};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, ScrollArea, TextArea, TextButton, TextInput, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, MarkdownView, ScrollArea, TextArea, TextButton, TextInput,
+    TextInputEvent,
 };
 use redesmyn_ui::utils::theme_for_window;
 
@@ -129,6 +134,47 @@ struct ScrollRestore {
     top_event_id: Option<SessionEventId>,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct MarkdownCacheStats {
+    message_events: usize,
+    cached: usize,
+    truncated: usize,
+    total_bytes: usize,
+}
+
+fn cache_markdown_for_events(
+    cache: &mut HashMap<SessionEventId, Arc<MarkdownDoc>>,
+    events: &[SessionEvent],
+) -> MarkdownCacheStats {
+    let mut stats = MarkdownCacheStats::default();
+    let options = MarkdownParseOptions::default();
+
+    for event in events {
+        let text = match &event.kind {
+            SessionEventKind::UserMessage(msg) => msg.text.as_str(),
+            SessionEventKind::AssistantMessage(msg) => msg.text.as_str(),
+            _ => continue,
+        };
+
+        stats.message_events = stats.message_events.saturating_add(1);
+        stats.total_bytes = stats.total_bytes.saturating_add(text.len());
+
+        if cache.contains_key(&event.session_event_id) {
+            continue;
+        }
+
+        let doc = parse_markdown(text, options);
+        if doc.truncation.is_some() {
+            stats.truncated = stats.truncated.saturating_add(1);
+        }
+
+        cache.insert(event.session_event_id, Arc::new(doc));
+        stats.cached = stats.cached.saturating_add(1);
+    }
+
+    stats
+}
+
 pub struct SessionView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
@@ -137,6 +183,7 @@ pub struct SessionView {
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
+    markdown_cache: HashMap<SessionEventId, Arc<MarkdownDoc>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -214,6 +261,7 @@ impl SessionView {
             composer_input,
             pending_focus_composer: false,
             feed: None,
+            markdown_cache: HashMap::new(),
             client,
             _client_task: client_task,
             subscription_task: None,
@@ -243,6 +291,7 @@ impl SessionView {
             self.pending_scroll_restore = None;
             self.error = None;
             self.feed = None;
+            self.markdown_cache.clear();
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
@@ -306,6 +355,7 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.pending_scroll_restore = None;
+        self.markdown_cache.clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -390,6 +440,18 @@ impl SessionView {
                     return;
                 }
 
+                let stats = cache_markdown_for_events(
+                    &mut self.markdown_cache,
+                    std::slice::from_ref(&resp.event),
+                );
+                if stats.truncated > 0 {
+                    redesmyn_logging::tracing::warn!(
+                        session_event_id = %resp.event.session_event_id,
+                        total_bytes = stats.total_bytes,
+                        "markdown input truncated for rendering"
+                    );
+                }
+
                 feed.apply_live_event(resp.event);
                 apply_scroll_intents(feed, &self.scroll_handle);
             }
@@ -429,6 +491,22 @@ impl SessionView {
                     created_at: event.created_at,
                     session_event_id: event.session_event_id,
                 });
+
+                let stats = cache_markdown_for_events(&mut self.markdown_cache, &resp.events);
+                if stats.cached > 0 {
+                    let span = redesmyn_logging::redesmyn_info_span!(
+                        "session_markdown_cache_history",
+                        session_id = %feed.session_id,
+                        events = resp.events.len(),
+                        message_events = stats.message_events,
+                        cached = stats.cached,
+                        truncated = stats.truncated,
+                        total_bytes = stats.total_bytes
+                    );
+                    let _guard = span.enter();
+                    redesmyn_logging::tracing::info!("cached markdown docs");
+                }
+
                 feed.apply_history_page(resp.events, resp.next_cursor);
                 feed.set_at_bottom(true);
                 self.scroll_handle.scroll_to_bottom();
@@ -511,6 +589,17 @@ impl SessionView {
             SubscriptionEvent::SessionEvent(ev) => {
                 if ev.session_id != feed.session_id {
                     return;
+                }
+                let stats = cache_markdown_for_events(
+                    &mut self.markdown_cache,
+                    std::slice::from_ref(&ev),
+                );
+                if stats.truncated > 0 {
+                    redesmyn_logging::tracing::warn!(
+                        session_event_id = %ev.session_event_id,
+                        total_bytes = stats.total_bytes,
+                        "markdown input truncated for rendering"
+                    );
                 }
                 feed.apply_live_event(ev);
                 apply_scroll_intents(feed, scroll_handle);
@@ -627,6 +716,21 @@ impl SessionView {
 
         match response {
             Ok(resp) => {
+                let stats = cache_markdown_for_events(&mut self.markdown_cache, &resp.events);
+                if stats.cached > 0 {
+                    let span = redesmyn_logging::redesmyn_info_span!(
+                        "session_markdown_cache_older",
+                        session_id = %feed.session_id,
+                        events = resp.events.len(),
+                        message_events = stats.message_events,
+                        cached = stats.cached,
+                        truncated = stats.truncated,
+                        total_bytes = stats.total_bytes
+                    );
+                    let _guard = span.enter();
+                    redesmyn_logging::tracing::info!("cached markdown docs");
+                }
+
                 feed.apply_history_page(resp.events, resp.next_cursor);
                 if let Some(restore) = self.pending_scroll_restore.take() {
                     self.restore_scroll_after_prepend(restore, cx);
@@ -779,53 +883,136 @@ impl Render for SessionView {
                         )),
                 ),
                 SessionTimelineItem::Event(item) => {
-                    let label = match item.content {
-                        redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg) => {
-                            format!("user: {}", msg.text)
-                        }
-                        redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
+                    let event_key = session_event_id_key(item.session_event_id);
+                    let bubble_id: ElementId = ("session_event", event_key).into();
+
+                    match item.content {
+                        redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg)
+                        | redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
                             msg,
                         ) => {
-                            format!("assistant: {}", msg.text)
-                        }
-                        redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
-                            tool,
-                        ) => format!("tool: {} {}", tool.tool_name, tool.input_preview),
-                        redesmyn_session_view_model::SessionEventItemContent::ToolResult(tool) => {
-                            let status = tool
-                                .error
-                                .as_ref()
-                                .map(|e| format!("error: {}", e.message))
-                                .unwrap_or_else(|| "ok".to_owned());
-                            let preview = tool.output_preview.trim();
-                            if preview.is_empty() {
-                                format!("tool_result: {} ({status})", tool.tool_name)
-                            } else {
-                                format!("tool_result: {} ({status}): {preview}", tool.tool_name)
-                            }
-                        }
-                        redesmyn_session_view_model::SessionEventItemContent::StatusUpdate(
-                            status,
-                        ) => status
-                            .message
-                            .as_deref()
-                            .filter(|msg| !msg.trim().is_empty())
-                            .map(|msg| format!("status: {msg}"))
-                            .unwrap_or_else(|| format!("status: {:?}", status.turn_state)),
-                        _ => format!("{:?}", item.kind),
-                    };
+                            let (role_label, bg) = match msg.role {
+                                redesmyn_session_view_model::SessionMessageRole::User => (
+                                    "user",
+                                    theme.colors.accent.opacity(0.65),
+                                ),
+                                redesmyn_session_view_model::SessionMessageRole::Assistant => (
+                                    "assistant",
+                                    theme.colors.surface_elevated.opacity(0.4),
+                                ),
+                                redesmyn_session_view_model::SessionMessageRole::Tool => (
+                                    "tool",
+                                    theme.colors.surface_elevated.opacity(0.6),
+                                ),
+                            };
 
-                    list.child(
-                        div()
-                            .id(("session_event", session_event_id_key(item.session_event_id)))
-                            .px(theme.spacing.sm)
-                            .py(theme.spacing.sm)
-                            .rounded_sm()
-                            .bg(theme.colors.surface_elevated.opacity(0.4))
-                            .text_sm()
-                            .text_color(theme.colors.foreground)
-                            .child(label),
-                    )
+                            let markdown = self
+                                .markdown_cache
+                                .entry(item.session_event_id)
+                                .or_insert_with(|| {
+                                    Arc::new(parse_markdown(
+                                        &msg.text,
+                                        MarkdownParseOptions::default(),
+                                    ))
+                                })
+                                .clone();
+
+                            let mut bubble = div()
+                                .id(bubble_id.clone())
+                                .flex()
+                                .flex_col()
+                                .gap(theme.spacing.sm)
+                                .px(theme.spacing.md)
+                                .py(theme.spacing.md)
+                                .rounded_md()
+                                .bg(bg)
+                                .child(
+                                    div()
+                                        .id((bubble_id.clone(), "meta"))
+                                        .text_xs()
+                                        .text_color(theme.colors.foreground_muted)
+                                        .child(role_label),
+                                )
+                                .child(MarkdownView::new(
+                                    (bubble_id.clone(), "markdown"),
+                                    markdown,
+                                ));
+
+                            if let Some(artifact) = msg.full_text_artifact {
+                                let artifact_id = artifact.artifact_id.to_string();
+                                let artifact_copy = artifact_id.clone();
+
+                                bubble = bubble.child(
+                                    div()
+                                        .id((bubble_id.clone(), "artifact"))
+                                        .flex()
+                                        .flex_row()
+                                        .gap(theme.spacing.sm)
+                                        .items_center()
+                                        .justify_between()
+                                        .px(theme.spacing.md)
+                                        .py(theme.spacing.sm)
+                                        .rounded_sm()
+                                        .bg(theme.colors.surface_elevated.opacity(0.35))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_xs()
+                                                .text_color(theme.colors.foreground_muted)
+                                                .child(format!(
+                                                    "Full message stored as artifact {artifact_id}."
+                                                )),
+                                        )
+                                        .child(
+                                            TextButton::new(
+                                                (bubble_id.clone(), "copy_artifact"),
+                                                "Copy artifact id",
+                                            )
+                                            .kind(ButtonKind::Ghost)
+                                            .on_click(move |event, _window, cx| {
+                                                if event.standard_click() {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(
+                                                            artifact_copy.clone(),
+                                                        ),
+                                                    );
+                                                }
+                                            }),
+                                        ),
+                                );
+                            }
+
+                            list.child(bubble)
+                        }
+                        other => {
+                            let label = match other {
+                                redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
+                                    tool,
+                                ) => {
+                                    format!("tool invocation: {} — {}", tool.tool_name, tool.input_preview)
+                                }
+                                redesmyn_session_view_model::SessionEventItemContent::ToolResult(
+                                    tool,
+                                ) => {
+                                    format!("tool result: {} — {}", tool.tool_name, tool.output_preview)
+                                }
+                                _ => format!("{:?}", item.kind),
+                            };
+
+                            list.child(
+                                div()
+                                    .id(bubble_id)
+                                    .px(theme.spacing.sm)
+                                    .py(theme.spacing.sm)
+                                    .rounded_sm()
+                                    .bg(theme.colors.surface_elevated.opacity(0.4))
+                                    .text_sm()
+                                    .text_color(theme.colors.foreground)
+                                    .child(label),
+                            )
+                        }
+                    }
                 }
             },
         );
