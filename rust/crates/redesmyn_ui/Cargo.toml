@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 gpui.workspace = true
 redesmyn_config.workspace = true
+redesmyn_markdown.workspace = true
 redesmyn_logging.workspace = true
 serde.workspace = true
 serde_json.workspace = true
