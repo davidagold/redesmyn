@@ -73,13 +73,13 @@ enum InterfaceMode {
   INTERFACE_MODE_STRUCTURED = 2;
 }
 
-// Best-effort external conversation handle for structured agents.
+// Best-effort external session handle for structured agents.
 message ExternalSessionRef {
   oneof ref {
     ExternalSessionNone none = 1;
     CodexThreadRef codex_thread = 2;
     ClaudeSessionRef claude_session = 3;
-    CodexConversationRef codex_conversation = 4;
+    CodexSessionRef codex_session = 4;
     UnknownExternalSessionRef unknown = 100;
   }
 }
@@ -87,21 +87,21 @@ message ExternalSessionRef {
 message ExternalSessionNone {}
 
 message CodexThreadRef {
-  // Stable external conversation id.
+  // Stable external session id.
   string thread_id = 1;
   // Best-effort external turn id.
   optional string turn_id = 2;
 }
 
-message CodexConversationRef {
-  // Stable external conversation id (app-server).
-  string conversation_id = 1;
+message CodexSessionRef {
+  // Stable external session id (app-server).
+  string session_id = 1;
   // Best-effort external turn id.
   optional string turn_id = 2;
 }
 
 message ClaudeSessionRef {
-  // Stable external conversation id.
+  // Stable external session id.
   string session_id = 1;
 }
 
@@ -119,7 +119,7 @@ message SessionEvent {
 
   SessionScope scope = 3;
 
-  // SessionId (ULID bytes, length = 16): conversation id.
+  // SessionId (ULID bytes, length = 16): session identity.
   bytes session_id = 4;
 
   // Best-effort turn identifier; stable within an external harness when available.

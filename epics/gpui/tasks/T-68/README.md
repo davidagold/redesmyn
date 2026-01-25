@@ -34,8 +34,8 @@ Implement a daemon-side **Codex app-server runner** that:
 
 - launches `codex app-server` in the correct repo/worktree/sandbox context,
 - speaks Codex app-server protocol v2 (JSON-RPC over stdio with `Content-Length` framing),
-- converts Codex “conversation diff” notifications into Redesmyn `SessionEvent` emissions (T-14),
-- persists the external conversation id as the resumable session handle,
+- converts Codex “session diff” notifications (Codex calls them `updateConversation`) into Redesmyn `SessionEvent` emissions (T-14),
+- persists the external session id (Codex calls it `conversationId`) as the resumable session handle,
 - and integrates with control plane “send message” semantics (T-41) and session persistence (T-40).
 
 ## Requirements
@@ -59,8 +59,8 @@ Codex app-server protocol is JSON-RPC over stdio with LSP-style framing:
 
 Implementation guidance:
 
-- Prefer using Codex’s published protocol crate (`codex-app-server-protocol`) as a pinned git dependency (reproducible pin; no floating main).
-- If we cannot depend on it, reimplement the framing based on that crate’s `framing.rs` (keep it minimal and tested).
+- Implement the minimal framing + message models in-tree (keep it small and tested).
+- Track upstream protocol drift via a separate conformance harness ticket (T-76) rather than pulling the full Codex protocol crate into every build.
 
 ### 3) JSON-RPC method surface (protocol v2, minimum viable subset)
 
@@ -70,7 +70,7 @@ We target the v2 method names and message shapes as defined in Codex’s `codex-
 
 - `initialize` (must include `protocolVersion` and auth params; see below)
 - `newConversation`
-- `userMessage` (supports `resume: Option<String>` to resume an existing conversation)
+- `userMessage` (supports `resume: Option<String>` to resume an existing session)
 - `cancel`
 - `commandExecutionApproval`
 - `fileChangeApproval`
@@ -91,7 +91,7 @@ We target the v2 method names and message shapes as defined in Codex’s `codex-
 
 **Server → App requests**
 
-- `conversationId` (the client responds with the active conversation id)
+- `conversationId` (the client responds with the active session id)
 - `loginWithChatGPT` (OAuth bootstrap; client opens URL in the user’s browser)
 
 Auth basics:
@@ -103,9 +103,9 @@ Auth basics:
 
 Codex’s primary stream is the `updateConversation` notification:
 
-- `updateConversation.params.diff: Vec<ConversationDiff>`
+- `updateConversation.params.diff: Vec<SessionDiff>`
 - Each diff item is tagged (examples include):
-  - `newConversation` (includes `conversation_id`)
+  - `newConversation` (includes `conversationId`, which we treat as the external session id)
   - `newTurn`
   - `newMessage` / `updateMessage`
   - `newToolCall` / `updateToolCall`
@@ -115,7 +115,7 @@ Codex’s primary stream is the `updateConversation` notification:
 
 Define a deterministic mapping to Redesmyn `SessionEvent` (T-14) such that:
 
-- The session’s `ExternalSessionRef` is persisted as soon as the conversation id is known.
+- The session’s `ExternalSessionRef` is persisted as soon as the external session id is known.
 - “session == conversation; turns are events” holds:
   - `newTurn` emits `agent.turn_started`,
   - turn completion/failure is emitted deterministically (based on diff sequence).
@@ -135,7 +135,7 @@ Where Codex uses “update*” diff items, prefer to emit:
 Runner must support the control plane semantics (T-41):
 
 - Start a new conversation when no external handle exists.
-- Resume an existing conversation when `ExternalSessionRef` is present.
+- Resume an existing session when `ExternalSessionRef` is present.
 - Provide an “interrupt/cancel” path:
   - use `cancel` request where appropriate,
   - always surface visible lifecycle updates (no silent failure).
@@ -147,20 +147,20 @@ Provide deterministic tests without requiring Codex installed:
 - Implement a small fake app-server process fixture that:
   - speaks the framed JSON-RPC transport,
   - accepts `initialize`/`newConversation`/`userMessage`,
-  - emits `updateConversation` diffs in a controlled way (including `conversation_id`),
+  - emits `updateConversation` diffs in a controlled way (including the external session id),
   - and supports `cancel`.
 
 Acceptance tests should cover:
 
-- conversation id capture + persistence,
-- at least one user message → assistant message turn,
-- interrupt/cancel,
-- and robust parsing of framing under chunked reads.
+- session id capture + persistence,
+  - at least one user message → assistant message turn,
+  - interrupt/cancel,
+  - and robust parsing of framing under chunked reads.
 
 ## Acceptance criteria
 
 - Daemon can run a mock Codex app-server and emit Redesmyn `SessionEvent`s suitable for SessionView history.
-- External conversation id is captured and persisted promptly and used for subsequent resumed turns.
+- External session id is captured and persisted promptly and used for subsequent resumed turns.
 - Runner integrates with control-plane “send message” semantics (conflict handling stays in control plane; runner exposes the right primitive operations).
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).

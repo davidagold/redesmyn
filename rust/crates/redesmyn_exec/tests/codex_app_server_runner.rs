@@ -173,7 +173,7 @@ impl FakeV2State {
 }
 
 async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2State>) {
-    let conversation_id: &str = "conv_test";
+    let session_id: &str = "session_test";
 
     let (mut reader, writer) = tokio::io::split(stream);
     let writer: Writer = Arc::new(Mutex::new(writer));
@@ -218,7 +218,7 @@ async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2St
                     send_response(
                         &writer,
                         id,
-                        serde_json::json!({ "conversationId": conversation_id }),
+                        serde_json::json!({ "conversationId": session_id }),
                     )
                     .await;
                 }
@@ -267,7 +267,7 @@ async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2St
                             "updateConversation",
                             serde_json::json!({
                                 "diff": [
-                                    { "type": "newConversation", "conversationId": conversation_id },
+                                    { "type": "newConversation", "conversationId": session_id },
                                     { "type": "newTurn", "turnId": turn_id },
                                     { "type": "newMessage", "messageId": user_message_id, "role": "user", "content": prompt, "done": true }
                                 ]
@@ -453,13 +453,13 @@ async fn collect_until_turn_started(
     }
 }
 
-fn find_latest_codex_conversation(events: &[SessionEvent]) -> Option<(String, Option<String>)> {
+fn find_latest_codex_session(events: &[SessionEvent]) -> Option<(String, Option<String>)> {
     events.iter().rev().find_map(|ev| match &ev.kind {
         SessionEventKind::TurnStarted(ts) => match ts.external_session_ref.as_ref()? {
-            ExternalSessionRef::CodexConversation {
-                conversation_id,
+            ExternalSessionRef::CodexSession {
+                session_id,
                 turn_id,
-            } => Some((conversation_id.clone(), turn_id.clone())),
+            } => Some((session_id.clone(), turn_id.clone())),
             _ => None,
         },
         _ => None,
@@ -467,7 +467,7 @@ fn find_latest_codex_conversation(events: &[SessionEvent]) -> Option<(String, Op
 }
 
 #[tokio::test]
-async fn initialize_new_conversation_user_message_emits_codex_conversation_ref() {
+async fn initialize_new_session_user_message_emits_codex_session_ref() {
     let (frames_tx, mut frames_rx) = mpsc::channel(256);
     let tmp = tempfile::tempdir().expect("tempdir");
     let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
@@ -489,7 +489,7 @@ async fn initialize_new_conversation_user_message_emits_codex_conversation_ref()
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
-    let session_id = supervisor
+    let daemon_session_id = supervisor
         .start_session(
             task_id,
             AppServerSessionSpec {
@@ -503,7 +503,7 @@ async fn initialize_new_conversation_user_message_emits_codex_conversation_ref()
 
     let _ = supervisor
         .send_message(
-            session_id,
+            daemon_session_id,
             AppServerTurnIntent::StartNew {
                 prompt: "hi".to_owned(),
             },
@@ -512,11 +512,11 @@ async fn initialize_new_conversation_user_message_emits_codex_conversation_ref()
         .expect("send_message");
 
     let events =
-        collect_until_turn_completed(&mut frames_rx, session_id, Duration::from_secs(5)).await;
+        collect_until_turn_completed(&mut frames_rx, daemon_session_id, Duration::from_secs(5))
+            .await;
 
-    let (conversation_id, turn_id) =
-        find_latest_codex_conversation(&events).expect("conversation id");
-    assert_eq!(conversation_id, "conv_test");
+    let (codex_session_id, turn_id) = find_latest_codex_session(&events).expect("session id");
+    assert_eq!(codex_session_id, "session_test");
     assert!(turn_id.is_some(), "expected turn id to be present");
 
     assert!(events.iter().any(|e| matches!(
@@ -525,7 +525,7 @@ async fn initialize_new_conversation_user_message_emits_codex_conversation_ref()
     )));
 
     supervisor
-        .stop_session(session_id)
+        .stop_session(daemon_session_id)
         .await
         .expect("stop_session");
     supervisor.shutdown().await;
@@ -555,7 +555,7 @@ async fn resume_sets_user_message_resume_field() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
-    let session_id = supervisor
+    let daemon_session_id = supervisor
         .start_session(
             task_id,
             AppServerSessionSpec {
@@ -569,7 +569,7 @@ async fn resume_sets_user_message_resume_field() {
 
     let _ = supervisor
         .send_message(
-            session_id,
+            daemon_session_id,
             AppServerTurnIntent::StartNew {
                 prompt: "first".to_owned(),
             },
@@ -578,16 +578,17 @@ async fn resume_sets_user_message_resume_field() {
         .expect("send_message");
 
     let first_events =
-        collect_until_turn_completed(&mut frames_rx, session_id, Duration::from_secs(5)).await;
-    let (conversation_id, _turn_id) =
-        find_latest_codex_conversation(&first_events).expect("conversation id");
+        collect_until_turn_completed(&mut frames_rx, daemon_session_id, Duration::from_secs(5))
+            .await;
+    let (codex_session_id, _turn_id) =
+        find_latest_codex_session(&first_events).expect("session id");
 
     let _ = supervisor
         .send_message(
-            session_id,
+            daemon_session_id,
             AppServerTurnIntent::Resume {
-                external: DomainExternalSessionRef::CodexConversation {
-                    conversation_id: conversation_id.clone(),
+                external: DomainExternalSessionRef::CodexSession {
+                    session_id: codex_session_id.clone(),
                     turn_id: None,
                 },
                 prompt: "again".to_owned(),
@@ -597,7 +598,8 @@ async fn resume_sets_user_message_resume_field() {
         .expect("send_message");
 
     let second_events =
-        collect_until_turn_completed(&mut frames_rx, session_id, Duration::from_secs(5)).await;
+        collect_until_turn_completed(&mut frames_rx, daemon_session_id, Duration::from_secs(5))
+            .await;
     assert!(second_events.iter().any(|e| matches!(
         &e.kind,
         SessionEventKind::AssistantMessage(m) if m.text == "echo: again"
@@ -610,13 +612,13 @@ async fn resume_sets_user_message_resume_field() {
         .clone();
     assert_eq!(resumes.len(), 2);
     assert_eq!(resumes[0], None);
-    assert_eq!(resumes[1], Some(conversation_id));
+    assert_eq!(resumes[1], Some(codex_session_id));
 
     assert_eq!(counters.new_conversation_calls.load(Ordering::Relaxed), 1);
     assert_eq!(counters.user_message_calls.load(Ordering::Relaxed), 2);
 
     supervisor
-        .stop_session(session_id)
+        .stop_session(daemon_session_id)
         .await
         .expect("stop_session");
     supervisor.shutdown().await;

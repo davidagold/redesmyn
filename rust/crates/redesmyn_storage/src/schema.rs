@@ -161,7 +161,7 @@ impl fmt::Display for SessionScopeKind {
     }
 }
 
-/// Scope kind for `agent_sessions` (conversation identity).
+/// Scope kind for `agent_sessions` (session identity).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentSessionScopeKind {
     Task,

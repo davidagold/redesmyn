@@ -118,8 +118,8 @@ pub enum ExternalSessionRef {
         thread_id: String,
         turn_id: Option<String>,
     },
-    CodexConversation {
-        conversation_id: String,
+    CodexSession {
+        session_id: String,
         turn_id: Option<String>,
     },
     ClaudeSession {
@@ -136,7 +136,7 @@ impl ExternalSessionRef {
     #[must_use]
     pub fn provider_hint(&self) -> Option<AgentProvider> {
         match self {
-            Self::CodexThread { .. } | Self::CodexConversation { .. } => Some(AgentProvider::Codex),
+            Self::CodexThread { .. } | Self::CodexSession { .. } => Some(AgentProvider::Codex),
             Self::ClaudeSession { .. } => Some(AgentProvider::ClaudeCode),
             Self::None | Self::Unknown { .. } => None,
         }
@@ -147,7 +147,7 @@ impl ExternalSessionRef {
         match self {
             Self::None => "none".to_owned(),
             Self::CodexThread { .. } => "codex_thread".to_owned(),
-            Self::CodexConversation { .. } => "codex_conversation".to_owned(),
+            Self::CodexSession { .. } => "codex_session".to_owned(),
             Self::ClaudeSession { .. } => "claude_session".to_owned(),
             Self::Unknown { type_, .. } => type_.clone(),
         }
@@ -175,13 +175,13 @@ impl Serialize for ExternalSessionRef {
                 }
                 st.end()
             }
-            Self::CodexConversation {
-                conversation_id,
+            Self::CodexSession {
+                session_id,
                 turn_id,
             } => {
                 let mut st = serializer.serialize_struct("ExternalSessionRef", 3)?;
-                st.serialize_field("type", "codex_conversation")?;
-                st.serialize_field("conversation_id", conversation_id)?;
+                st.serialize_field("type", "codex_session")?;
+                st.serialize_field("session_id", session_id)?;
                 if let Some(turn_id) = turn_id {
                     st.serialize_field("turn_id", turn_id)?;
                 }
@@ -237,8 +237,9 @@ impl<'de> Deserialize<'de> for ExternalSessionRef {
                 };
                 Ok(Self::CodexThread { thread_id, turn_id })
             }
-            "codex_conversation" => {
-                let conversation_id = match obj.get("conversation_id") {
+            "codex_session" | "codex_conversation" => {
+                let session_id = match obj.get("session_id").or_else(|| obj.get("conversation_id"))
+                {
                     Some(serde_json::Value::String(s)) => s.clone(),
                     _ => {
                         return Ok(Self::Unknown {
@@ -252,8 +253,8 @@ impl<'de> Deserialize<'de> for ExternalSessionRef {
                     Some(serde_json::Value::String(s)) => Some(s.clone()),
                     _ => None,
                 };
-                Ok(Self::CodexConversation {
-                    conversation_id,
+                Ok(Self::CodexSession {
+                    session_id,
                     turn_id,
                 })
             }

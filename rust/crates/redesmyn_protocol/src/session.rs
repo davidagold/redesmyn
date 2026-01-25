@@ -33,7 +33,7 @@ pub enum InterfaceMode {
     Unknown,
 }
 
-/// Best-effort external conversation handle for structured agents.
+/// Best-effort external session handle for structured agents.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExternalSessionRef {
@@ -43,8 +43,10 @@ pub enum ExternalSessionRef {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },
-    CodexConversation {
-        conversation_id: String,
+    #[serde(alias = "codex_conversation")]
+    CodexSession {
+        #[serde(alias = "conversation_id")]
+        session_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         turn_id: Option<String>,
     },

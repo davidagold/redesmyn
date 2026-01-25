@@ -64,7 +64,7 @@ struct InitializeParams {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NewConversationParams {
+struct NewSessionParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
 }
@@ -85,7 +85,7 @@ struct CancelParams {
         skip_serializing_if = "Option::is_none",
         rename = "conversationId"
     )]
-    conversation_id: Option<String>,
+    session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "turnId")]
     turn_id: Option<String>,
 }
@@ -108,8 +108,8 @@ struct FileChangeApprovalParams {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateConversationParams {
-    diff: Vec<ConversationDiff>,
+struct UpdateSessionParams {
+    diff: Vec<SessionDiff>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -139,10 +139,11 @@ enum MessageRole {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-enum ConversationDiff {
-    NewConversation {
+enum SessionDiff {
+    #[serde(rename = "newConversation")]
+    NewSession {
         #[serde(rename = "conversationId")]
-        conversation_id: String,
+        session_id: String,
     },
     NewTurn {
         #[serde(rename = "turnId")]
@@ -185,12 +186,12 @@ struct AccumulatedMessage {
 }
 
 #[derive(Debug, Default)]
-struct ConversationAccumulator {
+struct SessionAccumulator {
     messages: HashMap<String, AccumulatedMessage>,
     emitted_message_ids: HashSet<String>,
 }
 
-impl ConversationAccumulator {
+impl SessionAccumulator {
     fn reset(&mut self) {
         self.messages.clear();
         self.emitted_message_ids.clear();
@@ -266,39 +267,39 @@ impl ConversationAccumulator {
 
 #[derive(Debug, Default)]
 struct CodexAppServerStateInner {
-    conversation_id: Option<String>,
+    session_id: Option<String>,
     active_turn_id: Option<String>,
 }
 
 #[derive(Debug)]
 struct CodexAppServerState {
     inner: Mutex<CodexAppServerStateInner>,
-    accumulator: Mutex<ConversationAccumulator>,
+    accumulator: Mutex<SessionAccumulator>,
 }
 
 impl CodexAppServerState {
     fn new() -> Self {
         Self {
             inner: Mutex::new(CodexAppServerStateInner::default()),
-            accumulator: Mutex::new(ConversationAccumulator::default()),
+            accumulator: Mutex::new(SessionAccumulator::default()),
         }
     }
 
-    async fn reset_for_new_conversation(&self) {
+    async fn reset_for_new_session(&self) {
         {
             let mut inner = self.inner.lock().await;
-            inner.conversation_id = None;
+            inner.session_id = None;
             inner.active_turn_id = None;
         }
         self.accumulator.lock().await.reset();
     }
 
-    async fn set_conversation_id(&self, conversation_id: String) {
-        self.inner.lock().await.conversation_id = Some(conversation_id);
+    async fn set_session_id(&self, session_id: String) {
+        self.inner.lock().await.session_id = Some(session_id);
     }
 
-    async fn conversation_id(&self) -> Option<String> {
-        self.inner.lock().await.conversation_id.clone()
+    async fn session_id(&self) -> Option<String> {
+        self.inner.lock().await.session_id.clone()
     }
 
     async fn active_turn_id(&self) -> Option<String> {
@@ -377,11 +378,11 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn start_new_conversation(&self) -> Result<(), AppServerRequestError> {
-        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.new_conversation");
+    async fn start_new_session(&self) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.new_session");
         let _guard = span.enter();
 
-        let params = NewConversationParams {
+        let params = NewSessionParams {
             cwd: Some(self.cwd.to_string_lossy().to_string()),
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
@@ -395,8 +396,8 @@ impl CodexAppServerClient {
             .map_err(|err| AppServerRequestError::Failed {
                 reason: format!("newConversation failed: {err}"),
             })?;
-        if let Some(conversation_id) = parse_conversation_id_from_new_conversation_result(&result) {
-            self.state.set_conversation_id(conversation_id).await;
+        if let Some(session_id) = parse_session_id_from_new_conversation_result(&result) {
+            self.state.set_session_id(session_id).await;
         }
         Ok(())
     }
@@ -404,17 +405,17 @@ impl CodexAppServerClient {
     async fn send_user_message(
         &self,
         prompt: &str,
-        resume: Option<String>,
+        resume_session_id: Option<String>,
     ) -> Result<(), AppServerRequestError> {
         let span = redesmyn_logging::redesmyn_info_span!(
             "codex_app_server.user_message",
-            resume = resume.as_deref().unwrap_or("<new>")
+            resume = resume_session_id.as_deref().unwrap_or("<new>")
         );
         let _guard = span.enter();
 
         let params = UserMessageParams {
             message: prompt.to_owned(),
-            resume,
+            resume: resume_session_id,
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
             reason: format!("userMessage params serialization failed: {err}"),
@@ -434,11 +435,11 @@ impl CodexAppServerClient {
         let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.cancel");
         let _guard = span.enter();
 
-        let conversation_id = self.state.conversation_id().await;
+        let session_id = self.state.session_id().await;
         let turn_id = self.state.active_turn_id().await;
 
         let params = CancelParams {
-            conversation_id,
+            session_id,
             turn_id,
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
@@ -466,16 +467,12 @@ impl AppServerClient for CodexAppServerClient {
                 AppServerRequest::SendMessage { intent } => {
                     match &intent {
                         AppServerTurnIntent::StartNew { .. } => {
-                            self.state.reset_for_new_conversation().await;
-                            self.start_new_conversation().await?;
+                            self.state.reset_for_new_session().await;
+                            self.start_new_session().await?;
                         }
                         AppServerTurnIntent::Resume { external, .. } => match external {
-                            DomainExternalSessionRef::CodexConversation {
-                                conversation_id, ..
-                            } => {
-                                self.state
-                                    .set_conversation_id(conversation_id.clone())
-                                    .await;
+                            DomainExternalSessionRef::CodexSession { session_id, .. } => {
+                                self.state.set_session_id(session_id.clone()).await;
                             }
                             DomainExternalSessionRef::None => {
                                 return Err(AppServerRequestError::Failed {
@@ -495,9 +492,9 @@ impl AppServerClient for CodexAppServerClient {
                     let (prompt, resume) = match intent {
                         AppServerTurnIntent::StartNew { prompt } => (prompt, None),
                         AppServerTurnIntent::Resume { prompt, external } => match external {
-                            DomainExternalSessionRef::CodexConversation {
-                                conversation_id, ..
-                            } => (prompt, Some(conversation_id)),
+                            DomainExternalSessionRef::CodexSession { session_id, .. } => {
+                                (prompt, Some(session_id))
+                            }
                             _ => (prompt, None),
                         },
                     };
@@ -514,9 +511,7 @@ impl AppServerClient for CodexAppServerClient {
     }
 }
 
-fn parse_conversation_id_from_new_conversation_result(
-    result: &serde_json::Value,
-) -> Option<String> {
+fn parse_session_id_from_new_conversation_result(result: &serde_json::Value) -> Option<String> {
     result
         .get("conversationId")
         .and_then(|v| v.as_str())
@@ -796,14 +791,14 @@ async fn handle_server_request(
 ) {
     match method {
         "conversationId" => {
-            let conversation_id = state.conversation_id().await;
-            match conversation_id {
-                Some(conversation_id) => {
-                    conn.respond_ok(id, serde_json::Value::String(conversation_id))
+            let session_id = state.session_id().await;
+            match session_id {
+                Some(session_id) => {
+                    conn.respond_ok(id, serde_json::Value::String(session_id))
                         .await;
                 }
                 None => {
-                    conn.respond_error(id, -32000, "missing active conversation id")
+                    conn.respond_error(id, -32000, "missing active session id")
                         .await;
                 }
             }
@@ -863,14 +858,14 @@ async fn handle_notification(
 ) {
     match method {
         "updateConversation" => {
-            let params: UpdateConversationParams = match serde_json::from_value(params.clone()) {
+            let params: UpdateSessionParams = match serde_json::from_value(params.clone()) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(error = %err, "invalid updateConversation params");
                     return;
                 }
             };
-            handle_update_conversation(state, events_tx, params).await;
+            handle_update_session(state, events_tx, params).await;
         }
         "runCommand" => {
             let params: RunCommandParams = match serde_json::from_value(params.clone()) {
@@ -948,10 +943,10 @@ async fn handle_notification(
     }
 }
 
-async fn handle_update_conversation(
+async fn handle_update_session(
     state: &Arc<CodexAppServerState>,
     events_tx: &mpsc::Sender<AppServerEvent>,
-    params: UpdateConversationParams,
+    params: UpdateSessionParams,
 ) {
     let mut events = Vec::new();
 
@@ -961,24 +956,23 @@ async fn handle_update_conversation(
 
         for diff in params.diff {
             match diff {
-                ConversationDiff::NewConversation { conversation_id } => {
-                    if inner.conversation_id.as_deref() != Some(conversation_id.as_str()) {
-                        inner.conversation_id = Some(conversation_id);
+                SessionDiff::NewSession { session_id } => {
+                    if inner.session_id.as_deref() != Some(session_id.as_str()) {
+                        inner.session_id = Some(session_id);
                     }
                 }
-                ConversationDiff::NewTurn { turn_id } => {
+                SessionDiff::NewTurn { turn_id } => {
                     inner.active_turn_id = Some(turn_id.clone());
 
-                    let external_session_ref =
-                        inner.conversation_id.as_ref().map(|conversation_id| {
-                            ExternalSessionRef::CodexConversation {
-                                conversation_id: conversation_id.clone(),
-                                turn_id: Some(turn_id.clone()),
-                            }
-                        });
+                    let external_session_ref = inner.session_id.as_ref().map(|session_id| {
+                        ExternalSessionRef::CodexSession {
+                            session_id: session_id.clone(),
+                            turn_id: Some(turn_id.clone()),
+                        }
+                    });
 
                     tracing::info!(
-                        conversation_id = inner.conversation_id.as_deref().unwrap_or("<unknown>"),
+                        session_id = inner.session_id.as_deref().unwrap_or("<unknown>"),
                         turn_id = turn_id,
                         "codex app-server turn started"
                     );
@@ -988,7 +982,7 @@ async fn handle_update_conversation(
                         external_session_ref,
                     });
                 }
-                ConversationDiff::NewMessage {
+                SessionDiff::NewMessage {
                     message_id,
                     role,
                     content,
@@ -998,7 +992,7 @@ async fn handle_update_conversation(
                         events.push(ev);
                     }
                 }
-                ConversationDiff::UpdateMessage {
+                SessionDiff::UpdateMessage {
                     message_id,
                     content,
                     content_delta,
@@ -1010,20 +1004,19 @@ async fn handle_update_conversation(
                         events.push(ev);
                     }
                 }
-                ConversationDiff::TurnCompleted {
+                SessionDiff::TurnCompleted {
                     turn_id,
                     status,
                     error,
                 } => {
                     inner.active_turn_id = None;
 
-                    let external_session_ref =
-                        inner.conversation_id.as_ref().map(|conversation_id| {
-                            ExternalSessionRef::CodexConversation {
-                                conversation_id: conversation_id.clone(),
-                                turn_id: Some(turn_id.clone()),
-                            }
-                        });
+                    let external_session_ref = inner.session_id.as_ref().map(|session_id| {
+                        ExternalSessionRef::CodexSession {
+                            session_id: session_id.clone(),
+                            turn_id: Some(turn_id.clone()),
+                        }
+                    });
 
                     let error = match status {
                         TurnCompletionStatus::Failed => error
@@ -1033,7 +1026,7 @@ async fn handle_update_conversation(
                     };
 
                     tracing::info!(
-                        conversation_id = inner.conversation_id.as_deref().unwrap_or("<unknown>"),
+                        session_id = inner.session_id.as_deref().unwrap_or("<unknown>"),
                         turn_id = turn_id,
                         status = ?status,
                         "codex app-server turn completed"
@@ -1045,7 +1038,7 @@ async fn handle_update_conversation(
                         error,
                     });
                 }
-                ConversationDiff::Unknown => {}
+                SessionDiff::Unknown => {}
             }
         }
     }
