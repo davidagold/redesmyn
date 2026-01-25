@@ -804,6 +804,13 @@ impl GraphView {
 
         let delta = event.delta.pixel_delta(window.line_height());
         if delta.x == px(0.0) && delta.y == px(0.0) {
+            redesmyn_logging::tracing::debug!(
+                position = ?event.position,
+                raw_delta = ?event.delta,
+                touch_phase = ?event.touch_phase,
+                modifiers = ?event.modifiers,
+                "graph scroll wheel pixel delta is (0, 0)"
+            );
             return;
         }
 
