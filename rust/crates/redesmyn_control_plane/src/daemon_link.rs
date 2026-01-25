@@ -162,6 +162,29 @@ async fn handle_inbound_frame(
                 tracing::warn!(error = %err, "failed to apply daemon command update");
             }
         }
+        DaemonMessage::SessionEventBatch(batch) => {
+            let span = tracing::debug_span!(
+                "control_plane.daemon_link.session_event_batch",
+                host_instance_id = %host_instance_id,
+                event_count = batch.events.len(),
+            );
+            let _enter = span.enter();
+
+            for event in &batch.events {
+                if let Err(err) = control_plane
+                    .session_events()
+                    .append_session_event(event)
+                    .await
+                {
+                    tracing::warn!(
+                        error = %err,
+                        session_id = %event.session_id,
+                        session_event_id = %event.session_event_id,
+                        "failed to persist session event from daemon",
+                    );
+                }
+            }
+        }
         DaemonMessage::RepoAttach(attach) => {
             control_plane
                 .daemons()
