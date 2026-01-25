@@ -8,6 +8,7 @@ mod daemon_link;
 mod daemon_router;
 mod session_events_projection;
 mod task_manager;
+mod turn_state;
 
 pub mod client_api;
 pub mod demo;

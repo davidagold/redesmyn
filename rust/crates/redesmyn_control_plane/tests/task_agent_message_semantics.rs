@@ -7,7 +7,7 @@ use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, DaemonLinkHandle};
 use redesmyn_ids::{CommandId, EpicId, RepoId, RequestId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, StartTaskAgentSessionCommand, TASK_AGENT_RESUME_BY_ID_TURN,
+    ResumeByIdTaskAgentTurnCommand, StartTaskAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
     TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{
@@ -382,7 +382,7 @@ async fn run_mock_daemon(
                 )
                 .await;
             }
-            TASK_AGENT_RESUME_BY_ID_TURN => {
+            SESSION_AGENT_RESUME_BY_ID_TURN => {
                 let payload: ResumeByIdTaskAgentTurnCommand =
                     serde_json::from_slice(&json_payload).expect("decode resume payload");
 
@@ -668,7 +668,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
     assert_eq!(second.session_id, first.session_id);
 
     let dispatch = dispatch_rx.recv().await.expect("dispatch");
-    assert_eq!(dispatch.command_kind, TASK_AGENT_RESUME_BY_ID_TURN);
+    assert_eq!(dispatch.command_kind, SESSION_AGENT_RESUME_BY_ID_TURN);
 
     // Wait until the control plane sees an in-progress turn.
     assert!(
@@ -735,7 +735,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
     );
 
     let dispatch = dispatch_rx.recv().await.expect("dispatch");
-    assert_eq!(dispatch.command_kind, TASK_AGENT_RESUME_BY_ID_TURN);
+    assert_eq!(dispatch.command_kind, SESSION_AGENT_RESUME_BY_ID_TURN);
     let payload: ResumeByIdTaskAgentTurnCommand =
         serde_json::from_slice(&dispatch.json_payload).expect("decode resume payload");
     assert!(payload.interrupt_turn, "expected interrupt_turn=true");

@@ -12,6 +12,10 @@ use crate::session_events::{
 };
 use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
 use redesmyn_logging::tracing;
+use redesmyn_protocol::agent_commands::{
+    ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand, StartAgentSessionCommand,
+    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_START,
+};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, AgentSessionScopeKind,
     AgentSessionStatus, AgentSessionSummary, ClientFrame, ClientMessage, CloseChatSessionResponse,
@@ -26,8 +30,8 @@ use redesmyn_protocol::client::{
     WaitForIdleResponse,
 };
 use redesmyn_protocol::{
-    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope,
-    SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
+    ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef, ProtocolEnvelope,
+    ProtocolVersion, Scope, SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
 };
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
@@ -727,6 +731,61 @@ async fn handle_request_result(
                             "Chat session is closed.",
                         )));
                     }
+                    let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
+                    if send.on_conflict == AgentMessageConflictAction::StopSessionAndStartNew {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::InvalidRequest,
+                            "stop_session_and_start_new is not supported for chat sessions. Create a new chat session instead.",
+                        )));
+                    }
+                    if matches!(
+                        interface_mode,
+                        AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+                    ) && session.ended_at_ms.is_none()
+                    {
+                        let in_progress = match crate::turn_state::structured_turn_in_progress(
+                            control_plane.pool(),
+                            session.session_id,
+                        )
+                        .await
+                        {
+                            Ok(in_progress) => in_progress,
+                            Err(err) => return Ok(ResponseResult::Error(err)),
+                        };
+
+                        if in_progress {
+                            match send.on_conflict {
+                                AgentMessageConflictAction::Fail => {
+                                    return Ok(ResponseResult::Error(conflict_error(
+                                        session.session_id,
+                                        CONFLICT_CODE_TURN_IN_PROGRESS,
+                                        "A structured agent turn is currently in progress.",
+                                    )));
+                                }
+                                AgentMessageConflictAction::InterruptTurn => {
+                                    let Some(external_session_ref) =
+                                        parse_external_session_ref(&session.external_session_ref)
+                                    else {
+                                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                            ErrorCategory::InvalidRequest,
+                                            "Cannot interrupt: chat session is not resumable.",
+                                        )));
+                                    };
+                                    if !external_ref_matches_agent_kind(
+                                        &external_session_ref,
+                                        protocol_agent_kind_from_storage(session.agent_kind),
+                                    ) {
+                                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                            ErrorCategory::InvalidRequest,
+                                            "Cannot interrupt: chat session is not resumable.",
+                                        )));
+                                    }
+                                }
+                                AgentMessageConflictAction::StopSessionAndStartNew => {}
+                            }
+                        }
+                    }
+
                     (session.session_id, SessionScope::Chat, None)
                 }
                 (StorageAgentSessionScopeKind::Task, Some(task_id)) => (
@@ -742,6 +801,8 @@ async fn handle_request_result(
                 }
             };
 
+            let mut stop_session_ids = Vec::new();
+
             let (session_id, scope) = if let Some(interface_mode) = interface_mode {
                 let task_id = match scope {
                     SessionScope::Task { task_id } => task_id,
@@ -753,12 +814,23 @@ async fn handle_request_result(
                     }
                 };
 
-                let turn_in_progress = interface_mode == StorageAgentInterfaceMode::StructuredExec
-                    && session.ended_at_ms.is_none()
-                    && matches!(
-                        session.status,
-                        StorageAgentSessionStatus::Running | StorageAgentSessionStatus::Blocked
-                    );
+                let turn_in_progress =
+                    if (interface_mode == StorageAgentInterfaceMode::StructuredExec
+                        || interface_mode == StorageAgentInterfaceMode::AppServer)
+                        && session.ended_at_ms.is_none()
+                    {
+                        match crate::turn_state::structured_turn_in_progress(
+                            control_plane.pool(),
+                            session.session_id,
+                        )
+                        .await
+                        {
+                            Ok(turn_in_progress) => turn_in_progress,
+                            Err(err) => return Ok(ResponseResult::Error(err)),
+                        }
+                    } else {
+                        false
+                    };
 
                 let sessions = redesmyn_storage::sessions::list_task_sessions(
                     control_plane.pool(),
@@ -804,14 +876,23 @@ async fn handle_request_result(
                         }
 
                         if turn_in_progress {
-                            // TODO(T41): Interrupt the running structured turn via daemon command(s)
-                            // instead of directly mutating persisted session state.
-                            redesmyn_storage::sessions::update_agent_session_status(
-                                control_plane.pool(),
-                                session.session_id,
-                                StorageAgentSessionStatus::Stopped,
-                            )
-                            .await?;
+                            let Some(external_session_ref) =
+                                parse_external_session_ref(&session.external_session_ref)
+                            else {
+                                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                    ErrorCategory::InvalidRequest,
+                                    "Cannot interrupt: session is not resumable.",
+                                )));
+                            };
+                            if !external_ref_matches_agent_kind(
+                                &external_session_ref,
+                                protocol_agent_kind_from_storage(session.agent_kind),
+                            ) {
+                                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                                    ErrorCategory::InvalidRequest,
+                                    "Cannot interrupt: session is not resumable.",
+                                )));
+                            }
                         }
                     }
                     AgentMessageConflictAction::StopSessionAndStartNew => {
@@ -825,6 +906,11 @@ async fn handle_request_result(
 
                         // TODO(T41): Replace direct session termination with daemon command(s) so the
                         // runtime can shut down cleanly before we create a new session row.
+                        stop_session_ids = sessions
+                            .iter()
+                            .filter(|row| row.ended_at_ms.is_none())
+                            .map(|row| row.session_id)
+                            .collect();
                         let _ended = redesmyn_storage::sessions::end_task_sessions(
                             control_plane.pool(),
                             task_id,
@@ -869,8 +955,109 @@ async fn handle_request_result(
                 .append_session_event(&event)
                 .await?;
 
+            let current = redesmyn_storage::sessions::get_agent_session(
+                control_plane.pool(),
+                session_id,
+            )
+            .await?;
+            let Some(current) = current else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "Session disappeared while sending message.",
+                )));
+            };
+
+            let agent_kind = protocol_agent_kind_from_storage(current.agent_kind);
+            let interface_mode = protocol_interface_mode_from_storage(current.interface_mode);
+            let task_id = current.task_id;
+
+            let turn_in_progress = matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) && match crate::turn_state::structured_turn_in_progress(control_plane.pool(), session_id)
+                .await
+            {
+                Ok(turn_in_progress) => turn_in_progress,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let external_session_ref = parse_external_session_ref(&current.external_session_ref)
+                .filter(|r| external_ref_matches_agent_kind(r, agent_kind));
+
+            let interrupt_turn = send.on_conflict == AgentMessageConflictAction::InterruptTurn
+                && turn_in_progress;
+
+            let (command_kind, json_payload) = match interface_mode {
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer => {
+                    if let Some(external_session_ref) = external_session_ref {
+                        let json_payload = match encode_agent_command_payload(
+                            &ResumeByIdTaskAgentTurnCommand {
+                                session_id,
+                                prompt: text.to_string(),
+                                external_session_ref,
+                                interrupt_turn,
+                            },
+                        ) {
+                            Ok(payload) => payload,
+                            Err(err) => return Ok(ResponseResult::Error(err)),
+                        };
+
+                        (SESSION_AGENT_RESUME_BY_ID_TURN.to_string(), json_payload)
+                    } else {
+                        let json_payload = match encode_agent_command_payload(
+                            &StartAgentSessionCommand {
+                                session_id,
+                                task_id,
+                                agent_kind,
+                                interface_mode,
+                                initial_prompt: Some(text.to_string()),
+                                stop_session_ids,
+                            },
+                        ) {
+                            Ok(payload) => payload,
+                            Err(err) => return Ok(ResponseResult::Error(err)),
+                        };
+
+                        (SESSION_AGENT_START.to_string(), json_payload)
+                    }
+                }
+                AgentInterfaceMode::ShellTmux => {
+                    let json_payload = match encode_agent_command_payload(
+                        &SendTaskAgentMessageCommand {
+                            session_id,
+                            text: text.to_string(),
+                            interrupt_turn,
+                            submit: true,
+                        },
+                    ) {
+                        Ok(payload) => payload,
+                        Err(err) => return Ok(ResponseResult::Error(err)),
+                    };
+
+                    (SESSION_AGENT_SEND_MESSAGE.to_string(), json_payload)
+                }
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id: current.scope_workspace_id,
+                        repo_id: current.scope_repo_id,
+                    },
+                    command_kind,
+                    task_id,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
             Ok(ResponseResult::SendSessionMessage(
-                SendSessionMessageResponse { event, session_id },
+                SendSessionMessageResponse {
+                    event,
+                    session_id,
+                    command: Some(command),
+                },
             ))
         }
         redesmyn_protocol::client::RequestPayload::StartAgent(req) => {
@@ -1353,17 +1540,8 @@ fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSession
         StorageAgentSessionScopeKind::Chat => AgentSessionScopeKind::Chat,
     };
 
-    let agent_kind = match record.agent_kind {
-        StorageAgentKind::Codex => AgentKind::Codex,
-        StorageAgentKind::ClaudeCode => AgentKind::ClaudeCode,
-        StorageAgentKind::Shell => AgentKind::Shell,
-    };
-
-    let interface_mode = match record.interface_mode {
-        StorageAgentInterfaceMode::ShellTmux => AgentInterfaceMode::ShellTmux,
-        StorageAgentInterfaceMode::StructuredExec => AgentInterfaceMode::StructuredExec,
-        StorageAgentInterfaceMode::AppServer => AgentInterfaceMode::AppServer,
-    };
+    let agent_kind = protocol_agent_kind_from_storage(record.agent_kind);
+    let interface_mode = protocol_interface_mode_from_storage(record.interface_mode);
 
     let status = match record.status {
         StorageAgentSessionStatus::Running => AgentSessionStatus::Running,
@@ -1385,6 +1563,45 @@ fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSession
         updated_at: Some(timestamp_from_ms(record.updated_at_ms)),
         ended_at: record.ended_at_ms.map(timestamp_from_ms),
     }
+}
+
+fn protocol_agent_kind_from_storage(kind: StorageAgentKind) -> AgentKind {
+    match kind {
+        StorageAgentKind::Codex => AgentKind::Codex,
+        StorageAgentKind::ClaudeCode => AgentKind::ClaudeCode,
+        StorageAgentKind::Shell => AgentKind::Shell,
+    }
+}
+
+fn protocol_interface_mode_from_storage(mode: StorageAgentInterfaceMode) -> AgentInterfaceMode {
+    match mode {
+        StorageAgentInterfaceMode::ShellTmux => AgentInterfaceMode::ShellTmux,
+        StorageAgentInterfaceMode::StructuredExec => AgentInterfaceMode::StructuredExec,
+        StorageAgentInterfaceMode::AppServer => AgentInterfaceMode::AppServer,
+    }
+}
+
+fn parse_external_session_ref(raw: &str) -> Option<ExternalSessionRef> {
+    serde_json::from_str(raw).ok()
+}
+
+fn external_ref_matches_agent_kind(external_session_ref: &ExternalSessionRef, agent_kind: AgentKind) -> bool {
+    matches!(
+        (agent_kind, external_session_ref),
+        (AgentKind::Codex, ExternalSessionRef::CodexThread { .. })
+            | (AgentKind::Codex, ExternalSessionRef::CodexSession { .. })
+            | (AgentKind::ClaudeCode, ExternalSessionRef::ClaudeSession { .. })
+    )
+}
+
+fn encode_agent_command_payload<T: serde::Serialize>(payload: &T) -> Result<Vec<u8>, ErrorEnvelope> {
+    serde_json::to_vec(payload).map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to encode agent command payload.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })
 }
 
 fn response_envelope(

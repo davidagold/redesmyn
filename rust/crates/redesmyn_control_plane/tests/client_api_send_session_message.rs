@@ -1,13 +1,19 @@
 use std::time::Duration;
 
 use redesmyn_control_plane::ControlPlane;
-use redesmyn_ids::{RepoId, RequestId, SessionId, TaskId, WorkspaceId};
+use redesmyn_ids::{HostId, HostInstanceId, RepoId, RequestId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::ProtocolEnvelope;
+use redesmyn_protocol::agent_commands::{
+    ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
+    SESSION_AGENT_START,
+};
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, ClientFrame, ClientMessage, Request, RequestPayload,
     ResponseResult, SendSessionMessageRequest,
 };
-use redesmyn_protocol::session::SessionEventKind;
+use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage};
+use redesmyn_protocol::session::{InterfaceMode, SessionEventKind, SessionScope, TurnStarted};
+use redesmyn_protocol::{ExternalSessionRef, SessionEvent, Timestamp};
 use redesmyn_storage::schema::{
     AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
     AgentSessionScopeKind as StorageAgentSessionScopeKind,
@@ -16,6 +22,7 @@ use redesmyn_storage::schema::{
 use redesmyn_storage::sessions::{AgentSessionRecord, get_agent_session, insert_agent_session};
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::in_proc::InProcEndpoint;
+use tokio::sync::mpsc;
 
 async fn request(conn: &mut InProcEndpoint, payload: RequestPayload) -> ResponseResult {
     let request_id = RequestId::new();
@@ -197,6 +204,10 @@ async fn send_session_message_appends_user_message_for_chat_session() {
     assert_eq!(resp.session_id, session_id);
     assert_eq!(resp.event.session_id, session_id);
     assert!(matches!(resp.event.kind, SessionEventKind::UserMessage(_)));
+    assert_eq!(
+        resp.command.as_ref().map(|c| c.kind.as_str()),
+        Some(SESSION_AGENT_START),
+    );
 
     let events = control_plane
         .session_events()
@@ -239,7 +250,7 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
             agent_kind: StorageAgentKind::Codex,
             interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Running,
-            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            external_session_ref: r#"{"type":"codex_thread","thread_id":"thread-1"}"#.to_owned(),
             title: None,
             started_at_ms: None,
             ended_at_ms: None,
@@ -248,6 +259,27 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
     )
     .await
     .expect("insert session");
+
+    control_plane
+        .session_events()
+        .append_session_event(&SessionEvent {
+            session_event_id: SessionEventId::new(),
+            created_at: Timestamp::now_utc(),
+            scope: SessionScope::Task { task_id },
+            session_id,
+            turn_id: Some("turn-1".to_string()),
+            kind: SessionEventKind::TurnStarted(TurnStarted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref: Some(ExternalSessionRef::CodexThread {
+                    thread_id: "thread-1".to_string(),
+                    turn_id: None,
+                }),
+                idempotency_key: None,
+                log_offset_bytes: None,
+            }),
+        })
+        .await
+        .expect("append turn_started");
 
     let (mut client, mut server) = InProcEndpoint::pair(8);
     let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -300,15 +332,13 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
             assert_eq!(resp.session_id, session_id);
             assert_eq!(resp.event.session_id, session_id);
             assert!(matches!(resp.event.kind, SessionEventKind::UserMessage(_)));
+            assert_eq!(
+                resp.command.as_ref().map(|c| c.kind.as_str()),
+                Some(SESSION_AGENT_RESUME_BY_ID_TURN),
+            );
         }
         other => panic!("unexpected response: {other:?}"),
     }
-
-    let session = get_agent_session(&pool, session_id)
-        .await
-        .expect("get session")
-        .expect("session exists");
-    assert_eq!(session.status, StorageAgentSessionStatus::Stopped);
 
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
@@ -420,8 +450,12 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
     )
     .await;
 
-    let (new_session_id, returned_event) = match result {
-        ResponseResult::SendSessionMessage(resp) => (resp.session_id, resp.event),
+    let (new_session_id, returned_event, command_kind) = match result {
+        ResponseResult::SendSessionMessage(resp) => (
+            resp.session_id,
+            resp.event,
+            resp.command.as_ref().map(|c| c.kind.clone()),
+        ),
         other => panic!("unexpected response: {other:?}"),
     };
     assert_ne!(new_session_id, target_session_id);
@@ -430,6 +464,7 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
         returned_event.kind,
         SessionEventKind::UserMessage(_)
     ));
+    assert_eq!(command_kind.as_deref(), Some(SESSION_AGENT_START));
 
     let ended_target = get_agent_session(&pool, target_session_id)
         .await
@@ -457,6 +492,234 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
         .0;
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0].kind, SessionEventKind::UserMessage(_)));
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn send_session_message_dispatches_session_start_for_chat_session() {
+    redesmyn_logging::init();
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let pool = control_plane.pool().clone();
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    insert_workspace(&pool, workspace_id).await;
+    insert_repo(&pool, workspace_id, repo_id).await;
+
+    let session_id = SessionId::new();
+    insert_agent_session(
+        &pool,
+        &AgentSessionRecord {
+            session_id,
+            created_at_ms: 5,
+            updated_at_ms: 5,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: StorageAgentSessionScopeKind::Chat,
+            task_id: None,
+            agent_kind: StorageAgentKind::Codex,
+            interface_mode: StorageAgentInterfaceMode::StructuredExec,
+            status: StorageAgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            title: None,
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        },
+    )
+    .await
+    .expect("insert session");
+
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<DaemonFrame>(8);
+    control_plane
+        .daemons()
+        .register_connection(
+            HostId::new(),
+            HostInstanceId::new(),
+            redesmyn_protocol::ProtocolVersion::CURRENT,
+            outbound_tx,
+        )
+        .await;
+
+    let (mut client, mut server) = InProcEndpoint::pair(8);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut shutdown = shutdown_tx.subscribe();
+    let server_control_plane = control_plane.clone();
+    let server_task = tokio::spawn(async move {
+        redesmyn_control_plane::client_api::serve_connection(
+            &mut server,
+            server_control_plane,
+            &mut shutdown,
+        )
+        .await
+        .ok();
+    });
+
+    let result = request(
+        &mut client,
+        RequestPayload::SendSessionMessage(SendSessionMessageRequest {
+            session_id,
+            message: "hello".to_string(),
+            on_conflict: AgentMessageConflictAction::Fail,
+        }),
+    )
+    .await;
+
+    let resp = match result {
+        ResponseResult::SendSessionMessage(resp) => resp,
+        other => panic!("unexpected response: {other:?}"),
+    };
+    let command_id = resp.command.as_ref().map(|c| c.command_id);
+    assert_eq!(resp.session_id, session_id);
+    assert_eq!(command_id, Some(resp.command.as_ref().unwrap().command_id));
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), outbound_rx.recv())
+        .await
+        .expect("dispatch timeout")
+        .expect("dispatch frame");
+    let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
+        panic!("expected CommandDispatch, got {:?}", frame.message);
+    };
+    assert_eq!(dispatch.command_id, resp.command.as_ref().unwrap().command_id);
+    assert_eq!(dispatch.command_kind, SESSION_AGENT_START);
+
+    let payload: StartAgentSessionCommand =
+        serde_json::from_slice(&dispatch.json_payload).expect("decode start payload");
+    assert_eq!(payload.session_id, session_id);
+    assert_eq!(payload.task_id, None);
+    assert_eq!(payload.initial_prompt.as_deref(), Some("hello"));
+    assert!(payload.stop_session_ids.is_empty());
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn send_session_message_dispatches_resume_by_id_turn_for_chat_session_interrupt() {
+    redesmyn_logging::init();
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let pool = control_plane.pool().clone();
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    insert_workspace(&pool, workspace_id).await;
+    insert_repo(&pool, workspace_id, repo_id).await;
+
+    let session_id = SessionId::new();
+    insert_agent_session(
+        &pool,
+        &AgentSessionRecord {
+            session_id,
+            created_at_ms: 5,
+            updated_at_ms: 5,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: StorageAgentSessionScopeKind::Chat,
+            task_id: None,
+            agent_kind: StorageAgentKind::Codex,
+            interface_mode: StorageAgentInterfaceMode::StructuredExec,
+            status: StorageAgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"codex_thread","thread_id":"thread-1"}"#.to_owned(),
+            title: None,
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        },
+    )
+    .await
+    .expect("insert session");
+
+    control_plane
+        .session_events()
+        .append_session_event(&SessionEvent {
+            session_event_id: SessionEventId::new(),
+            created_at: Timestamp::now_utc(),
+            scope: SessionScope::Chat,
+            session_id,
+            turn_id: Some("turn-1".to_string()),
+            kind: SessionEventKind::TurnStarted(TurnStarted {
+                interface_mode: InterfaceMode::Structured,
+                external_session_ref: Some(ExternalSessionRef::CodexThread {
+                    thread_id: "thread-1".to_string(),
+                    turn_id: None,
+                }),
+                idempotency_key: None,
+                log_offset_bytes: None,
+            }),
+        })
+        .await
+        .expect("append turn_started");
+
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<DaemonFrame>(8);
+    control_plane
+        .daemons()
+        .register_connection(
+            HostId::new(),
+            HostInstanceId::new(),
+            redesmyn_protocol::ProtocolVersion::CURRENT,
+            outbound_tx,
+        )
+        .await;
+
+    let (mut client, mut server) = InProcEndpoint::pair(8);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut shutdown = shutdown_tx.subscribe();
+    let server_control_plane = control_plane.clone();
+    let server_task = tokio::spawn(async move {
+        redesmyn_control_plane::client_api::serve_connection(
+            &mut server,
+            server_control_plane,
+            &mut shutdown,
+        )
+        .await
+        .ok();
+    });
+
+    let result = request(
+        &mut client,
+        RequestPayload::SendSessionMessage(SendSessionMessageRequest {
+            session_id,
+            message: "hello".to_string(),
+            on_conflict: AgentMessageConflictAction::InterruptTurn,
+        }),
+    )
+    .await;
+
+    let resp = match result {
+        ResponseResult::SendSessionMessage(resp) => resp,
+        other => panic!("unexpected response: {other:?}"),
+    };
+    assert_eq!(
+        resp.command.as_ref().map(|c| c.kind.as_str()),
+        Some(SESSION_AGENT_RESUME_BY_ID_TURN),
+    );
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), outbound_rx.recv())
+        .await
+        .expect("dispatch timeout")
+        .expect("dispatch frame");
+    let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
+        panic!("expected CommandDispatch, got {:?}", frame.message);
+    };
+    assert_eq!(dispatch.command_id, resp.command.as_ref().unwrap().command_id);
+    assert_eq!(dispatch.command_kind, SESSION_AGENT_RESUME_BY_ID_TURN);
+
+    let payload: ResumeByIdTaskAgentTurnCommand =
+        serde_json::from_slice(&dispatch.json_payload).expect("decode resume payload");
+    assert_eq!(payload.session_id, session_id);
+    assert_eq!(payload.prompt, "hello");
+    assert!(payload.interrupt_turn);
+    match payload.external_session_ref {
+        ExternalSessionRef::CodexThread { thread_id, turn_id } => {
+            assert_eq!(thread_id, "thread-1");
+            assert!(turn_id.is_none());
+        }
+        other => panic!("unexpected external ref: {other:?}"),
+    }
 
     let _ = shutdown_tx.send(());
     let _ = server_task.await;

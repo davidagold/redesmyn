@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use redesmyn_ids::{RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    TASK_AGENT_ATTACH_SESSION, TASK_AGENT_RESUME_BY_ID_TURN, TASK_AGENT_SEND_MESSAGE,
+    SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE,
     TASK_AGENT_START, TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::{
@@ -347,7 +347,7 @@ pub(super) async fn execute_attach_agent_session(
         control_plane,
         workspace_id,
         repo_id,
-        TASK_AGENT_ATTACH_SESSION.to_string(),
+        SESSION_AGENT_ATTACH_SESSION.to_string(),
         None,
         json_payload,
     )
@@ -377,7 +377,7 @@ pub(super) async fn execute_structured_resume(
         control_plane,
         workspace_id,
         repo_id,
-        TASK_AGENT_RESUME_BY_ID_TURN.to_string(),
+        SESSION_AGENT_RESUME_BY_ID_TURN.to_string(),
         Some(task_id),
         json_payload,
     )
@@ -477,7 +477,7 @@ pub(super) async fn execute_send_existing_interactive(
         control_plane,
         workspace_id,
         repo_id,
-        TASK_AGENT_SEND_MESSAGE.to_string(),
+        SESSION_AGENT_SEND_MESSAGE.to_string(),
         Some(task_id),
         json_payload,
     )
