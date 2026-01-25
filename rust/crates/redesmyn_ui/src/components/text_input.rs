@@ -22,10 +22,14 @@ actions!(
         Delete,
         Left,
         Right,
+        Up,
+        Down,
         MoveWordLeft,
         MoveWordRight,
         SelectLeft,
         SelectRight,
+        SelectUp,
+        SelectDown,
         SelectWordLeft,
         SelectWordRight,
         SelectAll,
@@ -37,6 +41,7 @@ actions!(
         DeleteWordForward,
         DeleteToLineStart,
         DeleteToLineEnd,
+        InsertNewline,
         Paste,
         Cut,
         Copy,
@@ -54,11 +59,16 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("left", Left, Some("TextArea")),
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("right", Right, Some("TextArea")),
+        KeyBinding::new("up", Up, Some("TextArea")),
+        KeyBinding::new("down", Down, Some("TextArea")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextArea")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextArea")),
+        KeyBinding::new("shift-up", SelectUp, Some("TextArea")),
+        KeyBinding::new("shift-down", SelectDown, Some("TextArea")),
         KeyBinding::new("enter", Submit, Some("TextInput")),
+        KeyBinding::new("enter", InsertNewline, Some("TextArea")),
     ]);
 
     #[cfg(target_os = "macos")]
@@ -95,6 +105,7 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextArea")),
         KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextInput")),
         KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextArea")),
+        KeyBinding::new("shift-enter", Submit, Some("TextArea")),
         KeyBinding::new("cmd-enter", Submit, Some("TextArea")),
     ]);
 
@@ -128,6 +139,7 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("shift-home", SelectLineStart, Some("TextArea")),
         KeyBinding::new("shift-end", SelectLineEnd, Some("TextInput")),
         KeyBinding::new("shift-end", SelectLineEnd, Some("TextArea")),
+        KeyBinding::new("shift-enter", Submit, Some("TextArea")),
         KeyBinding::new("ctrl-enter", Submit, Some("TextArea")),
     ]);
 }
@@ -898,6 +910,7 @@ pub struct TextArea {
     last_wrap_width: Option<Pixels>,
     is_selecting: bool,
     pending_scroll_to_cursor: bool,
+    preferred_vertical_x: Option<Pixels>,
 }
 
 impl EventEmitter<TextInputEvent> for TextArea {}
@@ -942,6 +955,170 @@ impl TextAreaLayoutCache {
     }
 }
 
+trait SegmentedLine {
+    fn len(&self) -> usize;
+    fn height(&self, line_height: Pixels) -> Pixels;
+    fn caret_point_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>>;
+    fn closest_index_for_local_position(&self, position: Point<Pixels>, line_height: Pixels)
+        -> usize;
+}
+
+fn caret_point_for_segmented_line_index(
+    index: usize,
+    line_len: usize,
+    segment_ends: impl IntoIterator<Item = usize>,
+    mut x_for_index: impl FnMut(usize) -> Pixels,
+    line_height: Pixels,
+) -> Point<Pixels> {
+    let index = index.min(line_len);
+
+    let mut segment_start = 0usize;
+    let mut segment_y = px(0.0);
+
+    for segment_end in segment_ends {
+        let segment_end = segment_end.min(line_len);
+        // Treat segment boundaries (except the final `len`) as the beginning of the next visual
+        // line. This matches typical editor caret semantics for wrapped lines.
+        if index < segment_end || segment_end == line_len {
+            let segment_start_x = x_for_index(segment_start);
+            let x = x_for_index(index) - segment_start_x;
+            return point(x, segment_y);
+        }
+
+        segment_start = segment_end;
+        segment_y += line_height;
+    }
+
+    let segment_start_x = x_for_index(segment_start);
+    let x = x_for_index(index) - segment_start_x;
+    point(x, segment_y)
+}
+
+fn wrap_boundary_end_indices(line: &WrappedLine) -> impl Iterator<Item = usize> + '_ {
+    let line_len = line.len();
+    line.wrap_boundaries
+        .iter()
+        .map(|boundary| {
+            line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
+        })
+        .filter(move |&ix| ix > 0 && ix < line_len)
+        .chain(std::iter::once(line_len))
+}
+
+impl SegmentedLine for WrappedLine {
+    fn len(&self) -> usize {
+        WrappedLine::len(self)
+    }
+
+    fn height(&self, line_height: Pixels) -> Pixels {
+        self.size(line_height).height
+    }
+
+    fn caret_point_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        Some(caret_point_for_segmented_line_index(
+            index,
+            self.len(),
+            wrap_boundary_end_indices(self),
+            |ix| self.unwrapped_layout.x_for_index(ix),
+            line_height,
+        ))
+    }
+
+    fn closest_index_for_local_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> usize {
+        match self.closest_index_for_position(position, line_height) {
+            Ok(ix) | Err(ix) => ix,
+        }
+    }
+}
+
+fn content_height_for_lines<L: SegmentedLine>(lines: &[L], line_height: Pixels) -> Pixels {
+    lines
+        .iter()
+        .fold(px(0.0), |acc, line| acc + line.height(line_height))
+}
+
+fn caret_point_for_offset_in_lines<L: SegmentedLine>(
+    lines: &[L],
+    offset: usize,
+    line_height: Pixels,
+) -> Option<Point<Pixels>> {
+    let mut line_origin_y = px(0.0);
+    let mut line_start_ix = 0usize;
+
+    for line in lines {
+        let line_end_ix = line_start_ix + line.len();
+        if offset <= line_end_ix {
+            let ix_within_line = offset.saturating_sub(line_start_ix);
+            let pos_in_line = line.caret_point_for_index(ix_within_line, line_height)?;
+            return Some(point(pos_in_line.x, line_origin_y + pos_in_line.y));
+        }
+
+        line_origin_y += line.height(line_height);
+        line_start_ix = line_end_ix + 1;
+    }
+
+    None
+}
+
+fn index_for_position_in_lines<L: SegmentedLine>(
+    lines: &[L],
+    position: Point<Pixels>,
+    line_height: Pixels,
+    content_len: usize,
+) -> usize {
+    let mut line_origin_y = px(0.0);
+    let mut line_start_ix = 0usize;
+
+    for line in lines {
+        let line_height_total = line.height(line_height);
+        if position.y <= line_origin_y + line_height_total {
+            let within_line = point(position.x, position.y - line_origin_y);
+            let ix = line.closest_index_for_local_position(within_line, line_height);
+            return (line_start_ix + ix).min(content_len);
+        }
+
+        line_origin_y += line_height_total;
+        line_start_ix += line.len() + 1;
+    }
+
+    content_len
+}
+
+fn move_vertically_in_lines<L: SegmentedLine>(
+    lines: &[L],
+    content_len: usize,
+    cursor_offset: usize,
+    preferred_x: &mut Option<Pixels>,
+    delta: i32,
+    line_height: Pixels,
+) -> Option<usize> {
+    let caret_pos = caret_point_for_offset_in_lines(lines, cursor_offset, line_height)?;
+
+    let x = preferred_x.unwrap_or(caret_pos.x);
+    if preferred_x.is_none() {
+        preferred_x.replace(x);
+    }
+
+    let half_line_height = px(f32::from(line_height) / 2.0);
+    let target_y = caret_pos.y + px(f32::from(line_height) * delta as f32) + half_line_height;
+
+    let content_height = content_height_for_lines(lines, line_height);
+    if target_y < px(0.0) || target_y >= content_height {
+        return None;
+    }
+
+    Some(index_for_position_in_lines(
+        lines,
+        point(x, target_y),
+        line_height,
+        content_len,
+    ))
+}
+
 impl TextArea {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
@@ -957,6 +1134,7 @@ impl TextArea {
             last_wrap_width: None,
             is_selecting: false,
             pending_scroll_to_cursor: false,
+            preferred_vertical_x: None,
         }
     }
 
@@ -976,6 +1154,7 @@ impl TextArea {
         self.marked_range = None;
         self.layout_cache = None;
         self.pending_scroll_to_cursor = true;
+        self.preferred_vertical_x = None;
         cx.emit(TextInputEvent::Changed(self.content.clone()));
         cx.notify();
     }
@@ -1113,25 +1292,11 @@ impl TextArea {
     fn caret_bounds(&self, index: usize, bounds: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
         let layout = self.layout_cache.as_ref()?;
         let line_height = layout.line_height;
-
-        let mut line_origin = bounds.origin;
-        let mut line_start_ix = 0usize;
-        for line in &layout.lines {
-            let line_end_ix = line_start_ix + line.len();
-            if index <= line_end_ix {
-                let ix_within_line = index.saturating_sub(line_start_ix);
-                let pos_within_line = line.position_for_index(ix_within_line, line_height)?;
-                return Some(Bounds::new(
-                    line_origin + pos_within_line,
-                    size(px(2.), line_height),
-                ));
-            }
-
-            line_origin.y += line.size(line_height).height;
-            line_start_ix = line_end_ix + 1;
-        }
-
-        None
+        let pos = caret_point_for_offset_in_lines(&layout.lines, index, line_height)?;
+        Some(Bounds::new(
+            bounds.origin + pos,
+            size(px(2.), line_height),
+        ))
     }
 
     fn scroll_caret_into_view(&mut self, window: &mut Window, cx: &App) {
@@ -1259,6 +1424,7 @@ impl TextArea {
     }
 
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
@@ -1268,6 +1434,7 @@ impl TextArea {
     }
 
     fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
@@ -1276,7 +1443,16 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
+    fn up(&mut self, _: &Up, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_vertically(-1, false, window, cx);
+    }
+
+    fn down(&mut self, _: &Down, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_vertically(1, false, window, cx);
+    }
+
     fn move_word_left(&mut self, _: &MoveWordLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.move_to(
                 previous_word_boundary(&self.content, self.cursor_offset()),
@@ -1289,6 +1465,7 @@ impl TextArea {
     }
 
     fn move_word_right(&mut self, _: &MoveWordRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.move_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
         } else {
@@ -1298,13 +1475,23 @@ impl TextArea {
     }
 
     fn select_left(&mut self, _: &SelectLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
     fn select_right(&mut self, _: &SelectRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
+    }
+
+    fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_vertically(-1, true, window, cx);
+    }
+
+    fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_vertically(1, true, window, cx);
     }
 
     fn select_word_left(
@@ -1313,6 +1500,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         self.select_to(
             previous_word_boundary(&self.content, self.cursor_offset()),
             cx,
@@ -1326,11 +1514,13 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         self.selection_reversed = false;
         self.selected_range = 0..self.content.len();
         cx.notify();
@@ -1338,12 +1528,14 @@ impl TextArea {
     }
 
     fn move_line_start(&mut self, _: &MoveLineStart, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         let start = line_start_offset(&self.content, self.cursor_offset());
         self.move_to(start, cx);
         self.scroll_caret_into_view(window, cx);
     }
 
     fn move_line_end(&mut self, _: &MoveLineEnd, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         let end = line_end_offset(&self.content, self.cursor_offset());
         self.move_to(end, cx);
         self.scroll_caret_into_view(window, cx);
@@ -1355,16 +1547,19 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         self.select_to(line_start_offset(&self.content, self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
     fn select_line_end(&mut self, _: &SelectLineEnd, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
@@ -1372,6 +1567,7 @@ impl TextArea {
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
@@ -1384,6 +1580,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(
                 previous_word_boundary(&self.content, self.cursor_offset()),
@@ -1399,6 +1596,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx)
         }
@@ -1411,6 +1609,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(line_start_offset(&self.content, self.cursor_offset()), cx);
         }
@@ -1423,13 +1622,20 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         if self.selected_range.is_empty() {
             self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
         }
         self.replace_text_in_range(None, "", window, cx)
     }
 
+    fn insert_newline(&mut self, _: &InsertNewline, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
+        self.replace_text_in_range(None, "\n", window, cx);
+    }
+
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let text = text.replace("\r\n", "\n");
             self.replace_text_in_range(None, &text, window, cx);
@@ -1445,6 +1651,7 @@ impl TextArea {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
@@ -1463,6 +1670,7 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         self.is_selecting = true;
         window.focus(&self.focus_handle);
         let offset = self.index_for_mouse_position(event.position, window);
@@ -1475,6 +1683,7 @@ impl TextArea {
     }
 
     fn on_mouse_up(&mut self, _: &gpui::MouseUpEvent, _window: &mut Window, _: &mut Context<Self>) {
+        self.preferred_vertical_x = None;
         self.is_selecting = false;
     }
 
@@ -1485,9 +1694,59 @@ impl TextArea {
         cx: &mut Context<Self>,
     ) {
         if self.is_selecting {
+            self.preferred_vertical_x = None;
             self.select_to(self.index_for_mouse_position(event.position, window), cx);
             self.scroll_caret_into_view(window, cx);
         }
+    }
+
+    fn move_vertically(
+        &mut self,
+        delta: i32,
+        select: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bounds) = self.last_bounds else {
+            return;
+        };
+
+        self.ensure_layout_for_width(Some(bounds.size.width), window, cx);
+        if !select && !self.selected_range.is_empty() {
+            self.preferred_vertical_x = None;
+            let offset = if delta < 0 {
+                self.selected_range.start
+            } else {
+                self.selected_range.end
+            };
+            self.move_to(offset, cx);
+            self.scroll_caret_into_view(window, cx);
+            return;
+        }
+
+        let Some(layout) = self.layout_cache.as_ref() else {
+            return;
+        };
+        let line_height = layout.line_height;
+
+        let cursor_offset = self.cursor_offset();
+        let Some(target_offset) = move_vertically_in_lines(
+            &layout.lines,
+            self.content.len(),
+            cursor_offset,
+            &mut self.preferred_vertical_x,
+            delta,
+            line_height,
+        ) else {
+            return;
+        };
+
+        if select {
+            self.select_to(target_offset, cx);
+        } else {
+            self.move_to(target_offset, cx);
+        }
+        self.scroll_caret_into_view(window, cx);
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>, _window: &Window) -> usize {
@@ -1570,6 +1829,7 @@ impl EntityInputHandler for TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         let replacement_range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -1599,6 +1859,7 @@ impl EntityInputHandler for TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferred_vertical_x = None;
         let replacement_range = range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -1644,24 +1905,8 @@ impl EntityInputHandler for TextArea {
         let line_height = layout.line_height;
 
         let position_for_index = |index: usize| -> Option<Point<Pixels>> {
-            let mut line_origin = bounds.origin;
-            let mut line_start_ix = 0usize;
-            for line in &layout.lines {
-                let line_end_ix = line_start_ix + line.len();
-                if index < line_start_ix {
-                    break;
-                } else if index > line_end_ix {
-                    line_origin.y += line.size(line_height).height;
-                    line_start_ix = line_end_ix + 1;
-                    continue;
-                } else {
-                    let ix_within_line = index - line_start_ix;
-                    return Some(
-                        line_origin + line.position_for_index(ix_within_line, line_height)?,
-                    );
-                }
-            }
-            None
+            caret_point_for_offset_in_lines(&layout.lines, index, line_height)
+                .map(|pos| bounds.origin + pos)
         };
 
         let start_pos = position_for_index(start)?;
@@ -1845,15 +2090,7 @@ impl Element for TextAreaElement {
                         let local_start = start - line_start_ix;
                         let local_end = end - line_start_ix;
 
-                        let boundary_indices = line
-                            .wrap_boundaries
-                            .iter()
-                            .map(|boundary| {
-                                line.unwrapped_layout.runs[boundary.run_ix].glyphs
-                                    [boundary.glyph_ix]
-                                    .index
-                            })
-                            .chain(std::iter::once(line.len()));
+                        let boundary_indices = wrap_boundary_end_indices(line);
 
                         let mut segment_start = 0usize;
                         let mut segment_y = px(0.0);
@@ -1905,26 +2142,7 @@ impl Element for TextAreaElement {
 
             // Paint cursor.
             if focus_handle.is_focused(window) && input.selected_range.is_empty() {
-                let cursor_offset = input.cursor_offset();
-
-                let mut cursor_bounds = None;
-                let mut line_origin = bounds.origin;
-                let mut line_start_ix = 0usize;
-                for line in &layout.lines {
-                    let line_end_ix = line_start_ix + line.len();
-                    if cursor_offset <= line_end_ix {
-                        let ix_within_line = cursor_offset.saturating_sub(line_start_ix);
-                        if let Some(pos) = line.position_for_index(ix_within_line, line_height) {
-                            cursor_bounds =
-                                Some(Bounds::new(line_origin + pos, size(px(2.), line_height)));
-                        }
-                        break;
-                    }
-                    line_origin.y += line.size(line_height).height;
-                    line_start_ix = line_end_ix + 1;
-                }
-
-                if let Some(cursor_bounds) = cursor_bounds {
+                if let Some(cursor_bounds) = input.caret_bounds(input.cursor_offset(), bounds) {
                     window.paint_quad(fill(cursor_bounds, theme.colors.ring));
                 }
             }
@@ -1957,10 +2175,14 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
             .on_action(cx.listener(Self::move_word_left))
             .on_action(cx.listener(Self::move_word_right))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_up))
+            .on_action(cx.listener(Self::select_down))
             .on_action(cx.listener(Self::select_word_left))
             .on_action(cx.listener(Self::select_word_right))
             .on_action(cx.listener(Self::select_all))
@@ -1972,6 +2194,7 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::delete_word_forward))
             .on_action(cx.listener(Self::delete_to_line_start))
             .on_action(cx.listener(Self::delete_to_line_end))
+            .on_action(cx.listener(Self::insert_newline))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
@@ -2056,6 +2279,70 @@ fn scroll_offset_y_to_reveal(
 mod tests {
     use super::*;
 
+    #[derive(Clone, Debug)]
+    struct TestLine {
+        len: usize,
+        segment_ends: Vec<usize>,
+        char_width: Pixels,
+    }
+
+    impl TestLine {
+        fn new(len: usize, mut segment_ends: Vec<usize>, char_width: Pixels) -> Self {
+            if segment_ends.last().copied() != Some(len) {
+                segment_ends.push(len);
+            }
+
+            Self {
+                len,
+                segment_ends,
+                char_width,
+            }
+        }
+    }
+
+    impl SegmentedLine for TestLine {
+        fn len(&self) -> usize {
+            self.len
+        }
+
+        fn height(&self, line_height: Pixels) -> Pixels {
+            px(f32::from(line_height) * self.segment_ends.len() as f32)
+        }
+
+        fn caret_point_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+            Some(caret_point_for_segmented_line_index(
+                index,
+                self.len,
+                self.segment_ends.iter().copied(),
+                |ix| px(f32::from(self.char_width) * ix as f32),
+                line_height,
+            ))
+        }
+
+        fn closest_index_for_local_position(
+            &self,
+            position: Point<Pixels>,
+            line_height: Pixels,
+        ) -> usize {
+            let segment_index =
+                (f32::from(position.y) / f32::from(line_height)).floor() as isize;
+            let segment_index = segment_index
+                .clamp(0, self.segment_ends.len().saturating_sub(1) as isize)
+                as usize;
+
+            let segment_start = segment_index
+                .checked_sub(1)
+                .and_then(|prev| self.segment_ends.get(prev).copied())
+                .unwrap_or(0);
+            let segment_end = self.segment_ends[segment_index];
+
+            let col = (f32::from(position.x) / f32::from(self.char_width)).round() as isize;
+            let col = col.clamp(0, (segment_end - segment_start) as isize) as usize;
+
+            segment_start + col
+        }
+    }
+
     #[test]
     fn scroll_offset_y_to_reveal_scrolls_up() {
         let viewport = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
@@ -2082,5 +2369,84 @@ mod tests {
 
         let new_offset = scroll_offset_y_to_reveal(px(-12.0), px(500.0), viewport, target, px(4.0));
         assert_eq!(new_offset, px(-12.0));
+    }
+
+    #[test]
+    fn caret_point_for_segmented_line_index_places_boundary_at_next_row_start() {
+        let line_height = px(18.0);
+        let char_width = px(10.0);
+
+        let point = caret_point_for_segmented_line_index(
+            3,
+            6,
+            [3, 6],
+            |ix| px(f32::from(char_width) * ix as f32),
+            line_height,
+        );
+
+        assert_eq!(point, gpui::point(px(0.0), line_height));
+    }
+
+    #[test]
+    fn move_vertically_moves_between_visual_rows_in_a_wrapped_line() {
+        let line_height = px(20.0);
+        let char_width = px(8.0);
+        let lines = vec![TestLine::new(6, vec![3], char_width)];
+
+        let mut preferred_x = None;
+        let up = move_vertically_in_lines(&lines, 6, 4, &mut preferred_x, -1, line_height);
+        assert_eq!(up, Some(1));
+        assert_eq!(preferred_x, Some(char_width));
+
+        let down = move_vertically_in_lines(&lines, 6, 1, &mut preferred_x, 1, line_height);
+        assert_eq!(down, Some(4));
+
+        let noop_up = move_vertically_in_lines(&lines, 6, 1, &mut preferred_x, -1, line_height);
+        assert_eq!(noop_up, None);
+        let noop_down = move_vertically_in_lines(&lines, 6, 4, &mut preferred_x, 1, line_height);
+        assert_eq!(noop_down, None);
+    }
+
+    #[test]
+    fn move_vertically_preserves_preferred_x_across_shorter_lines() {
+        let line_height = px(20.0);
+        let char_width = px(9.0);
+
+        // `0123456789\nx`
+        let lines = vec![TestLine::new(10, vec![], char_width), TestLine::new(1, vec![], char_width)];
+        let content_len = 12;
+
+        let mut preferred_x = None;
+        let down =
+            move_vertically_in_lines(&lines, content_len, 10, &mut preferred_x, 1, line_height);
+        assert_eq!(down, Some(12));
+
+        let up =
+            move_vertically_in_lines(&lines, content_len, 12, &mut preferred_x, -1, line_height);
+        assert_eq!(up, Some(10));
+    }
+
+    #[test]
+    fn move_vertically_noops_at_first_and_last_line() {
+        let line_height = px(20.0);
+        let char_width = px(9.0);
+
+        // `abc\ndef`
+        let lines = vec![TestLine::new(3, vec![], char_width), TestLine::new(3, vec![], char_width)];
+        let content_len = 7;
+
+        let mut preferred_x = None;
+        assert_eq!(
+            move_vertically_in_lines(&lines, content_len, 1, &mut preferred_x, -1, line_height),
+            None
+        );
+        assert_eq!(
+            move_vertically_in_lines(&lines, content_len, 1, &mut preferred_x, 1, line_height),
+            Some(5)
+        );
+        assert_eq!(
+            move_vertically_in_lines(&lines, content_len, 5, &mut preferred_x, 1, line_height),
+            None
+        );
     }
 }
