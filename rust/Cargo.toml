@@ -21,6 +21,7 @@ redesmyn_git = { path = "crates/redesmyn_git" }
 redesmyn_ids = { path = "crates/redesmyn_ids" }
 redesmyn_graph_layout = { path = "crates/redesmyn_graph_layout" }
 redesmyn_logging = { path = "crates/redesmyn_logging" }
+redesmyn_markdown = { path = "crates/redesmyn_markdown" }
 redesmyn_protocol = { path = "crates/redesmyn_protocol" }
 redesmyn_session_view_model = { path = "crates/redesmyn_session_view_model" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
@@ -40,6 +41,7 @@ prost = "0.14.3"
 prost-build = "0.14.3"
 prost-types = "0.14.3"
 protoc-bin-vendored = "3.2.0"
+pulldown-cmark = "0.13.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", default-features = false }

@@ -1,0 +1,11 @@
+[package]
+name = "redesmyn_markdown"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+pulldown-cmark.workspace = true
+
