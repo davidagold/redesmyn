@@ -964,6 +964,9 @@ async fn handle_update_session(
                 SessionDiff::NewTurn { turn_id } => {
                     inner.active_turn_id = Some(turn_id.clone());
 
+                    // TODO(T-68): Harden against out-of-order diffs (e.g. `newTurn` arriving
+                    // before `newConversation`) so we always capture/persist the external
+                    // `session_id` on TurnStarted events.
                     let external_session_ref = inner.session_id.as_ref().map(|session_id| {
                         ExternalSessionRef::CodexSession {
                             session_id: session_id.clone(),

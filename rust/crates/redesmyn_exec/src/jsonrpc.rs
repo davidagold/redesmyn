@@ -111,6 +111,9 @@ impl JsonRpcConnection {
             return Err(err);
         }
 
+        // TODO(T-68): Add per-request timeout/cancellation so a wedged or stalled app-server
+        // doesn't hang structured turns indefinitely. The supervisor should be able to surface a
+        // clear error and/or trigger reconnect on timeout.
         match rx.await {
             Ok(payload) => payload,
             Err(_) => Err(JsonRpcError::RemoteError {
