@@ -42,6 +42,9 @@ Define a deterministic discovery policy:
 - Rust DB path (default): `<repo>/.redesmyn/redesmyn_rust.sqlite3`
 - Legacy DB path (default): `<repo>/.redesmyn/redesmyn.sqlite3`
 
+The `rn-rs` CLI also supports overriding these paths for dev workflows (e.g. importing into a
+throwaway Rust DB file while preserving the “official” cutover DB).
+
 Safety rules:
 
 - Never write to the legacy DB.
@@ -55,7 +58,7 @@ temporary directory and opens the snapshot in read-only mode.
 
 Provide a developer-facing import surface, at minimum via Rust CLI:
 
-- `rn-rs db import-legacy [--repo <path>] [--dry-run] [--json]`
+- `rn-rs db import-legacy [--repo <path>] [--legacy-db-path <path>] [--rust-db-path <path>] [--dry-run] [--json]`
 
 Requirements:
 
@@ -102,6 +105,10 @@ Implementation note (v0): `legacy_id_map` is used for:
 - `agent_sessions` (session id)
 - `agent_session_preview_events` (distinct session event ids; do not reuse `session_id` as `event_id`)
 
+Important: ULIDs are stable only as long as the Rust DB file (and therefore `legacy_id_map`) is reused.
+If you import into a fresh Rust DB file, the newly generated ULIDs will differ (which is fine for a
+throwaway dev DB).
+
 ### 5) Tests
 
 Add a deterministic test that:
@@ -121,6 +128,8 @@ Add a deterministic test that:
 
 - Dry run (plan only): `rn-rs db import-legacy --dry-run --json`
 - Apply import: `rn-rs db import-legacy`
+- Dev DB import (throwaway Rust DB file): `rn-rs db import-legacy --rust-db-path <repo>/.redesmyn/redesmyn_rust_dev.sqlite3`
+- “Official”/cutover import (stable ULIDs across re-runs): `rn-rs db import-legacy --rust-db-path <repo>/.redesmyn/redesmyn_rust.sqlite3`
 - From the repo root via Cargo: `cargo run -p rn -- db import-legacy --dry-run --json`
 
 ## Dependencies / sequencing
