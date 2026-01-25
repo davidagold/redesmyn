@@ -11,7 +11,7 @@ use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage, SessionEventBatch};
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
     SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
-    ToolResult, TurnCompleted, TurnStarted, TurnState, UserMessage,
+    ToolResult, TurnCompleted, TurnStarted, TurnState,
 };
 use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -197,7 +197,7 @@ struct SupervisorState {
 
 #[derive(Debug)]
 struct SessionEntry {
-    task_id: TaskId,
+    task_id: Option<TaskId>,
     interface_mode: InterfaceMode,
     control_tx: mpsc::Sender<SessionCommand>,
     join: tokio::task::JoinHandle<()>,
@@ -233,8 +233,10 @@ impl AppServerSupervisor {
             while let Some(session_id) = cleanup_rx.recv().await {
                 let mut st = state_for_cleanup.lock().await;
                 if let Some(entry) = st.sessions.remove(&session_id) {
-                    st.active_by_task
-                        .remove(entry.task_id, entry.interface_mode, session_id);
+                    if let Some(task_id) = entry.task_id {
+                        st.active_by_task
+                            .remove(task_id, entry.interface_mode, session_id);
+                    }
                 }
             }
         });
@@ -250,12 +252,12 @@ impl AppServerSupervisor {
 
     pub async fn start_session(
         &self,
-        task_id: TaskId,
+        session_id: SessionId,
+        task_id: Option<TaskId>,
         spec: AppServerSessionSpec,
     ) -> Result<SessionId, StartSessionError> {
-        validate_task_scope(task_id, spec.scope)?;
+        validate_scope(task_id, spec.scope)?;
         let interface_mode = InterfaceMode::Structured;
-        let session_id = SessionId::new();
 
         let (control_tx, control_rx) = mpsc::channel::<SessionCommand>(16);
         let (ready_tx, ready_rx) = oneshot::channel::<Result<(), AppServerProcessError>>();
@@ -273,12 +275,18 @@ impl AppServerSupervisor {
                 return Err(StartSessionError::ShuttingDown);
             }
 
-            if !spec.allow_concurrent_for_task {
-                if let Some(existing) = st.active_by_task.any_session(task_id, interface_mode) {
-                    return Err(StartSessionError::TaskHasActiveSession {
-                        session_id: existing,
-                        interface_mode,
-                    });
+            if st.sessions.contains_key(&session_id) {
+                return Ok(session_id);
+            }
+
+            if let Some(task_id) = task_id {
+                if !spec.allow_concurrent_for_task {
+                    if let Some(existing) = st.active_by_task.any_session(task_id, interface_mode) {
+                        return Err(StartSessionError::TaskHasActiveSession {
+                            session_id: existing,
+                            interface_mode,
+                        });
+                    }
                 }
             }
 
@@ -287,7 +295,9 @@ impl AppServerSupervisor {
                     "app_server.session",
                     session_id = %session_id,
                 );
-                redesmyn_logging::span::record_task_id(&span, task_id);
+                if let Some(task_id) = task_id {
+                    redesmyn_logging::span::record_task_id(&span, task_id);
+                }
                 let _guard = span.enter();
 
                 if let Err(err) = run_session(
@@ -318,8 +328,10 @@ impl AppServerSupervisor {
                     join,
                 },
             );
-            st.active_by_task
-                .insert(task_id, interface_mode, session_id);
+            if let Some(task_id) = task_id {
+                st.active_by_task
+                    .insert(task_id, interface_mode, session_id);
+            }
         }
 
         match ready_rx.await {
@@ -402,8 +414,10 @@ impl AppServerSupervisor {
     async fn cleanup_local(&self, session_id: SessionId) {
         let mut st = self.state.lock().await;
         if let Some(entry) = st.sessions.remove(&session_id) {
-            st.active_by_task
-                .remove(entry.task_id, entry.interface_mode, session_id);
+            if let Some(task_id) = entry.task_id {
+                st.active_by_task
+                    .remove(task_id, entry.interface_mode, session_id);
+            }
         }
     }
 
@@ -427,18 +441,29 @@ impl AppServerSupervisor {
     }
 }
 
-fn validate_task_scope(task_id: TaskId, scope: SessionScope) -> Result<(), StartSessionError> {
+fn validate_scope(task_id: Option<TaskId>, scope: SessionScope) -> Result<(), StartSessionError> {
     match scope {
         SessionScope::Task {
             task_id: scope_task_id,
-        } if scope_task_id == task_id => Ok(()),
-        SessionScope::Task {
-            task_id: scope_task_id,
-        } => Err(StartSessionError::InvalidScope {
-            reason: format!("scope.task_id must match task_id ({task_id}); got {scope_task_id}"),
-        }),
+        } => match task_id {
+            Some(task_id) if scope_task_id == task_id => Ok(()),
+            Some(task_id) => Err(StartSessionError::InvalidScope {
+                reason: format!("scope.task_id must match task_id ({task_id}); got {scope_task_id}"),
+            }),
+            None => Err(StartSessionError::InvalidScope {
+                reason: "missing task_id for task-scoped app-server session".to_owned(),
+            }),
+        },
+        SessionScope::Chat => {
+            if task_id.is_some() {
+                return Err(StartSessionError::InvalidScope {
+                    reason: "chat-scoped app-server sessions must not include task_id".to_owned(),
+                });
+            }
+            Ok(())
+        }
         _ => Err(StartSessionError::InvalidScope {
-            reason: "expected task scope".to_owned(),
+            reason: "unsupported session scope for app-server session".to_owned(),
         }),
     }
 }
@@ -459,7 +484,7 @@ async fn run_session(
     config: AppServerSupervisorConfig,
     artifact_store: LocalArtifactStore,
     frames_tx: mpsc::Sender<DaemonFrame>,
-    task_id: TaskId,
+    task_id: Option<TaskId>,
     session_id: SessionId,
     scope: SessionScope,
     process: Arc<dyn AppServerProcess>,
@@ -506,7 +531,7 @@ async fn run_session(
     );
 
     let _ = ready_tx.send(Ok(()));
-    tracing::info!(%task_id, %session_id, "app-server session started");
+    tracing::info!(task_id = ?task_id, %session_id, "app-server session started");
 
     while let Some(cmd) = control_rx.recv().await {
         match cmd {
@@ -668,22 +693,10 @@ async fn emit_app_server_event(
                 error,
             }),
         ),
-        AppServerEvent::UserMessage { text } => {
-            let mut ev = UserMessage {
-                text,
-                preview: String::new(),
-                full_text_artifact: None,
-            };
-            limit_message_event(
-                artifact_store,
-                config.max_message_chars,
-                config.max_preview_chars,
-                &mut ev.text,
-                &mut ev.preview,
-                &mut ev.full_text_artifact,
-            )
-            .await?;
-            (None, SessionEventKind::UserMessage(ev))
+        AppServerEvent::UserMessage { .. } => {
+            // The control plane persists UserMessage events before dispatching daemon commands.
+            // Avoid emitting duplicate copies of the same user text from the app-server runner.
+            return Ok(());
         }
         AppServerEvent::AssistantMessage { text } => {
             let mut ev = AssistantMessage {

@@ -10,7 +10,7 @@ use redesmyn_exec::app_server::{
 };
 use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
-use redesmyn_ids::TaskId;
+use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::daemon::DaemonMessage;
 use redesmyn_protocol::session::{
     ExternalSessionRef, SessionEvent, SessionEventKind, SessionScope,
@@ -489,9 +489,11 @@ async fn initialize_new_session_user_message_emits_codex_session_ref() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let daemon_session_id = SessionId::new();
     let daemon_session_id = supervisor
         .start_session(
-            task_id,
+            daemon_session_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
@@ -555,9 +557,11 @@ async fn resume_sets_user_message_resume_field() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let daemon_session_id = SessionId::new();
     let daemon_session_id = supervisor
         .start_session(
-            task_id,
+            daemon_session_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
@@ -647,9 +651,11 @@ async fn cancel_mid_turn_emits_turn_completed() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let session_id = SessionId::new();
     let session_id = supervisor
         .start_session(
-            task_id,
+            session_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,

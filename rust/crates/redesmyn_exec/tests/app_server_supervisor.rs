@@ -10,7 +10,7 @@ use redesmyn_exec::app_server::{
     StartSessionError,
 };
 use redesmyn_exec::artifact_store::LocalArtifactStore;
-use redesmyn_ids::TaskId;
+use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::daemon::DaemonMessage;
 use redesmyn_protocol::session::{SessionEvent, SessionEventKind, SessionScope};
 use tokio::sync::mpsc;
@@ -200,9 +200,11 @@ async fn send_message_round_trips_and_emits_structured_event() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let session_id = SessionId::new();
     let session_id = supervisor
         .start_session(
-            task_id,
+            session_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
@@ -263,9 +265,11 @@ async fn concurrent_sessions_do_not_clear_active_task_marker() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let session_1_id = SessionId::new();
     let session_1 = supervisor
         .start_session(
-            task_id,
+            session_1_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: true,
@@ -275,9 +279,11 @@ async fn concurrent_sessions_do_not_clear_active_task_marker() {
         .await
         .expect("start_session 1");
 
+    let session_2_id = SessionId::new();
     let session_2 = supervisor
         .start_session(
-            task_id,
+            session_2_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: true,
@@ -298,7 +304,8 @@ async fn concurrent_sessions_do_not_clear_active_task_marker() {
 
     let err = supervisor
         .start_session(
-            task_id,
+            SessionId::new(),
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
@@ -341,9 +348,11 @@ async fn reconnect_failure_does_not_kill_event_forwarding() {
     let task_id = TaskId::new();
     let scope = SessionScope::Task { task_id };
 
+    let session_id = SessionId::new();
     let session_id = supervisor
         .start_session(
-            task_id,
+            session_id,
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
@@ -409,7 +418,8 @@ async fn connect_failure_triggers_shutdown() {
     let shutdown_calls = Arc::new(AtomicUsize::new(0));
     let err = supervisor
         .start_session(
-            task_id,
+            SessionId::new(),
+            Some(task_id),
             AppServerSessionSpec {
                 scope,
                 allow_concurrent_for_task: false,
