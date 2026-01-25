@@ -54,35 +54,15 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("left", Left, Some("TextArea")),
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("right", Right, Some("TextArea")),
-        // Word navigation (macOS: alt-*, Windows/Linux: ctrl-*).
-        KeyBinding::new("alt-left", MoveWordLeft, Some("TextInput")),
-        KeyBinding::new("alt-left", MoveWordLeft, Some("TextArea")),
-        KeyBinding::new("alt-right", MoveWordRight, Some("TextInput")),
-        KeyBinding::new("alt-right", MoveWordRight, Some("TextArea")),
-        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextInput")),
-        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextArea")),
-        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextInput")),
-        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextArea")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextArea")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextArea")),
-        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextInput")),
-        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextArea")),
-        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextInput")),
-        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextArea")),
-        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextInput")),
-        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextArea")),
-        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextInput")),
-        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextArea")),
-        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextInput")),
-        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextArea")),
-        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextInput")),
-        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextArea")),
-        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextInput")),
-        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextArea")),
-        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextInput")),
-        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextArea")),
+        KeyBinding::new("enter", Submit, Some("TextInput")),
+    ]);
+
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
         KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
         KeyBinding::new("cmd-a", SelectAll, Some("TextArea")),
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
@@ -91,7 +71,18 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, Some("TextArea")),
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
         KeyBinding::new("cmd-x", Cut, Some("TextArea")),
-        // Line navigation (macOS: cmd-left/right, Windows/Linux: home/end).
+        KeyBinding::new("alt-left", MoveWordLeft, Some("TextInput")),
+        KeyBinding::new("alt-left", MoveWordLeft, Some("TextArea")),
+        KeyBinding::new("alt-right", MoveWordRight, Some("TextInput")),
+        KeyBinding::new("alt-right", MoveWordRight, Some("TextArea")),
+        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("shift-alt-left", SelectWordLeft, Some("TextArea")),
+        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextInput")),
+        KeyBinding::new("shift-alt-right", SelectWordRight, Some("TextArea")),
+        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextInput")),
+        KeyBinding::new("alt-backspace", DeleteWordBackward, Some("TextArea")),
+        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextInput")),
+        KeyBinding::new("alt-delete", DeleteWordForward, Some("TextArea")),
         KeyBinding::new("cmd-left", MoveLineStart, Some("TextInput")),
         KeyBinding::new("cmd-left", MoveLineStart, Some("TextArea")),
         KeyBinding::new("cmd-right", MoveLineEnd, Some("TextInput")),
@@ -100,6 +91,35 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("shift-cmd-left", SelectLineStart, Some("TextArea")),
         KeyBinding::new("shift-cmd-right", SelectLineEnd, Some("TextInput")),
         KeyBinding::new("shift-cmd-right", SelectLineEnd, Some("TextArea")),
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextInput")),
+        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextArea")),
+        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextInput")),
+        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextArea")),
+        KeyBinding::new("cmd-enter", Submit, Some("TextArea")),
+    ]);
+
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([
+        KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
+        KeyBinding::new("ctrl-a", SelectAll, Some("TextArea")),
+        KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
+        KeyBinding::new("ctrl-v", Paste, Some("TextArea")),
+        KeyBinding::new("ctrl-c", Copy, Some("TextInput")),
+        KeyBinding::new("ctrl-c", Copy, Some("TextArea")),
+        KeyBinding::new("ctrl-x", Cut, Some("TextInput")),
+        KeyBinding::new("ctrl-x", Cut, Some("TextArea")),
+        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextInput")),
+        KeyBinding::new("ctrl-left", MoveWordLeft, Some("TextArea")),
+        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextInput")),
+        KeyBinding::new("ctrl-right", MoveWordRight, Some("TextArea")),
+        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextInput")),
+        KeyBinding::new("shift-ctrl-left", SelectWordLeft, Some("TextArea")),
+        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextInput")),
+        KeyBinding::new("shift-ctrl-right", SelectWordRight, Some("TextArea")),
+        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextInput")),
+        KeyBinding::new("ctrl-backspace", DeleteWordBackward, Some("TextArea")),
+        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextInput")),
+        KeyBinding::new("ctrl-delete", DeleteWordForward, Some("TextArea")),
         KeyBinding::new("home", MoveLineStart, Some("TextInput")),
         KeyBinding::new("home", MoveLineStart, Some("TextArea")),
         KeyBinding::new("end", MoveLineEnd, Some("TextInput")),
@@ -108,13 +128,7 @@ pub fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("shift-home", SelectLineStart, Some("TextArea")),
         KeyBinding::new("shift-end", SelectLineEnd, Some("TextInput")),
         KeyBinding::new("shift-end", SelectLineEnd, Some("TextArea")),
-        // Line deletion (optional but recommended).
-        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextInput")),
-        KeyBinding::new("cmd-backspace", DeleteToLineStart, Some("TextArea")),
-        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextInput")),
-        KeyBinding::new("cmd-delete", DeleteToLineEnd, Some("TextArea")),
-        KeyBinding::new("enter", Submit, Some("TextInput")),
-        KeyBinding::new("cmd-enter", Submit, Some("TextArea")),
+        KeyBinding::new("ctrl-enter", Submit, Some("TextArea")),
     ]);
 }
 
@@ -1264,7 +1278,10 @@ impl TextArea {
 
     fn move_word_left(&mut self, _: &MoveWordLeft, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.move_to(previous_word_boundary(&self.content, self.cursor_offset()), cx);
+            self.move_to(
+                previous_word_boundary(&self.content, self.cursor_offset()),
+                cx,
+            );
         } else {
             self.move_to(self.selected_range.start, cx)
         }
@@ -1296,7 +1313,10 @@ impl TextArea {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_to(previous_word_boundary(&self.content, self.cursor_offset()), cx);
+        self.select_to(
+            previous_word_boundary(&self.content, self.cursor_offset()),
+            cx,
+        );
         self.scroll_caret_into_view(window, cx);
     }
 
@@ -1339,12 +1359,7 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
-    fn select_line_end(
-        &mut self,
-        _: &SelectLineEnd,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_line_end(&mut self, _: &SelectLineEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
         self.scroll_caret_into_view(window, cx);
     }
@@ -1846,17 +1861,17 @@ impl Element for TextAreaElement {
                             let start_ix = local_start.clamp(segment_start, segment_end);
                             let end_ix = local_end.clamp(segment_start, segment_end);
                             if start_ix < end_ix {
-                                let segment_start_x = line.unwrapped_layout.x_for_index(segment_start);
+                                let segment_start_x =
+                                    line.unwrapped_layout.x_for_index(segment_start);
                                 let x0 =
                                     line.unwrapped_layout.x_for_index(start_ix) - segment_start_x;
-                                let x1 = line.unwrapped_layout.x_for_index(end_ix) - segment_start_x;
+                                let x1 =
+                                    line.unwrapped_layout.x_for_index(end_ix) - segment_start_x;
 
                                 let top_left =
                                     gpui::point(line_origin.x + x0, line_origin.y + segment_y);
-                                let bottom_right = gpui::point(
-                                    line_origin.x + x1,
-                                    top_left.y + line_height,
-                                );
+                                let bottom_right =
+                                    gpui::point(line_origin.x + x1, top_left.y + line_height);
                                 window.paint_quad(fill(
                                     Bounds::from_corners(top_left, bottom_right),
                                     selection_color,
