@@ -600,6 +600,8 @@ impl RootView {
                 .unwrap_or_else(String::new),
             task_id: selected_task_id,
             task_slug: selected_task_slug,
+            // `edge_id` is a domain TaskRelationId selection (not a UI graph edge). Graph edge
+            // selection is surfaced via `UiSnapshot.graph.selected_edge`.
             edge_id: None,
         };
 

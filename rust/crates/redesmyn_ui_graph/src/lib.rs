@@ -16,4 +16,4 @@ mod view;
 pub use camera::{GraphCamera, GraphCameraLimits};
 pub use hit_test::GraphHit;
 pub use scene::{GraphEdgeId, GraphNodeId, GraphScene, GraphSelection, TrunkCommit, TrunkTimeline};
-pub use view::{GraphView, GraphViewEvent};
+pub use view::GraphView;

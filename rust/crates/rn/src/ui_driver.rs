@@ -35,6 +35,9 @@ pub(crate) enum UiDriverCommands {
     Smoke(UiDriverSmokeArgs),
     /// Runs a deterministic graph smoke flow:
     /// open epic → select node → toggle focus mode → capture artifacts.
+    ///
+    /// Prefer `--launch` (sets `REDESMYN_UI_TEST_MODE=1`) unless you are connecting to an
+    /// already-running test instance.
     GraphSmoke(UiDriverGraphSmokeArgs),
 }
 
@@ -97,7 +100,8 @@ pub(crate) struct UiDriverGraphSmokeArgs {
 
     /// TaskId to select in the graph.
     ///
-    /// If omitted, uses a deterministic demo TaskId (bytes: [1; 16]).
+    /// If omitted, uses a deterministic demo TaskId (bytes: [1; 16]) from UI test mode.
+    /// Prefer `--launch`; otherwise pass `--task-id`.
     #[arg(long)]
     task_id: Option<TaskId>,
 
@@ -423,6 +427,13 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
     #[cfg(unix)]
     {
         let mut desktop_child: Option<Child> = None;
+
+        if args.task_id.is_none() && !args.launch {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Missing --task-id. The default demo TaskId ([1; 16]) requires `--launch` (sets REDESMYN_UI_TEST_MODE=1).",
+            ));
+        }
 
         let socket_path = match args.uds.clone() {
             Some(path) => path,

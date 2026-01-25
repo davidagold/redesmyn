@@ -5624,26 +5624,6 @@ impl crate::ui_driver::UiSelectionState {
     }
 }
 
-impl crate::ui_driver::UiGraphState {
-    #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::UiGraphState {
-        pbv1::UiGraphState {
-            load_state: encode_ui_graph_load_state(self.load_state),
-            node_count: self.node_count,
-            edge_count: self.edge_count,
-        }
-    }
-
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::UiGraphState) -> Self {
-        Self {
-            load_state: decode_ui_graph_load_state(proto.load_state),
-            node_count: proto.node_count,
-            edge_count: proto.edge_count,
-        }
-    }
-}
-
 impl crate::ui_driver::UiInFlightAction {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiInFlightAction {
@@ -5766,6 +5746,9 @@ impl crate::ui_driver::UiGraphState {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::UiGraphState {
         pbv1::UiGraphState {
+            load_state: encode_ui_graph_load_state(self.load_state),
+            node_count: self.node_count,
+            edge_count: self.edge_count,
             selected_node: self.selected_node.map(|id| id.to_protobuf()),
             selected_edge: self.selected_edge.map(|id| id.to_protobuf()),
             multi_selected_nodes: self
@@ -5789,6 +5772,9 @@ impl crate::ui_driver::UiGraphState {
 
     pub fn try_from_protobuf(proto: pbv1::UiGraphState) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
+            load_state: decode_ui_graph_load_state(proto.load_state),
+            node_count: proto.node_count,
+            edge_count: proto.edge_count,
             selected_node: proto
                 .selected_node
                 .map(crate::ui_driver::UiGraphNodeId::try_from_protobuf)
@@ -5824,7 +5810,6 @@ impl crate::ui_driver::UiSnapshot {
             primary_view: encode_ui_primary_view(self.primary_view),
             left_pane: Some(self.left_pane.to_protobuf()),
             selection: Some(self.selection.to_protobuf()),
-            graph: Some(self.graph.to_protobuf()),
             in_flight: self
                 .in_flight
                 .iter()
@@ -5858,10 +5843,6 @@ impl crate::ui_driver::UiSnapshot {
                     .selection
                     .ok_or_else(|| missing_required("selection"))?,
             )?,
-            graph: proto
-                .graph
-                .map(crate::ui_driver::UiGraphState::from_protobuf)
-                .unwrap_or_default(),
             in_flight: proto
                 .in_flight
                 .into_iter()

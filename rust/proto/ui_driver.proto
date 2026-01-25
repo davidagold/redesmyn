@@ -322,7 +322,9 @@ message UiSelectionState {
   // TaskId (ULID bytes, length = 16).
   bytes task_id = 3;
   string task_slug = 4;
-  // TaskRelationId (ULID bytes, length = 16).
+  // Domain graph edge selection (TaskRelationId; ULID bytes, length = 16).
+  //
+  // Note: UI graph edge selection is surfaced via UiGraphState.selected_edge.
   bytes edge_id = 5;
 }
 

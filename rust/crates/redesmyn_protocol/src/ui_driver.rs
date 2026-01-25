@@ -402,6 +402,9 @@ pub struct UiSelectionState {
     pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_slug: String,
+    /// Selected domain graph edge (TaskRelationId), when the UI supports relation selection.
+    ///
+    /// Note: UI graph edge selection is surfaced via `UiSnapshot.graph.selected_edge`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge_id: Option<TaskRelationId>,
 }
@@ -522,8 +525,6 @@ pub struct UiSnapshot {
     pub pinned_chat_session_id: Option<SessionId>,
     #[serde(default)]
     pub pinned_chat_composer: UiComposerState,
-    #[serde(default)]
-    pub graph: UiGraphState,
 }
 
 /// UI driver protocol messages.

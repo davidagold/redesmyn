@@ -395,7 +395,6 @@ impl UiDriverHarness {
                 .collect(),
             pinned_chat_session_id: None,
             pinned_chat_composer: UiComposerState::default(),
-            graph: Default::default(),
         }
     }
 
