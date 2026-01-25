@@ -13,6 +13,7 @@ redesmyn_ids.workspace = true
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_ui.workspace = true
+redesmyn_ui_session.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui = { workspace = true, features = ["wayland", "x11"] }

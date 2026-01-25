@@ -15,14 +15,14 @@ use gpui::{
 use gpui::prelude::*;
 
 use redesmyn_client_api::Client;
-use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
+use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentMessageConflictAction, GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
-    ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
-    SubscriptionEvent,
+    AgentMessageConflictAction, GetLatestTaskSessionRequest, GetSessionEventsRequest,
+    GetSessionEventsResponse, RequestPayload, ResponseResult, SendSessionMessageRequest,
+    SendSessionMessageResponse, SessionEventCursor, SubscriptionEvent,
 };
-use redesmyn_protocol::session::SessionEventKind;
+use redesmyn_protocol::session::{InterfaceMode, SessionEventKind};
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, SessionEvent};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -32,7 +32,7 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, MarkdownView, ScrollArea, TextArea, TextButton, TextInput,
     TextInputEvent,
 };
-use redesmyn_ui::utils::theme_for_window;
+use redesmyn_ui::utils::{UserActionState, theme_for_window};
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
@@ -73,6 +73,26 @@ async fn get_session_events(
 
     match response {
         ResponseResult::GetSessionEvents(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
+async fn get_latest_task_session(
+    client: &Client,
+    task_id: TaskId,
+) -> Result<Option<SessionId>, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::GetLatestTaskSession(
+            GetLatestTaskSessionRequest { task_id },
+        ))
+        .await?;
+
+    match response {
+        ResponseResult::GetLatestTaskSession(resp) => Ok(resp.session_id),
         ResponseResult::Error(err) => Err(err),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::Internal,
@@ -189,6 +209,19 @@ fn cache_markdown_for_events(
     stats
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TaskSessionBindingState {
+    pub task_id: Option<TaskId>,
+    pub in_flight: bool,
+    pub error: Option<SharedString>,
+    pub session_id: Option<SessionId>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionViewEvent {
+    TaskBindingStateChanged(TaskSessionBindingState),
+}
+
 pub struct SessionView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
@@ -206,7 +239,14 @@ pub struct SessionView {
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
     pending_scroll_restore: Option<ScrollRestore>,
+    task_binding_task_id: Option<TaskId>,
+    task_binding_action: UserActionState,
+    task_binding_generation: u64,
+    task_binding_task: Option<Task<()>>,
     error: Option<SharedString>,
+    attach: UserActionState,
+    attach_notice: Option<SharedString>,
+    attach_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -215,6 +255,8 @@ impl Focusable for SessionView {
         self.focus_handle.clone()
     }
 }
+
+impl gpui::EventEmitter<SessionViewEvent> for SessionView {}
 
 impl SessionView {
     pub fn new(
@@ -284,7 +326,14 @@ impl SessionView {
             load_older_task: None,
             send_task: None,
             pending_scroll_restore: None,
+            task_binding_task_id: None,
+            task_binding_action: UserActionState::default(),
+            task_binding_generation: 0,
+            task_binding_task: None,
             error: None,
+            attach: UserActionState::default(),
+            attach_notice: None,
+            attach_task: None,
             _subscriptions: subscriptions,
         };
 
@@ -294,6 +343,181 @@ impl SessionView {
         }
 
         this
+    }
+
+    #[must_use]
+    pub fn task_binding_state(&self) -> TaskSessionBindingState {
+        let session_id = self.feed.as_ref().map(|feed| feed.session_id);
+        TaskSessionBindingState {
+            task_id: self.task_binding_task_id,
+            in_flight: self.task_binding_action.in_flight,
+            error: self.task_binding_action.error.clone(),
+            session_id,
+        }
+    }
+
+    #[must_use]
+    pub fn scroll_handle(&self) -> ScrollHandle {
+        self.scroll_handle.clone()
+    }
+
+    pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
+        if self.task_binding_task_id == task_id {
+            return;
+        }
+
+        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
+        let generation = self.task_binding_generation;
+        self.task_binding_task_id = task_id;
+        self.task_binding_action.in_flight = false;
+        self.task_binding_action.error = None;
+        self.task_binding_task = None;
+        self.attach = UserActionState::default();
+        self.attach_notice = None;
+        self.attach_task = None;
+
+        self.set_session_id(None, cx);
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+
+        let Some(task_id) = task_id else {
+            cx.notify();
+            return;
+        };
+
+        let Some(client) = self.client.clone() else {
+            self.task_binding_action
+                .fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
+            cx.notify();
+            return;
+        };
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_view.bind_latest_task_session",
+            task_id = %task_id
+        );
+        let _guard = span.enter();
+
+        self.task_binding_action.start();
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+        cx.notify();
+
+        let view = cx.entity();
+        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = get_latest_task_session(&client, task_id).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_task_binding_loaded(generation, task_id, result, cx)
+                    })
+                });
+            }
+        }));
+    }
+
+    pub fn refresh_latest_task_session(&mut self, cx: &mut Context<Self>) {
+        let Some(task_id) = self.task_binding_task_id else {
+            return;
+        };
+
+        if self.task_binding_action.in_flight {
+            return;
+        }
+
+        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
+        let generation = self.task_binding_generation;
+        self.task_binding_action.in_flight = false;
+        self.task_binding_action.error = None;
+        self.task_binding_task = None;
+        self.attach = UserActionState::default();
+        self.attach_notice = None;
+        self.attach_task = None;
+
+        self.set_session_id(None, cx);
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+
+        let Some(client) = self.client.clone() else {
+            self.task_binding_action
+                .fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
+            cx.notify();
+            return;
+        };
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_view.refresh_latest_task_session",
+            task_id = %task_id
+        );
+        let _guard = span.enter();
+
+        self.task_binding_action.start();
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+        cx.notify();
+
+        let view = cx.entity();
+        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = get_latest_task_session(&client, task_id).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_task_binding_loaded(generation, task_id, result, cx)
+                    })
+                });
+            }
+        }));
+    }
+
+    fn on_task_binding_loaded(
+        &mut self,
+        generation: u64,
+        task_id: TaskId,
+        result: Result<Option<SessionId>, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.task_binding_generation || self.task_binding_task_id != Some(task_id)
+        {
+            return;
+        }
+
+        self.task_binding_task = None;
+
+        match result {
+            Ok(session_id) => {
+                self.task_binding_action.succeed();
+                self.task_binding_action.clear_error();
+                self.set_session_id(session_id, cx);
+            }
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    task_id = %task_id,
+                    error = %err.message,
+                    "failed to load latest task session"
+                );
+                self.task_binding_action.fail(err.message);
+                self.set_session_id(None, cx);
+            }
+        }
+
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+        cx.notify();
     }
 
     pub fn set_session_id(&mut self, session_id: Option<SessionId>, cx: &mut Context<Self>) {
@@ -771,6 +995,62 @@ impl SessionView {
         self.scroll_handle.scroll_to_bottom();
         cx.notify();
     }
+
+    fn attach_command(&self) -> Option<String> {
+        let Some(task_id) = self.task_binding_task_id else {
+            return None;
+        };
+        Some(format!("rn agent attach --task {task_id}"))
+    }
+
+    fn start_attach(&mut self, attach_command: String, cx: &mut Context<Self>) {
+        if self.attach.in_flight {
+            return;
+        }
+
+        let span =
+            redesmyn_logging::redesmyn_info_span!("ui.session_view.attach", command = %attach_command);
+        let _guard = span.enter();
+
+        self.attach.start();
+        self.attach_notice = None;
+        cx.notify();
+
+        let view = cx.entity();
+        self.attach_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                gpui::Timer::after(Duration::from_millis(240)).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(attach_command));
+                        this.attach.succeed();
+                        this.attach_notice = Some("Copied attach command.".into());
+                        this.attach_task = None;
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
+    fn copy_attach_command(&mut self, attach_command: String, cx: &mut Context<Self>) {
+        if self.attach.in_flight {
+            return;
+        }
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_view.copy_attach_command",
+            command = %attach_command
+        );
+        let _guard = span.enter();
+
+        self.attach.start();
+        cx.write_to_clipboard(ClipboardItem::new_string(attach_command));
+        self.attach.succeed();
+        self.attach_notice = Some("Copied attach command.".into());
+        cx.notify();
+    }
 }
 
 impl Render for SessionView {
@@ -838,6 +1118,131 @@ impl Render for SessionView {
             .as_ref()
             .map(SessionFeedState::timeline_items)
             .unwrap_or_default();
+
+        let session_is_interactive = items.iter().any(|item| match item {
+            SessionTimelineItem::Event(item) => match &item.content {
+                redesmyn_session_view_model::SessionEventItemContent::TurnStarted(turn) => {
+                    turn.interface_mode == InterfaceMode::Interactive
+                }
+                redesmyn_session_view_model::SessionEventItemContent::TurnCompleted(turn) => {
+                    turn.interface_mode == InterfaceMode::Interactive
+                }
+                _ => false,
+            },
+            _ => false,
+        });
+
+        if session_is_interactive {
+            let attach_command = self.attach_command();
+            let attach_label = if self.attach.in_flight {
+                "Preparing attach…"
+            } else {
+                "Attach"
+            };
+
+            let attach_disabled = self.attach.in_flight || attach_command.is_none();
+            let attach_disabled_reason = if self.attach.in_flight {
+                "Preparing…"
+            } else {
+                "Attach command unavailable"
+            };
+
+            let copy_label = if self.attach.in_flight {
+                "Copying…"
+            } else {
+                "Copy attach command"
+            };
+
+            let attach = TextButton::new(("session_attach", cx.entity_id()), attach_label)
+                .kind(ButtonKind::Primary)
+                .disabled(attach_disabled)
+                .disabled_reason(attach_disabled_reason)
+                .on_click({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        let command = view.read(cx).attach_command();
+                        view.update(cx, |this, cx| {
+                            let Some(command) = command else {
+                                this.attach.fail("Attach command unavailable.");
+                                cx.notify();
+                                return;
+                            };
+                            this.start_attach(command, cx);
+                        });
+                    }
+                });
+
+            let copy_attach = TextButton::new(("session_copy_attach", cx.entity_id()), copy_label)
+                .kind(ButtonKind::Secondary)
+                .disabled(attach_disabled)
+                .disabled_reason(attach_disabled_reason)
+                .on_click({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        let command = view.read(cx).attach_command();
+                        view.update(cx, |this, cx| {
+                            let Some(command) = command else {
+                                this.attach.fail("Attach command unavailable.");
+                                cx.notify();
+                                return;
+                            };
+                            this.copy_attach_command(command, cx);
+                        });
+                    }
+                });
+
+            let mut placeholder = div()
+                .p(theme.spacing.md)
+                .rounded_md()
+                .bg(theme.colors.surface_elevated.opacity(0.35))
+                .flex()
+                .flex_col()
+                .gap(theme.spacing.sm)
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child("Interactive session (tmux)"),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground_muted)
+                        .child("The native viewer does not render terminal output yet."),
+                );
+
+            if let Some(command) = attach_command.clone() {
+                placeholder = placeholder.child(
+                    div()
+                        .px(theme.spacing.sm)
+                        .py(theme.spacing.sm)
+                        .rounded_sm()
+                        .bg(theme.colors.surface.opacity(0.6))
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .child(command),
+                );
+            }
+
+            placeholder = placeholder.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(theme.spacing.sm)
+                    .child(attach)
+                    .child(copy_attach),
+            );
+
+            if let Some(err) = self.attach.error.clone() {
+                placeholder = placeholder.child(Callout::new(err).kind(CalloutKind::Danger).title("Attach"));
+            }
+            if let Some(notice) = self.attach_notice.clone() {
+                placeholder = placeholder
+                    .child(Callout::new(notice).kind(CalloutKind::Info).title("Attach"));
+            }
+
+            content = content.child(placeholder);
+        }
 
         let markdown_options = MarkdownParseOptions::default();
         let markdown_cache = &mut self.markdown_cache;

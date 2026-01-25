@@ -48,6 +48,7 @@ fn main() {
     let tokio_handle = desktop.tokio_handle();
     let session_control_plane_client = desktop.take_control_plane_client();
     let session_viewer_fixture = desktop.take_session_viewer_fixture();
+    let task_control_plane_client = desktop.connect_control_plane_client(64);
     let chrome_control_plane_client = desktop.connect_control_plane_client(64);
     let (ui_driver_rx, _ui_driver_server) = match std::env::var_os("REDESMYN_UI_DRIVER_SOCKET_PATH")
     {
@@ -107,6 +108,7 @@ fn main() {
                         daemon_host_id,
                         tokio_handle.clone(),
                         session_control_plane_client,
+                        task_control_plane_client,
                         chrome_control_plane_client,
                         session_viewer_fixture,
                         ui_driver_rx,

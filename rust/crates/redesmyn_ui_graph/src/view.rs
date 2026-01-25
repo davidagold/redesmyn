@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, fill, prelude::*, px, quad, rems, App, AsyncApp, ClickEvent, Context, CursorStyle,
-    FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render,
-    ScrollHandle, ScrollWheelEvent, Task, TextRun, Window,
+    Entity, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Render, ScrollHandle, ScrollWheelEvent, Subscription, Task, TextRun, Window,
 };
 
 use redesmyn_ids::CommandId;
@@ -31,6 +31,7 @@ use crate::hit_test::{hit_test, GraphHit};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
 use redesmyn_protocol::client::{MergeReadiness, TaskState};
+use redesmyn_ui_session::{SessionView, SessionViewEvent};
 
 #[derive(Debug, Clone)]
 struct FpsOverlay {
@@ -190,7 +191,7 @@ pub struct GraphView {
     camera_animation_guard: Option<UiActivityGuard>,
     pan_drag: Option<PanDrag>,
     last_canvas_bounds: Option<gpui::Bounds<gpui::Pixels>>,
-    expanded_session_scroll: ScrollHandle,
+    task_session_view: Entity<SessionView>,
     expanded_details_scroll: ScrollHandle,
     demo_action: UserActionState,
     demo_action_task: Option<Task<()>>,
@@ -204,29 +205,43 @@ pub struct GraphView {
     selection_bar_transition: Option<SelectionBarTransition>,
     selection_bar_guard: Option<UiActivityGuard>,
     bulk_start: BulkCommandState,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl GraphView {
-    pub fn new_empty(cx: &mut Context<Self>) -> Self {
+    pub fn new_empty(task_session_view: Entity<SessionView>, cx: &mut Context<Self>) -> Self {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_empty");
         let _guard = span.enter();
 
-        Self::new_with_scene(GraphScene::empty_demo(), cx)
+        Self::new_with_scene(GraphScene::empty_demo(), task_session_view, cx)
     }
 
-    pub fn new_demo(cx: &mut Context<Self>) -> Self {
+    pub fn new_demo(task_session_view: Entity<SessionView>, cx: &mut Context<Self>) -> Self {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_demo");
         let _guard = span.enter();
 
-        Self::new_with_scene(GraphScene::demo(), cx)
+        Self::new_with_scene(GraphScene::demo(), task_session_view, cx)
     }
 
-    fn new_with_scene(scene: GraphScene, cx: &mut Context<Self>) -> Self {
+    fn new_with_scene(
+        scene: GraphScene,
+        task_session_view: Entity<SessionView>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let fps_overlay_enabled = std::env::var("REDESMYN_UI_FPS_OVERLAY")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.subscribe(
+            &task_session_view,
+            |_this, _, _: &SessionViewEvent, cx: &mut Context<Self>| {
+                // Session state drives card chrome (loading/empty callouts), so keep the graph view
+                // in sync when the embedded SessionView updates.
+                cx.notify();
+            },
+        ));
 
-        Self {
+        let mut this = Self {
             focus_handle: cx.focus_handle(),
             scene,
             camera: GraphCamera::new(GraphCameraLimits::default()),
@@ -235,7 +250,7 @@ impl GraphView {
             camera_animation_guard: None,
             pan_drag: None,
             last_canvas_bounds: None,
-            expanded_session_scroll: ScrollHandle::new(),
+            task_session_view,
             expanded_details_scroll: ScrollHandle::new(),
             demo_action: UserActionState::default(),
             demo_action_task: None,
@@ -249,7 +264,12 @@ impl GraphView {
             selection_bar_transition: None,
             selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
-        }
+            _subscriptions: subscriptions,
+        };
+
+        let selected = this.scene.selection().selected_node;
+        this.sync_task_session_view(selected, cx);
+        this
     }
 
     pub fn replace_from_epic_graph(
@@ -268,6 +288,7 @@ impl GraphView {
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
+            self.sync_task_session_view(next_selection.selected_node, cx);
         }
 
         let did_start_layout_animation = self.start_layout_animation(
@@ -330,6 +351,7 @@ impl GraphView {
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
+            self.sync_task_session_view(next_selection.selected_node, cx);
             let did_start_layout_animation = self.start_layout_animation(
                 from_layout,
                 self.snapshot_scene_layout(),
@@ -370,8 +392,22 @@ impl GraphView {
         self.update_selection(|scene| scene.clear_selection(), cx);
     }
 
+    fn sync_task_session_view(
+        &mut self,
+        selected_node: Option<GraphNodeId>,
+        cx: &mut Context<Self>,
+    ) {
+        let task_id = match selected_node {
+            Some(GraphNodeId::Task(task_id)) => Some(task_id),
+            _ => None,
+        };
+
+        self.task_session_view.update(cx, |view, cx| {
+            view.bind_latest_task_session(task_id, cx);
+        });
+    }
+
     fn reset_expanded_card_state(&mut self) {
-        self.expanded_session_scroll = ScrollHandle::new();
         self.expanded_details_scroll = ScrollHandle::new();
         self.demo_action = UserActionState::default();
         self.demo_action_task = None;
@@ -945,7 +981,8 @@ impl GraphView {
             return;
         }
 
-        if should_defer_pan_to_scroll_view(&self.expanded_session_scroll, event.position, delta)
+        let session_scroll = self.task_session_view.read(cx).scroll_handle();
+        if should_defer_pan_to_scroll_view(&session_scroll, event.position, delta)
             || should_defer_pan_to_scroll_view(&self.expanded_details_scroll, event.position, delta)
         {
             return;
@@ -1695,6 +1732,7 @@ impl Render for GraphView {
             let primary_selected = self.visual_selected_node();
             let selected_nodes = &self.scene.selection().selected_nodes;
             let layout_animation = self.layout_animation.as_ref();
+            let task_session_state = self.task_session_view.read(cx).task_binding_state();
 
             let mut layer = div().absolute().inset_0();
 
@@ -1840,8 +1878,13 @@ impl Render for GraphView {
                             graph.update(cx, |this, cx| this.start_demo_action(node_id, cx));
                         }
                     };
+                    let start_agent_action = {
+                        let graph = graph.clone();
+                        move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                            graph.update(cx, |this, cx| this.start_demo_action(node_id, cx));
+                        }
+                    };
 
-                    let left_scroll = self.expanded_session_scroll.clone();
                     let right_scroll = self.expanded_details_scroll.clone();
                     let demo_action = self.demo_action.clone();
 
@@ -1918,56 +1961,153 @@ impl Render for GraphView {
                                                     .h(px(34.0))
                                                     .px(theme.spacing.md)
                                                     .flex()
+                                                    .flex_row()
                                                     .items_center()
                                                     .text_sm()
                                                     .text_color(theme.colors.foreground)
-                                                    .child("Session"),
+                                                    .justify_between()
+                                                    .child("Session")
+                                                    .when(is_primary_selected, |this| {
+                                                        let label = if task_session_state.in_flight
+                                                        {
+                                                            "Loading…".to_string()
+                                                        } else if let Some(session_id) =
+                                                            task_session_state.session_id
+                                                        {
+                                                            session_id.to_string()
+                                                        } else {
+                                                            "No session".to_string()
+                                                        };
+
+                                                        this.child(
+                                                            div()
+                                                                .min_w_0()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    theme.colors.foreground_muted,
+                                                                )
+                                                                .truncate()
+                                                                .child(label),
+                                                        )
+                                                    }),
                                             )
                                             .child(
                                                 div()
                                                     .flex_1()
                                                     .min_h(px(0.0))
                                                     .p(theme.spacing.md)
-                                                    .child(
-                                                        ScrollArea::new(
-                                                            (
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(theme.spacing.sm)
+                                                    .when(is_primary_selected, |this| {
+                                                        let mut this = this;
+
+                                                        if task_session_state.in_flight {
+                                                            this = this.child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .text_color(
+                                                                        theme.colors.foreground_muted,
+                                                                    )
+                                                                    .child("Loading latest session…"),
+                                                            );
+                                                        } else if let Some(err) = task_session_state.error.clone() {
+                                                            let refresh_button_id = (
                                                                 gpui::ElementId::from((
-                                                                    "task_card_session_scroll",
+                                                                    "task_card_session_refresh",
                                                                     entity_id,
                                                                 )),
                                                                 node_key.clone(),
-                                                            ),
-                                                            left_scroll,
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .flex()
-                                                                .flex_col()
-                                                                .gap(theme.spacing.sm)
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(
-                                                                            theme.colors.foreground_muted,
+                                                            );
+                                                            let task_session_view =
+                                                                self.task_session_view.clone();
+
+                                                            this = this.child(
+                                                                Callout::new(err)
+                                                                    .kind(CalloutKind::Danger)
+                                                                    .title("Session")
+                                                                    .action(
+                                                                        TextButton::new(
+                                                                            refresh_button_id,
+                                                                            "Retry",
                                                                         )
-                                                                        .child(
-                                                                            "SessionView placeholder (T-64).",
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    placeholder_message(
-                                                                        "Incoming session events will render here.",
-                                                                        &theme,
+                                                                        .kind(ButtonKind::Secondary)
+                                                                        .on_click(move |_, _, cx| {
+                                                                            task_session_view.update(
+                                                                                cx,
+                                                                                |view, cx| {
+                                                                                    view.refresh_latest_task_session(cx)
+                                                                                },
+                                                                            );
+                                                                        }),
                                                                     ),
-                                                                )
-                                                                .child(
-                                                                    placeholder_message(
-                                                                        "Composer UI will live at the bottom.",
-                                                                        &theme,
+                                                            );
+                                                        } else if task_session_state.session_id.is_none() {
+                                                            let refresh_button_id = (
+                                                                gpui::ElementId::from((
+                                                                    "task_card_session_refresh",
+                                                                    entity_id,
+                                                                )),
+                                                                node_key.clone(),
+                                                            );
+                                                            let start_button_id = (
+                                                                gpui::ElementId::from((
+                                                                    "task_card_session_start_agent",
+                                                                    entity_id,
+                                                                )),
+                                                                node_key.clone(),
+                                                            );
+
+                                                            let task_session_view =
+                                                                self.task_session_view.clone();
+
+                                                            this = this.child(
+                                                                Callout::new("No session yet.")
+                                                                    .kind(CalloutKind::Info)
+                                                                    .title("Session")
+                                                                    .action(
+                                                                        div()
+                                                                            .flex()
+                                                                            .flex_row()
+                                                                            .gap(theme.spacing.sm)
+                                                                            .child(
+                                                                                TextButton::new(
+                                                                                    start_button_id,
+                                                                                    "Start agent",
+                                                                                )
+                                                                                .kind(
+                                                                                    ButtonKind::Secondary,
+                                                                                )
+                                                                                .on_click(
+                                                                                    start_agent_action,
+                                                                                ),
+                                                                            )
+                                                                            .child(
+                                                                                TextButton::new(
+                                                                                    refresh_button_id,
+                                                                                    "Refresh",
+                                                                                )
+                                                                                .kind(ButtonKind::Ghost)
+                                                                                .on_click(move |_, _, cx| {
+                                                                                    task_session_view.update(
+                                                                                        cx,
+                                                                                        |view, cx| {
+                                                                                            view.refresh_latest_task_session(cx)
+                                                                                        },
+                                                                                    );
+                                                                                }),
+                                                                            ),
                                                                     ),
-                                                                ),
-                                                        ),
-                                                    ),
+                                                            );
+                                                        }
+
+                                                        this.child(
+                                                            div()
+                                                                .flex_1()
+                                                                .min_h(px(0.0))
+                                                                .child(self.task_session_view.clone()),
+                                                        )
+                                                    }),
                                             ),
                                     )
                                     .child(
@@ -2404,19 +2544,6 @@ fn task_status_chips(
         .child(task_state_chip(state, theme))
         .child(merge_readiness_chip(merge_readiness, theme))
         .child(agent_status_chip(agent_status, theme))
-}
-
-fn placeholder_message(
-    text: impl Into<gpui::SharedString>,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    div()
-        .p(theme.spacing.md)
-        .rounded(theme.radius.md)
-        .bg(theme.colors.accent.opacity(0.7))
-        .text_sm()
-        .text_color(theme.colors.foreground_muted)
-        .child(text.into())
 }
 
 fn details_kv_row(

@@ -42,6 +42,7 @@ pub struct DesktopModel {
     config: Arc<redesmyn_config::RustConfig>,
     daemon_host_id: Option<redesmyn_ids::HostId>,
     session_control_plane_client: Option<ClientInProcEndpoint>,
+    task_control_plane_client: Option<ClientInProcEndpoint>,
     chrome_control_plane_client: Option<ControlPlaneClient>,
     session_viewer_fixture: Option<SessionViewerFixtureEmitter>,
     ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
@@ -54,6 +55,7 @@ impl DesktopModel {
         daemon_host_id: Option<redesmyn_ids::HostId>,
         tokio_handle: tokio::runtime::Handle,
         session_control_plane_client: Option<ClientInProcEndpoint>,
+        task_control_plane_client: Option<ClientInProcEndpoint>,
         chrome_control_plane_client: Option<ClientInProcEndpoint>,
         session_viewer_fixture: Option<SessionViewerFixtureEmitter>,
         ui_driver_rx: Option<mpsc::UnboundedReceiver<crate::ui_driver::UiDriverCommand>>,
@@ -62,6 +64,7 @@ impl DesktopModel {
             config,
             daemon_host_id,
             session_control_plane_client,
+            task_control_plane_client,
             chrome_control_plane_client: chrome_control_plane_client
                 .map(|conn| ControlPlaneClient::new(tokio_handle, conn)),
             session_viewer_fixture,
@@ -71,6 +74,10 @@ impl DesktopModel {
 
     pub fn take_control_plane_client(&mut self) -> Option<ClientInProcEndpoint> {
         self.session_control_plane_client.take()
+    }
+
+    pub fn take_task_control_plane_client(&mut self) -> Option<ClientInProcEndpoint> {
+        self.task_control_plane_client.take()
     }
 
     pub fn take_ui_driver_rx(
@@ -3083,6 +3090,7 @@ struct WorkspacePaneHost {
     focus_handle: FocusHandle,
     ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
+    task_session_view: Entity<SessionView>,
     graph_view: Entity<GraphView>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
@@ -3109,11 +3117,16 @@ impl WorkspacePaneHost {
         ui_updates: UiUpdateCounter,
         cx: &mut Context<Self>,
     ) -> Self {
+        let task_session_client =
+            model.update(cx, |model, _cx| model.take_task_control_plane_client());
+        let task_session_view = cx.new(|cx| SessionView::new(task_session_client, None, cx));
+        let graph_session_view = task_session_view.clone();
         Self {
             focus_handle: cx.focus_handle(),
             ui_updates,
             model,
-            graph_view: cx.new(GraphView::new_empty),
+            task_session_view,
+            graph_view: cx.new(|cx| GraphView::new_empty(graph_session_view, cx)),
             sessions_collapsed,
             ui_settings_error: None,
             selected_epic_slug: None,
@@ -3147,7 +3160,8 @@ impl WorkspacePaneHost {
             self.graph_node_count = 0;
             self.graph_edge_count = 0;
             self.graph_error = None;
-            self.graph_view = cx.new(GraphView::new_empty);
+            let task_session_view = self.task_session_view.clone();
+            self.graph_view = cx.new(|cx| GraphView::new_empty(task_session_view, cx));
 
             if self.selected_epic_slug.is_some() {
                 self.refresh_graph(cx);
