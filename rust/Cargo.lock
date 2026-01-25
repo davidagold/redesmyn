@@ -4712,6 +4712,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "redesmyn_client_api"
+version = "0.1.0"
+dependencies = [
+ "redesmyn_ids",
+ "redesmyn_logging",
+ "redesmyn_protocol",
+ "redesmyn_transport",
+ "tokio",
+]
+
+[[package]]
 name = "redesmyn_config"
 version = "0.1.0"
 dependencies = [

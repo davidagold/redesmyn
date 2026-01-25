@@ -11,6 +11,7 @@ version = "0.1.0"
 [workspace.dependencies]
 # Workspace crates (prefer `workspace = true` in members).
 redesmyn_config = { path = "crates/redesmyn_config" }
+redesmyn_client_api = { path = "crates/redesmyn_client_api" }
 redesmyn_control_plane = { path = "crates/redesmyn_control_plane" }
 redesmyn_daemon = { path = "crates/redesmyn_daemon" }
 redesmyn_domain = { path = "crates/redesmyn_domain" }

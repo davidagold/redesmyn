@@ -1,0 +1,14 @@
+[package]
+name = "redesmyn_client_api"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_ids.workspace = true
+redesmyn_logging.workspace = true
+redesmyn_protocol.workspace = true
+redesmyn_transport.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
