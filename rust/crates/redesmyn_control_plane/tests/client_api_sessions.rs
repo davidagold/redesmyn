@@ -9,10 +9,11 @@ use redesmyn_ids::{
 };
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, ClientFrame, ClientMessage, CloseChatSessionRequest,
-    CreateChatSessionRequest, GetEpicPinnedChatSessionRequest, GetSessionEventsRequest,
-    ListChatSessionsRequest, ListTaskSessionsRequest, PinChatSessionToEpicRequest, Request,
-    RequestPayload, ResponseResult, SendSessionMessageRequest, SessionEventsFilter, Subscribe,
-    SubscriptionEvent, SubscriptionFilter,
+    CreateChatSessionRequest, GetEpicPinnedChatSessionRequest, GetLatestTaskSessionRequest,
+    GetSessionEventsRequest, ListChatSessionsRequest, ListTaskSessionsRequest,
+    PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
+    SendSessionMessageRequest, SessionEventsFilter, Subscribe, SubscriptionEvent,
+    SubscriptionFilter,
 };
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope, SessionEvent, Timestamp};
@@ -225,6 +226,29 @@ async fn uds_server_supports_session_query_surfaces() {
     let stream = connect_with_retry(&socket_path).await;
     let mut conn = FramedEndpoint::new(stream, ProtobufCodec::new());
     let scope = RepoScope::new(workspace_id, repo_id);
+
+    let get_latest_task_session_request_id = RequestId::new();
+    conn.send(ClientFrame::new(
+        ProtocolEnvelope::new().with_scope(scope.into()),
+        ClientMessage::Request(Request {
+            request_id: get_latest_task_session_request_id,
+            payload: RequestPayload::GetLatestTaskSession(GetLatestTaskSessionRequest { task_id }),
+        }),
+    ))
+    .await
+    .expect("send get_latest_task_session");
+
+    let frame = recv_frame(&mut conn).await;
+    let ClientMessage::Response(resp) = frame.message else {
+        panic!("expected Response, got {:?}", frame.message);
+    };
+    match resp.result {
+        ResponseResult::GetLatestTaskSession(payload) => {
+            assert_eq!(resp.request_id, get_latest_task_session_request_id);
+            assert_eq!(payload.session_id, Some(task_session_id));
+        }
+        other => panic!("unexpected response: {other:?}"),
+    }
 
     let list_task_sessions_request_id = RequestId::new();
     conn.send(ClientFrame::new(

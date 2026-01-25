@@ -190,12 +190,13 @@ impl SessionEvents {
         &self,
         task_id: TaskId,
     ) -> Result<Option<SessionId>, StorageError> {
-        let result = sqlx::query_scalar::<_, SessionId>(
+        // Prefer the newest task session record, even if it has not emitted any durable events yet.
+        let session_id = sqlx::query_scalar::<_, SessionId>(
             r#"
             SELECT session_id
-            FROM session_events
-            WHERE task_id = ?1
-            ORDER BY created_at_ms DESC, id DESC
+            FROM agent_sessions
+            WHERE scope_kind = 'task' AND task_id = ?1
+            ORDER BY created_at_ms DESC, session_id DESC
             LIMIT 1
             "#,
         )
@@ -203,7 +204,7 @@ impl SessionEvents {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(result)
+        Ok(session_id)
     }
 
     pub async fn get_epic_pinned_chat_session(
