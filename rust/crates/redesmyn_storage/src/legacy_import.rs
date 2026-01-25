@@ -1145,7 +1145,7 @@ async fn load_agent_sessions_schema(
 ) -> Result<AgentSessionsSchema, StorageError> {
     let rows: Vec<SqliteTableInfoRow> = sqlx::query_as(
         r#"
-        SELECT name, notnull, dflt_value, pk
+        SELECT name, "notnull" AS "notnull", dflt_value, pk
         FROM pragma_table_info('agent_sessions')
         "#,
     )
@@ -1227,6 +1227,7 @@ async fn ensure_agent_session(
         "status",
         "created_at_ms",
         "updated_at_ms",
+        "ended_at_ms",
     ] {
         if schema.columns.contains(column) && column != schema.pk_column {
             insert_columns.push(column.to_owned());
@@ -1261,11 +1262,11 @@ async fn ensure_agent_session(
             Some(AgentSessionValueKind::RepoId) => {
                 query = query.bind(repo_id);
             }
-            Some(AgentSessionValueKind::AgentKindGeneric) => {
-                query = query.bind("generic");
+            Some(AgentSessionValueKind::AgentKindShell) => {
+                query = query.bind("shell");
             }
-            Some(AgentSessionValueKind::InterfaceModeStructured) => {
-                query = query.bind("structured");
+            Some(AgentSessionValueKind::InterfaceModeShellTmux) => {
+                query = query.bind("shell_tmux");
             }
             Some(AgentSessionValueKind::StatusStopped) => {
                 query = query.bind("stopped");
@@ -1320,8 +1321,8 @@ enum AgentSessionValueKind {
     ScopeKindTask,
     WorkspaceId,
     RepoId,
-    AgentKindGeneric,
-    InterfaceModeStructured,
+    AgentKindShell,
+    InterfaceModeShellTmux,
     StatusStopped,
     TimestampNowMs,
 }
@@ -1340,10 +1341,10 @@ fn agent_session_value_kind(schema: &AgentSessionsSchema, column: &str) -> Optio
             Some(AgentSessionValueKind::WorkspaceId)
         }
         "repo_id" if !schema.columns.contains("scope_repo_id") => Some(AgentSessionValueKind::RepoId),
-        "agent_kind" => Some(AgentSessionValueKind::AgentKindGeneric),
-        "interface_mode" => Some(AgentSessionValueKind::InterfaceModeStructured),
+        "agent_kind" => Some(AgentSessionValueKind::AgentKindShell),
+        "interface_mode" => Some(AgentSessionValueKind::InterfaceModeShellTmux),
         "status" => Some(AgentSessionValueKind::StatusStopped),
-        "created_at_ms" | "updated_at_ms" => Some(AgentSessionValueKind::TimestampNowMs),
+        "created_at_ms" | "updated_at_ms" | "ended_at_ms" => Some(AgentSessionValueKind::TimestampNowMs),
         _ => None,
     }
 }
