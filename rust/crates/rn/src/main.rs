@@ -181,6 +181,14 @@ struct DbImportLegacyArgs {
     #[arg(long)]
     repo: Option<PathBuf>,
 
+    /// Legacy Python DB path (defaults to `<repo>/.redesmyn/redesmyn.sqlite3`).
+    #[arg(long)]
+    legacy_db_path: Option<PathBuf>,
+
+    /// Rust control-plane DB path (defaults to `<repo>/.redesmyn/redesmyn_rust.sqlite3`).
+    #[arg(long)]
+    rust_db_path: Option<PathBuf>,
+
     /// Report what would be imported without writing.
     #[arg(long)]
     dry_run: bool,
@@ -432,8 +440,14 @@ fn db_import_legacy(args: DbImportLegacyArgs, output: &Output) -> CommandOutcome
         }
     };
 
-    let legacy_db_path = legacy_db_path(&repo_root);
-    let rust_db_path = rust_db_path(&repo_root);
+    let legacy_db_path = args
+        .legacy_db_path
+        .clone()
+        .unwrap_or_else(|| legacy_db_path(&repo_root));
+    let rust_db_path = args
+        .rust_db_path
+        .clone()
+        .unwrap_or_else(|| rust_db_path(&repo_root));
 
     let options = redesmyn_storage::legacy_import::ImportLegacyOptions {
         repo_root: repo_root.clone(),
