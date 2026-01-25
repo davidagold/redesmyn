@@ -1,3 +1,5 @@
+use unicode_segmentation::UnicodeSegmentation;
+
 fn clamp_to_char_boundary(text: &str, mut offset: usize) -> usize {
     offset = offset.min(text.len());
     while offset > 0 && !text.is_char_boundary(offset) {
@@ -8,6 +10,39 @@ fn clamp_to_char_boundary(text: &str, mut offset: usize) -> usize {
 
 fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
+}
+
+pub(crate) fn previous_grapheme_boundary(text: &str, offset: usize) -> usize {
+    let offset = clamp_to_char_boundary(text, offset);
+    if offset == 0 {
+        return 0;
+    }
+
+    text.grapheme_indices(true)
+        .take_while(|(ix, _)| *ix < offset)
+        .last()
+        .map(|(ix, _)| ix)
+        .unwrap_or(0)
+}
+
+pub(crate) fn next_grapheme_boundary(text: &str, offset: usize) -> usize {
+    let len = text.len();
+    let offset = clamp_to_char_boundary(text, offset);
+    if offset >= len {
+        return len;
+    }
+
+    let mut cluster_start = 0usize;
+    let mut cluster_len = 0usize;
+    for (start, cluster) in text.grapheme_indices(true) {
+        if start > offset {
+            break;
+        }
+        cluster_start = start;
+        cluster_len = cluster.len();
+    }
+
+    (cluster_start + cluster_len).min(len)
 }
 
 /// Returns the start byte offset of the previous "word" relative to `offset`.
@@ -88,7 +123,10 @@ pub(crate) fn line_end_offset(text: &str, offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{line_end_offset, line_start_offset, next_word_boundary, previous_word_boundary};
+    use super::{
+        line_end_offset, line_start_offset, next_grapheme_boundary, next_word_boundary,
+        previous_grapheme_boundary, previous_word_boundary,
+    };
     use std::ops::Range;
 
     fn delete_word_backward(text: &str, cursor: usize) -> (String, usize) {
@@ -196,5 +234,39 @@ mod tests {
             extend_selection(cursor..cursor, false, line_start_offset(text, cursor));
         assert_eq!(range, line2_start..cursor);
         assert!(reversed);
+    }
+
+    #[test]
+    fn grapheme_boundaries_combining_mark() {
+        let text = "e\u{301}";
+        assert_eq!(next_grapheme_boundary(text, 0), text.len());
+        assert_eq!(next_grapheme_boundary(text, "e".len()), text.len());
+        assert_eq!(previous_grapheme_boundary(text, text.len()), 0);
+        assert_eq!(previous_grapheme_boundary(text, "e".len()), 0);
+    }
+
+    #[test]
+    fn grapheme_boundaries_zwj_emoji() {
+        let emoji = "👩‍👩‍👧‍👧";
+        assert_eq!(next_grapheme_boundary(emoji, 0), emoji.len());
+        assert_eq!(next_grapheme_boundary(emoji, "👩".len()), emoji.len());
+        assert_eq!(previous_grapheme_boundary(emoji, emoji.len()), 0);
+        assert_eq!(previous_grapheme_boundary(emoji, "👩".len()), 0);
+    }
+
+    #[test]
+    fn grapheme_boundaries_multiple_clusters() {
+        let emoji = "👩‍👩‍👧‍👧";
+        let text = format!("a{emoji}b");
+        let emoji_start = "a".len();
+        let emoji_end = emoji_start + emoji.len();
+
+        assert_eq!(next_grapheme_boundary(&text, 0), 1);
+        assert_eq!(next_grapheme_boundary(&text, emoji_start), emoji_end);
+        assert_eq!(next_grapheme_boundary(&text, emoji_end), text.len());
+
+        assert_eq!(previous_grapheme_boundary(&text, text.len()), emoji_end);
+        assert_eq!(previous_grapheme_boundary(&text, emoji_end), emoji_start);
+        assert_eq!(previous_grapheme_boundary(&text, emoji_start), 0);
     }
 }

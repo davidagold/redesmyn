@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
@@ -10,7 +13,8 @@ use gpui::{
 
 use crate::utils::{
     text_editing::{
-        line_end_offset, line_start_offset, next_word_boundary, previous_word_boundary,
+        line_end_offset, line_start_offset, next_grapheme_boundary, next_word_boundary,
+        previous_grapheme_boundary, previous_word_boundary,
     },
     theme_for_window,
 };
@@ -18,6 +22,8 @@ use crate::utils::{
 actions!(
     redesmyn_ui_text_input,
     [
+        Undo,
+        Redo,
         Backspace,
         Delete,
         Left,
@@ -73,6 +79,12 @@ pub fn bind_text_input_keys(cx: &mut App) {
 
     #[cfg(target_os = "macos")]
     cx.bind_keys([
+        KeyBinding::new("cmd-z", Undo, Some("TextInput")),
+        KeyBinding::new("cmd-z", Undo, Some("TextArea")),
+        KeyBinding::new("shift-cmd-z", Redo, Some("TextInput")),
+        KeyBinding::new("shift-cmd-z", Redo, Some("TextArea")),
+        KeyBinding::new("cmd-y", Redo, Some("TextInput")),
+        KeyBinding::new("cmd-y", Redo, Some("TextArea")),
         KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
         KeyBinding::new("cmd-a", SelectAll, Some("TextArea")),
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
@@ -111,6 +123,12 @@ pub fn bind_text_input_keys(cx: &mut App) {
 
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
+        KeyBinding::new("ctrl-z", Undo, Some("TextInput")),
+        KeyBinding::new("ctrl-z", Undo, Some("TextArea")),
+        KeyBinding::new("shift-ctrl-z", Redo, Some("TextInput")),
+        KeyBinding::new("shift-ctrl-z", Redo, Some("TextArea")),
+        KeyBinding::new("ctrl-y", Redo, Some("TextInput")),
+        KeyBinding::new("ctrl-y", Redo, Some("TextArea")),
         KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
         KeyBinding::new("ctrl-a", SelectAll, Some("TextArea")),
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
@@ -150,6 +168,122 @@ pub enum TextInputEvent {
     Submitted(SharedString),
 }
 
+const EDIT_HISTORY_LIMIT: usize = 128;
+const TYPING_GROUP_TIMEOUT: Duration = Duration::from_millis(750);
+
+#[derive(Clone, Debug)]
+struct EditSnapshot {
+    content: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+    marked_range: Option<Range<usize>>,
+}
+
+impl EditSnapshot {
+    fn capture(
+        content: &SharedString,
+        selected_range: &Range<usize>,
+        selection_reversed: bool,
+        marked_range: &Option<Range<usize>>,
+    ) -> Self {
+        Self {
+            content: content.clone(),
+            selected_range: selected_range.clone(),
+            selection_reversed,
+            marked_range: marked_range.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditKind {
+    TypingInsert,
+    Newline,
+    Paste,
+    Cut,
+    Delete,
+    ReplaceSelection,
+    Ime,
+}
+
+#[derive(Debug, Clone)]
+struct LastEdit {
+    at: Instant,
+    kind: EditKind,
+    cursor_after: usize,
+}
+
+#[derive(Debug, Default)]
+struct EditHistory {
+    undo: Vec<EditSnapshot>,
+    redo: Vec<EditSnapshot>,
+    last_edit: Option<LastEdit>,
+}
+
+impl EditHistory {
+    fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.last_edit = None;
+    }
+
+    fn break_group(&mut self) {
+        self.last_edit = None;
+    }
+
+    fn record_undo_step_at(
+        &mut self,
+        now: Instant,
+        before: EditSnapshot,
+        kind: EditKind,
+        insertion_point: usize,
+        cursor_after: usize,
+    ) {
+        self.redo.clear();
+
+        let can_group = kind == EditKind::TypingInsert
+            && self
+                .last_edit
+                .as_ref()
+                .is_some_and(|last| last.kind == EditKind::TypingInsert
+                    && now.duration_since(last.at) <= TYPING_GROUP_TIMEOUT
+                    && last.cursor_after == insertion_point);
+
+        if !can_group {
+            if self.undo.len() >= EDIT_HISTORY_LIMIT {
+                self.undo.remove(0);
+            }
+            self.undo.push(before);
+        }
+
+        self.last_edit = Some(LastEdit {
+            at: now,
+            kind,
+            cursor_after,
+        });
+    }
+
+    fn undo(&mut self, current: EditSnapshot) -> Option<EditSnapshot> {
+        let prev = self.undo.pop()?;
+        if self.redo.len() >= EDIT_HISTORY_LIMIT {
+            self.redo.remove(0);
+        }
+        self.redo.push(current);
+        self.last_edit = None;
+        Some(prev)
+    }
+
+    fn redo(&mut self, current: EditSnapshot) -> Option<EditSnapshot> {
+        let next = self.redo.pop()?;
+        if self.undo.len() >= EDIT_HISTORY_LIMIT {
+            self.undo.remove(0);
+        }
+        self.undo.push(current);
+        self.last_edit = None;
+        Some(next)
+    }
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -160,6 +294,7 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    history: EditHistory,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -176,6 +311,7 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            history: EditHistory::default(),
         }
     }
 
@@ -193,37 +329,23 @@ impl TextInput {
         self.selected_range = self.content.len()..self.content.len();
         self.selection_reversed = false;
         self.marked_range = None;
+        self.history.clear();
         cx.emit(TextInputEvent::Changed(self.content.clone()));
         cx.notify();
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
-        if offset == 0 {
-            return 0;
-        }
-        self.content
-            .char_indices()
-            .take_while(|(ix, _)| *ix < offset)
-            .last()
-            .map(|(ix, _)| ix)
-            .unwrap_or(0)
+        previous_grapheme_boundary(&self.content, offset)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
-        if offset >= self.content.len() {
-            return self.content.len();
-        }
-        self.content
-            .char_indices()
-            .skip_while(|(ix, _)| *ix <= offset)
-            .map(|(ix, _)| ix)
-            .next()
-            .unwrap_or(self.content.len())
+        next_grapheme_boundary(&self.content, offset)
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         self.selection_reversed = false;
+        self.history.break_group();
         cx.notify()
     }
 
@@ -237,6 +359,7 @@ impl TextInput {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
+        self.history.break_group();
         cx.notify()
     }
 
@@ -324,74 +447,108 @@ impl TextInput {
         self.select_to(self.content.len(), cx);
     }
 
-    fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx)
+    fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                self.previous_boundary(cursor)..cursor
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
-    fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx)
+    fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                cursor..self.next_boundary(cursor)
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
     fn delete_word_backward(
         &mut self,
         _: &DeleteWordBackward,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_range.is_empty() {
-            self.select_to(
-                previous_word_boundary(&self.content, self.cursor_offset()),
-                cx,
-            )
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                previous_word_boundary(&self.content, cursor)..cursor
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
     fn delete_word_forward(
         &mut self,
         _: &DeleteWordForward,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_range.is_empty() {
-            self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                cursor..next_word_boundary(&self.content, cursor)
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
     fn delete_to_line_start(
         &mut self,
         _: &DeleteToLineStart,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_range.is_empty() {
-            self.select_to(0, cx);
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| 0..self.cursor_offset());
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
     fn delete_to_line_end(
         &mut self,
         _: &DeleteToLineEnd,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_range.is_empty() {
-            self.select_to(self.content.len(), cx);
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| self.cursor_offset()..self.content.len());
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+            let replacement_range = self.replacement_range_for_input(None);
+            self.apply_edit_range(
+                replacement_range,
+                &text,
+                Some(EditKind::Paste),
+                Instant::now(),
+                cx,
+            );
         }
     }
 
@@ -403,17 +560,37 @@ impl TextInput {
         }
     }
 
-    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if !self.selected_range.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
-            self.replace_text_in_range(None, "", window, cx)
+            self.apply_edit_range(
+                self.selected_range.clone(),
+                "",
+                Some(EditKind::Cut),
+                Instant::now(),
+                cx,
+            );
         }
     }
 
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(TextInputEvent::Submitted(self.content.clone()));
+    }
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let current = self.snapshot();
+        if let Some(prev) = self.history.undo(current) {
+            self.restore_snapshot(prev, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let current = self.snapshot();
+        if let Some(next) = self.history.redo(current) {
+            self.restore_snapshot(next, cx);
+        }
     }
 
     fn on_mouse_down(
@@ -513,6 +690,121 @@ impl TextInput {
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
     }
+
+    fn snapshot(&self) -> EditSnapshot {
+        EditSnapshot::capture(
+            &self.content,
+            &self.selected_range,
+            self.selection_reversed,
+            &self.marked_range,
+        )
+    }
+
+    fn restore_snapshot(&mut self, snapshot: EditSnapshot, cx: &mut Context<Self>) {
+        self.content = snapshot.content;
+        self.selected_range = snapshot.selected_range;
+        self.selection_reversed = snapshot.selection_reversed;
+        self.marked_range = snapshot.marked_range;
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
+    }
+
+    fn replacement_range_for_input(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
+        range_utf16
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .or(self.marked_range.clone())
+            .unwrap_or(self.selected_range.clone())
+    }
+
+    fn apply_edit_range(
+        &mut self,
+        replacement_range: Range<usize>,
+        text: &str,
+        kind_override: Option<EditKind>,
+        now: Instant,
+        cx: &mut Context<Self>,
+    ) {
+        if replacement_range.is_empty() && text.is_empty() {
+            return;
+        }
+
+        let had_newline = text.contains('\n');
+        let text = text.replace('\n', " ");
+
+        let kind = kind_override.unwrap_or_else(|| {
+            if text.is_empty() {
+                EditKind::Delete
+            } else if !replacement_range.is_empty() {
+                EditKind::ReplaceSelection
+            } else if had_newline {
+                EditKind::Newline
+            } else {
+                EditKind::TypingInsert
+            }
+        });
+
+        let before = self.snapshot();
+        let insertion_point = replacement_range.start;
+        let cursor_after = replacement_range.start + text.len();
+        self.history.record_undo_step_at(
+            now,
+            before,
+            kind,
+            insertion_point,
+            cursor_after,
+        );
+
+        let mut content = self.content.to_string();
+        content.replace_range(replacement_range, &text);
+        self.content = content.into();
+
+        self.selected_range = cursor_after..cursor_after;
+        self.selection_reversed = false;
+        self.marked_range = None;
+
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
+    }
+
+    fn apply_marked_edit_range(
+        &mut self,
+        replacement_range: Range<usize>,
+        new_text: &str,
+        new_selected_range: Option<&Range<usize>>,
+        now: Instant,
+        cx: &mut Context<Self>,
+    ) {
+        let new_text = new_text.replace('\n', " ");
+
+        let before = self.snapshot();
+        let insertion_point = replacement_range.start;
+
+        let new_selected_range = new_selected_range
+            .map(|range_utf16| utf8_range_from_utf16(&new_text, range_utf16))
+            .unwrap_or_else(|| new_text.len()..new_text.len());
+        let cursor_after = replacement_range.start + new_selected_range.end;
+        self.history.record_undo_step_at(
+            now,
+            before,
+            EditKind::Ime,
+            insertion_point,
+            cursor_after,
+        );
+
+        let mut content = self.content.to_string();
+        content.replace_range(replacement_range.clone(), &new_text);
+        self.content = content.into();
+
+        self.marked_range = (!new_text.is_empty())
+            .then(|| replacement_range.start..replacement_range.start + new_text.len());
+
+        self.selected_range = (replacement_range.start + new_selected_range.start)
+            ..(replacement_range.start + new_selected_range.end);
+        self.selection_reversed = false;
+
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
+    }
 }
 
 impl EntityInputHandler for TextInput {
@@ -558,24 +850,8 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = text.replace('\n', " ");
-
-        let replacement_range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-        let mut content = self.content.to_string();
-        content.replace_range(replacement_range.clone(), &text);
-        self.content = content.into();
-
-        let cursor = replacement_range.start + text.len();
-        self.selected_range = cursor..cursor;
-        self.selection_reversed = false;
-        self.marked_range = None;
-
-        cx.emit(TextInputEvent::Changed(self.content.clone()));
-        cx.notify();
+        let replacement_range = self.replacement_range_for_input(range_utf16.as_ref());
+        self.apply_edit_range(replacement_range, text, None, Instant::now(), cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -586,31 +862,14 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let new_text = new_text.replace('\n', " ");
-
-        let replacement_range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-
-        let mut content = self.content.to_string();
-        content.replace_range(replacement_range.clone(), &new_text);
-        self.content = content.into();
-
-        self.marked_range = (!new_text.is_empty())
-            .then(|| replacement_range.start..replacement_range.start + new_text.len());
-
-        let new_selected_range = new_selected_range
-            .as_ref()
-            .map(|range_utf16| utf8_range_from_utf16(&new_text, range_utf16))
-            .unwrap_or_else(|| new_text.len()..new_text.len());
-        self.selected_range = (replacement_range.start + new_selected_range.start)
-            ..(replacement_range.start + new_selected_range.end);
-        self.selection_reversed = false;
-
-        cx.emit(TextInputEvent::Changed(self.content.clone()));
-        cx.notify();
+        let replacement_range = self.replacement_range_for_input(range_utf16.as_ref());
+        self.apply_marked_edit_range(
+            replacement_range,
+            new_text,
+            new_selected_range.as_ref(),
+            Instant::now(),
+            cx,
+        );
     }
 
     fn bounds_for_range(
@@ -852,6 +1111,8 @@ impl Render for TextInput {
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -911,6 +1172,7 @@ pub struct TextArea {
     is_selecting: bool,
     pending_scroll_to_cursor: bool,
     preferred_vertical_x: Option<Pixels>,
+    history: EditHistory,
 }
 
 impl EventEmitter<TextInputEvent> for TextArea {}
@@ -1135,6 +1397,7 @@ impl TextArea {
             is_selecting: false,
             pending_scroll_to_cursor: false,
             preferred_vertical_x: None,
+            history: EditHistory::default(),
         }
     }
 
@@ -1155,6 +1418,7 @@ impl TextArea {
         self.layout_cache = None;
         self.pending_scroll_to_cursor = true;
         self.preferred_vertical_x = None;
+        self.history.clear();
         cx.emit(TextInputEvent::Changed(self.content.clone()));
         cx.notify();
     }
@@ -1333,33 +1597,18 @@ impl TextArea {
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
-        if offset == 0 {
-            return 0;
-        }
-        self.content
-            .char_indices()
-            .take_while(|(ix, _)| *ix < offset)
-            .last()
-            .map(|(ix, _)| ix)
-            .unwrap_or(0)
+        previous_grapheme_boundary(&self.content, offset)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
-        if offset >= self.content.len() {
-            return self.content.len();
-        }
-        self.content
-            .char_indices()
-            .skip_while(|(ix, _)| *ix <= offset)
-            .map(|(ix, _)| ix)
-            .next()
-            .unwrap_or(self.content.len())
+        next_grapheme_boundary(&self.content, offset)
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         self.selection_reversed = false;
         self.pending_scroll_to_cursor = true;
+        self.history.break_group();
         cx.notify()
     }
 
@@ -1374,6 +1623,7 @@ impl TextArea {
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
         self.pending_scroll_to_cursor = true;
+        self.history.break_group();
         cx.notify()
     }
 
@@ -1421,6 +1671,135 @@ impl TextArea {
 
     fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range.start)..self.offset_from_utf16(range.end)
+    }
+
+    fn snapshot(&self) -> EditSnapshot {
+        EditSnapshot::capture(
+            &self.content,
+            &self.selected_range,
+            self.selection_reversed,
+            &self.marked_range,
+        )
+    }
+
+    fn restore_snapshot(
+        &mut self,
+        snapshot: EditSnapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.preferred_vertical_x = None;
+        self.content = snapshot.content;
+        self.selected_range = snapshot.selected_range;
+        self.selection_reversed = snapshot.selection_reversed;
+        self.marked_range = snapshot.marked_range;
+        self.layout_cache = None;
+        self.pending_scroll_to_cursor = true;
+        self.scroll_caret_into_view(window, cx);
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
+    }
+
+    fn replacement_range_for_input(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
+        range_utf16
+            .map(|range_utf16| self.range_from_utf16(range_utf16))
+            .or(self.marked_range.clone())
+            .unwrap_or(self.selected_range.clone())
+    }
+
+    fn apply_edit_range(
+        &mut self,
+        replacement_range: Range<usize>,
+        text: &str,
+        kind_override: Option<EditKind>,
+        now: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if replacement_range.is_empty() && text.is_empty() {
+            return;
+        }
+
+        self.preferred_vertical_x = None;
+        let kind = kind_override.unwrap_or_else(|| {
+            if text.is_empty() {
+                EditKind::Delete
+            } else if !replacement_range.is_empty() {
+                EditKind::ReplaceSelection
+            } else if text.contains('\n') {
+                EditKind::Newline
+            } else {
+                EditKind::TypingInsert
+            }
+        });
+
+        let before = self.snapshot();
+        let insertion_point = replacement_range.start;
+        let cursor_after = replacement_range.start + text.len();
+        self.history.record_undo_step_at(
+            now,
+            before,
+            kind,
+            insertion_point,
+            cursor_after,
+        );
+
+        let mut content = self.content.to_string();
+        content.replace_range(replacement_range, text);
+        self.content = content.into();
+
+        self.selected_range = cursor_after..cursor_after;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.layout_cache = None;
+        self.pending_scroll_to_cursor = true;
+        self.scroll_caret_into_view(window, cx);
+
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
+    }
+
+    fn apply_marked_edit_range(
+        &mut self,
+        replacement_range: Range<usize>,
+        new_text: &str,
+        new_selected_range: Option<&Range<usize>>,
+        now: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.preferred_vertical_x = None;
+        let before = self.snapshot();
+        let insertion_point = replacement_range.start;
+
+        let new_selected_range = new_selected_range
+            .map(|range_utf16| utf8_range_from_utf16(new_text, range_utf16))
+            .unwrap_or_else(|| new_text.len()..new_text.len());
+        let cursor_after = replacement_range.start + new_selected_range.end;
+        self.history.record_undo_step_at(
+            now,
+            before,
+            EditKind::Ime,
+            insertion_point,
+            cursor_after,
+        );
+
+        let mut content = self.content.to_string();
+        content.replace_range(replacement_range.clone(), new_text);
+        self.content = content.into();
+
+        self.marked_range = (!new_text.is_empty())
+            .then(|| replacement_range.start..replacement_range.start + new_text.len());
+
+        self.selected_range = (replacement_range.start + new_selected_range.start)
+            ..(replacement_range.start + new_selected_range.end);
+        self.selection_reversed = false;
+        self.layout_cache = None;
+        self.pending_scroll_to_cursor = true;
+        self.scroll_caret_into_view(window, cx);
+
+        cx.emit(TextInputEvent::Changed(self.content.clone()));
+        cx.notify();
     }
 
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
@@ -1560,18 +1939,30 @@ impl TextArea {
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx);
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                self.previous_boundary(cursor)..cursor
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx);
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                cursor..self.next_boundary(cursor)
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn delete_word_backward(
@@ -1581,13 +1972,16 @@ impl TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(
-                previous_word_boundary(&self.content, self.cursor_offset()),
-                cx,
-            )
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                previous_word_boundary(&self.content, cursor)..cursor
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn delete_word_forward(
@@ -1597,10 +1991,16 @@ impl TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(next_word_boundary(&self.content, self.cursor_offset()), cx)
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| {
+                let cursor = self.cursor_offset();
+                cursor..next_word_boundary(&self.content, cursor)
+            });
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn delete_to_line_start(
@@ -1610,10 +2010,13 @@ impl TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(line_start_offset(&self.content, self.cursor_offset()), cx);
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| line_start_offset(&self.content, self.cursor_offset())..self.cursor_offset());
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn delete_to_line_end(
@@ -1623,10 +2026,13 @@ impl TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        if self.selected_range.is_empty() {
-            self.select_to(line_end_offset(&self.content, self.cursor_offset()), cx);
-        }
-        self.replace_text_in_range(None, "", window, cx)
+        let replacement_range = self
+            .marked_range
+            .clone()
+            .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
+            .unwrap_or_else(|| self.cursor_offset()..line_end_offset(&self.content, self.cursor_offset()));
+
+        self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
 
     fn insert_newline(&mut self, _: &InsertNewline, window: &mut Window, cx: &mut Context<Self>) {
@@ -1638,7 +2044,15 @@ impl TextArea {
         self.preferred_vertical_x = None;
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let text = text.replace("\r\n", "\n");
-            self.replace_text_in_range(None, &text, window, cx);
+            let replacement_range = self.replacement_range_for_input(None);
+            self.apply_edit_range(
+                replacement_range,
+                &text,
+                Some(EditKind::Paste),
+                Instant::now(),
+                window,
+                cx,
+            );
         }
     }
 
@@ -1656,12 +2070,33 @@ impl TextArea {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
-            self.replace_text_in_range(None, "", window, cx);
+            self.apply_edit_range(
+                self.selected_range.clone(),
+                "",
+                Some(EditKind::Cut),
+                Instant::now(),
+                window,
+                cx,
+            );
         }
     }
 
     fn submit(&mut self, _: &Submit, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(TextInputEvent::Submitted(self.content.clone()));
+    }
+
+    fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.snapshot();
+        if let Some(prev) = self.history.undo(current) {
+            self.restore_snapshot(prev, window, cx);
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.snapshot();
+        if let Some(next) = self.history.redo(current) {
+            self.restore_snapshot(next, window, cx);
+        }
     }
 
     fn on_mouse_down(
@@ -1830,25 +2265,8 @@ impl EntityInputHandler for TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        let replacement_range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-        let mut content = self.content.to_string();
-        content.replace_range(replacement_range.clone(), text);
-        self.content = content.into();
-
-        let cursor = replacement_range.start + text.len();
-        self.selected_range = cursor..cursor;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.layout_cache = None;
-        self.pending_scroll_to_cursor = true;
-        self.scroll_caret_into_view(window, cx);
-
-        cx.emit(TextInputEvent::Changed(self.content.clone()));
-        cx.notify();
+        let replacement_range = self.replacement_range_for_input(range_utf16.as_ref());
+        self.apply_edit_range(replacement_range, text, None, Instant::now(), window, cx);
     }
 
     fn replace_and_mark_text_in_range(
@@ -1860,32 +2278,15 @@ impl EntityInputHandler for TextArea {
         cx: &mut Context<Self>,
     ) {
         self.preferred_vertical_x = None;
-        let replacement_range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
-
-        let mut content = self.content.to_string();
-        content.replace_range(replacement_range.clone(), new_text);
-        self.content = content.into();
-
-        self.marked_range = (!new_text.is_empty())
-            .then(|| replacement_range.start..replacement_range.start + new_text.len());
-
-        let new_selected_range = new_selected_range
-            .as_ref()
-            .map(|range_utf16| utf8_range_from_utf16(new_text, range_utf16))
-            .unwrap_or_else(|| new_text.len()..new_text.len());
-        self.selected_range = (replacement_range.start + new_selected_range.start)
-            ..(replacement_range.start + new_selected_range.end);
-        self.selection_reversed = false;
-        self.layout_cache = None;
-        self.pending_scroll_to_cursor = true;
-        self.scroll_caret_into_view(window, cx);
-
-        cx.emit(TextInputEvent::Changed(self.content.clone()));
-        cx.notify();
+        let replacement_range = self.replacement_range_for_input(range_utf16.as_ref());
+        self.apply_marked_edit_range(
+            replacement_range,
+            new_text,
+            new_selected_range.as_ref(),
+            Instant::now(),
+            window,
+            cx,
+        );
     }
 
     fn bounds_for_range(
@@ -2171,6 +2572,8 @@ impl Render for TextArea {
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .block_mouse_except_scroll()
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
