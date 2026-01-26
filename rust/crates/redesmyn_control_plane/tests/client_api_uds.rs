@@ -199,6 +199,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
             }
             SubscriptionEvent::EventLog(_) => continue,
             SubscriptionEvent::SessionEvent(_) => continue,
+            SubscriptionEvent::SessionLiveEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
@@ -231,6 +232,7 @@ async fn uds_server_binds_securely_and_streams_appended_events() {
             }
             SubscriptionEvent::Subscribed(_) => continue,
             SubscriptionEvent::SessionEvent(_) => continue,
+            SubscriptionEvent::SessionLiveEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
@@ -346,6 +348,7 @@ async fn event_log_subscription_supports_cursor_resume_over_uds() {
                 break;
             }
             SubscriptionEvent::SessionEvent(_) => continue,
+            SubscriptionEvent::SessionLiveEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }

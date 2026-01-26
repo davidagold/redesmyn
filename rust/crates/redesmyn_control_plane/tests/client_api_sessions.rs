@@ -543,6 +543,7 @@ async fn uds_server_supports_session_query_surfaces() {
             SubscriptionEvent::Subscribed(_) => break,
             SubscriptionEvent::EventLog(_) => continue,
             SubscriptionEvent::SessionEvent(_) => continue,
+            SubscriptionEvent::SessionLiveEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }
@@ -569,6 +570,7 @@ async fn uds_server_supports_session_query_surfaces() {
             }
             SubscriptionEvent::Subscribed(_) => continue,
             SubscriptionEvent::EventLog(_) => continue,
+            SubscriptionEvent::SessionLiveEvent(_) => continue,
             SubscriptionEvent::Error(err) => panic!("unexpected subscription error: {err:?}"),
         }
     }

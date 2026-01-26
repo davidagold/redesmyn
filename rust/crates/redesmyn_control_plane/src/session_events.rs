@@ -1,14 +1,17 @@
 use tokio::sync::{broadcast, mpsc};
 
 use prost::Message as _;
-use redesmyn_ids::{EpicId, SessionEventId, SessionId, TaskId};
+use redesmyn_ids::{EpicId, RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_logging::tracing::{Instrument as _, debug, warn};
 use sqlx::SqlitePool;
 
 use redesmyn_protocol::client::{SessionEventCursor, SessionEventKindFilter};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
-use redesmyn_protocol::session::{SessionEventKind, SessionScope, UnknownSessionEvent};
-use redesmyn_protocol::{SessionEvent, SessionLiveEvent, Timestamp};
+use redesmyn_protocol::session::{
+    ArtifactEmitted, AssistantMessage, SessionEventKind, SessionScope, ToolInvocation, ToolResult,
+    UnknownSessionEvent, UserMessage,
+};
+use redesmyn_protocol::{ArtifactKind, ArtifactRef, SessionEvent, SessionLiveEvent, Timestamp};
 use redesmyn_storage::StorageError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,6 +449,15 @@ impl SessionEvents {
         let message_preview = message_preview_from_kind(&event.kind);
         let artifact_id = artifact_id_from_kind(&event.kind);
 
+        ensure_event_artifacts(
+            &self.pool,
+            ms_from_timestamp(event.created_at),
+            workspace_id,
+            repo_id,
+            &event.kind,
+        )
+        .await?;
+
         sqlx::query(
             r#"
             INSERT INTO session_events (
@@ -484,6 +496,121 @@ impl SessionEvents {
 
         let _ = self.hub.send(event.clone());
         Ok(())
+    }
+}
+
+async fn ensure_event_artifacts(
+    pool: &SqlitePool,
+    created_at_ms: i64,
+    workspace_id: Option<WorkspaceId>,
+    repo_id: Option<RepoId>,
+    kind: &SessionEventKind,
+) -> Result<(), StorageError> {
+    let mut artifacts = Vec::new();
+
+    match kind {
+        SessionEventKind::UserMessage(UserMessage {
+            full_text_artifact, ..
+        }) => artifacts.extend(full_text_artifact.as_ref()),
+        SessionEventKind::AssistantMessage(AssistantMessage {
+            full_text_artifact, ..
+        }) => artifacts.extend(full_text_artifact.as_ref()),
+        SessionEventKind::ToolInvocation(ToolInvocation { input_artifact, .. }) => {
+            artifacts.extend(input_artifact.as_ref())
+        }
+        SessionEventKind::ToolResult(ToolResult {
+            output_artifact, ..
+        }) => artifacts.extend(output_artifact.as_ref()),
+        SessionEventKind::ArtifactEmitted(ArtifactEmitted { artifact, .. }) => {
+            artifacts.push(artifact)
+        }
+        _ => {}
+    }
+
+    for artifact in artifacts {
+        ensure_artifact(pool, created_at_ms, workspace_id, repo_id, artifact).await?;
+    }
+
+    Ok(())
+}
+
+async fn ensure_artifact(
+    pool: &SqlitePool,
+    created_at_ms: i64,
+    workspace_id: Option<WorkspaceId>,
+    repo_id: Option<RepoId>,
+    artifact: &ArtifactRef,
+) -> Result<(), StorageError> {
+    let (scope_kind, scope_workspace_id, scope_repo_id) =
+        if let (Some(workspace_id), Some(repo_id)) = (workspace_id, repo_id) {
+            ("repo", Some(workspace_id), Some(repo_id))
+        } else {
+            ("none", None, None)
+        };
+
+    let content_hash = artifact
+        .content_hash
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|err| StorageError::InvalidData {
+            message: format!("failed to serialize artifact content_hash: {err}"),
+        })?;
+
+    let storage_hint = artifact
+        .storage_hint
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|err| StorageError::InvalidData {
+            message: format!("failed to serialize artifact storage_hint: {err}"),
+        })?;
+
+    let byte_len = artifact
+        .byte_len
+        .map(|len| i64::try_from(len).unwrap_or_else(|_| if len == 0 { 0 } else { i64::MAX }));
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO artifacts (
+            id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            kind,
+            content_hash,
+            byte_len,
+            mime,
+            storage_hint
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "#,
+    )
+    .bind(artifact.artifact_id)
+    .bind(created_at_ms)
+    .bind(scope_kind)
+    .bind(scope_workspace_id)
+    .bind(scope_repo_id)
+    .bind(artifact_kind_db_value(artifact.kind))
+    .bind(content_hash)
+    .bind(byte_len)
+    .bind(&artifact.mime)
+    .bind(storage_hint)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+fn artifact_kind_db_value(kind: ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::Log => "log",
+        ArtifactKind::Diff => "diff",
+        ArtifactKind::Patch => "patch",
+        ArtifactKind::FileSnapshot => "file_snapshot",
+        ArtifactKind::Trace => "trace",
+        ArtifactKind::Unknown => "unknown",
     }
 }
 
