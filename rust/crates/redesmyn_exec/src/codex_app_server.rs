@@ -442,15 +442,16 @@ impl CodexAppServerClient {
         if let Some(session_id) = parse_session_id_from_new_conversation_result(&result) {
             self.state.set_session_id(session_id).await;
         } else {
-            self.state
-                .set_session_id(conversation_id.to_owned())
-                .await;
+            self.state.set_session_id(conversation_id.to_owned()).await;
         }
 
         Ok(())
     }
 
-    async fn ensure_conversation_listener(&self, conversation_id: &str) -> Result<(), AppServerRequestError> {
+    async fn ensure_conversation_listener(
+        &self,
+        conversation_id: &str,
+    ) -> Result<(), AppServerRequestError> {
         {
             let inner = self.state.inner.lock().await;
             if inner.listener_session_id.as_deref() == Some(conversation_id) {
@@ -489,9 +490,13 @@ impl CodexAppServerClient {
         let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.send_user_message");
         let _guard = span.enter();
 
-        let conversation_id = self.state.session_id().await.ok_or_else(|| AppServerRequestError::Failed {
-            reason: "missing active codex conversation id".to_owned(),
-        })?;
+        let conversation_id =
+            self.state
+                .session_id()
+                .await
+                .ok_or_else(|| AppServerRequestError::Failed {
+                    reason: "missing active codex conversation id".to_owned(),
+                })?;
 
         self.ensure_conversation_listener(&conversation_id).await?;
 
@@ -574,7 +579,8 @@ impl AppServerClient for CodexAppServerClient {
                                 }
                                 DomainExternalSessionRef::None => {
                                     return Err(AppServerRequestError::Failed {
-                                        reason: "cannot resume: ExternalSessionRef::None".to_owned(),
+                                        reason: "cannot resume: ExternalSessionRef::None"
+                                            .to_owned(),
                                     });
                                 }
                                 other => {
@@ -973,7 +979,9 @@ enum ThreadItem {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ThreadContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -1228,7 +1236,10 @@ async fn handle_turn_completed(
             Some(_) => {}
         }
 
-        if !inner.emitted_turn_completions.insert(params.turn.id.clone()) {
+        if !inner
+            .emitted_turn_completions
+            .insert(params.turn.id.clone())
+        {
             return;
         }
 
@@ -1308,8 +1319,19 @@ async fn handle_update_session(
                     content,
                     done,
                 } => {
-                    if let Some(ev) = acc.apply_new_message(message_id, role, content, done) {
+                    let delta_text =
+                        (role == MessageRole::Assistant && !done && !content.is_empty())
+                            .then(|| content.clone());
+                    if let Some(ev) = acc.apply_new_message(message_id.clone(), role, content, done)
+                    {
                         events.push(ev);
+                    }
+                    if let Some(delta) = delta_text {
+                        events.push(AppServerEvent::AssistantMessageDelta {
+                            turn_id: inner.active_turn_id.clone(),
+                            item_id: Some(message_id),
+                            delta,
+                        });
                     }
                 }
                 SessionDiff::UpdateMessage {
@@ -1318,10 +1340,32 @@ async fn handle_update_session(
                     content_delta,
                     done,
                 } => {
+                    let role = acc
+                        .messages
+                        .get(&message_id)
+                        .map(|message| message.role)
+                        .unwrap_or(MessageRole::Unknown);
+                    let delta_text = match &content_delta {
+                        Some(delta)
+                            if role == MessageRole::Assistant
+                                && !delta.is_empty()
+                                && !acc.emitted_message_ids.contains(&message_id) =>
+                        {
+                            Some(delta.clone())
+                        }
+                        _ => None,
+                    };
                     if let Some(ev) =
-                        acc.apply_update_message(message_id, content, content_delta, done)
+                        acc.apply_update_message(message_id.clone(), content, content_delta, done)
                     {
                         events.push(ev);
+                    }
+                    if let Some(delta) = delta_text {
+                        events.push(AppServerEvent::AssistantMessageDelta {
+                            turn_id: inner.active_turn_id.clone(),
+                            item_id: Some(message_id),
+                            delta,
+                        });
                     }
                 }
                 SessionDiff::TurnCompleted {

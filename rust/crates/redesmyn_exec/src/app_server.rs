@@ -7,11 +7,16 @@ use redesmyn_domain::agent::AppServerTurnIntent;
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef};
-use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage, SessionEventBatch};
+use redesmyn_protocol::daemon::{
+    DaemonFrame, DaemonMessage, SessionEventBatch, SessionLiveEventBatch,
+};
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
     SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
     ToolResult, TurnCompleted, TurnStarted, TurnState,
+};
+use redesmyn_protocol::session_live::{
+    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind,
 };
 use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -86,6 +91,11 @@ pub enum AppServerEvent {
     },
     AssistantMessage {
         text: String,
+    },
+    AssistantMessageDelta {
+        turn_id: Option<String>,
+        item_id: Option<String>,
+        delta: String,
     },
     ToolInvocation {
         tool_name: String,
@@ -448,7 +458,9 @@ fn validate_scope(task_id: Option<TaskId>, scope: SessionScope) -> Result<(), St
         } => match task_id {
             Some(task_id) if scope_task_id == task_id => Ok(()),
             Some(task_id) => Err(StartSessionError::InvalidScope {
-                reason: format!("scope.task_id must match task_id ({task_id}); got {scope_task_id}"),
+                reason: format!(
+                    "scope.task_id must match task_id ({task_id}); got {scope_task_id}"
+                ),
             }),
             None => Err(StartSessionError::InvalidScope {
                 reason: "missing task_id for task-scoped app-server session".to_owned(),
@@ -625,16 +637,53 @@ async fn run_event_forwarder(
     scope: SessionScope,
     mut rx: mpsc::Receiver<AppServerEvent>,
 ) -> Result<(), RunSessionError> {
-    while let Some(event) = rx.recv().await {
-        emit_app_server_event(
-            &frames_tx,
-            &artifact_store,
-            &config,
-            session_id,
-            scope,
-            event,
-        )
-        .await?;
+    const LIVE_FLUSH_MAX_EVENTS: usize = 64;
+    let mut pending_live = Vec::<SessionLiveEvent>::new();
+    let mut flush_interval = tokio::time::interval(std::time::Duration::from_millis(50));
+    flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            biased;
+            maybe_event = rx.recv() => {
+                let Some(event) = maybe_event else { break };
+
+                match event {
+                    AppServerEvent::AssistantMessageDelta { turn_id, item_id, delta } => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        pending_live.push(make_assistant_delta_live_event(session_id, turn_id, item_id, delta));
+                        if pending_live.len() >= LIVE_FLUSH_MAX_EVENTS {
+                            try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
+                        }
+                    }
+                    event => {
+                        if !pending_live.is_empty() {
+                            try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
+                        }
+                        emit_app_server_event(
+                            &frames_tx,
+                            &artifact_store,
+                            &config,
+                            session_id,
+                            scope,
+                            event,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            _ = flush_interval.tick() => {
+                if !pending_live.is_empty() {
+                    try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
+                }
+            }
+        }
+    }
+
+    if !pending_live.is_empty() {
+        try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
     }
     Ok(())
 }
@@ -714,6 +763,15 @@ async fn emit_app_server_event(
             )
             .await?;
             (None, SessionEventKind::AssistantMessage(ev))
+        }
+        AppServerEvent::AssistantMessageDelta {
+            turn_id,
+            item_id,
+            delta,
+        } => {
+            let event = make_assistant_delta_live_event(session_id, turn_id, item_id, delta);
+            try_emit_session_live_event_batch(frames_tx, vec![event]);
+            return Ok(());
         }
         AppServerEvent::ToolInvocation {
             tool_name,
@@ -860,6 +918,35 @@ fn make_session_event_frame(
         ProtocolEnvelope::new(),
         DaemonMessage::SessionEventBatch(batch),
     )
+}
+
+fn make_assistant_delta_live_event(
+    session_id: SessionId,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    delta: String,
+) -> SessionLiveEvent {
+    SessionLiveEvent {
+        created_at: Timestamp::now_utc(),
+        session_id,
+        turn_id,
+        item_id,
+        kind: SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta { delta }),
+    }
+}
+
+fn try_emit_session_live_event_batch(
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    events: Vec<SessionLiveEvent>,
+) {
+    if events.is_empty() {
+        return;
+    }
+    let frame = DaemonFrame::new(
+        ProtocolEnvelope::new(),
+        DaemonMessage::SessionLiveEventBatch(SessionLiveEventBatch { events }),
+    );
+    let _ = frames_tx.try_send(frame);
 }
 
 fn try_emit_status_update(
