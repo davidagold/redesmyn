@@ -781,12 +781,12 @@ impl Render for SessionView {
                 SessionTimelineItem::Event(item) => {
                     let label = match item.content {
                         redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg) => {
-                            format!("user: {}", msg.preview)
+                            format!("user: {}", msg.text)
                         }
                         redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
                             msg,
                         ) => {
-                            format!("assistant: {}", msg.preview)
+                            format!("assistant: {}", msg.text)
                         }
                         redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
                             tool,
