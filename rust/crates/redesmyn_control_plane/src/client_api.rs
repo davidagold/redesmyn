@@ -390,6 +390,9 @@ where
                                             SessionEventsSubscriptionItem::Event(event) => {
                                                 (SubscriptionEvent::SessionEvent(event), false)
                                             }
+                                            SessionEventsSubscriptionItem::Live(event) => {
+                                                (SubscriptionEvent::SessionLiveEvent(event), false)
+                                            }
                                             SessionEventsSubscriptionItem::ResyncRequired(
                                                 resync,
                                             ) => (

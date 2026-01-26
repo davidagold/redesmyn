@@ -12,7 +12,9 @@ use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
 
 use redesmyn_ids::{CommandId, HostInstanceId, TaskId};
-use redesmyn_protocol::daemon::{CommandUpdate as DaemonCommandUpdate, SessionEventBatch};
+use redesmyn_protocol::daemon::{
+    CommandUpdate as DaemonCommandUpdate, SessionEventBatch, SessionLiveEventBatch,
+};
 use redesmyn_protocol::{ErrorEnvelope, RepoScope};
 use redesmyn_storage::commands::CommandScope;
 use redesmyn_storage::schema::CommandState as StorageCommandState;
@@ -278,6 +280,17 @@ impl ControlPlane {
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn apply_daemon_session_live_event_batch(
+        &self,
+        _host_instance_id: HostInstanceId,
+        batch: SessionLiveEventBatch,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        for event in batch.events {
+            self.session_events.publish_live_event(event);
+        }
         Ok(())
     }
 

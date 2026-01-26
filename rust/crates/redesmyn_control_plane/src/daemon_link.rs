@@ -177,6 +177,21 @@ async fn handle_inbound_frame(
                 tracing::warn!(error = %err, "failed to apply daemon session event batch");
             }
         }
+        DaemonMessage::SessionLiveEventBatch(batch) => {
+            let span = tracing::debug_span!(
+                "control_plane.daemon_link.session_live_event_batch",
+                host_instance_id = %host_instance_id,
+                event_count = batch.events.len(),
+            );
+            let _enter = span.enter();
+
+            if let Err(err) = control_plane
+                .apply_daemon_session_live_event_batch(host_instance_id, batch)
+                .await
+            {
+                tracing::warn!(error = %err, "failed to apply daemon session live event batch");
+            }
+        }
         DaemonMessage::RepoAttach(attach) => {
             control_plane
                 .daemons()

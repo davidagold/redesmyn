@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use redesmyn_protocol::client::{SessionEventCursor, SessionEventKindFilter};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_protocol::session::{SessionEventKind, SessionScope, UnknownSessionEvent};
-use redesmyn_protocol::{SessionEvent, Timestamp};
+use redesmyn_protocol::{SessionEvent, SessionLiveEvent, Timestamp};
 use redesmyn_storage::StorageError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +34,7 @@ pub struct SessionEventsResync {
 #[allow(clippy::large_enum_variant)]
 pub enum SessionEventsSubscriptionItem {
     Event(SessionEvent),
+    Live(SessionLiveEvent),
     ResyncRequired(SessionEventsResync),
 }
 
@@ -44,6 +45,8 @@ pub struct SessionEventsConfig {
     /// Drop policy: when the hub buffer overflows, lagging subscribers observe a `Lagged` error and
     /// must resubscribe with a DB cursor to resync.
     pub hub_buffer: usize,
+    /// Broadcast buffer size for the live-only session event hub.
+    pub live_hub_buffer: usize,
     /// Per-subscriber channel size between the hub task and the consumer.
     pub subscription_buffer: usize,
     /// Page size used when replaying historical events from the DB on subscribe/resume.
@@ -54,6 +57,7 @@ impl Default for SessionEventsConfig {
     fn default() -> Self {
         Self {
             hub_buffer: 1024,
+            live_hub_buffer: 512,
             subscription_buffer: 128,
             backlog_page_size: 256,
         }
@@ -64,6 +68,7 @@ impl Default for SessionEventsConfig {
 pub struct SessionEvents {
     pool: SqlitePool,
     hub: broadcast::Sender<SessionEvent>,
+    live_hub: broadcast::Sender<SessionLiveEvent>,
     config: SessionEventsConfig,
 }
 
@@ -71,7 +76,13 @@ impl SessionEvents {
     #[must_use]
     pub(crate) fn new_with_config(pool: SqlitePool, config: SessionEventsConfig) -> Self {
         let (hub, _rx) = broadcast::channel(config.hub_buffer.max(1));
-        Self { pool, hub, config }
+        let (live_hub, _rx) = broadcast::channel(config.live_hub_buffer.max(1));
+        Self {
+            pool,
+            hub,
+            live_hub,
+            config,
+        }
     }
 
     #[must_use]
@@ -222,6 +233,7 @@ impl SessionEvents {
         let (tx, rx) = mpsc::channel(self.config.subscription_buffer.max(1));
         let pool = self.pool.clone();
         let mut hub_rx = self.hub.subscribe();
+        let mut live_hub_rx = self.live_hub.subscribe();
         let config = self.config;
 
         tokio::spawn(
@@ -327,50 +339,73 @@ impl SessionEvents {
                 }
 
                 loop {
-                    match hub_rx.recv().await {
-                        Ok(event) => {
-                            if event.session_id != session_id {
-                                continue;
+                    tokio::select! {
+                        biased;
+                        recv = hub_rx.recv() => match recv {
+                            Ok(event) => {
+                                if event.session_id != session_id {
+                                    continue;
+                                }
+
+                                let cursor = SessionEventCursor {
+                                    created_at: event.created_at,
+                                    session_event_id: event.session_event_id,
+                                };
+
+                                if last_cursor.is_some_and(|last| cursor <= last) {
+                                    continue;
+                                }
+
+                                last_cursor = Some(cursor);
+
+                                if tx
+                                    .send(SessionEventsSubscriptionItem::Event(event))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
                             }
-
-                            let cursor = SessionEventCursor {
-                                created_at: event.created_at,
-                                session_event_id: event.session_event_id,
-                            };
-
-                            if last_cursor.is_some_and(|last| cursor <= last) {
-                                continue;
-                            }
-
-                            last_cursor = Some(cursor);
-
-                            if tx
-                                .send(SessionEventsSubscriptionItem::Event(event))
-                                .await
-                                .is_err()
-                            {
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                debug!(
+                                    skipped,
+                                    resume_after_session_event_id =
+                                        last_cursor.map(|c| c.session_event_id.to_string()),
+                                    "subscription fell behind; resync required"
+                                );
+                                let _ = tx
+                                    .send(SessionEventsSubscriptionItem::ResyncRequired(
+                                        SessionEventsResync {
+                                            reason: SessionEventsResyncReason::Lagged,
+                                            resume_after: last_cursor,
+                                            dropped_events: Some(skipped),
+                                        },
+                                    ))
+                                    .await;
                                 return;
                             }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            debug!(
-                                skipped,
-                                resume_after_session_event_id =
-                                    last_cursor.map(|c| c.session_event_id.to_string()),
-                                "subscription fell behind; resync required"
-                            );
-                            let _ = tx
-                                .send(SessionEventsSubscriptionItem::ResyncRequired(
-                                    SessionEventsResync {
-                                        reason: SessionEventsResyncReason::Lagged,
-                                        resume_after: last_cursor,
-                                        dropped_events: Some(skipped),
-                                    },
-                                ))
-                                .await;
-                            return;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => return,
+                            Err(broadcast::error::RecvError::Closed) => return,
+                        },
+                        recv = live_hub_rx.recv() => match recv {
+                            Ok(event) => {
+                                if event.session_id != session_id {
+                                    continue;
+                                }
+
+                                match tx.try_send(SessionEventsSubscriptionItem::Live(event)) {
+                                    Ok(()) => {}
+                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
+                                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                        // Best-effort: drop live events under backpressure rather
+                                        // than stalling durable session event delivery.
+                                    }
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                debug!(skipped, "live subscription fell behind; dropping deltas");
+                            }
+                            Err(broadcast::error::RecvError::Closed) => return,
+                        },
                     }
                 }
             }
@@ -381,6 +416,10 @@ impl SessionEvents {
         );
 
         SessionEventsSubscription { rx }
+    }
+
+    pub fn publish_live_event(&self, event: SessionLiveEvent) {
+        let _ = self.live_hub.send(event);
     }
 
     pub async fn append_session_event(&self, event: &SessionEvent) -> Result<(), StorageError> {
