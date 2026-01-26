@@ -46,6 +46,7 @@ message DaemonFrame {
 
     // Session events
     SessionEventBatch session_event_batch = 40;
+    SessionLiveEventBatch session_live_event_batch = 41;
 
     // Command dispatch + lifecycle
     CommandDispatch command_dispatch = 30;
@@ -171,6 +172,11 @@ message ResyncRequest {
 // Daemon → control plane: batch of session events (T-35/T-14).
 message SessionEventBatch {
   repeated SessionEvent events = 1;
+}
+
+// Daemon → control plane: batch of live-only session events (NOT persisted).
+message SessionLiveEventBatch {
+  repeated SessionLiveEvent events = 1;
 }
 
 // Control plane → daemon: dispatch a command to a daemon.

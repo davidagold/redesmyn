@@ -688,6 +688,7 @@ message Event {
     Subscribed subscribed = 10;
     EventLogEvent event_log = 11;
     SessionEvent session_event = 12;
+    SessionLiveEvent session_live_event = 13;
     ErrorEnvelope error = 100;
   }
 }

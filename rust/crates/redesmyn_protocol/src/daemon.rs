@@ -36,6 +36,7 @@ pub enum DaemonMessage {
     CommandDispatch(CommandDispatch),
     CommandUpdate(CommandUpdate),
     SessionEventBatch(SessionEventBatch),
+    SessionLiveEventBatch(SessionLiveEventBatch),
     Error(ErrorEnvelope),
 }
 
@@ -201,6 +202,13 @@ pub struct CommandUpdate {
 pub struct SessionEventBatch {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<crate::session::SessionEvent>,
+}
+
+/// Batch of live-only session events emitted by the daemon.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionLiveEventBatch {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<crate::session_live::SessionLiveEvent>,
 }
 
 /// Typed daemon capabilities advertised during handshake.

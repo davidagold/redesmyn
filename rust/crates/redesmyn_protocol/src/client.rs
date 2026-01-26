@@ -9,7 +9,10 @@ use redesmyn_ids::{
     SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
-use crate::{ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, Timestamp};
+use crate::{
+    ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, SessionLiveEvent,
+    Timestamp,
+};
 
 /// A single client ↔ control plane protocol frame.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -853,6 +856,7 @@ pub enum SubscriptionEvent {
     Subscribed(Subscribed),
     EventLog(EventLogEvent),
     SessionEvent(SessionEvent),
+    SessionLiveEvent(SessionLiveEvent),
     Error(ErrorEnvelope),
 }
 

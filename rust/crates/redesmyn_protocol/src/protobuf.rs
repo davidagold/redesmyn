@@ -9,14 +9,17 @@ use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 use crate::daemon::{
     AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate,
     ControlPlaneHelloAck, DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent,
-    RepoAttach, RepoDetach, ResyncRequest, SessionEventBatch, TelemetryEvent, TelemetryEventBatch,
-    TelemetryFreshness, TelemetrySnapshot, UnknownEvent, WorktreeEvent,
+    RepoAttach, RepoDetach, ResyncRequest, SessionEventBatch, SessionLiveEventBatch, TelemetryEvent,
+    TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot, UnknownEvent, WorktreeEvent,
 };
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
     SessionEventKind, SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
     TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+};
+use crate::session_live::{
+    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,
 };
 use crate::{
     DaemonHello, ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion,
@@ -770,6 +773,30 @@ impl SessionEventBatch {
     }
 }
 
+impl SessionLiveEventBatch {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionLiveEventBatch {
+        pbv1::SessionLiveEventBatch {
+            events: self.events.iter().map(SessionLiveEvent::to_protobuf).collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionLiveEventBatch) -> Result<Self, ErrorEnvelope> {
+        let mut events = Vec::with_capacity(proto.events.len());
+        for (idx, ev) in proto.events.into_iter().enumerate() {
+            let decoded = SessionLiveEvent::try_from_protobuf(ev).map_err(|err| {
+                invalid_field(
+                    "session_live_event_batch.events",
+                    format!("{idx}: {}: {}", err.category, err.message),
+                )
+            })?;
+            events.push(decoded);
+        }
+
+        Ok(Self { events })
+    }
+}
+
 impl DaemonFrame {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::DaemonFrame {
@@ -808,6 +835,9 @@ impl DaemonFrame {
                 }
                 DaemonMessage::SessionEventBatch(batch) => {
                     pbv1::daemon_frame::Message::SessionEventBatch(batch.to_protobuf())
+                }
+                DaemonMessage::SessionLiveEventBatch(batch) => {
+                    pbv1::daemon_frame::Message::SessionLiveEventBatch(batch.to_protobuf())
                 }
                 DaemonMessage::Error(error) => {
                     pbv1::daemon_frame::Message::Error(error.to_protobuf())
@@ -854,6 +884,11 @@ impl DaemonFrame {
             }
             pbv1::daemon_frame::Message::SessionEventBatch(batch) => {
                 DaemonMessage::SessionEventBatch(SessionEventBatch::try_from_protobuf(batch)?)
+            }
+            pbv1::daemon_frame::Message::SessionLiveEventBatch(batch) => {
+                DaemonMessage::SessionLiveEventBatch(SessionLiveEventBatch::try_from_protobuf(
+                    batch,
+                )?)
             }
             pbv1::daemon_frame::Message::Error(error) => {
                 DaemonMessage::Error(ErrorEnvelope::from_protobuf(error))
@@ -1320,6 +1355,86 @@ impl UnknownSessionEvent {
             },
             json_payload: proto.json_payload,
         }
+    }
+}
+
+impl UnknownSessionLiveEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::UnknownSessionLiveEvent {
+        pbv1::UnknownSessionLiveEvent {
+            event_type: self.event_type.clone(),
+            json_payload: self.json_payload.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::UnknownSessionLiveEvent) -> Self {
+        Self {
+            event_type: if proto.event_type.is_empty() {
+                "<unknown>".to_owned()
+            } else {
+                proto.event_type
+            },
+            json_payload: proto.json_payload,
+        }
+    }
+}
+
+impl AssistantMessageDelta {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantMessageDelta {
+        pbv1::AssistantMessageDelta {
+            delta: self.delta.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::AssistantMessageDelta) -> Result<Self, ErrorEnvelope> {
+        Ok(Self { delta: proto.delta })
+    }
+}
+
+impl SessionLiveEvent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionLiveEvent {
+        pbv1::SessionLiveEvent {
+            created_at: Some(encode_timestamp(self.created_at)),
+            session_id: self.session_id.to_bytes().to_vec(),
+            turn_id: normalize_optional_string(self.turn_id.clone()),
+            item_id: normalize_optional_string(self.item_id.clone()),
+            kind: Some(match &self.kind {
+                SessionLiveEventKind::AssistantMessageDelta(ev) => {
+                    pbv1::session_live_event::Kind::AssistantMessageDelta(ev.to_protobuf())
+                }
+                SessionLiveEventKind::Unknown(ev) => {
+                    pbv1::session_live_event::Kind::Unknown(ev.to_protobuf())
+                }
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionLiveEvent) -> Result<Self, ErrorEnvelope> {
+        let kind = match proto.kind {
+            Some(pbv1::session_live_event::Kind::AssistantMessageDelta(ev)) => {
+                SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta::try_from_protobuf(
+                    ev,
+                )?)
+            }
+            Some(pbv1::session_live_event::Kind::Unknown(ev)) => {
+                SessionLiveEventKind::Unknown(UnknownSessionLiveEvent::from_protobuf(ev))
+            }
+            None => SessionLiveEventKind::Unknown(UnknownSessionLiveEvent {
+                event_type: "<unknown>".to_owned(),
+                json_payload: Vec::new(),
+            }),
+        };
+
+        Ok(Self {
+            created_at: decode_required_timestamp("created_at", proto.created_at)?,
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            turn_id: normalize_optional_string(proto.turn_id),
+            item_id: normalize_optional_string(proto.item_id),
+            kind,
+        })
     }
 }
 
@@ -3928,6 +4043,9 @@ impl crate::client::Event {
                 crate::client::SubscriptionEvent::SessionEvent(ev) => {
                     pbv1::event::Event::SessionEvent(ev.to_protobuf())
                 }
+                crate::client::SubscriptionEvent::SessionLiveEvent(ev) => {
+                    pbv1::event::Event::SessionLiveEvent(ev.to_protobuf())
+                }
                 crate::client::SubscriptionEvent::Error(err) => {
                     pbv1::event::Event::Error(err.to_protobuf())
                 }
@@ -3948,6 +4066,9 @@ impl crate::client::Event {
             pbv1::event::Event::SessionEvent(ev) => {
                 crate::client::SubscriptionEvent::SessionEvent(SessionEvent::try_from_protobuf(ev)?)
             }
+            pbv1::event::Event::SessionLiveEvent(ev) => crate::client::SubscriptionEvent::SessionLiveEvent(
+                SessionLiveEvent::try_from_protobuf(ev)?,
+            ),
             pbv1::event::Event::Error(err) => {
                 crate::client::SubscriptionEvent::Error(ErrorEnvelope::from_protobuf(err))
             }

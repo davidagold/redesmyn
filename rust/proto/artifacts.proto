@@ -180,6 +180,36 @@ message ToolInvocation {
   ArtifactRef input_artifact = 4;
 }
 
+// Live-only session event record (NOT persisted).
+//
+// These are best-effort UX affordances (e.g. streaming deltas). They are delivered to active
+// subscribers but are not written to the durable session event log.
+message SessionLiveEvent {
+  // Wall-clock timestamp (informational).
+  google.protobuf.Timestamp created_at = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+  // Best-effort turn identifier (optional).
+  optional string turn_id = 3;
+  // Provider-defined item identifier (optional).
+  optional string item_id = 4;
+
+  oneof kind {
+    AssistantMessageDelta assistant_message_delta = 10;
+    UnknownSessionLiveEvent unknown = 100;
+  }
+}
+
+message AssistantMessageDelta {
+  string delta = 1;
+}
+
+// Forward-compatible placeholder for live-event union fallbacks.
+message UnknownSessionLiveEvent {
+  string event_type = 1;
+  bytes json_payload = 2;
+}
+
 // Tool results are bounded; use artifacts for large outputs.
 message ToolResult {
   string tool_name = 1;

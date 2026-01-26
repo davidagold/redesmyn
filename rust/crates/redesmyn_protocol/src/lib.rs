@@ -24,6 +24,7 @@ pub mod artifacts;
 pub mod client;
 pub mod daemon;
 pub mod session;
+pub mod session_live;
 pub mod ui_driver;
 
 pub use artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
@@ -31,6 +32,9 @@ pub use session::{
     ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
     SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
     ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+};
+pub use session_live::{
+    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,
 };
 
 pub use daemon::DaemonHello;
