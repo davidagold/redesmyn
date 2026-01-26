@@ -63,36 +63,32 @@ struct InitializeParams {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct NewSessionParams {
+struct ThreadStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AddConversationListenerParams {
-    #[serde(rename = "conversationId")]
-    conversation_id: String,
+struct ThreadResumeParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SendUserMessageParams {
-    #[serde(rename = "conversationId")]
-    conversation_id: String,
-    items: Vec<InputItem>,
+struct TurnStartParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    input: Vec<UserInput>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-enum InputItem {
-    Text { data: InputTextData },
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InputTextData {
-    text: String,
+enum UserInput {
+    Text { text: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,22 +98,6 @@ struct TurnInterruptParams {
     thread_id: String,
     #[serde(rename = "turnId")]
     turn_id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CommandExecutionApprovalParams {
-    #[serde(rename = "commandId")]
-    command_id: String,
-    approved: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FileChangeApprovalParams {
-    #[serde(rename = "proposalId")]
-    proposal_id: String,
-    approved: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -283,8 +263,6 @@ impl SessionAccumulator {
 struct CodexAppServerStateInner {
     session_id: Option<String>,
     active_turn_id: Option<String>,
-    listener_session_id: Option<String>,
-    listener_subscription_id: Option<String>,
     emitted_turn_starts: HashSet<String>,
     emitted_turn_completions: HashSet<String>,
     emitted_item_ids: HashSet<String>,
@@ -309,8 +287,6 @@ impl CodexAppServerState {
             let mut inner = self.inner.lock().await;
             inner.session_id = None;
             inner.active_turn_id = None;
-            inner.listener_session_id = None;
-            inner.listener_subscription_id = None;
             inner.emitted_turn_starts.clear();
             inner.emitted_turn_completions.clear();
             inner.emitted_item_ids.clear();
@@ -403,52 +379,58 @@ impl CodexAppServerClient {
     }
 
     async fn start_new_session(&self) -> Result<(), AppServerRequestError> {
-        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.new_session");
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.thread_start");
         let _guard = span.enter();
 
-        let params = NewSessionParams {
+        let params = ThreadStartParams {
             cwd: Some(self.cwd.to_string_lossy().to_string()),
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
-            reason: format!("newConversation params serialization failed: {err}"),
+            reason: format!("thread/start params serialization failed: {err}"),
         })?;
 
         let result = self
             .conn
-            .request("newConversation", Some(params))
+            .request("thread/start", Some(params))
             .await
             .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("newConversation failed: {err}"),
+                reason: format!("thread/start failed: {err}"),
             })?;
 
-        let session_id =
-            parse_session_id_from_new_conversation_result(&result).ok_or_else(|| {
-                AppServerRequestError::Failed {
-                    reason: format!(
-                        "newConversation response missing conversation id: {}",
-                        result.to_string()
-                    ),
-                }
-            })?;
-        self.state.set_session_id(session_id).await;
+        let thread_id = parse_thread_id_from_result(&result).ok_or_else(|| {
+            AppServerRequestError::Failed {
+                reason: format!(
+                    "thread/start response missing thread id: {}",
+                    result.to_string()
+                ),
+            }
+        })?;
+        self.state.set_session_id(thread_id).await;
         Ok(())
     }
 
     async fn resume_session(&self, conversation_id: &str) -> Result<(), AppServerRequestError> {
-        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.resume_session");
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.thread_resume");
         let _guard = span.enter();
 
-        let params = serde_json::json!({ "conversationId": conversation_id });
+        let params = ThreadResumeParams {
+            thread_id: conversation_id.to_owned(),
+            cwd: Some(self.cwd.to_string_lossy().to_string()),
+        };
+        let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
+            reason: format!("thread/resume params serialization failed: {err}"),
+        })?;
+
         let result = self
             .conn
-            .request("resumeConversation", Some(params))
+            .request("thread/resume", Some(params))
             .await
             .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("resumeConversation failed: {err}"),
+                reason: format!("thread/resume failed: {err}"),
             })?;
 
-        if let Some(session_id) = parse_session_id_from_new_conversation_result(&result) {
-            self.state.set_session_id(session_id).await;
+        if let Some(thread_id) = parse_thread_id_from_result(&result) {
+            self.state.set_session_id(thread_id).await;
         } else {
             self.state.set_session_id(conversation_id.to_owned()).await;
         }
@@ -456,77 +438,38 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn ensure_conversation_listener(
-        &self,
-        conversation_id: &str,
-    ) -> Result<(), AppServerRequestError> {
-        {
-            let inner = self.state.inner.lock().await;
-            if inner.listener_session_id.as_deref() == Some(conversation_id) {
-                return Ok(());
-            }
-        }
+    async fn send_user_message(&self, prompt: &str) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.turn_start");
+        let _guard = span.enter();
 
-        let params = AddConversationListenerParams {
-            conversation_id: conversation_id.to_owned(),
+        let thread_id = self.state.session_id().await.ok_or_else(|| {
+            AppServerRequestError::Failed {
+                reason: "missing active codex thread id".to_owned(),
+            }
+        })?;
+
+        let params = TurnStartParams {
+            thread_id,
+            input: vec![UserInput::Text {
+                text: prompt.to_owned(),
+            }],
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
-            reason: format!("addConversationListener params serialization failed: {err}"),
+            reason: format!("turn/start params serialization failed: {err}"),
         })?;
 
         let result = self
             .conn
-            .request("addConversationListener", Some(params))
+            .request("turn/start", Some(params))
             .await
             .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("addConversationListener failed: {err}"),
+                reason: format!("turn/start failed: {err}"),
             })?;
 
-        let subscription_id = result
-            .get("subscriptionId")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned);
-
-        let mut inner = self.state.inner.lock().await;
-        inner.listener_session_id = Some(conversation_id.to_owned());
-        inner.listener_subscription_id = subscription_id;
-
-        Ok(())
-    }
-
-    async fn send_user_message(&self, prompt: &str) -> Result<(), AppServerRequestError> {
-        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.send_user_message");
-        let _guard = span.enter();
-
-        let conversation_id =
-            self.state
-                .session_id()
-                .await
-                .ok_or_else(|| AppServerRequestError::Failed {
-                    reason: "missing active codex conversation id".to_owned(),
-                })?;
-
-        self.ensure_conversation_listener(&conversation_id).await?;
-
-        let params = SendUserMessageParams {
-            conversation_id,
-            items: vec![InputItem::Text {
-                data: InputTextData {
-                    text: prompt.to_owned(),
-                },
-            }],
-        };
-        let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
-            reason: format!("sendUserMessage params serialization failed: {err}"),
-        })?;
-
-        let _ = self
-            .conn
-            .request("sendUserMessage", Some(params))
-            .await
-            .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("sendUserMessage failed: {err}"),
-            })?;
+        if let Some(turn_id) = parse_turn_id_from_turn_start_result(&result) {
+            let mut inner = self.state.inner.lock().await;
+            inner.active_turn_id = Some(turn_id);
+        }
         Ok(())
     }
 
@@ -549,11 +492,12 @@ impl CodexAppServerClient {
             reason: format!("turn/interrupt params serialization failed: {err}"),
         })?;
 
-        self.conn
-            .notify("turn/interrupt", Some(params))
+        let _ = self
+            .conn
+            .request("turn/interrupt", Some(params))
             .await
             .map_err(|err| AppServerRequestError::Failed {
-                reason: format!("turn/interrupt notify failed: {err}"),
+                reason: format!("turn/interrupt failed: {err}"),
             })?;
         Ok(())
     }
@@ -620,7 +564,7 @@ impl AppServerClient for CodexAppServerClient {
     }
 }
 
-fn parse_session_id_from_new_conversation_result(result: &serde_json::Value) -> Option<String> {
+fn parse_thread_id_from_result(result: &serde_json::Value) -> Option<String> {
     fn take_string(value: &serde_json::Value) -> Option<String> {
         match value {
             serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.to_owned()),
@@ -649,6 +593,27 @@ fn parse_session_id_from_new_conversation_result(result: &serde_json::Value) -> 
                     .and_then(|v| v.as_object())
                     .and_then(|nested| lookup(nested, "id"))
             }),
+        _ => None,
+    }
+}
+
+fn parse_turn_id_from_turn_start_result(result: &serde_json::Value) -> Option<String> {
+    fn take_string(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.to_owned()),
+            _ => None,
+        }
+    }
+
+    match result {
+        serde_json::Value::String(_) => take_string(result),
+        serde_json::Value::Object(obj) => obj
+            .get("turn")
+            .and_then(|v| v.as_object())
+            .and_then(|turn| turn.get("id"))
+            .and_then(take_string)
+            .or_else(|| obj.get("turnId").and_then(take_string))
+            .or_else(|| obj.get("turn_id").and_then(take_string)),
         _ => None,
     }
 }
@@ -931,6 +896,79 @@ async fn handle_server_request(
                 }
             }
         }
+        "item/commandExecution/requestApproval" => {
+            let params: CommandExecutionRequestApprovalParams =
+                match serde_json::from_value(params.clone()) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "invalid item/commandExecution/requestApproval params");
+                        conn.respond_error(id, -32602, "invalid params").await;
+                        return;
+                    }
+                };
+
+            let tool_call_id = params.item_id.clone();
+            let _ = events_tx
+                .send(AppServerEvent::ToolInvocation {
+                    tool_name: "command_execution_request_approval".to_owned(),
+                    tool_call_id: Some(tool_call_id),
+                    input: serde_json::json!({
+                        "thread_id": params.thread_id,
+                        "turn_id": params.turn_id,
+                        "command": params.command,
+                        "cwd": params.cwd,
+                        "reason": params.reason,
+                    })
+                    .to_string(),
+                })
+                .await;
+
+            // Safe-by-default: deny until a control-plane approval path exists.
+            conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                .await;
+        }
+        "item/fileChange/requestApproval" => {
+            let params: FileChangeRequestApprovalParams = match serde_json::from_value(params.clone())
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/fileChange/requestApproval params");
+                    conn.respond_error(id, -32602, "invalid params").await;
+                    return;
+                }
+            };
+
+            let tool_call_id = params.item_id.clone();
+            let _ = events_tx
+                .send(AppServerEvent::ToolInvocation {
+                    tool_name: "file_change_request_approval".to_owned(),
+                    tool_call_id: Some(tool_call_id),
+                    input: serde_json::json!({
+                        "thread_id": params.thread_id,
+                        "turn_id": params.turn_id,
+                        "grant_root": params.grant_root,
+                        "reason": params.reason,
+                    })
+                    .to_string(),
+                })
+                .await;
+
+            // Safe-by-default: deny until a control-plane approval path exists.
+            conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                .await;
+        }
+        "item/tool/requestUserInput" => {
+            // Safe-by-default: without a control-plane surface for this, fail fast so the
+            // agent can continue the turn instead of hanging indefinitely.
+            conn.respond_error(id, -32601, "user input requests not supported")
+                .await;
+        }
+        "applyPatchApproval" | "execCommandApproval" => {
+            // Legacy approval APIs (for sendUserMessage/sendUserTurn). We don't support these yet;
+            // deny so the agent can continue instead of hanging.
+            conn.respond_ok(id, serde_json::json!({ "decision": "denied" }))
+                .await;
+        }
         "loginWithChatGPT" => {
             let url = params
                 .get("url")
@@ -960,21 +998,34 @@ async fn handle_server_request(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RunCommandParams {
-    #[serde(rename = "commandId", alias = "id")]
-    command_id: String,
-    command: String,
+struct CommandExecutionRequestApprovalParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    #[serde(default)]
+    command: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProposalToEditFileParams {
-    #[serde(rename = "proposalId", alias = "id")]
-    proposal_id: String,
-    path: String,
-    diff: String,
+struct FileChangeRequestApprovalParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    #[serde(default)]
+    grant_root: Option<String>,
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1024,6 +1075,26 @@ struct TurnCompletedParams {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct TurnStartedParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    turn: TurnSummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentMessageDeltaParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    delta: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TurnSummary {
     id: String,
     status: TurnStatus,
@@ -1036,6 +1107,8 @@ struct TurnSummary {
 enum TurnStatus {
     Completed,
     Failed,
+    Interrupted,
+    InProgress,
     #[serde(rename = "cancelled", alias = "canceled")]
     Cancelled,
     #[serde(other)]
@@ -1050,7 +1123,7 @@ struct TurnError {
 }
 
 async fn handle_notification(
-    conn: &Arc<JsonRpcConnection>,
+    _conn: &Arc<JsonRpcConnection>,
     state: &Arc<CodexAppServerState>,
     events_tx: &mpsc::Sender<AppServerEvent>,
     method: &str,
@@ -1067,6 +1140,16 @@ async fn handle_notification(
             };
             handle_update_session(state, events_tx, params).await;
         }
+        "turn/started" => {
+            let params: TurnStartedParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid turn/started params");
+                    return;
+                }
+            };
+            handle_turn_started(state, events_tx, params).await;
+        }
         "item/started" => {
             let params: ItemEventParams = match serde_json::from_value(params.clone()) {
                 Ok(v) => v,
@@ -1076,6 +1159,16 @@ async fn handle_notification(
                 }
             };
             handle_item_started(state, events_tx, params).await;
+        }
+        "item/agentMessage/delta" => {
+            let params: AgentMessageDeltaParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/agentMessage/delta params");
+                    return;
+                }
+            };
+            handle_agent_message_delta(state, events_tx, params).await;
         }
         "item/completed" => {
             let params: ItemEventParams = match serde_json::from_value(params.clone()) {
@@ -1097,72 +1190,6 @@ async fn handle_notification(
             };
             handle_turn_completed(state, events_tx, params).await;
         }
-        "runCommand" => {
-            let params: RunCommandParams = match serde_json::from_value(params.clone()) {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(error = %err, "invalid runCommand params");
-                    return;
-                }
-            };
-
-            let _ = events_tx
-                .send(AppServerEvent::ToolInvocation {
-                    tool_name: "run_command".to_owned(),
-                    tool_call_id: Some(params.command_id.clone()),
-                    input: serde_json::json!({
-                        "command": params.command,
-                        "cwd": params.cwd,
-                    })
-                    .to_string(),
-                })
-                .await;
-
-            // Safe-by-default: do not auto-run; deny until a control-plane approval path exists.
-            let conn = Arc::clone(conn);
-            tokio::spawn(async move {
-                let params = CommandExecutionApprovalParams {
-                    command_id: params.command_id,
-                    approved: false,
-                };
-                if let Ok(params) = serde_json::to_value(params) {
-                    let _ = conn.request("commandExecutionApproval", Some(params)).await;
-                }
-            });
-        }
-        "proposalToEditFile" => {
-            let params: ProposalToEditFileParams = match serde_json::from_value(params.clone()) {
-                Ok(v) => v,
-                Err(err) => {
-                    tracing::warn!(error = %err, "invalid proposalToEditFile params");
-                    return;
-                }
-            };
-
-            let _ = events_tx
-                .send(AppServerEvent::ToolInvocation {
-                    tool_name: "proposal_to_edit_file".to_owned(),
-                    tool_call_id: Some(params.proposal_id.clone()),
-                    input: serde_json::json!({
-                        "path": params.path,
-                        "diff": params.diff,
-                    })
-                    .to_string(),
-                })
-                .await;
-
-            // Safe-by-default: do not auto-edit; deny until a control-plane approval path exists.
-            let conn = Arc::clone(conn);
-            tokio::spawn(async move {
-                let params = FileChangeApprovalParams {
-                    proposal_id: params.proposal_id,
-                    approved: false,
-                };
-                if let Ok(params) = serde_json::to_value(params) {
-                    let _ = conn.request("fileChangeApproval", Some(params)).await;
-                }
-            });
-        }
         "shutdown" => {
             tracing::info!("codex app-server requested shutdown");
         }
@@ -1171,6 +1198,72 @@ async fn handle_notification(
         }
         _ => {}
     }
+}
+
+async fn handle_turn_started(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: TurnStartedParams,
+) {
+    let event = {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn.id.clone());
+
+        if inner.emitted_turn_starts.insert(params.turn.id.clone()) {
+            Some(AppServerEvent::TurnStarted {
+                turn_id: Some(params.turn.id.clone()),
+                external_session_ref: Some(ExternalSessionRef::CodexThread {
+                    thread_id: params.thread_id.clone(),
+                    turn_id: Some(params.turn.id.clone()),
+                }),
+            })
+        } else {
+            None
+        }
+    };
+
+    if let Some(event) = event {
+        let _ = events_tx.send(event).await;
+    }
+}
+
+async fn handle_agent_message_delta(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: AgentMessageDeltaParams,
+) {
+    if params.delta.is_empty() {
+        return;
+    }
+
+    {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn_id.clone());
+    }
+
+    let _ = events_tx
+        .send(AppServerEvent::AssistantMessageDelta {
+            turn_id: Some(params.turn_id),
+            item_id: Some(params.item_id),
+            delta: params.delta,
+        })
+        .await;
 }
 
 async fn handle_item_started(
