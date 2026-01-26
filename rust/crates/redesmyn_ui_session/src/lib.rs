@@ -787,6 +787,14 @@ impl Render for SessionView {
                         ) => {
                             format!("assistant: {}", msg.preview)
                         }
+                        redesmyn_session_view_model::SessionEventItemContent::StatusUpdate(
+                            status,
+                        ) => status
+                            .message
+                            .as_deref()
+                            .filter(|msg| !msg.trim().is_empty())
+                            .map(|msg| format!("status: {msg}"))
+                            .unwrap_or_else(|| format!("status: {:?}", status.turn_state)),
                         _ => format!("{:?}", item.kind),
                     };
 
