@@ -725,6 +725,57 @@ mod tests {
     }
 
     #[test]
+    fn test_live_session_event_appends_ephemeral_and_clears_on_assistant_message() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+        state.set_at_bottom(true);
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(1),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantMessageDelta(
+                redesmyn_protocol::session_live::AssistantMessageDelta {
+                    delta: "hello".to_owned(),
+                },
+            ),
+        });
+
+        assert_eq!(state.ephemeral.len(), 1);
+        assert_eq!(
+            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
+            Some("hello")
+        );
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(2),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantMessageDelta(
+                redesmyn_protocol::session_live::AssistantMessageDelta {
+                    delta: " world".to_owned(),
+                },
+            ),
+        });
+
+        assert_eq!(
+            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
+            Some("hello world")
+        );
+
+        state.apply_live_event(assistant_event(
+            session_id,
+            SessionEventId::new(),
+            ts(10),
+            "final",
+        ));
+
+        assert!(state.ephemeral.is_empty());
+    }
+
+    #[test]
     fn test_dedup_by_event_id() {
         let session_id = SessionId::new();
         let mut state = SessionFeedState::new(session_id);

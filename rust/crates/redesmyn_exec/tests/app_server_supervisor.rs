@@ -13,6 +13,7 @@ use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::daemon::DaemonMessage;
 use redesmyn_protocol::session::{SessionEvent, SessionEventKind, SessionScope};
+use redesmyn_protocol::session_live::SessionLiveEvent;
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -59,6 +60,70 @@ impl AppServerClient for FakeAppServerClient {
                     let _ = events_tx
                         .send(AppServerEvent::AssistantMessage {
                             text: format!("echo: {prompt}"),
+                        })
+                        .await;
+                    Ok(AppServerResponse::MessageAccepted)
+                }
+                AppServerRequest::Interrupt => Ok(AppServerResponse::Interrupted),
+            }
+        })
+    }
+}
+
+#[derive(Clone)]
+struct DeltaAppServerProcess;
+
+impl AppServerProcess for DeltaAppServerProcess {
+    fn start(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn connect(&self) -> BoxFuture<'_, Result<AppServerConnection, AppServerProcessError>> {
+        Box::pin(async {
+            let (events_tx, events_rx) = mpsc::channel::<AppServerEvent>(16);
+            Ok(AppServerConnection {
+                client: Arc::new(DeltaAppServerClient { events_tx }),
+                events: events_rx,
+            })
+        })
+    }
+
+    fn shutdown(&self) -> BoxFuture<'_, Result<(), AppServerProcessError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct DeltaAppServerClient {
+    events_tx: mpsc::Sender<AppServerEvent>,
+}
+
+impl AppServerClient for DeltaAppServerClient {
+    fn request(
+        &self,
+        request: AppServerRequest,
+    ) -> BoxFuture<'_, Result<AppServerResponse, AppServerRequestError>> {
+        let events_tx = self.events_tx.clone();
+        Box::pin(async move {
+            match request {
+                AppServerRequest::SendMessage { .. } => {
+                    let item_id = Some("test_item".to_owned());
+                    let _ = events_tx
+                        .send(AppServerEvent::AssistantMessageDelta {
+                            turn_id: Some("turn_1".to_owned()),
+                            item_id: item_id.clone(),
+                            delta: "hello ".to_owned(),
+                        })
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::AssistantMessageDelta {
+                            turn_id: Some("turn_1".to_owned()),
+                            item_id,
+                            delta: "world".to_owned(),
+                        })
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::AssistantMessage {
+                            text: "hello world".to_owned(),
                         })
                         .await;
                     Ok(AppServerResponse::MessageAccepted)
@@ -145,6 +210,30 @@ async fn collect_session_records(
             .collect(),
         _ => Vec::new(),
     }
+}
+
+async fn collect_live_events(
+    rx: &mut mpsc::Receiver<redesmyn_protocol::daemon::DaemonFrame>,
+    session_id: redesmyn_ids::SessionId,
+    timeout: Duration,
+) -> Vec<SessionLiveEvent> {
+    tokio::time::timeout(timeout, async {
+        loop {
+            let frame = rx.recv().await.expect("frame channel closed");
+            if let DaemonMessage::SessionLiveEventBatch(batch) = frame.message {
+                let events: Vec<_> = batch
+                    .events
+                    .into_iter()
+                    .filter(|event| event.session_id == session_id)
+                    .collect();
+                if !events.is_empty() {
+                    return events;
+                }
+            }
+        }
+    })
+    .await
+    .expect("timeout waiting for live session events")
 }
 
 async fn collect_until_session_ended(
@@ -246,6 +335,66 @@ async fn send_message_round_trips_and_emits_structured_event() {
         .await
         .expect("stop_session");
     supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn send_message_emits_live_assistant_deltas() {
+    let (frames_tx, mut frames_rx) = mpsc::channel(256);
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let artifact_store = LocalArtifactStore::new(tmp.path().to_path_buf());
+
+    let supervisor = AppServerSupervisor::new(
+        AppServerSupervisorConfig::default(),
+        artifact_store,
+        frames_tx,
+    )
+    .await
+    .expect("supervisor");
+
+    let task_id = TaskId::new();
+    let scope = SessionScope::Task { task_id };
+
+    let session_id = SessionId::new();
+    let session_id = supervisor
+        .start_session(
+            session_id,
+            Some(task_id),
+            AppServerSessionSpec {
+                scope,
+                allow_concurrent_for_task: false,
+                process: Arc::new(DeltaAppServerProcess),
+            },
+        )
+        .await
+        .expect("start_session");
+
+    let response = supervisor
+        .send_message(
+            session_id,
+            AppServerTurnIntent::StartNew {
+                prompt: "hi".to_owned(),
+            },
+        )
+        .await
+        .expect("send_message");
+    assert_eq!(response, AppServerResponse::MessageAccepted);
+
+    let live_events = collect_live_events(&mut frames_rx, session_id, Duration::from_secs(2)).await;
+    assert!(live_events
+        .iter()
+        .all(|event| event.item_id.as_deref() == Some("test_item")));
+    assert_eq!(
+        live_events
+            .into_iter()
+            .filter_map(|event| match event.kind {
+                redesmyn_protocol::session_live::SessionLiveEventKind::AssistantMessageDelta(
+                    delta,
+                ) => Some(delta.delta),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec!["hello ".to_owned(), "world".to_owned()]
+    );
 }
 
 #[tokio::test]
