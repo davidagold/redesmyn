@@ -265,6 +265,7 @@ struct CodexAppServerStateInner {
     active_turn_id: Option<String>,
     emitted_turn_starts: HashSet<String>,
     emitted_turn_completions: HashSet<String>,
+    emitted_item_starts: HashSet<String>,
     emitted_item_ids: HashSet<String>,
 }
 
@@ -289,6 +290,7 @@ impl CodexAppServerState {
             inner.active_turn_id = None;
             inner.emitted_turn_starts.clear();
             inner.emitted_turn_completions.clear();
+            inner.emitted_item_starts.clear();
             inner.emitted_item_ids.clear();
         }
         self.accumulator.lock().await.reset();
@@ -1041,26 +1043,38 @@ struct ItemEventParams {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ThreadItem {
-    UserMessage {
-        id: String,
-        #[serde(default)]
-        content: Vec<ThreadContentBlock>,
-    },
     AgentMessage {
         id: String,
         #[serde(default)]
         text: String,
     },
+    CommandExecution {
+        id: String,
+        command: String,
+        cwd: String,
+        status: ItemStatus,
+        #[serde(default, rename = "aggregatedOutput")]
+        aggregated_output: Option<String>,
+        #[serde(default, rename = "exitCode")]
+        exit_code: Option<i32>,
+    },
+    FileChange {
+        id: String,
+        status: ItemStatus,
+        #[serde(default)]
+        changes: Vec<serde_json::Value>,
+    },
     #[serde(other)]
     Unknown,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-enum ThreadContentBlock {
-    Text {
-        text: String,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ItemStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Declined,
     #[serde(other)]
     Unknown,
 }
@@ -1084,6 +1098,18 @@ struct TurnStartedParams {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentMessageDeltaParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    delta: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ItemOutputDeltaParams {
     #[serde(rename = "threadId")]
     thread_id: String,
     #[serde(rename = "turnId")]
@@ -1169,6 +1195,26 @@ async fn handle_notification(
                 }
             };
             handle_agent_message_delta(state, events_tx, params).await;
+        }
+        "item/commandExecution/outputDelta" => {
+            let params: ItemOutputDeltaParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/commandExecution/outputDelta params");
+                    return;
+                }
+            };
+            handle_tool_output_delta(state, events_tx, "exec_command", params).await;
+        }
+        "item/fileChange/outputDelta" => {
+            let params: ItemOutputDeltaParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/fileChange/outputDelta params");
+                    return;
+                }
+            };
+            handle_tool_output_delta(state, events_tx, "file_change", params).await;
         }
         "item/completed" => {
             let params: ItemEventParams = match serde_json::from_value(params.clone()) {
@@ -1266,59 +1312,13 @@ async fn handle_agent_message_delta(
         .await;
 }
 
-async fn handle_item_started(
+async fn handle_tool_output_delta(
     state: &Arc<CodexAppServerState>,
     events_tx: &mpsc::Sender<AppServerEvent>,
-    params: ItemEventParams,
+    tool_name: &'static str,
+    params: ItemOutputDeltaParams,
 ) {
-    if let ThreadItem::UserMessage { id, content } = &params.item {
-        let _ = id;
-        for block in content {
-            if let ThreadContentBlock::Text { text } = block {
-                let _ = text;
-            }
-        }
-    }
-
-    let event = {
-        let mut inner = state.inner.lock().await;
-        match inner.session_id.as_deref() {
-            Some(session_id) if session_id != params.thread_id => return,
-            None => {
-                inner.session_id = Some(params.thread_id.clone());
-            }
-            Some(_) => {}
-        }
-
-        inner.active_turn_id = Some(params.turn_id.clone());
-
-        if inner.emitted_turn_starts.insert(params.turn_id.clone()) {
-            Some(AppServerEvent::TurnStarted {
-                turn_id: Some(params.turn_id.clone()),
-                external_session_ref: Some(ExternalSessionRef::CodexThread {
-                    thread_id: params.thread_id.clone(),
-                    turn_id: Some(params.turn_id.clone()),
-                }),
-            })
-        } else {
-            None
-        }
-    };
-
-    if let Some(event) = event {
-        let _ = events_tx.send(event).await;
-    }
-}
-
-async fn handle_item_completed(
-    state: &Arc<CodexAppServerState>,
-    events_tx: &mpsc::Sender<AppServerEvent>,
-    params: ItemEventParams,
-) {
-    let ThreadItem::AgentMessage { id, text } = params.item else {
-        return;
-    };
-    if text.trim().is_empty() {
+    if params.delta.is_empty() {
         return;
     }
 
@@ -1332,14 +1332,189 @@ async fn handle_item_completed(
             Some(_) => {}
         }
 
-        if !inner.emitted_item_ids.insert(id) {
-            return;
-        }
+        inner.active_turn_id = Some(params.turn_id.clone());
     }
 
     let _ = events_tx
-        .send(AppServerEvent::AssistantMessage { text })
+        .send(AppServerEvent::ToolOutputDelta {
+            turn_id: Some(params.turn_id),
+            tool_name: tool_name.to_owned(),
+            tool_call_id: Some(params.item_id),
+            delta: params.delta,
+        })
         .await;
+}
+
+async fn handle_item_started(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: ItemEventParams,
+) {
+    let (turn_started, tool_invocation) = {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn_id.clone());
+
+        let turn_started = inner.emitted_turn_starts.insert(params.turn_id.clone()).then(|| {
+            AppServerEvent::TurnStarted {
+                turn_id: Some(params.turn_id.clone()),
+                external_session_ref: Some(ExternalSessionRef::CodexThread {
+                    thread_id: params.thread_id.clone(),
+                    turn_id: Some(params.turn_id.clone()),
+                }),
+            }
+        });
+
+        let tool_invocation = match &params.item {
+            ThreadItem::CommandExecution { id, command, cwd, .. } => inner
+                .emitted_item_starts
+                .insert(id.clone())
+                .then(|| AppServerEvent::ToolInvocation {
+                    tool_name: "exec_command".to_owned(),
+                    tool_call_id: Some(id.clone()),
+                    input: serde_json::json!({
+                        "command": command,
+                        "cwd": cwd,
+                    })
+                    .to_string(),
+                }),
+            ThreadItem::FileChange { id, changes, .. } => inner
+                .emitted_item_starts
+                .insert(id.clone())
+                .then(|| AppServerEvent::ToolInvocation {
+                    tool_name: "file_change".to_owned(),
+                    tool_call_id: Some(id.clone()),
+                    input: serde_json::json!({
+                        "changes": changes.len(),
+                    })
+                    .to_string(),
+                }),
+            _ => None,
+        };
+
+        (turn_started, tool_invocation)
+    };
+
+    if let Some(event) = turn_started {
+        let _ = events_tx.send(event).await;
+    }
+    if let Some(event) = tool_invocation {
+        let _ = events_tx.send(event).await;
+    }
+}
+
+async fn handle_item_completed(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: ItemEventParams,
+) {
+    match params.item {
+        ThreadItem::AgentMessage { id, text } => {
+            if text.trim().is_empty() {
+                return;
+            }
+
+            {
+                let mut inner = state.inner.lock().await;
+                match inner.session_id.as_deref() {
+                    Some(session_id) if session_id != params.thread_id => return,
+                    None => {
+                        inner.session_id = Some(params.thread_id.clone());
+                    }
+                    Some(_) => {}
+                }
+
+                if !inner.emitted_item_ids.insert(id) {
+                    return;
+                }
+            }
+
+            let _ = events_tx
+                .send(AppServerEvent::AssistantMessage { text })
+                .await;
+        }
+        ThreadItem::CommandExecution {
+            id,
+            status,
+            aggregated_output,
+            exit_code,
+            ..
+        } => {
+            {
+                let mut inner = state.inner.lock().await;
+                match inner.session_id.as_deref() {
+                    Some(session_id) if session_id != params.thread_id => return,
+                    None => {
+                        inner.session_id = Some(params.thread_id.clone());
+                    }
+                    Some(_) => {}
+                }
+
+                if !inner.emitted_item_ids.insert(id.clone()) {
+                    return;
+                }
+            }
+
+            let mut output = String::new();
+            if status != ItemStatus::Completed {
+                output.push_str(&format!("status: {status:?}\n"));
+            }
+            if let Some(exit_code) = exit_code {
+                output.push_str(&format!("exit_code: {exit_code}\n"));
+            }
+            if let Some(aggregated_output) = aggregated_output {
+                output.push_str(&aggregated_output);
+            }
+
+            let _ = events_tx
+                .send(AppServerEvent::ToolResult {
+                    tool_name: "exec_command".to_owned(),
+                    tool_call_id: Some(id),
+                    output,
+                    error: None,
+                })
+                .await;
+        }
+        ThreadItem::FileChange { id, status, changes } => {
+            {
+                let mut inner = state.inner.lock().await;
+                match inner.session_id.as_deref() {
+                    Some(session_id) if session_id != params.thread_id => return,
+                    None => {
+                        inner.session_id = Some(params.thread_id.clone());
+                    }
+                    Some(_) => {}
+                }
+
+                if !inner.emitted_item_ids.insert(id.clone()) {
+                    return;
+                }
+            }
+
+            let output = serde_json::json!({
+                "status": format!("{status:?}"),
+                "changes": changes.len(),
+            })
+            .to_string();
+
+            let _ = events_tx
+                .send(AppServerEvent::ToolResult {
+                    tool_name: "file_change".to_owned(),
+                    tool_call_id: Some(id),
+                    output,
+                    error: None,
+                })
+                .await;
+        }
+        _ => {}
+    }
 }
 
 async fn handle_turn_completed(

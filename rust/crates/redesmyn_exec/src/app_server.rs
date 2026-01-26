@@ -16,7 +16,7 @@ use redesmyn_protocol::session::{
     ToolResult, TurnCompleted, TurnStarted, TurnState,
 };
 use redesmyn_protocol::session_live::{
-    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind,
+    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
 };
 use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -95,6 +95,12 @@ pub enum AppServerEvent {
     AssistantMessageDelta {
         turn_id: Option<String>,
         item_id: Option<String>,
+        delta: String,
+    },
+    ToolOutputDelta {
+        turn_id: Option<String>,
+        tool_name: String,
+        tool_call_id: Option<String>,
         delta: String,
     },
     ToolInvocation {
@@ -657,6 +663,21 @@ async fn run_event_forwarder(
                             try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
                         }
                     }
+                    AppServerEvent::ToolOutputDelta { turn_id, tool_name, tool_call_id, delta } => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        pending_live.push(make_tool_output_delta_live_event(
+                            session_id,
+                            turn_id,
+                            tool_call_id,
+                            tool_name,
+                            delta,
+                        ));
+                        if pending_live.len() >= LIVE_FLUSH_MAX_EVENTS {
+                            try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
+                        }
+                    }
                     event => {
                         if !pending_live.is_empty() {
                             try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
@@ -769,6 +790,22 @@ async fn emit_app_server_event(
             delta,
         } => {
             let event = make_assistant_delta_live_event(session_id, turn_id, item_id, delta);
+            try_emit_session_live_event_batch(frames_tx, vec![event]);
+            return Ok(());
+        }
+        AppServerEvent::ToolOutputDelta {
+            turn_id,
+            tool_name,
+            tool_call_id,
+            delta,
+        } => {
+            let event = make_tool_output_delta_live_event(
+                session_id,
+                turn_id,
+                tool_call_id,
+                tool_name,
+                delta,
+            );
             try_emit_session_live_event_batch(frames_tx, vec![event]);
             return Ok(());
         }
@@ -931,6 +968,22 @@ fn make_assistant_delta_live_event(
         turn_id,
         item_id,
         kind: SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta { delta }),
+    }
+}
+
+fn make_tool_output_delta_live_event(
+    session_id: SessionId,
+    turn_id: Option<String>,
+    tool_call_id: Option<String>,
+    tool_name: String,
+    delta: String,
+) -> SessionLiveEvent {
+    SessionLiveEvent {
+        created_at: Timestamp::now_utc(),
+        session_id,
+        turn_id,
+        item_id: tool_call_id,
+        kind: SessionLiveEventKind::ToolOutputDelta(ToolOutputDelta { tool_name, delta }),
     }
 }
 
