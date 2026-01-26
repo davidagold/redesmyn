@@ -321,20 +321,34 @@ impl SessionFeedState {
     }
 
     pub fn apply_live_event(&mut self, event: SessionEvent) {
-        let should_clear_ephemeral = matches!(
-            &event.kind,
-            SessionEventKind::AssistantMessage(_)
-                | SessionEventKind::ToolResult(_)
-                | SessionEventKind::TurnCompleted(_)
-        );
+        let clear_assistant_ephemeral =
+            matches!(&event.kind, SessionEventKind::AssistantMessage(_));
+        let clear_tool_ephemeral = match &event.kind {
+            SessionEventKind::ToolResult(ev) => Some(ev.tool_call_id.clone()),
+            _ => None,
+        };
         let inserted = self.insert_event(SessionEventRow::from_event(event));
 
         let Some(inserted_at_end) = inserted else {
             return;
         };
 
-        if should_clear_ephemeral && inserted_at_end {
-            self.clear_ephemeral();
+        if inserted_at_end {
+            if clear_assistant_ephemeral {
+                self.ephemeral
+                    .retain(|_, item| item.role != SessionMessageRole::Assistant);
+            }
+            if let Some(tool_call_id) = clear_tool_ephemeral {
+                match tool_call_id {
+                    Some(tool_call_id) => {
+                        self.ephemeral.remove(&tool_call_id);
+                    }
+                    None => {
+                        self.ephemeral
+                            .retain(|_, item| item.role != SessionMessageRole::Tool);
+                    }
+                }
+            }
         }
 
         if inserted_at_end {
@@ -382,7 +396,9 @@ impl SessionFeedState {
                     return;
                 }
 
-                let key = event.item_id.unwrap_or_else(|| "tool_output_delta".to_owned());
+                let key = event
+                    .item_id
+                    .unwrap_or_else(|| "tool_output_delta".to_owned());
 
                 let entry = self
                     .ephemeral
