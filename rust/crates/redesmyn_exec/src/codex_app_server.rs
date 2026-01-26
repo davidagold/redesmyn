@@ -420,9 +420,17 @@ impl CodexAppServerClient {
             .map_err(|err| AppServerRequestError::Failed {
                 reason: format!("newConversation failed: {err}"),
             })?;
-        if let Some(session_id) = parse_session_id_from_new_conversation_result(&result) {
-            self.state.set_session_id(session_id).await;
-        }
+
+        let session_id =
+            parse_session_id_from_new_conversation_result(&result).ok_or_else(|| {
+                AppServerRequestError::Failed {
+                    reason: format!(
+                        "newConversation response missing conversation id: {}",
+                        result.to_string()
+                    ),
+                }
+            })?;
+        self.state.set_session_id(session_id).await;
         Ok(())
     }
 
@@ -613,16 +621,36 @@ impl AppServerClient for CodexAppServerClient {
 }
 
 fn parse_session_id_from_new_conversation_result(result: &serde_json::Value) -> Option<String> {
-    result
-        .get("conversationId")
-        .and_then(|v| v.as_str())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            result
-                .get("conversation_id")
-                .and_then(|v| v.as_str())
-                .map(ToOwned::to_owned)
-        })
+    fn take_string(value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.to_owned()),
+            _ => None,
+        }
+    }
+
+    fn lookup(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+        obj.get(key).and_then(take_string)
+    }
+
+    match result {
+        serde_json::Value::String(_) => take_string(result),
+        serde_json::Value::Object(obj) => lookup(obj, "conversationId")
+            .or_else(|| lookup(obj, "conversation_id"))
+            .or_else(|| lookup(obj, "threadId"))
+            .or_else(|| lookup(obj, "thread_id"))
+            .or_else(|| lookup(obj, "id"))
+            .or_else(|| {
+                obj.get("conversation")
+                    .and_then(|v| v.as_object())
+                    .and_then(|nested| lookup(nested, "id"))
+            })
+            .or_else(|| {
+                obj.get("thread")
+                    .and_then(|v| v.as_object())
+                    .and_then(|nested| lookup(nested, "id"))
+            }),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]

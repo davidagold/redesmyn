@@ -644,7 +644,6 @@ async fn run_event_forwarder(
 
     loop {
         tokio::select! {
-            biased;
             maybe_event = rx.recv() => {
                 let Some(event) = maybe_event else { break };
 
