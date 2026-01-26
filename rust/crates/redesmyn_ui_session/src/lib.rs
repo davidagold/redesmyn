@@ -515,6 +515,13 @@ impl SessionView {
                 feed.apply_live_event(ev);
                 apply_scroll_intents(feed, scroll_handle);
             }
+            SubscriptionEvent::SessionLiveEvent(ev) => {
+                if ev.session_id != feed.session_id {
+                    return;
+                }
+                feed.apply_live_session_event(ev);
+                apply_scroll_intents(feed, scroll_handle);
+            }
             SubscriptionEvent::Error(err) => {
                 feed.apply_live_error(err.message);
             }

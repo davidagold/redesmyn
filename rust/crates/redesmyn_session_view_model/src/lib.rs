@@ -10,6 +10,7 @@ use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, SessionEventKind, StatusUpdate, ToolInvocation, ToolResult,
     TurnCompleted, TurnStarted, UserMessage,
 };
+use redesmyn_protocol::session_live::{SessionLiveEvent, SessionLiveEventKind};
 use redesmyn_protocol::{ArtifactRef, SessionEvent, Timestamp};
 
 #[derive(
@@ -319,11 +320,19 @@ impl SessionFeedState {
     }
 
     pub fn apply_live_event(&mut self, event: SessionEvent) {
+        let should_clear_ephemeral = matches!(
+            &event.kind,
+            SessionEventKind::AssistantMessage(_) | SessionEventKind::TurnCompleted(_)
+        );
         let inserted = self.insert_event(SessionEventRow::from_event(event));
 
         let Some(inserted_at_end) = inserted else {
             return;
         };
+
+        if should_clear_ephemeral && inserted_at_end {
+            self.clear_ephemeral();
+        }
 
         if inserted_at_end {
             if self.scroll.at_bottom {
@@ -334,6 +343,39 @@ impl SessionFeedState {
         }
 
         self.recompute_summary();
+    }
+
+    pub fn apply_live_session_event(&mut self, event: SessionLiveEvent) {
+        if event.session_id != self.session_id {
+            return;
+        }
+
+        match event.kind {
+            SessionLiveEventKind::AssistantMessageDelta(delta) => {
+                if delta.delta.is_empty() {
+                    return;
+                }
+
+                let key = event
+                    .item_id
+                    .unwrap_or_else(|| "assistant_delta".to_owned());
+
+                let entry = self
+                    .ephemeral
+                    .entry(key.clone())
+                    .or_insert(EphemeralTextItem {
+                        key,
+                        role: SessionMessageRole::Assistant,
+                        text: String::new(),
+                    });
+
+                entry.text.push_str(&delta.delta);
+                if self.scroll.at_bottom {
+                    self.scroll.pending_scroll_to_bottom = true;
+                }
+            }
+            SessionLiveEventKind::Unknown(_) => {}
+        }
     }
 
     pub fn set_draft(&mut self, draft: impl Into<String>) {
