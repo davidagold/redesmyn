@@ -1502,6 +1502,7 @@ impl Focusable for RootView {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::vsync::ensure_vsync(window);
         let theme = theme_for_window(window, cx);
 
         if !self.chrome.did_startup_refresh {

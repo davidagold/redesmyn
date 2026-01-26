@@ -161,6 +161,7 @@ impl FoundationsDemo {
 
 impl Render for FoundationsDemo {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::vsync::ensure_vsync(window);
         let theme = theme_for_window(window, cx);
         let demo = cx.entity();
 

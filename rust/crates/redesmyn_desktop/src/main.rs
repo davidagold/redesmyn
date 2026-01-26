@@ -6,6 +6,7 @@ mod root_view;
 mod screenshot;
 mod test_artifacts;
 mod ui_driver;
+mod vsync;
 
 use gpui::{AppContext as _, Focusable as _};
 
