@@ -11,12 +11,20 @@ use crate::{Timestamp, session::UnknownSessionEvent};
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum SessionLiveEventKind {
     AssistantMessageDelta(AssistantMessageDelta),
+    ToolOutputDelta(ToolOutputDelta),
     Unknown(UnknownSessionLiveEvent),
 }
 
 /// Streaming delta for an assistant message.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AssistantMessageDelta {
+    pub delta: String,
+}
+
+/// Streaming delta for tool output (e.g. terminal output).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolOutputDelta {
+    pub tool_name: String,
     pub delta: String,
 }
 
@@ -49,4 +57,3 @@ pub struct SessionLiveEvent {
     #[serde(flatten)]
     pub kind: SessionLiveEventKind,
 }
-

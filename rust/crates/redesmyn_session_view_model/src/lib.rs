@@ -20,6 +20,7 @@ use redesmyn_protocol::{ArtifactRef, SessionEvent, Timestamp};
 pub enum SessionMessageRole {
     User,
     Assistant,
+    Tool,
 }
 
 #[derive(
@@ -322,7 +323,9 @@ impl SessionFeedState {
     pub fn apply_live_event(&mut self, event: SessionEvent) {
         let should_clear_ephemeral = matches!(
             &event.kind,
-            SessionEventKind::AssistantMessage(_) | SessionEventKind::TurnCompleted(_)
+            SessionEventKind::AssistantMessage(_)
+                | SessionEventKind::ToolResult(_)
+                | SessionEventKind::TurnCompleted(_)
         );
         let inserted = self.insert_event(SessionEventRow::from_event(event));
 
@@ -367,6 +370,27 @@ impl SessionFeedState {
                         key,
                         role: SessionMessageRole::Assistant,
                         text: String::new(),
+                    });
+
+                entry.text.push_str(&delta.delta);
+                if self.scroll.at_bottom {
+                    self.scroll.pending_scroll_to_bottom = true;
+                }
+            }
+            SessionLiveEventKind::ToolOutputDelta(delta) => {
+                if delta.delta.is_empty() {
+                    return;
+                }
+
+                let key = event.item_id.unwrap_or_else(|| "tool_output_delta".to_owned());
+
+                let entry = self
+                    .ephemeral
+                    .entry(key.clone())
+                    .or_insert(EphemeralTextItem {
+                        key,
+                        role: SessionMessageRole::Tool,
+                        text: format!("{}\n", delta.tool_name),
                     });
 
                 entry.text.push_str(&delta.delta);
@@ -594,6 +618,29 @@ mod tests {
         }
     }
 
+    fn tool_result_event(
+        session_id: SessionId,
+        id: SessionEventId,
+        created_at: Timestamp,
+        tool_call_id: &str,
+        preview: &str,
+    ) -> SessionEvent {
+        SessionEvent {
+            session_event_id: id,
+            created_at,
+            scope: redesmyn_protocol::SessionScope::Chat,
+            session_id,
+            turn_id: None,
+            kind: SessionEventKind::ToolResult(ToolResult {
+                tool_name: "exec_command".to_owned(),
+                tool_call_id: Some(tool_call_id.to_owned()),
+                output_preview: preview.to_owned(),
+                output_artifact: None,
+                error: None,
+            }),
+        }
+    }
+
     #[test]
     fn test_history_prepend_sets_anchor() {
         let session_id = SessionId::new();
@@ -770,6 +817,60 @@ mod tests {
             SessionEventId::new(),
             ts(10),
             "final",
+        ));
+
+        assert!(state.ephemeral.is_empty());
+    }
+
+    #[test]
+    fn test_live_tool_output_delta_appends_ephemeral_and_clears_on_tool_result() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+        state.set_at_bottom(true);
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(1),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::ToolOutputDelta(
+                redesmyn_protocol::session_live::ToolOutputDelta {
+                    tool_name: "exec_command".to_owned(),
+                    delta: "hello".to_owned(),
+                },
+            ),
+        });
+
+        assert_eq!(state.ephemeral.len(), 1);
+        assert_eq!(
+            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
+            Some("exec_command\nhello")
+        );
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(2),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::ToolOutputDelta(
+                redesmyn_protocol::session_live::ToolOutputDelta {
+                    tool_name: "exec_command".to_owned(),
+                    delta: " world".to_owned(),
+                },
+            ),
+        });
+
+        assert_eq!(
+            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
+            Some("exec_command\nhello world")
+        );
+
+        state.apply_live_event(tool_result_event(
+            session_id,
+            SessionEventId::new(),
+            ts(10),
+            "item_1",
+            "done",
         ));
 
         assert!(state.ephemeral.is_empty());

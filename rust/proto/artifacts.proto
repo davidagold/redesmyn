@@ -196,12 +196,18 @@ message SessionLiveEvent {
 
   oneof kind {
     AssistantMessageDelta assistant_message_delta = 10;
+    ToolOutputDelta tool_output_delta = 11;
     UnknownSessionLiveEvent unknown = 100;
   }
 }
 
 message AssistantMessageDelta {
   string delta = 1;
+}
+
+message ToolOutputDelta {
+  string tool_name = 1;
+  string delta = 2;
 }
 
 // Forward-compatible placeholder for live-event union fallbacks.

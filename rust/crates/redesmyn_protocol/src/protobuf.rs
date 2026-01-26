@@ -19,7 +19,8 @@ use crate::session::{
     TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
 };
 use crate::session_live::{
-    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,
+    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
+    UnknownSessionLiveEvent,
 };
 use crate::{
     DaemonHello, ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion,
@@ -1393,6 +1394,23 @@ impl AssistantMessageDelta {
     }
 }
 
+impl ToolOutputDelta {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ToolOutputDelta {
+        pbv1::ToolOutputDelta {
+            tool_name: self.tool_name.clone(),
+            delta: self.delta.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ToolOutputDelta) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            tool_name: proto.tool_name,
+            delta: proto.delta,
+        })
+    }
+}
+
 impl SessionLiveEvent {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::SessionLiveEvent {
@@ -1404,6 +1422,9 @@ impl SessionLiveEvent {
             kind: Some(match &self.kind {
                 SessionLiveEventKind::AssistantMessageDelta(ev) => {
                     pbv1::session_live_event::Kind::AssistantMessageDelta(ev.to_protobuf())
+                }
+                SessionLiveEventKind::ToolOutputDelta(ev) => {
+                    pbv1::session_live_event::Kind::ToolOutputDelta(ev.to_protobuf())
                 }
                 SessionLiveEventKind::Unknown(ev) => {
                     pbv1::session_live_event::Kind::Unknown(ev.to_protobuf())
@@ -1418,6 +1439,9 @@ impl SessionLiveEvent {
                 SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta::try_from_protobuf(
                     ev,
                 )?)
+            }
+            Some(pbv1::session_live_event::Kind::ToolOutputDelta(ev)) => {
+                SessionLiveEventKind::ToolOutputDelta(ToolOutputDelta::try_from_protobuf(ev)?)
             }
             Some(pbv1::session_live_event::Kind::Unknown(ev)) => {
                 SessionLiveEventKind::Unknown(UnknownSessionLiveEvent::from_protobuf(ev))

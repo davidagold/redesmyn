@@ -773,6 +773,7 @@ impl Render for SessionView {
                                 redesmyn_session_view_model::SessionMessageRole::User => "user",
                                 redesmyn_session_view_model::SessionMessageRole::Assistant =>
                                     "assistant",
+                                redesmyn_session_view_model::SessionMessageRole::Tool => "tool",
                             },
                             item.text
                         )),
@@ -786,6 +787,22 @@ impl Render for SessionView {
                             msg,
                         ) => {
                             format!("assistant: {}", msg.preview)
+                        }
+                        redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
+                            tool,
+                        ) => format!("tool: {} {}", tool.tool_name, tool.input_preview),
+                        redesmyn_session_view_model::SessionEventItemContent::ToolResult(tool) => {
+                            let status = tool
+                                .error
+                                .as_ref()
+                                .map(|e| format!("error: {}", e.message))
+                                .unwrap_or_else(|| "ok".to_owned());
+                            let preview = tool.output_preview.trim();
+                            if preview.is_empty() {
+                                format!("tool_result: {} ({status})", tool.tool_name)
+                            } else {
+                                format!("tool_result: {} ({status}): {preview}", tool.tool_name)
+                            }
                         }
                         redesmyn_session_view_model::SessionEventItemContent::StatusUpdate(
                             status,
