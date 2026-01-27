@@ -261,23 +261,68 @@ fn render_inline_segments(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let atoms = flatten_inlines(inlines);
-    let chunks = chunk_atoms(atoms);
+    let items = flatten_inlines(inlines);
+    let lines = split_inline_items_into_lines(items);
 
     let mut flow = div()
         .id(id.clone())
         .flex()
-        .flex_row()
-        .flex_wrap()
+        .flex_col()
         .min_w_0()
         .w_full();
 
-    for (ix, chunk) in chunks.into_iter().enumerate() {
-        let chunk_id: ElementId = (id.clone(), format!("chunk-{ix}")).into();
-        flow = flow.child(render_inline_chunk(chunk_id, chunk, style, window, cx));
+    for (line_ix, atoms) in lines.into_iter().enumerate() {
+        let chunks = chunk_atoms(atoms);
+        let line_id: ElementId = (id.clone(), format!("line-{line_ix}")).into();
+
+        let mut line = div()
+            .id(line_id.clone())
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .min_w_0()
+            .w_full();
+
+        if chunks.is_empty() {
+            line = line.child(styled_text_div(
+                (line_id, "empty").into(),
+                vec![InlineAtom {
+                    text: " ".to_string(),
+                    style: InlineStyle::default(),
+                    link: None,
+                }],
+                TextFlavor::Body,
+                window,
+                cx,
+            ));
+        } else {
+            for (chunk_ix, chunk) in chunks.into_iter().enumerate() {
+                let chunk_id: ElementId = (line_id.clone(), format!("chunk-{chunk_ix}")).into();
+                line = line.child(render_inline_chunk(chunk_id, chunk, style, window, cx));
+            }
+        }
+
+        flow = flow.child(line);
     }
 
     flow.into_any_element()
+}
+
+fn split_inline_items_into_lines(items: Vec<InlineItem>) -> Vec<Vec<InlineAtom>> {
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+
+    for item in items {
+        match item {
+            InlineItem::Atom(atom) => current.push(atom),
+            InlineItem::HardBreak => {
+                lines.push(std::mem::take(&mut current));
+            }
+        }
+    }
+
+    lines.push(current);
+    lines
 }
 
 enum InlineChunk {
@@ -408,7 +453,12 @@ fn styled_text_div(
         .child(StyledText::new(text).with_runs(runs))
 }
 
-fn flatten_inlines(inlines: &[MarkdownInline]) -> Vec<InlineAtom> {
+enum InlineItem {
+    Atom(InlineAtom),
+    HardBreak,
+}
+
+fn flatten_inlines(inlines: &[MarkdownInline]) -> Vec<InlineItem> {
     let mut out = Vec::new();
     for inline in inlines {
         flatten_inline(inline, InlineStyle::default(), None, &mut out);
@@ -421,7 +471,7 @@ fn flatten_inline(
     inline: &MarkdownInline,
     style: InlineStyle,
     link: Option<&str>,
-    out: &mut Vec<InlineAtom>,
+    out: &mut Vec<InlineItem>,
 ) {
     match inline {
         MarkdownInline::Text { text, .. } => push_atom(text, style, link, out),
@@ -454,29 +504,31 @@ fn flatten_inline(
             }
         }
         MarkdownInline::SoftBreak { .. } => push_atom(" ", style, link, out),
-        MarkdownInline::HardBreak { .. } => push_atom("\n", style, link, out),
+        MarkdownInline::HardBreak { .. } => out.push(InlineItem::HardBreak),
     }
 }
 
-fn push_atom(text: &str, style: InlineStyle, link: Option<&str>, out: &mut Vec<InlineAtom>) {
+fn push_atom(text: &str, style: InlineStyle, link: Option<&str>, out: &mut Vec<InlineItem>) {
     if text.is_empty() {
         return;
     }
 
     let link = link.map(str::to_string);
-    if let Some(last) = out.last_mut()
-        && last.style == style
-        && last.link == link
-    {
-        last.text.push_str(text);
-        return;
+    if let Some(last) = out.last_mut() {
+        if let InlineItem::Atom(last) = last
+            && last.style == style
+            && last.link == link
+        {
+            last.text.push_str(text);
+            return;
+        }
     }
 
-    out.push(InlineAtom {
+    out.push(InlineItem::Atom(InlineAtom {
         text: text.to_string(),
         style,
         link,
-    });
+    }));
 }
 
 fn chunk_atoms(atoms: Vec<InlineAtom>) -> Vec<InlineChunk> {
