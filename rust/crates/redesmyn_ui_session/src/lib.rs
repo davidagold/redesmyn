@@ -928,6 +928,7 @@ impl Render for SessionView {
                             };
 
                             let markdown = self.markdown_cache.get(&item.session_event_id).cloned();
+                            let show_truncation_notice = full_text_artifact.is_none();
 
                             let mut bubble = div()
                                 .id(bubble_id.clone())
@@ -949,6 +950,7 @@ impl Render for SessionView {
                                     markdown
                                         .map(|doc| {
                                             MarkdownView::new((bubble_id.clone(), "markdown"), doc)
+                                                .show_truncation_notice(show_truncation_notice)
                                                 .into_any_element()
                                         })
                                         .unwrap_or_else(|| {

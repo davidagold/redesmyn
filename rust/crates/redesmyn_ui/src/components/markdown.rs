@@ -17,6 +17,7 @@ use super::{ButtonKind, TextButton};
 pub struct MarkdownView {
     id: ElementId,
     doc: Arc<MarkdownDoc>,
+    show_truncation_notice: bool,
 }
 
 impl MarkdownView {
@@ -24,7 +25,13 @@ impl MarkdownView {
         Self {
             id: id.into(),
             doc,
+            show_truncation_notice: true,
         }
+    }
+
+    pub fn show_truncation_notice(mut self, show: bool) -> Self {
+        self.show_truncation_notice = show;
+        self
     }
 }
 
@@ -48,7 +55,9 @@ impl RenderOnce for MarkdownView {
             container = container.child(render_block(block_id, block, window, cx));
         }
 
-        if let Some(truncation) = self.doc.truncation.as_ref() {
+        if self.show_truncation_notice
+            && let Some(truncation) = self.doc.truncation.as_ref()
+        {
             container = container.child(
                 div()
                     .id((base_id, "truncation"))
