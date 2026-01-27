@@ -100,11 +100,21 @@ fn truncate(input: &str, max_len: usize) -> (&str, Option<MarkdownTruncation>) {
 }
 
 fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<MarkdownBlock> {
-    let mut stack = vec![BlockContext::Root { blocks: Vec::new() }];
+    let mut stack = vec![BlockContext::Root {
+        blocks: Vec::new(),
+        tight_inlines: None,
+    }];
 
     for event in events {
         match event {
-            Event::Start(tag) => match tag {
+            Event::Start(tag) => {
+                if tag_is_block_boundary(&tag)
+                    && let Some(parent) = stack.last_mut()
+                {
+                    parent.flush_tight_paragraph();
+                }
+
+                match tag {
                 Tag::Paragraph => stack.push(BlockContext::Paragraph {
                     inlines: InlineBuilder::new(),
                 }),
@@ -112,13 +122,19 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     level: heading_level(level),
                     inlines: InlineBuilder::new(),
                 }),
-                Tag::BlockQuote(_) => stack.push(BlockContext::BlockQuote { blocks: Vec::new() }),
+                Tag::BlockQuote(_) => stack.push(BlockContext::BlockQuote {
+                    blocks: Vec::new(),
+                    tight_inlines: None,
+                }),
                 Tag::List(start) => stack.push(BlockContext::List {
                     ordered: start.is_some(),
                     start,
                     items: Vec::new(),
                 }),
-                Tag::Item => stack.push(BlockContext::ListItem { blocks: Vec::new() }),
+                Tag::Item => stack.push(BlockContext::ListItem {
+                    blocks: Vec::new(),
+                    tight_inlines: None,
+                }),
                 Tag::CodeBlock(kind) => {
                     let info = code_block_info(kind);
                     stack.push(BlockContext::CodeBlock {
@@ -130,7 +146,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 Tag::Emphasis => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.start_emphasis();
                     }
@@ -138,7 +154,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 Tag::Strong => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.start_strong();
                     }
@@ -146,13 +162,14 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 Tag::Link { dest_url, .. } => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.start_link(dest_url.to_string());
                     }
                 }
                 _ => {}
-            },
+                }
+            }
             Event::End(tag_end) => match tag_end {
                 TagEnd::Paragraph => {
                     if let Some(BlockContext::Paragraph { mut inlines }) = stack.pop() {
@@ -171,7 +188,12 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     }
                 }
                 TagEnd::BlockQuote(_) => {
-                    if let Some(BlockContext::BlockQuote { blocks }) = stack.pop() {
+                    if let Some(BlockContext::BlockQuote {
+                        mut blocks,
+                        mut tight_inlines,
+                    }) = stack.pop()
+                    {
+                        flush_tight_inlines(&mut blocks, &mut tight_inlines);
                         push_block(&mut stack, MarkdownBlock::BlockQuote(blocks));
                     }
                 }
@@ -193,7 +215,12 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     }
                 }
                 TagEnd::Item => {
-                    if let Some(BlockContext::ListItem { blocks }) = stack.pop() {
+                    if let Some(BlockContext::ListItem {
+                        mut blocks,
+                        mut tight_inlines,
+                    }) = stack.pop()
+                    {
+                        flush_tight_inlines(&mut blocks, &mut tight_inlines);
                         push_item(&mut stack, MarkdownListItem { blocks });
                     }
                 }
@@ -217,7 +244,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 TagEnd::Emphasis => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.end_emphasis();
                     }
@@ -225,7 +252,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 TagEnd::Strong => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.end_strong();
                     }
@@ -233,7 +260,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 TagEnd::Link => {
                     if let Some(builder) = stack
                         .last_mut()
-                        .and_then(BlockContext::inline_builder_mut)
+                        .and_then(BlockContext::ensure_inline_builder_mut)
                     {
                         builder.end_link();
                     }
@@ -300,7 +327,11 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     },
                 );
             }
-            Some(BlockContext::BlockQuote { blocks }) => {
+            Some(BlockContext::BlockQuote {
+                mut blocks,
+                mut tight_inlines,
+            }) => {
+                flush_tight_inlines(&mut blocks, &mut tight_inlines);
                 push_block(&mut stack, MarkdownBlock::BlockQuote(blocks));
             }
             Some(BlockContext::List {
@@ -317,7 +348,11 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     },
                 );
             }
-            Some(BlockContext::ListItem { blocks }) => {
+            Some(BlockContext::ListItem {
+                mut blocks,
+                mut tight_inlines,
+            }) => {
+                flush_tight_inlines(&mut blocks, &mut tight_inlines);
                 push_item(&mut stack, MarkdownListItem { blocks });
             }
             _ => {}
@@ -325,9 +360,40 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
     }
 
     match stack.pop() {
-        Some(BlockContext::Root { blocks }) => blocks,
+        Some(BlockContext::Root {
+            mut blocks,
+            mut tight_inlines,
+        }) => {
+            flush_tight_inlines(&mut blocks, &mut tight_inlines);
+            blocks
+        }
         _ => Vec::new(),
     }
+}
+
+fn tag_is_block_boundary(tag: &Tag<'_>) -> bool {
+    matches!(
+        tag,
+        Tag::Paragraph
+            | Tag::Heading { .. }
+            | Tag::BlockQuote(_)
+            | Tag::List(_)
+            | Tag::Item
+            | Tag::CodeBlock(_)
+    )
+}
+
+fn flush_tight_inlines(blocks: &mut Vec<MarkdownBlock>, tight_inlines: &mut Option<InlineBuilder>) {
+    let Some(mut inlines) = tight_inlines.take() else {
+        return;
+    };
+
+    let inlines = inlines.finish();
+    if inlines.is_empty() {
+        return;
+    }
+
+    blocks.push(MarkdownBlock::Paragraph(inlines));
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {
@@ -387,9 +453,9 @@ fn extract_fenced_language(info_raw: &str) -> Option<String> {
 fn push_block(stack: &mut [BlockContext], block: MarkdownBlock) {
     if let Some(parent) = stack.last_mut() {
         match parent {
-            BlockContext::Root { blocks } => blocks.push(block),
-            BlockContext::BlockQuote { blocks } => blocks.push(block),
-            BlockContext::ListItem { blocks } => blocks.push(block),
+            BlockContext::Root { blocks, .. } => blocks.push(block),
+            BlockContext::BlockQuote { blocks, .. } => blocks.push(block),
+            BlockContext::ListItem { blocks, .. } => blocks.push(block),
             _ => {}
         }
     }
@@ -399,9 +465,9 @@ fn push_item(stack: &mut [BlockContext], item: MarkdownListItem) {
     if let Some(parent) = stack.last_mut() {
         match parent {
             BlockContext::List { items, .. } => items.push(item),
-            BlockContext::ListItem { blocks } => blocks.extend(item.blocks),
-            BlockContext::BlockQuote { blocks } => blocks.extend(item.blocks),
-            BlockContext::Root { blocks } => blocks.extend(item.blocks),
+            BlockContext::ListItem { blocks, .. } => blocks.extend(item.blocks),
+            BlockContext::BlockQuote { blocks, .. } => blocks.extend(item.blocks),
+            BlockContext::Root { blocks, .. } => blocks.extend(item.blocks),
             _ => {}
         }
     }
@@ -410,6 +476,7 @@ fn push_item(stack: &mut [BlockContext], item: MarkdownListItem) {
 enum BlockContext {
     Root {
         blocks: Vec<MarkdownBlock>,
+        tight_inlines: Option<InlineBuilder>,
     },
     Paragraph {
         inlines: InlineBuilder,
@@ -425,6 +492,7 @@ enum BlockContext {
     },
     BlockQuote {
         blocks: Vec<MarkdownBlock>,
+        tight_inlines: Option<InlineBuilder>,
     },
     List {
         ordered: bool,
@@ -433,6 +501,7 @@ enum BlockContext {
     },
     ListItem {
         blocks: Vec<MarkdownBlock>,
+        tight_inlines: Option<InlineBuilder>,
     },
 }
 
@@ -446,9 +515,42 @@ impl BlockContext {
         }
     }
 
+    fn ensure_inline_builder_mut(&mut self) -> Option<&mut InlineBuilder> {
+        match self {
+            BlockContext::Paragraph { .. } | BlockContext::Heading { .. } => self.inline_builder_mut(),
+            BlockContext::Root { tight_inlines, .. }
+            | BlockContext::BlockQuote { tight_inlines, .. }
+            | BlockContext::ListItem { tight_inlines, .. } => {
+                if tight_inlines.is_none() {
+                    *tight_inlines = Some(InlineBuilder::new());
+                }
+                tight_inlines.as_mut()
+            }
+            _ => None,
+        }
+    }
+
     fn push_inline(&mut self, inline: MarkdownInline) {
-        if let Some(builder) = self.inline_builder_mut() {
+        if let Some(builder) = self.ensure_inline_builder_mut() {
             builder.push(inline);
+        }
+    }
+
+    fn flush_tight_paragraph(&mut self) {
+        match self {
+            BlockContext::Root {
+                blocks,
+                tight_inlines,
+            }
+            | BlockContext::BlockQuote {
+                blocks,
+                tight_inlines,
+            }
+            | BlockContext::ListItem {
+                blocks,
+                tight_inlines,
+            } => flush_tight_inlines(blocks, tight_inlines),
+            _ => {}
         }
     }
 }
@@ -707,6 +809,102 @@ mod tests {
                 original_len: 50,
                 rendered_len: 10,
             })
+        );
+    }
+
+    #[test]
+    fn projects_nested_lists_code_blocks_and_links() {
+        let doc = parse_markdown(
+            r#"1. First
+   - nested A
+     - nested B
+2. Second with [link](https://example.com) and `inline`.
+
+```rust,no_run
+fn main() {}
+```
+
+```bash
+echo "hi"
+```"#,
+            MarkdownParseOptions::default(),
+        );
+
+        let list = doc
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                MarkdownBlock::List { ordered, items, .. } if *ordered => Some(items),
+                _ => None,
+            })
+            .expect("expected ordered list block");
+        assert_eq!(list.len(), 2);
+
+        let nested_list = list[0]
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                MarkdownBlock::List { ordered, items, .. } if !*ordered => Some(items),
+                _ => None,
+            })
+            .expect("expected nested bullet list");
+        assert!(
+            nested_list[0]
+                .blocks
+                .iter()
+                .any(|block| matches!(block, MarkdownBlock::Paragraph(_))),
+            "expected paragraph inside nested list item"
+        );
+        assert!(
+            nested_list[0]
+                .blocks
+                .iter()
+                .any(|block| matches!(block, MarkdownBlock::List { .. })),
+            "expected nested list inside nested list item"
+        );
+
+        let second_paragraph_inlines = list[1]
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                MarkdownBlock::Paragraph(inlines) => Some(inlines),
+                _ => None,
+            })
+            .expect("expected paragraph in second list item");
+        assert!(
+            second_paragraph_inlines.iter().any(|inline| matches!(
+                inline,
+                MarkdownInline::Link { destination, .. } if destination == "https://example.com"
+            )),
+            "expected https link inline"
+        );
+
+        let code_blocks: Vec<_> = doc
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                MarkdownBlock::CodeBlock {
+                    language,
+                    info_raw,
+                    code,
+                } => Some((language.as_deref(), info_raw.as_deref(), code.as_str())),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            code_blocks.iter().any(|(language, info_raw, code)| {
+                *language == Some("rust")
+                    && *info_raw == Some("rust,no_run")
+                    && *code == "fn main() {}\n"
+            }),
+            "expected rust fenced code block"
+        );
+        assert!(
+            code_blocks.iter().any(|(language, info_raw, code)| {
+                *language == Some("bash") && *info_raw == Some("bash") && *code == "echo \"hi\"\n"
+            }),
+            "expected bash fenced code block"
         );
     }
 }
