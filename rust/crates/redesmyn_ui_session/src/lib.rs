@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, AsyncApp, ClipboardItem, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
@@ -163,7 +163,21 @@ fn cache_markdown_for_events(
             continue;
         }
 
-        let doc = parse_markdown(text, options);
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "parse_markdown",
+            session_event_id = %event.session_event_id,
+            bytes = text.len(),
+            duration_ms = redesmyn_logging::tracing::field::Empty,
+        );
+        let start = Instant::now();
+        let doc = {
+            let _guard = span.enter();
+            parse_markdown(text, options)
+        };
+        span.record(
+            "duration_ms",
+            redesmyn_logging::tracing::field::display(start.elapsed().as_millis()),
+        );
         if doc.truncation.is_some() {
             stats.truncated = stats.truncated.saturating_add(1);
         }
@@ -891,7 +905,14 @@ impl Render for SessionView {
                         | redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
                             msg,
                         ) => {
-                            let (role_label, bg) = match msg.role {
+                            let redesmyn_session_view_model::MessageItem {
+                                role,
+                                text,
+                                preview: _,
+                                full_text_artifact,
+                            } = msg;
+
+                            let (role_label, bg) = match role {
                                 redesmyn_session_view_model::SessionMessageRole::User => (
                                     "user",
                                     theme.colors.accent.opacity(0.65),
@@ -906,16 +927,7 @@ impl Render for SessionView {
                                 ),
                             };
 
-                            let markdown = self
-                                .markdown_cache
-                                .entry(item.session_event_id)
-                                .or_insert_with(|| {
-                                    Arc::new(parse_markdown(
-                                        &msg.text,
-                                        MarkdownParseOptions::default(),
-                                    ))
-                                })
-                                .clone();
+                            let markdown = self.markdown_cache.get(&item.session_event_id).cloned();
 
                             let mut bubble = div()
                                 .id(bubble_id.clone())
@@ -933,12 +945,23 @@ impl Render for SessionView {
                                         .text_color(theme.colors.foreground_muted)
                                         .child(role_label),
                                 )
-                                .child(MarkdownView::new(
-                                    (bubble_id.clone(), "markdown"),
-                                    markdown,
-                                ));
+                                .child(
+                                    markdown
+                                        .map(|doc| {
+                                            MarkdownView::new((bubble_id.clone(), "markdown"), doc)
+                                                .into_any_element()
+                                        })
+                                        .unwrap_or_else(|| {
+                                            div()
+                                                .id((bubble_id.clone(), "plaintext"))
+                                                .text_sm()
+                                                .text_color(theme.colors.foreground)
+                                                .child(text.clone())
+                                                .into_any_element()
+                                        }),
+                                );
 
-                            if let Some(artifact) = msg.full_text_artifact {
+                            if let Some(artifact) = full_text_artifact {
                                 let artifact_id = artifact.artifact_id.to_string();
                                 let artifact_copy = artifact_id.clone();
 
