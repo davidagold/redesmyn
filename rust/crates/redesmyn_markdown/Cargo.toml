@@ -8,4 +8,3 @@ publish = false
 
 [dependencies]
 pulldown-cmark.workspace = true
-

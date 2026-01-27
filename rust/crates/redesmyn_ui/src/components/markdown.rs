@@ -96,7 +96,11 @@ fn render_block(
                 ))
                 .into_any_element()
         }
-        MarkdownBlock::CodeBlock { language, code } => CodeBlockView::new(id, language, code)
+        MarkdownBlock::CodeBlock {
+            language,
+            info_raw: _,
+            code,
+        } => CodeBlockView::new(id, language, code)
             .render(window, cx)
             .into_any_element(),
         MarkdownBlock::BlockQuote(blocks) => {

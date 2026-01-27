@@ -41,6 +41,7 @@ pub enum MarkdownBlock {
     },
     CodeBlock {
         language: Option<String>,
+        info_raw: Option<String>,
         code: String,
     },
     BlockQuote(Vec<MarkdownBlock>),
@@ -118,10 +119,14 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     items: Vec::new(),
                 }),
                 Tag::Item => stack.push(BlockContext::ListItem { blocks: Vec::new() }),
-                Tag::CodeBlock(kind) => stack.push(BlockContext::CodeBlock {
-                    language: code_block_language(kind),
-                    code: String::new(),
-                }),
+                Tag::CodeBlock(kind) => {
+                    let info = code_block_info(kind);
+                    stack.push(BlockContext::CodeBlock {
+                        language: info.language,
+                        info_raw: info.info_raw,
+                        code: String::new(),
+                    })
+                }
                 Tag::Emphasis => {
                     if let Some(builder) = stack
                         .last_mut()
@@ -193,10 +198,19 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     }
                 }
                 TagEnd::CodeBlock => {
-                    if let Some(BlockContext::CodeBlock { language, code }) = stack.pop() {
+                    if let Some(BlockContext::CodeBlock {
+                        language,
+                        info_raw,
+                        code,
+                    }) = stack.pop()
+                    {
                         push_block(
                             &mut stack,
-                            MarkdownBlock::CodeBlock { language, code },
+                            MarkdownBlock::CodeBlock {
+                                language,
+                                info_raw,
+                                code,
+                            },
                         );
                     }
                 }
@@ -247,9 +261,7 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                 }
             }
             Event::Html(html) | Event::InlineHtml(html) => {
-                if let Some(ctx) = stack.last_mut() {
-                    ctx.push_inline(MarkdownInline::Text(html.to_string()));
-                }
+                let _ = html;
             }
             Event::InlineMath(math) | Event::DisplayMath(math) => {
                 if let Some(ctx) = stack.last_mut() {
@@ -274,8 +286,19 @@ fn parse_blocks<'a>(events: impl IntoIterator<Item = Event<'a>>) -> Vec<Markdown
                     },
                 );
             }
-            Some(BlockContext::CodeBlock { language, code }) => {
-                push_block(&mut stack, MarkdownBlock::CodeBlock { language, code });
+            Some(BlockContext::CodeBlock {
+                language,
+                info_raw,
+                code,
+            }) => {
+                push_block(
+                    &mut stack,
+                    MarkdownBlock::CodeBlock {
+                        language,
+                        info_raw,
+                        code,
+                    },
+                );
             }
             Some(BlockContext::BlockQuote { blocks }) => {
                 push_block(&mut stack, MarkdownBlock::BlockQuote(blocks));
@@ -318,18 +341,47 @@ fn heading_level(level: HeadingLevel) -> u8 {
     }
 }
 
-fn code_block_language(kind: CodeBlockKind<'_>) -> Option<String> {
+#[derive(Debug)]
+struct MarkdownCodeBlockInfo {
+    language: Option<String>,
+    info_raw: Option<String>,
+}
+
+fn code_block_info(kind: CodeBlockKind<'_>) -> MarkdownCodeBlockInfo {
     match kind {
-        CodeBlockKind::Indented => None,
-        CodeBlockKind::Fenced(lang) => {
-            let language = lang.trim();
-            if language.is_empty() {
-                None
-            } else {
-                Some(language.to_string())
+        CodeBlockKind::Indented => MarkdownCodeBlockInfo {
+            language: None,
+            info_raw: None,
+        },
+        CodeBlockKind::Fenced(info_raw) => {
+            let info_raw = info_raw.to_string();
+            let trimmed = info_raw.trim();
+            if trimmed.is_empty() {
+                return MarkdownCodeBlockInfo {
+                    language: None,
+                    info_raw: None,
+                };
+            }
+
+            MarkdownCodeBlockInfo {
+                language: extract_fenced_language(trimmed),
+                info_raw: Some(trimmed.to_string()),
             }
         }
     }
+}
+
+fn extract_fenced_language(info_raw: &str) -> Option<String> {
+    let first_token = info_raw.split_whitespace().next().unwrap_or_default();
+    let primary = first_token
+        .split_once(',')
+        .map_or(first_token, |(prefix, _)| prefix)
+        .trim();
+    if primary.is_empty() {
+        return None;
+    }
+
+    Some(primary.to_ascii_lowercase())
 }
 
 fn push_block(stack: &mut [BlockContext], block: MarkdownBlock) {
@@ -368,6 +420,7 @@ enum BlockContext {
     },
     CodeBlock {
         language: Option<String>,
+        info_raw: Option<String>,
         code: String,
     },
     BlockQuote {
@@ -578,9 +631,49 @@ mod tests {
             doc.blocks,
             vec![MarkdownBlock::CodeBlock {
                 language: Some("rust".into()),
+                info_raw: Some("rust".into()),
                 code: "fn main() {}\n".into(),
             }]
         );
+    }
+
+    #[test]
+    fn normalizes_fenced_language_tokens() {
+        let doc = parse_markdown(
+            "```Rust,no_run\nfn main() {}\n```",
+            MarkdownParseOptions::default(),
+        );
+
+        let [MarkdownBlock::CodeBlock {
+            language,
+            info_raw,
+            code,
+        }] = doc.blocks.as_slice()
+        else {
+            panic!("expected single code block");
+        };
+
+        assert_eq!(language.as_deref(), Some("rust"));
+        assert_eq!(info_raw.as_deref(), Some("Rust,no_run"));
+        assert_eq!(code, "fn main() {}\n");
+    }
+
+    #[test]
+    fn extracts_fenced_language_from_comma_followed_by_space() {
+        let doc = parse_markdown(
+            "```rust, no_run\nfn main() {}\n```",
+            MarkdownParseOptions::default(),
+        );
+
+        let [MarkdownBlock::CodeBlock {
+            language, info_raw, ..
+        }] = doc.blocks.as_slice()
+        else {
+            panic!("expected single code block");
+        };
+
+        assert_eq!(language.as_deref(), Some("rust"));
+        assert_eq!(info_raw.as_deref(), Some("rust, no_run"));
     }
 
     #[test]
