@@ -74,8 +74,8 @@ fn render_block(
     let theme = theme_for_window(window, cx);
 
     match block {
-        MarkdownBlock::Paragraph(inlines) => render_inline_flow(id, inlines, window, cx),
-        MarkdownBlock::Heading { level, content } => {
+        MarkdownBlock::Paragraph { content, .. } => render_inline_flow(id, content, window, cx),
+        MarkdownBlock::Heading { level, content, .. } => {
             let text_size = match level {
                 1 => div().text_2xl(),
                 2 => div().text_xl(),
@@ -98,12 +98,12 @@ fn render_block(
         }
         MarkdownBlock::CodeBlock {
             language,
-            info_raw: _,
             code,
+            ..
         } => CodeBlockView::new(id, language, code)
             .render(window, cx)
             .into_any_element(),
-        MarkdownBlock::BlockQuote(blocks) => {
+        MarkdownBlock::BlockQuote { content: blocks, .. } => {
             let mut quote = div()
                 .id(id.clone())
                 .flex()
@@ -130,6 +130,7 @@ fn render_block(
             ordered,
             start,
             items,
+            ..
         } => {
             let mut list = div().id(id.clone()).flex().flex_col().gap(theme.spacing.xs);
 
@@ -414,22 +415,22 @@ fn flatten_inline(
     out: &mut Vec<InlineAtom>,
 ) {
     match inline {
-        MarkdownInline::Text(text) => push_atom(text, style, link, out),
-        MarkdownInline::Emphasis(children) => {
+        MarkdownInline::Text { text, .. } => push_atom(text, style, link, out),
+        MarkdownInline::Emphasis { content: children, .. } => {
             let mut style = style;
             style.italic = true;
             for child in children {
                 flatten_inline(child, style, link, out);
             }
         }
-        MarkdownInline::Strong(children) => {
+        MarkdownInline::Strong { content: children, .. } => {
             let mut style = style;
             style.bold = true;
             for child in children {
                 flatten_inline(child, style, link, out);
             }
         }
-        MarkdownInline::Code(code) => {
+        MarkdownInline::Code { code, .. } => {
             let mut style = style;
             style.code = true;
             push_atom(code, style, link, out);
@@ -437,13 +438,14 @@ fn flatten_inline(
         MarkdownInline::Link {
             destination,
             content,
+            ..
         } => {
             for child in content {
                 flatten_inline(child, style, Some(destination.as_str()), out);
             }
         }
-        MarkdownInline::SoftBreak => push_atom(" ", style, link, out),
-        MarkdownInline::HardBreak => push_atom("\n", style, link, out),
+        MarkdownInline::SoftBreak { .. } => push_atom(" ", style, link, out),
+        MarkdownInline::HardBreak { .. } => push_atom("\n", style, link, out),
     }
 }
 
