@@ -1,11 +1,13 @@
 //! Small UI helpers.
 
+mod external_url;
 mod idle;
 mod test_mode;
 pub(crate) mod text_editing;
 mod theme;
 mod user_action;
 
+pub use external_url::{OpenExternalUrl, is_http_https_url};
 pub use idle::{UiActivityGuard, UiIdleTracker, ui_idle_tracker};
 pub use test_mode::{
     ui_test_mode_animation_duration, ui_test_mode_enabled, ui_test_theme_override,

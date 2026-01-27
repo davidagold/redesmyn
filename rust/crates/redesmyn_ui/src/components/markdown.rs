@@ -9,7 +9,7 @@ use gpui::prelude::*;
 
 use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
-use crate::utils::theme_for_window;
+use crate::utils::{OpenExternalUrl as _, theme_for_window};
 
 use super::{ButtonKind, TextButton};
 
@@ -310,7 +310,9 @@ fn render_inline_chunk(
                 })
                 .on_click(move |event: &ClickEvent, _window, cx| {
                     if event.standard_click() {
-                        cx.open_url(&url);
+                        if !cx.open_external_url(&url) {
+                            cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                        }
                     }
                 })
                 .child(styled_text_div(

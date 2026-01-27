@@ -961,15 +961,18 @@ impl Render for SessionView {
                                                 .text_xs()
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(format!(
-                                                    "Full message stored as artifact {artifact_id}."
+                                                    "Output truncated. Full output stored as artifact {artifact_id}."
                                                 )),
                                         )
                                         .child(
                                             TextButton::new(
-                                                (bubble_id.clone(), "copy_artifact"),
-                                                "Copy artifact id",
+                                                (bubble_id.clone(), "view_full_output"),
+                                                "View full output…",
                                             )
                                             .kind(ButtonKind::Ghost)
+                                            .tooltip(
+                                                "Viewer not implemented yet — copies artifact id.",
+                                            )
                                             .on_click(move |event, _window, cx| {
                                                 if event.standard_click() {
                                                     cx.write_to_clipboard(
