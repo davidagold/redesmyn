@@ -1060,6 +1060,7 @@ impl Render for SessionView {
             ("session_scroll", cx.entity_id()),
             self.scroll_handle.clone(),
         )
+        .bg(theme.colors.surface)
         .scrollbar_width(px(10.0))
         .child(
             feed_list.on_scroll_wheel(cx.listener(|this, _event, _window, cx| {

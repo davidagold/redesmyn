@@ -1,6 +1,6 @@
 use gpui::{
-    AbsoluteLength, AnyElement, App, ElementId, ParentElement, RenderOnce, ScrollHandle, Window,
-    div, prelude::*,
+    AbsoluteLength, AnyElement, App, ElementId, Hsla, ParentElement, RenderOnce, ScrollHandle,
+    Window, div, prelude::*,
 };
 
 #[derive(IntoElement)]
@@ -8,6 +8,7 @@ pub struct ScrollArea {
     id: ElementId,
     scroll_handle: ScrollHandle,
     scrollbar_width: Option<AbsoluteLength>,
+    background_color: Option<Hsla>,
     children: Vec<AnyElement>,
 }
 
@@ -17,12 +18,18 @@ impl ScrollArea {
             id: id.into(),
             scroll_handle,
             scrollbar_width: None,
+            background_color: None,
             children: Vec::new(),
         }
     }
 
     pub fn scrollbar_width(mut self, width: impl Into<AbsoluteLength>) -> Self {
         self.scrollbar_width = Some(width.into());
+        self
+    }
+
+    pub fn bg(mut self, color: Hsla) -> Self {
+        self.background_color = Some(color);
         self
     }
 }
@@ -41,6 +48,10 @@ impl RenderOnce for ScrollArea {
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .block_mouse_except_scroll();
+
+        if let Some(color) = self.background_color {
+            root = root.bg(color);
+        }
 
         if let Some(scrollbar_width) = self.scrollbar_width {
             root = root.scrollbar_width(scrollbar_width);
