@@ -272,20 +272,11 @@ fn render_inline_segments(
         .w_full();
 
     for (line_ix, atoms) in lines.into_iter().enumerate() {
-        let chunks = chunk_atoms(atoms);
         let line_id: ElementId = (id.clone(), format!("line-{line_ix}")).into();
 
-        let mut line = div()
-            .id(line_id.clone())
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .min_w_0()
-            .w_full();
-
-        if chunks.is_empty() {
-            line = line.child(styled_text_div(
-                (line_id, "empty").into(),
+        if atoms.is_empty() {
+            flow = flow.child(styled_text_div(
+                line_id,
                 vec![InlineAtom {
                     text: " ".to_string(),
                     style: InlineStyle::default(),
@@ -295,11 +286,27 @@ fn render_inline_segments(
                 window,
                 cx,
             ));
-        } else {
-            for (chunk_ix, chunk) in chunks.into_iter().enumerate() {
-                let chunk_id: ElementId = (line_id.clone(), format!("chunk-{chunk_ix}")).into();
-                line = line.child(render_inline_chunk(chunk_id, chunk, style, window, cx));
-            }
+            continue;
+        }
+
+        let has_links = atoms.iter().any(|atom| atom.link.is_some());
+        if !has_links {
+            flow = flow.child(styled_text_block(line_id, atoms, TextFlavor::Body, window, cx));
+            continue;
+        }
+
+        let chunks = chunk_atoms(atoms);
+        let mut line = div()
+            .id(line_id.clone())
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .min_w_0()
+            .w_full();
+
+        for (chunk_ix, chunk) in chunks.into_iter().enumerate() {
+            let chunk_id: ElementId = (line_id.clone(), format!("chunk-{chunk_ix}")).into();
+            line = line.child(render_inline_chunk(chunk_id, chunk, style, window, cx));
         }
 
         flow = flow.child(line);
@@ -450,6 +457,72 @@ fn styled_text_div(
         .id(id)
         .min_w_0()
         .flex_shrink()
+        .child(StyledText::new(text).with_runs(runs))
+}
+
+fn styled_text_block(
+    id: ElementId,
+    atoms: Vec<InlineAtom>,
+    flavor: TextFlavor,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let theme = theme_for_window(window, cx);
+
+    let mut text = String::new();
+    let mut runs = Vec::new();
+
+    let (default_color, underline) = match flavor {
+        TextFlavor::Body => (theme.colors.foreground, None),
+        TextFlavor::Link(color) => (
+            color,
+            Some(UnderlineStyle {
+                color: Some(color),
+                thickness: px(1.0),
+                wavy: false,
+            }),
+        ),
+    };
+
+    for atom in atoms {
+        if atom.text.is_empty() {
+            continue;
+        }
+
+        let mut font = if atom.style.code {
+            theme.typography.mono.font.clone()
+        } else {
+            theme.typography.body.font.clone()
+        };
+
+        if atom.style.bold {
+            font.weight = FontWeight::BOLD;
+        }
+        if atom.style.italic {
+            font.style = FontStyle::Italic;
+        }
+
+        let background_color = if atom.style.code {
+            Some(theme.colors.accent.opacity(0.65))
+        } else {
+            None
+        };
+
+        runs.push(TextRun {
+            len: atom.text.len(),
+            font,
+            color: default_color,
+            background_color,
+            underline,
+            strikethrough: None,
+        });
+        text.push_str(&atom.text);
+    }
+
+    div()
+        .id(id)
+        .min_w_0()
+        .w_full()
         .child(StyledText::new(text).with_runs(runs))
 }
 
