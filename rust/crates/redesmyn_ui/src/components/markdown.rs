@@ -291,6 +291,8 @@ fn render_inline_segments(
 
         let has_links = atoms.iter().any(|atom| atom.link.is_some());
         if !has_links {
+            // Render entire non-link lines as a single `StyledText` to avoid GPUI flex-wrap
+            // layout/paint artifacts that can show up when we emit many inline chunks.
             flow = flow.child(styled_text_block(line_id, atoms, TextFlavor::Body, window, cx));
             continue;
         }
@@ -467,6 +469,8 @@ fn styled_text_block(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    // Similar to `styled_text_div`, but forces the line to take full width (which helps keep GPUI's
+    // layout stable when inline spans mix styles).
     let theme = theme_for_window(window, cx);
 
     let mut text = String::new();
