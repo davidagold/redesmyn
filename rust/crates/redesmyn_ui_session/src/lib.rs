@@ -8,15 +8,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AsyncApp, ClipboardItem, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
+    App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
     Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window, div, px,
 };
 
 use gpui::prelude::*;
 
-use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_client_api::Client;
 use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
+use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
     ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
@@ -604,10 +604,8 @@ impl SessionView {
                 if ev.session_id != feed.session_id {
                     return;
                 }
-                let stats = cache_markdown_for_events(
-                    &mut self.markdown_cache,
-                    std::slice::from_ref(&ev),
-                );
+                let stats =
+                    cache_markdown_for_events(&mut self.markdown_cache, std::slice::from_ref(&ev));
                 if stats.truncated > 0 {
                     redesmyn_logging::tracing::warn!(
                         session_event_id = %ev.session_event_id,
@@ -842,7 +840,12 @@ impl Render for SessionView {
             .unwrap_or_default();
 
         let feed_list = items.into_iter().enumerate().fold(
-            div().flex().flex_col().gap(theme.spacing.sm),
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme.spacing.sm)
+                .w_full()
+                .min_w_0(),
             |list, (ix, item)| match item {
                 SessionTimelineItem::LoadOlder(row) => {
                     let button = if row.in_flight {
@@ -879,6 +882,8 @@ impl Render for SessionView {
                 SessionTimelineItem::EphemeralText(item) => list.child(
                     div()
                         .id(("session_item_ephemeral", ix))
+                        .w_full()
+                        .min_w_0()
                         .px(theme.spacing.sm)
                         .py(theme.spacing.sm)
                         .rounded_sm()
@@ -935,6 +940,8 @@ impl Render for SessionView {
                                 .flex()
                                 .flex_col()
                                 .gap(theme.spacing.sm)
+                                .w_full()
+                                .min_w_0()
                                 .px(theme.spacing.md)
                                 .py(theme.spacing.md)
                                 .rounded_md()
@@ -956,6 +963,8 @@ impl Render for SessionView {
                                         .unwrap_or_else(|| {
                                             div()
                                                 .id((bubble_id.clone(), "plaintext"))
+                                                .w_full()
+                                                .min_w_0()
                                                 .text_sm()
                                                 .text_color(theme.colors.foreground)
                                                 .child(text.clone())
@@ -1031,6 +1040,8 @@ impl Render for SessionView {
                             list.child(
                                 div()
                                     .id(bubble_id)
+                                    .w_full()
+                                    .min_w_0()
                                     .px(theme.spacing.sm)
                                     .py(theme.spacing.sm)
                                     .rounded_sm()
