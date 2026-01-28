@@ -839,6 +839,9 @@ impl Render for SessionView {
             .map(SessionFeedState::timeline_items)
             .unwrap_or_default();
 
+        let markdown_options = MarkdownParseOptions::default();
+        let markdown_cache = &mut self.markdown_cache;
+
         let feed_list = items.into_iter().enumerate().fold(
             div()
                 .flex()
@@ -932,8 +935,16 @@ impl Render for SessionView {
                                 ),
                             };
 
-                            let markdown = self.markdown_cache.get(&item.session_event_id).cloned();
                             let show_truncation_notice = full_text_artifact.is_none();
+                            let doc = markdown_cache
+                                .get(&item.session_event_id)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    let doc =
+                                        Arc::new(parse_markdown(text.as_str(), markdown_options));
+                                    markdown_cache.insert(item.session_event_id, doc.clone());
+                                    doc
+                                });
 
                             let mut bubble = div()
                                 .id(bubble_id.clone())
@@ -954,22 +965,9 @@ impl Render for SessionView {
                                         .child(role_label),
                                 )
                                 .child(
-                                    markdown
-                                        .map(|doc| {
-                                            MarkdownView::new((bubble_id.clone(), "markdown"), doc)
-                                                .show_truncation_notice(show_truncation_notice)
-                                                .into_any_element()
-                                        })
-                                        .unwrap_or_else(|| {
-                                            div()
-                                                .id((bubble_id.clone(), "plaintext"))
-                                                .w_full()
-                                                .min_w_0()
-                                                .text_sm()
-                                                .text_color(theme.colors.foreground)
-                                                .child(text.clone())
-                                                .into_any_element()
-                                        }),
+                                    MarkdownView::new((bubble_id.clone(), "markdown"), doc)
+                                        .show_truncation_notice(show_truncation_notice)
+                                        .into_any_element(),
                                 );
 
                             if let Some(artifact) = full_text_artifact {
