@@ -1079,6 +1079,7 @@ impl Render for SessionView {
                 .border_1()
                 .border_color(theme.colors.border.opacity(0.4))
                 .rounded_md()
+                .bg(theme.colors.surface)
                 .child(body),
         );
 
