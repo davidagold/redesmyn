@@ -719,6 +719,17 @@ enum ClientEventSummary {
         session_event_id: redesmyn_ids::SessionEventId,
         event_type: String,
     },
+    SessionLiveEvent {
+        session_id: redesmyn_ids::SessionId,
+        event_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool_name: Option<String>,
+        delta_len: usize,
+    },
     Error {
         category: ErrorCategory,
         message: String,
@@ -740,6 +751,28 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::Unknown(unknown) => &unknown.event_type,
     }
     .to_owned()
+}
+
+fn session_live_event_kind_summary(
+    event: &redesmyn_protocol::session_live::SessionLiveEvent,
+) -> (String, Option<String>, usize) {
+    match &event.kind {
+        redesmyn_protocol::session_live::SessionLiveEventKind::AssistantMessageDelta(delta) => (
+            "assistant_message_delta".to_owned(),
+            None,
+            delta.delta.len(),
+        ),
+        redesmyn_protocol::session_live::SessionLiveEventKind::ToolOutputDelta(delta) => (
+            "tool_output_delta".to_owned(),
+            Some(delta.tool_name.clone()),
+            delta.delta.len(),
+        ),
+        redesmyn_protocol::session_live::SessionLiveEventKind::Unknown(unknown) => (
+            unknown.event_type.clone(),
+            None,
+            unknown.json_payload.len(),
+        ),
+    }
 }
 
 fn client_frame_summary(
@@ -780,6 +813,18 @@ fn client_frame_summary(
                         session_id: session_event.session_id,
                         session_event_id: session_event.session_event_id,
                         event_type: session_event_kind_label(&session_event.kind),
+                    }
+                }
+                redesmyn_protocol::client::SubscriptionEvent::SessionLiveEvent(live_event) => {
+                    let (event_type, tool_name, delta_len) =
+                        session_live_event_kind_summary(live_event);
+                    ClientEventSummary::SessionLiveEvent {
+                        session_id: live_event.session_id,
+                        event_type,
+                        turn_id: live_event.turn_id.clone(),
+                        item_id: live_event.item_id.clone(),
+                        tool_name,
+                        delta_len,
                     }
                 }
                 redesmyn_protocol::client::SubscriptionEvent::Error(err) => {
@@ -872,6 +917,24 @@ fn client_frame_summary_line(frame: &ClientFrame, payload_len: usize, frame_inde
                 } => format!(
                     "session_event session_id={session_id} session_event_id={session_event_id} event_type={event_type}"
                 ),
+                ClientEventSummary::SessionLiveEvent {
+                    session_id,
+                    event_type,
+                    turn_id,
+                    item_id,
+                    tool_name,
+                    delta_len,
+                } => {
+                    let tool = tool_name.map(|name| format!(" tool_name={name}"));
+                    let turn = turn_id.map(|id| format!(" turn_id={id}"));
+                    let item = item_id.map(|id| format!(" item_id={id}"));
+                    format!(
+                        "session_live_event session_id={session_id} event_type={event_type} delta_len={delta_len}{}{}{}",
+                        tool.as_deref().unwrap_or(""),
+                        turn.as_deref().unwrap_or(""),
+                        item.as_deref().unwrap_or(""),
+                    )
+                }
                 ClientEventSummary::Error { category, message } => {
                     format!("error {category}: {message}")
                 }
