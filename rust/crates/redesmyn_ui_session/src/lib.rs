@@ -993,18 +993,15 @@ impl Render for SessionView {
                                                 .text_xs()
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(format!(
-                                                    "Output truncated. Full output stored as artifact {artifact_id}."
+                                                    "Full message stored as artifact {artifact_id}."
                                                 )),
                                         )
                                         .child(
                                             TextButton::new(
-                                                (bubble_id.clone(), "view_full_output"),
-                                                "View full output…",
+                                                (bubble_id.clone(), "copy_artifact"),
+                                                "Copy artifact id",
                                             )
                                             .kind(ButtonKind::Ghost)
-                                            .tooltip(
-                                                "Viewer not implemented yet — copies artifact id.",
-                                            )
                                             .on_click(move |event, _window, cx| {
                                                 if event.standard_click() {
                                                     cx.write_to_clipboard(
@@ -1032,6 +1029,14 @@ impl Render for SessionView {
                                 ) => {
                                     format!("tool result: {} — {}", tool.tool_name, tool.output_preview)
                                 }
+                                redesmyn_session_view_model::SessionEventItemContent::StatusUpdate(
+                                    status,
+                                ) => status
+                                    .message
+                                    .as_deref()
+                                    .filter(|msg| !msg.trim().is_empty())
+                                    .map(|msg| format!("status: {msg}"))
+                                    .unwrap_or_else(|| format!("status: {:?}", status.turn_state)),
                                 _ => format!("{:?}", item.kind),
                             };
 
