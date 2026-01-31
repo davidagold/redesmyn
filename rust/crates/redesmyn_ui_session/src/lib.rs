@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,26 +15,24 @@ use gpui::{
 use gpui::prelude::*;
 
 use redesmyn_client_api::Client;
-use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId, TaskId};
+use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentMessageConflictAction, GetLatestTaskSessionRequest, GetSessionEventsRequest,
-    GetSessionEventsResponse, RequestPayload, ResponseResult, SendSessionMessageRequest,
-    SendSessionMessageResponse, SessionEventCursor, StartAgentRequest, StartAgentResponse,
+    AgentMessageConflictAction, GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
+    ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
     SubscriptionEvent,
 };
-use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
-use redesmyn_protocol::session::{InterfaceMode, SessionEventKind};
+use redesmyn_protocol::session::SessionEventKind;
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, SessionEvent};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, MarkdownView, ScrollArea, TextArea, TextButton, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, ScrollArea, TextArea, TextButton,
+    TextInput, TextInputEvent,
 };
-use redesmyn_ui::utils::{BoundedCache, UserActionState, theme_for_window};
+use redesmyn_ui::utils::theme_for_window;
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
@@ -82,26 +81,6 @@ async fn get_session_events(
     }
 }
 
-async fn get_latest_task_session(
-    client: &Client,
-    task_id: TaskId,
-) -> Result<Option<SessionId>, ErrorEnvelope> {
-    let response = client
-        .request(RequestPayload::GetLatestTaskSession(
-            GetLatestTaskSessionRequest { task_id },
-        ))
-        .await?;
-
-    match response {
-        ResponseResult::GetLatestTaskSession(resp) => Ok(resp.session_id),
-        ResponseResult::Error(err) => Err(err),
-        other => Err(ErrorEnvelope::new(
-            ErrorCategory::Internal,
-            format!("Unexpected response: {other:?}"),
-        )),
-    }
-}
-
 async fn send_session_message(
     client: &Client,
     session_id: SessionId,
@@ -120,31 +99,6 @@ async fn send_session_message(
 
     match response {
         ResponseResult::SendSessionMessage(resp) => Ok(resp),
-        ResponseResult::Error(err) => Err(err),
-        other => Err(ErrorEnvelope::new(
-            ErrorCategory::Internal,
-            format!("Unexpected response: {other:?}"),
-        )),
-    }
-}
-
-async fn start_task_agent(
-    client: &Client,
-    task_id: TaskId,
-    on_conflict: AgentMessageConflictAction,
-) -> Result<StartAgentResponse, ErrorEnvelope> {
-    let response = client
-        .request(RequestPayload::StartAgent(StartAgentRequest {
-            task_id,
-            agent_kind: AgentKind::Codex,
-            interface_mode: AgentInterfaceMode::AppServer,
-            initial_prompt: None,
-            on_conflict,
-        }))
-        .await?;
-
-    match response {
-        ResponseResult::StartAgent(resp) => Ok(resp),
         ResponseResult::Error(err) => Err(err),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::Internal,
@@ -188,10 +142,8 @@ struct MarkdownCacheStats {
     total_bytes: usize,
 }
 
-const SESSION_MARKDOWN_CACHE_CAPACITY: usize = 256;
-
 fn cache_markdown_for_events(
-    cache: &mut BoundedCache<SessionEventId, Arc<MarkdownDoc>>,
+    cache: &mut HashMap<SessionEventId, Arc<MarkdownDoc>>,
     events: &[SessionEvent],
 ) -> MarkdownCacheStats {
     let mut stats = MarkdownCacheStats::default();
@@ -207,7 +159,7 @@ fn cache_markdown_for_events(
         stats.message_events = stats.message_events.saturating_add(1);
         stats.total_bytes = stats.total_bytes.saturating_add(text.len());
 
-        if cache.get(&event.session_event_id).is_some() {
+        if cache.contains_key(&event.session_event_id) {
             continue;
         }
 
@@ -237,26 +189,6 @@ fn cache_markdown_for_events(
     stats
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskSessionOperation {
-    LoadLatest,
-    StartAgent,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TaskSessionBindingState {
-    pub task_id: Option<TaskId>,
-    pub in_flight: bool,
-    pub error: Option<SharedString>,
-    pub session_id: Option<SessionId>,
-    pub operation: Option<TaskSessionOperation>,
-}
-
-#[derive(Debug, Clone)]
-pub enum SessionViewEvent {
-    TaskBindingStateChanged(TaskSessionBindingState),
-}
-
 pub struct SessionView {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
@@ -265,7 +197,8 @@ pub struct SessionView {
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
-    markdown_cache: BoundedCache<SessionEventId, Arc<MarkdownDoc>>,
+    expanded_tool_events: HashSet<SessionEventId>,
+    markdown_cache: HashMap<SessionEventId, Arc<MarkdownDoc>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -274,18 +207,7 @@ pub struct SessionView {
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
     pending_scroll_restore: Option<ScrollRestore>,
-    task_binding_task_id: Option<TaskId>,
-    task_binding_action: UserActionState,
-    task_binding_generation: u64,
-    task_binding_task: Option<Task<()>>,
-    task_operation: Option<TaskSessionOperation>,
-    start_agent_action: UserActionState,
-    start_agent_generation: u64,
-    start_agent_task: Option<Task<()>>,
     error: Option<SharedString>,
-    attach: UserActionState,
-    attach_notice: Option<SharedString>,
-    attach_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -294,8 +216,6 @@ impl Focusable for SessionView {
         self.focus_handle.clone()
     }
 }
-
-impl gpui::EventEmitter<SessionViewEvent> for SessionView {}
 
 impl SessionView {
     pub fn new(
@@ -356,7 +276,8 @@ impl SessionView {
             composer_input,
             pending_focus_composer: false,
             feed: None,
-            markdown_cache: BoundedCache::new(SESSION_MARKDOWN_CACHE_CAPACITY),
+            expanded_tool_events: HashSet::new(),
+            markdown_cache: HashMap::new(),
             client,
             _client_task: client_task,
             subscription_task: None,
@@ -365,18 +286,7 @@ impl SessionView {
             load_older_task: None,
             send_task: None,
             pending_scroll_restore: None,
-            task_binding_task_id: None,
-            task_binding_action: UserActionState::default(),
-            task_binding_generation: 0,
-            task_binding_task: None,
-            task_operation: None,
-            start_agent_action: UserActionState::default(),
-            start_agent_generation: 0,
-            start_agent_task: None,
             error: None,
-            attach: UserActionState::default(),
-            attach_notice: None,
-            attach_task: None,
             _subscriptions: subscriptions,
         };
 
@@ -388,268 +298,8 @@ impl SessionView {
         this
     }
 
-    #[must_use]
-    pub fn task_binding_state(&self) -> TaskSessionBindingState {
-        let session_id = self.feed.as_ref().map(|feed| feed.session_id);
-        let in_flight = self.task_binding_action.in_flight || self.start_agent_action.in_flight;
-        let error = self
-            .start_agent_action
-            .error
-            .clone()
-            .or_else(|| self.task_binding_action.error.clone());
-        let operation = if self.start_agent_action.in_flight || self.start_agent_action.error.is_some()
-        {
-            Some(TaskSessionOperation::StartAgent)
-        } else if self.task_binding_action.in_flight || self.task_binding_action.error.is_some() {
-            Some(TaskSessionOperation::LoadLatest)
-        } else {
-            self.task_operation
-        };
-        TaskSessionBindingState {
-            task_id: self.task_binding_task_id,
-            in_flight,
-            error,
-            session_id,
-            operation,
-        }
-    }
-
-    #[must_use]
-    pub fn client(&self) -> Option<Client> {
-        self.client.clone()
-    }
-
-    #[must_use]
-    pub fn scroll_handle(&self) -> ScrollHandle {
-        self.scroll_handle.clone()
-    }
-
-    pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
-        if self.task_binding_task_id == task_id {
-            return;
-        }
-
-        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
-        let generation = self.task_binding_generation;
-        self.task_binding_task_id = task_id;
-        self.task_binding_action.in_flight = false;
-        self.task_binding_action.error = None;
-        self.task_binding_task = None;
-        self.start_agent_action = UserActionState::default();
-        self.start_agent_task = None;
-        self.attach = UserActionState::default();
-        self.attach_notice = None;
-        self.attach_task = None;
-        self.task_operation = Some(TaskSessionOperation::LoadLatest);
-
-        self.set_session_id(None, cx);
-
-        let Some(task_id) = task_id else {
-            cx.notify();
-            return;
-        };
-
-        let Some(client) = self.client.clone() else {
-            self.task_binding_action
-                .fail("Control plane client is unavailable.");
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(
-                self.task_binding_state(),
-            ));
-            cx.notify();
-            return;
-        };
-
-        let span = redesmyn_logging::redesmyn_info_span!(
-            "ui.session_view.bind_latest_task_session",
-            task_id = %task_id
-        );
-        let _guard = span.enter();
-
-        self.task_binding_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-        cx.notify();
-
-        let view = cx.entity();
-        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let client = client.clone();
-            let cx = cx.clone();
-            async move {
-                let result = get_latest_task_session(&client, task_id).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        this.on_task_binding_loaded(generation, task_id, result, cx)
-                    })
-                });
-            }
-        }));
-    }
-
-    pub fn refresh_latest_task_session(&mut self, cx: &mut Context<Self>) {
-        let Some(task_id) = self.task_binding_task_id else {
-            return;
-        };
-
-        if self.task_binding_action.in_flight {
-            return;
-        }
-
-        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
-        let generation = self.task_binding_generation;
-        self.task_binding_action.in_flight = false;
-        self.task_binding_action.error = None;
-        self.task_binding_task = None;
-        self.start_agent_action = UserActionState::default();
-        self.start_agent_task = None;
-        self.attach = UserActionState::default();
-        self.attach_notice = None;
-        self.attach_task = None;
-        self.task_operation = Some(TaskSessionOperation::LoadLatest);
-
-        self.set_session_id(None, cx);
-
-        let Some(client) = self.client.clone() else {
-            self.task_binding_action
-                .fail("Control plane client is unavailable.");
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-            cx.notify();
-            return;
-        };
-
-        let span = redesmyn_logging::redesmyn_info_span!(
-            "ui.session_view.refresh_latest_task_session",
-            task_id = %task_id
-        );
-        let _guard = span.enter();
-
-        self.task_binding_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-        cx.notify();
-
-        let view = cx.entity();
-        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let client = client.clone();
-            let cx = cx.clone();
-            async move {
-                let result = get_latest_task_session(&client, task_id).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        this.on_task_binding_loaded(generation, task_id, result, cx)
-                    })
-                });
-            }
-        }));
-    }
-
-    fn on_task_binding_loaded(
-        &mut self,
-        generation: u64,
-        task_id: TaskId,
-        result: Result<Option<SessionId>, ErrorEnvelope>,
-        cx: &mut Context<Self>,
-    ) {
-        if generation != self.task_binding_generation || self.task_binding_task_id != Some(task_id)
-        {
-            return;
-        }
-
-        self.task_binding_task = None;
-
-        match result {
-            Ok(session_id) => {
-                self.task_binding_action.succeed();
-                self.task_binding_action.clear_error();
-                self.set_session_id(session_id, cx);
-            }
-            Err(err) => {
-                redesmyn_logging::tracing::warn!(
-                    task_id = %task_id,
-                    error = %err.message,
-                    "failed to load latest task session"
-                );
-                self.task_binding_action.fail(err.message);
-                self.set_session_id(None, cx);
-            }
-        }
-
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(
-            self.task_binding_state(),
-        ));
-        cx.notify();
-    }
-
-    pub fn start_agent_for_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
-        if self.start_agent_action.in_flight {
-            return;
-        }
-
-        if self.task_binding_task_id != Some(task_id) {
-            self.task_binding_task_id = Some(task_id);
-        }
-
-        let Some(client) = self.client.clone() else {
-            self.start_agent_action.fail("Control plane client is unavailable.");
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-            cx.notify();
-            return;
-        };
-
-        self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
-        let generation = self.start_agent_generation;
-        self.task_operation = Some(TaskSessionOperation::StartAgent);
-        self.start_agent_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-        cx.notify();
-
-        let view = cx.entity();
-        self.start_agent_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let client = client.clone();
-            let cx = cx.clone();
-            async move {
-                let result = start_task_agent(&client, task_id, AgentMessageConflictAction::Fail).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        this.on_start_agent_completed(generation, task_id, result, cx)
-                    })
-                });
-            }
-        }));
-    }
-
-    fn on_start_agent_completed(
-        &mut self,
-        generation: u64,
-        task_id: TaskId,
-        result: Result<StartAgentResponse, ErrorEnvelope>,
-        cx: &mut Context<Self>,
-    ) {
-        if generation != self.start_agent_generation || self.task_binding_task_id != Some(task_id) {
-            return;
-        }
-
-        self.start_agent_task = None;
-        match result {
-            Ok(resp) => {
-                self.start_agent_action.succeed();
-                self.start_agent_action.clear_error();
-                self.set_session_id(Some(resp.session_id), cx);
-            }
-            Err(err) => {
-                redesmyn_logging::tracing::warn!(
-                    task_id = %task_id,
-                    error = %err.message,
-                    "failed to start task agent"
-                );
-                self.start_agent_action.fail(err.message);
-            }
-        }
-
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
-        cx.notify();
-    }
-
     pub fn set_session_id(&mut self, session_id: Option<SessionId>, cx: &mut Context<Self>) {
         let Some(session_id) = session_id else {
-            self.unsubscribe_session_events(cx);
             self.subscription_id = None;
             self.subscription_task = None;
             self.load_task = None;
@@ -657,15 +307,13 @@ impl SessionView {
             self.pending_scroll_restore = None;
             self.error = None;
             self.feed = None;
+            self.expanded_tool_events.clear();
             self.markdown_cache.clear();
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
             self.session_id_input
                 .update(cx, |input, cx| input.set_text("", cx));
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(
-                self.task_binding_state(),
-            ));
             cx.notify();
             return;
         };
@@ -673,9 +321,6 @@ impl SessionView {
         self.session_id_input
             .update(cx, |input, cx| input.set_text(session_id.to_string(), cx));
         self.load_session_id(&session_id.to_string(), cx);
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(
-            self.task_binding_state(),
-        ));
     }
 
     pub fn request_focus_composer(&mut self, cx: &mut Context<Self>) {
@@ -695,9 +340,10 @@ impl SessionView {
         }
     }
 
-    fn unsubscribe_session_events(&mut self, cx: &mut Context<Self>) {
+    fn load_session_id(&mut self, raw: &str, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
-            self.subscription_id = None;
+            self.error = Some("Control plane client is unavailable.".into());
+            cx.notify();
             return;
         };
 
@@ -708,16 +354,6 @@ impl SessionView {
             })
             .detach();
         }
-    }
-
-    fn load_session_id(&mut self, raw: &str, cx: &mut Context<Self>) {
-        let Some(client) = self.client.clone() else {
-            self.error = Some("Control plane client is unavailable.".into());
-            cx.notify();
-            return;
-        };
-
-        self.unsubscribe_session_events(cx);
 
         let raw = raw.trim();
         let session_id = match SessionId::from_str(raw) {
@@ -736,6 +372,7 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.pending_scroll_restore = None;
+        self.expanded_tool_events.clear();
         self.markdown_cache.clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
@@ -1047,7 +684,24 @@ impl SessionView {
         .detach();
     }
 
-    fn load_older(&mut self, _event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn maybe_autoload_older(&mut self, cx: &mut Context<Self>) {
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        if feed.history.loading_older || feed.history.next_cursor.is_none() {
+            return;
+        }
+
+        let scroll = self.scroll_handle.offset();
+        if scroll.y < px(-24.0) {
+            return;
+        }
+
+        self.start_loading_older(cx);
+    }
+
+    fn start_loading_older(&mut self, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -1123,6 +777,15 @@ impl SessionView {
         cx.notify();
     }
 
+    fn toggle_tool_event(&mut self, session_event_id: SessionEventId, cx: &mut Context<Self>) {
+        if self.expanded_tool_events.contains(&session_event_id) {
+            self.expanded_tool_events.remove(&session_event_id);
+        } else {
+            self.expanded_tool_events.insert(session_event_id);
+        }
+        cx.notify();
+    }
+
     fn jump_to_bottom(
         &mut self,
         _event: &ClickEvent,
@@ -1136,62 +799,6 @@ impl SessionView {
         feed.set_at_bottom(true);
         feed.clear_scroll_intents();
         self.scroll_handle.scroll_to_bottom();
-        cx.notify();
-    }
-
-    fn attach_command(&self) -> Option<String> {
-        let Some(task_id) = self.task_binding_task_id else {
-            return None;
-        };
-        Some(format!("rn agent attach --task {task_id}"))
-    }
-
-    fn start_attach(&mut self, attach_command: String, cx: &mut Context<Self>) {
-        if self.attach.in_flight {
-            return;
-        }
-
-        let span =
-            redesmyn_logging::redesmyn_info_span!("ui.session_view.attach", command = %attach_command);
-        let _guard = span.enter();
-
-        self.attach.start();
-        self.attach_notice = None;
-        cx.notify();
-
-        let view = cx.entity();
-        self.attach_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                gpui::Timer::after(Duration::from_millis(240)).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(attach_command));
-                        this.attach.succeed();
-                        this.attach_notice = Some("Copied attach command.".into());
-                        this.attach_task = None;
-                        cx.notify();
-                    })
-                });
-            }
-        }));
-    }
-
-    fn copy_attach_command(&mut self, attach_command: String, cx: &mut Context<Self>) {
-        if self.attach.in_flight {
-            return;
-        }
-
-        let span = redesmyn_logging::redesmyn_info_span!(
-            "ui.session_view.copy_attach_command",
-            command = %attach_command
-        );
-        let _guard = span.enter();
-
-        self.attach.start();
-        cx.write_to_clipboard(ClipboardItem::new_string(attach_command));
-        self.attach.succeed();
-        self.attach_notice = Some("Copied attach command.".into());
         cx.notify();
     }
 }
@@ -1262,133 +869,9 @@ impl Render for SessionView {
             .map(SessionFeedState::timeline_items)
             .unwrap_or_default();
 
-        let session_is_interactive = items.iter().any(|item| match item {
-            SessionTimelineItem::Event(item) => match &item.content {
-                redesmyn_session_view_model::SessionEventItemContent::TurnStarted(turn) => {
-                    turn.interface_mode == InterfaceMode::Interactive
-                }
-                redesmyn_session_view_model::SessionEventItemContent::TurnCompleted(turn) => {
-                    turn.interface_mode == InterfaceMode::Interactive
-                }
-                _ => false,
-            },
-            _ => false,
-        });
-
-        if session_is_interactive {
-            let attach_command = self.attach_command();
-            let attach_label = if self.attach.in_flight {
-                "Preparing attach…"
-            } else {
-                "Attach"
-            };
-
-            let attach_disabled = self.attach.in_flight || attach_command.is_none();
-            let attach_disabled_reason = if self.attach.in_flight {
-                "Preparing…"
-            } else {
-                "Attach command unavailable"
-            };
-
-            let copy_label = if self.attach.in_flight {
-                "Copying…"
-            } else {
-                "Copy attach command"
-            };
-
-            let attach = TextButton::new(("session_attach", cx.entity_id()), attach_label)
-                .kind(ButtonKind::Primary)
-                .disabled(attach_disabled)
-                .disabled_reason(attach_disabled_reason)
-                .on_click({
-                    let view = view.clone();
-                    move |_, _, cx| {
-                        let command = view.read(cx).attach_command();
-                        view.update(cx, |this, cx| {
-                            let Some(command) = command else {
-                                this.attach.fail("Attach command unavailable.");
-                                cx.notify();
-                                return;
-                            };
-                            this.start_attach(command, cx);
-                        });
-                    }
-                });
-
-            let copy_attach = TextButton::new(("session_copy_attach", cx.entity_id()), copy_label)
-                .kind(ButtonKind::Secondary)
-                .disabled(attach_disabled)
-                .disabled_reason(attach_disabled_reason)
-                .on_click({
-                    let view = view.clone();
-                    move |_, _, cx| {
-                        let command = view.read(cx).attach_command();
-                        view.update(cx, |this, cx| {
-                            let Some(command) = command else {
-                                this.attach.fail("Attach command unavailable.");
-                                cx.notify();
-                                return;
-                            };
-                            this.copy_attach_command(command, cx);
-                        });
-                    }
-                });
-
-            let mut placeholder = div()
-                .p(theme.spacing.md)
-                .rounded_md()
-                .bg(theme.colors.surface_elevated.opacity(0.35))
-                .flex()
-                .flex_col()
-                .gap(theme.spacing.sm)
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground)
-                        .child("Interactive session (tmux)"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("The native viewer does not render terminal output yet."),
-                );
-
-            if let Some(command) = attach_command.clone() {
-                placeholder = placeholder.child(
-                    div()
-                        .px(theme.spacing.sm)
-                        .py(theme.spacing.sm)
-                        .rounded_sm()
-                        .bg(theme.colors.surface.opacity(0.6))
-                        .text_sm()
-                        .text_color(theme.colors.foreground)
-                        .child(command),
-                );
-            }
-
-            placeholder = placeholder.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(theme.spacing.sm)
-                    .child(attach)
-                    .child(copy_attach),
-            );
-
-            if let Some(err) = self.attach.error.clone() {
-                placeholder = placeholder.child(Callout::new(err).kind(CalloutKind::Danger).title("Attach"));
-            }
-            if let Some(notice) = self.attach_notice.clone() {
-                placeholder = placeholder
-                    .child(Callout::new(notice).kind(CalloutKind::Info).title("Attach"));
-            }
-
-            content = content.child(placeholder);
-        }
-
         let markdown_options = MarkdownParseOptions::default();
         let markdown_cache = &mut self.markdown_cache;
+        let expanded_tool_events = &self.expanded_tool_events;
 
         let feed_list = items.into_iter().enumerate().fold(
             div()
@@ -1399,22 +882,25 @@ impl Render for SessionView {
                 .min_w_0(),
             |list, (ix, item)| match item {
                 SessionTimelineItem::LoadOlder(row) => {
-                    let button = if row.in_flight {
-                        TextButton::new(("session_load_older", cx.entity_id()), "Loading older…")
-                            .disabled(true)
+                    let label = if row.in_flight {
+                        "Loading older…"
+                    } else if row.enabled {
+                        "Scroll up to load older"
                     } else {
-                        TextButton::new(("session_load_older", cx.entity_id()), "Load older")
-                            .disabled(!row.enabled)
+                        ""
                     };
 
-                    list.child(div().id(("session_item_load_older", ix)).w_full().child(
-                        button.on_click({
-                            let view = view.clone();
-                            move |event, window, cx| {
-                                view.update(cx, |this, cx| this.load_older(event, window, cx))
-                            }
-                        }),
-                    ))
+                    list.child(
+                        div()
+                            .id(("session_item_load_older", ix))
+                            .w_full()
+                            .flex()
+                            .justify_center()
+                            .py(theme.spacing.xs)
+                            .text_xs()
+                            .text_color(theme.colors.foreground_muted)
+                            .child(label),
+                    )
                 }
                 SessionTimelineItem::NewMessages(row) => list.child(
                     div().id(("session_item_new_messages", ix)).w_full().child(
@@ -1437,20 +923,10 @@ impl Render for SessionView {
                         .min_w_0()
                         .px(theme.spacing.sm)
                         .py(theme.spacing.sm)
-                        .rounded_sm()
-                        .bg(theme.colors.surface_elevated.opacity(0.6))
                         .text_sm()
                         .text_color(theme.colors.foreground_muted)
-                        .child(format!(
-                            "[{}] {}",
-                            match item.role {
-                                redesmyn_session_view_model::SessionMessageRole::User => "user",
-                                redesmyn_session_view_model::SessionMessageRole::Assistant =>
-                                    "assistant",
-                                redesmyn_session_view_model::SessionMessageRole::Tool => "tool",
-                            },
-                            item.text
-                        )),
+                        .opacity(0.75)
+                        .child(item.text),
                 ),
                 SessionTimelineItem::Event(item) => {
                     let event_key = session_event_id_key(item.session_event_id);
@@ -1468,19 +944,16 @@ impl Render for SessionView {
                                 full_text_artifact,
                             } = msg;
 
-                            let (role_label, bg) = match role {
-                                redesmyn_session_view_model::SessionMessageRole::User => (
-                                    "user",
-                                    theme.colors.accent.opacity(0.65),
-                                ),
-                                redesmyn_session_view_model::SessionMessageRole::Assistant => (
-                                    "assistant",
-                                    theme.colors.surface_elevated.opacity(0.4),
-                                ),
-                                redesmyn_session_view_model::SessionMessageRole::Tool => (
-                                    "tool",
-                                    theme.colors.surface_elevated.opacity(0.6),
-                                ),
+                            let (bg, align_right) = match role {
+                                redesmyn_session_view_model::SessionMessageRole::User => {
+                                    (Some(theme.colors.accent.opacity(0.4)), true)
+                                }
+                                redesmyn_session_view_model::SessionMessageRole::Assistant => {
+                                    (None, false)
+                                }
+                                redesmyn_session_view_model::SessionMessageRole::Tool => {
+                                    (Some(theme.colors.surface_elevated.opacity(0.45)), false)
+                                }
                             };
 
                             let show_truncation_notice = full_text_artifact.is_none();
@@ -1499,19 +972,12 @@ impl Render for SessionView {
                                 .flex()
                                 .flex_col()
                                 .gap(theme.spacing.sm)
-                                .w_full()
+                                .max_w(px(560.0))
                                 .min_w_0()
                                 .px(theme.spacing.md)
                                 .py(theme.spacing.md)
                                 .rounded_md()
-                                .bg(bg)
-                                .child(
-                                    div()
-                                        .id((bubble_id.clone(), "meta"))
-                                        .text_xs()
-                                        .text_color(theme.colors.foreground_muted)
-                                        .child(role_label),
-                                )
+                                .when_some(bg, |this, bg| this.bg(bg))
                                 .child(
                                     MarkdownView::new((bubble_id.clone(), "markdown"), doc)
                                         .show_truncation_notice(show_truncation_notice)
@@ -1563,44 +1029,243 @@ impl Render for SessionView {
                                 );
                             }
 
-                            list.child(bubble)
+                            let mut row = div()
+                                .id((bubble_id.clone(), "row"))
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .flex_row()
+                                .gap(theme.spacing.sm);
+                            if align_right {
+                                row = row.child(div().flex_1()).child(bubble);
+                            } else {
+                                row = row.child(bubble).child(div().flex_1());
+                            }
+
+                            list.child(row)
                         }
                         other => {
-                            let label = match other {
+                            // Hide session lifecycle and status noise in the primary timeline.
+                            // (These remain available via the semantic snapshot/debug surfaces.)
+                            match other {
                                 redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
                                     tool,
                                 ) => {
-                                    format!("tool invocation: {} — {}", tool.tool_name, tool.input_preview)
+                                    let expanded = expanded_tool_events.contains(&item.session_event_id);
+                                    let chevron = if expanded { "▾" } else { "▸" };
+                                    let toggle_view = view.clone();
+                                    let session_event_id = item.session_event_id;
+                                    let summary_text =
+                                        format!("{} — {}", tool.tool_name, tool.input_preview);
+
+                                    let summary = div()
+                                        .id((bubble_id.clone(), "summary"))
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(theme.spacing.sm)
+                                        .px(theme.spacing.md)
+                                        .py(theme.spacing.sm)
+                                        .rounded_sm()
+                                        .bg(theme.colors.surface_elevated.opacity(0.3))
+                                        .hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.4)))
+                                        .cursor_pointer()
+                                        .focusable()
+                                        .on_click(move |event, _window, cx| {
+                                            if event.standard_click() {
+                                                toggle_view.update(cx, |this, cx| {
+                                                    this.toggle_tool_event(session_event_id, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.colors.foreground_muted)
+                                                .child(chevron),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_sm()
+                                                .text_color(theme.colors.foreground)
+                                                .truncate()
+                                                .child(summary_text),
+                                        );
+
+                                    let mut block = div()
+                                        .id(bubble_id.clone())
+                                        .w_full()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .child(summary);
+
+                                    if expanded {
+                                        let mut details = div()
+                                            .id((bubble_id.clone(), "details"))
+                                            .px(theme.spacing.md)
+                                            .py(theme.spacing.sm)
+                                            .rounded_sm()
+                                            .bg(theme.colors.surface_elevated.opacity(0.18))
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs);
+
+                                        if let Some(call_id) = tool.tool_call_id.as_ref() {
+                                            details = details.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.colors.foreground_muted)
+                                                    .child(format!("call id: {call_id}")),
+                                            );
+                                        }
+
+                                        details = details.child(
+                                            div()
+                                                .font(theme.typography.mono.font.clone())
+                                                .text_size(theme.typography.mono.size)
+                                                .text_color(theme.colors.foreground)
+                                                .child(tool.input_preview.clone()),
+                                        );
+
+                                        block = block.child(details);
+                                    }
+
+                                    list.child(block)
                                 }
                                 redesmyn_session_view_model::SessionEventItemContent::ToolResult(
                                     tool,
                                 ) => {
-                                    format!("tool result: {} — {}", tool.tool_name, tool.output_preview)
-                                }
-                                redesmyn_session_view_model::SessionEventItemContent::StatusUpdate(
-                                    status,
-                                ) => status
-                                    .message
-                                    .as_deref()
-                                    .filter(|msg| !msg.trim().is_empty())
-                                    .map(|msg| format!("status: {msg}"))
-                                    .unwrap_or_else(|| format!("status: {:?}", status.turn_state)),
-                                _ => format!("{:?}", item.kind),
-                            };
+                                    let expanded = expanded_tool_events.contains(&item.session_event_id);
+                                    let chevron = if expanded { "▾" } else { "▸" };
+                                    let toggle_view = view.clone();
+                                    let session_event_id = item.session_event_id;
 
-                            list.child(
-                                div()
-                                    .id(bubble_id)
-                                    .w_full()
-                                    .min_w_0()
-                                    .px(theme.spacing.sm)
-                                    .py(theme.spacing.sm)
-                                    .rounded_sm()
-                                    .bg(theme.colors.surface_elevated.opacity(0.4))
-                                    .text_sm()
-                                    .text_color(theme.colors.foreground)
-                                    .child(label),
-                            )
+                                    let summary_text =
+                                        format!("{} — {}", tool.tool_name, tool.output_preview);
+                                    let has_error = tool.error.is_some();
+
+                                    let summary = div()
+                                        .id((bubble_id.clone(), "summary"))
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(theme.spacing.sm)
+                                        .px(theme.spacing.md)
+                                        .py(theme.spacing.sm)
+                                        .rounded_sm()
+                                        .bg(theme.colors.surface_elevated.opacity(0.3))
+                                        .hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.4)))
+                                        .cursor_pointer()
+                                        .focusable()
+                                        .on_click(move |event, _window, cx| {
+                                            if event.standard_click() {
+                                                toggle_view.update(cx, |this, cx| {
+                                                    this.toggle_tool_event(session_event_id, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.colors.foreground_muted)
+                                                .child(chevron),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_sm()
+                                                .text_color(theme.colors.foreground)
+                                                .truncate()
+                                                .child(summary_text),
+                                        )
+                                        .when(has_error, |this| {
+                                            this.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.colors.danger)
+                                                    .child("error"),
+                                            )
+                                        });
+
+                                    let mut block = div()
+                                        .id(bubble_id.clone())
+                                        .w_full()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .child(summary);
+
+                                    if expanded {
+                                        let mut details = div()
+                                            .id((bubble_id.clone(), "details"))
+                                            .px(theme.spacing.md)
+                                            .py(theme.spacing.sm)
+                                            .rounded_sm()
+                                            .bg(theme.colors.surface_elevated.opacity(0.18))
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs);
+
+                                        if let Some(call_id) = tool.tool_call_id.as_ref() {
+                                            details = details.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.colors.foreground_muted)
+                                                    .child(format!("call id: {call_id}")),
+                                            );
+                                        }
+
+                                        if let Some(error) = tool.error.as_ref() {
+                                            details = details.child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.colors.danger)
+                                                    .child(error.message.clone()),
+                                            );
+                                        }
+
+                                        details = details.child(
+                                            div()
+                                                .font(theme.typography.mono.font.clone())
+                                                .text_size(theme.typography.mono.size)
+                                                .text_color(theme.colors.foreground)
+                                                .child(tool.output_preview.clone()),
+                                        );
+
+                                        block = block.child(details);
+                                    }
+
+                                    list.child(block)
+                                }
+                                redesmyn_session_view_model::SessionEventItemContent::ArtifactEmitted(
+                                    artifact,
+                                ) => list.child(
+                                    div()
+                                        .id(bubble_id)
+                                        .w_full()
+                                        .min_w_0()
+                                        .px(theme.spacing.sm)
+                                        .py(theme.spacing.sm)
+                                        .rounded_sm()
+                                        .bg(theme.colors.surface_elevated.opacity(0.35))
+                                        .text_sm()
+                                        .text_color(theme.colors.foreground)
+                                        .child(
+                                            artifact
+                                                .label
+                                                .as_deref()
+                                                .unwrap_or("Artifact emitted")
+                                                .to_string(),
+                                        ),
+                                ),
+                                _ => list,
+                            }
                         }
                     }
                 }
@@ -1617,8 +1282,9 @@ impl Render for SessionView {
             feed_list.on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
                 if let Some(feed) = this.feed.as_mut() {
                     update_scroll_state(feed, &this.scroll_handle);
-                    cx.notify();
                 }
+                this.maybe_autoload_older(cx);
+                cx.notify();
             })),
         );
 
@@ -1763,45 +1429,43 @@ impl Render for SessionView {
             .map(|feed| feed.composer.draft.as_str())
             .unwrap_or_default();
         let composer_sending = self.feed.as_ref().is_some_and(|feed| feed.composer.sending);
-        let composer_can_send = self.client.is_some()
-            && self.feed.is_some()
-            && !composer_sending
-            && !composer_draft.trim().is_empty();
+        let (composer_can_send, disabled_reason) = if composer_sending {
+            (false, "Sending…")
+        } else if self.client.is_none() || self.feed.is_none() {
+            (false, "Chat is unavailable")
+        } else if composer_draft.trim().is_empty() {
+            (false, "Message is empty")
+        } else {
+            (true, "")
+        };
 
-        let send_button = TextButton::new(
-            ("session_send_message", cx.entity_id()),
-            if composer_sending {
-                "Sending…"
-            } else {
-                "Send"
-            },
-        )
-        .kind(ButtonKind::Primary)
-        .disabled(!composer_can_send)
-        .on_click({
-            let view = view.clone();
-            move |_, _, cx| {
-                view.update(cx, |this, cx| {
-                    this.send_message(AgentMessageConflictAction::Fail, cx)
+        let send_button =
+            IconButton::new(("session_send_message", cx.entity_id()), div().child("↑"))
+                .tooltip("Send (⌘⏎ / ⇧⏎)")
+                .disabled(!composer_can_send)
+                .disabled_reason(disabled_reason)
+                .on_click({
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.send_message(AgentMessageConflictAction::Fail, cx)
+                        });
+                    }
                 });
-            }
-        });
 
-        content = content.child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(theme.spacing.sm)
-                .items_end()
-                .w_full()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .child(self.composer_input.clone()),
-                )
-                .child(send_button),
-        );
+        let composer = div()
+            .relative()
+            .w_full()
+            .child(self.composer_input.clone())
+            .child(
+                div()
+                    .absolute()
+                    .right(theme.spacing.sm)
+                    .bottom(theme.spacing.sm)
+                    .child(send_button),
+            );
+
+        content = content.child(composer);
 
         div()
             .flex()

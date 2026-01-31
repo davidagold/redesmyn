@@ -356,8 +356,9 @@ impl RootView {
         let selected_for_session_pane = selected.clone();
         let slug_for_workspace = slug.clone();
 
-        self.session_pane
-            .update(cx, move |pane, cx| pane.set_selected_epic(selected_for_session_pane, cx));
+        self.session_pane.update(cx, move |pane, cx| {
+            pane.set_selected_epic(selected_for_session_pane, cx)
+        });
         self.workspace_pane.update(cx, move |pane, cx| {
             pane.set_selected_epic(Some(slug_for_workspace), selected, cx)
         });
@@ -2719,11 +2720,31 @@ impl Render for EpicSessionPaneHost {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
 
-        let epic_slug = self
-            .selected_epic
-            .as_ref()
-            .map(|epic| epic.slug.clone())
-            .unwrap_or_else(|| "Select epic".to_string());
+        let header_title = match self.selected_epic.as_ref() {
+            None => "Chat".to_string(),
+            Some(_) => self
+                .pinned_chat_summary()
+                .and_then(|summary| summary.title.clone())
+                .unwrap_or_else(|| "Pinned chat".to_string()),
+        };
+
+        let header_subtitle = match self.selected_epic.as_ref() {
+            None => "Select an epic".to_string(),
+            Some(epic) => match self.pinned_session_id {
+                None => epic.slug.clone(),
+                Some(session_id) => {
+                    let closed = self
+                        .pinned_chat_summary()
+                        .and_then(|summary| summary.closed_at)
+                        .is_some();
+                    if closed {
+                        format!("{} · {session_id} · closed", epic.slug)
+                    } else {
+                        format!("{} · {session_id}", epic.slug)
+                    }
+                }
+            },
+        };
 
         let in_flight_label = if self.load.in_flight {
             Some("Loading chat")
@@ -2739,7 +2760,7 @@ impl Render for EpicSessionPaneHost {
             None
         };
 
-        let mut header_actions = div().flex().flex_row().items_center().gap(theme.spacing.sm);
+        let mut header_actions = div().flex().flex_row().items_center().gap(theme.spacing.xs);
 
         if let Some(label) = in_flight_label {
             header_actions = header_actions.child(ProgressPill::new(label));
@@ -2748,8 +2769,8 @@ impl Render for EpicSessionPaneHost {
         let can_act_on_epic = self.selected_epic.is_some() && !self.load.in_flight;
         let has_pinned = self.pinned_session_id.is_some();
 
-        let create_button = TextButton::new(("chat_create", cx.entity_id()), "Create chat")
-            .kind(ButtonKind::Secondary)
+        let create_button = IconButton::new(("chat_create", cx.entity_id()), div().child("+"))
+            .tooltip("Create chat")
             .disabled(!can_act_on_epic || self.create_and_pin.in_flight)
             .disabled_reason("Loading…")
             .on_click({
@@ -2758,8 +2779,8 @@ impl Render for EpicSessionPaneHost {
             });
 
         let pin_existing_button =
-            TextButton::new(("chat_pin_existing", cx.entity_id()), "Pin existing…")
-                .kind(ButtonKind::Ghost)
+            IconButton::new(("chat_pin_existing", cx.entity_id()), div().child("☰"))
+                .tooltip("Pin existing chat…")
                 .disabled(!can_act_on_epic || self.pin_existing.in_flight)
                 .disabled_reason("Loading…")
                 .on_click({
@@ -2767,8 +2788,8 @@ impl Render for EpicSessionPaneHost {
                     move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
                 });
 
-        let unpin_button = TextButton::new(("chat_unpin", cx.entity_id()), "Unpin")
-            .kind(ButtonKind::Ghost)
+        let unpin_button = IconButton::new(("chat_unpin", cx.entity_id()), div().child("⦸"))
+            .tooltip("Unpin chat")
             .disabled(!can_act_on_epic || !has_pinned || self.unpin.in_flight)
             .disabled_reason("No pinned chat")
             .on_click({
@@ -2776,8 +2797,8 @@ impl Render for EpicSessionPaneHost {
                 move |_, _, cx| view.update(cx, |this, cx| this.unpin_chat(cx))
             });
 
-        let close_button = TextButton::new(("chat_close", cx.entity_id()), "Close")
-            .kind(ButtonKind::Ghost)
+        let close_button = IconButton::new(("chat_close", cx.entity_id()), div().child("×"))
+            .tooltip("Close chat")
             .disabled(!can_act_on_epic || !has_pinned || self.close_session.in_flight)
             .disabled_reason("No pinned chat")
             .on_click({
@@ -2815,20 +2836,22 @@ impl Render for EpicSessionPaneHost {
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.sm)
+                    .flex_col()
+                    .min_w_0()
+                    .gap(theme.spacing.xs)
                     .child(
                         div()
                             .text_sm()
                             .text_color(theme.colors.foreground)
-                            .child("Chat"),
+                            .truncate()
+                            .child(header_title),
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_xs()
                             .text_color(theme.colors.foreground_muted)
-                            .child(epic_slug),
+                            .truncate()
+                            .child(header_subtitle),
                     ),
             )
             .child(header_actions);
@@ -2895,44 +2918,10 @@ impl Render for EpicSessionPaneHost {
                 );
             }
             Some(_) => {
-                let title = self
-                    .pinned_chat_summary()
-                    .and_then(|summary| summary.title.clone())
-                    .unwrap_or_else(|| "Pinned chat".to_string());
                 let closed = self
                     .pinned_chat_summary()
                     .and_then(|summary| summary.closed_at)
                     .is_some();
-
-                let subtitle = self
-                    .pinned_session_id
-                    .map(|id| {
-                        if closed {
-                            format!("{id} · closed")
-                        } else {
-                            id.to_string()
-                        }
-                    })
-                    .unwrap_or_default();
-
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(theme.spacing.xs)
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.colors.foreground)
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.colors.foreground_muted)
-                                .child(subtitle),
-                        ),
-                );
 
                 if closed {
                     body = body.child(
