@@ -4996,6 +4996,7 @@ dependencies = [
  "redesmyn_session_view_model",
  "redesmyn_transport",
  "redesmyn_ui",
+ "serde_json",
  "tokio",
 ]
 

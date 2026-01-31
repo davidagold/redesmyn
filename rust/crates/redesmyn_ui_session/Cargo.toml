@@ -16,6 +16,7 @@ redesmyn_protocol.workspace = true
 redesmyn_session_view_model.workspace = true
 redesmyn_transport.workspace = true
 redesmyn_ui.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

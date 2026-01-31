@@ -192,6 +192,7 @@ pub struct IconButton {
     id: ElementId,
     icon: AnyElement,
     tooltip: Option<SharedString>,
+    active: bool,
     disabled: bool,
     disabled_reason: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
@@ -203,6 +204,7 @@ impl IconButton {
             id: id.into(),
             icon: icon.into_any_element(),
             tooltip: None,
+            active: false,
             disabled: false,
             disabled_reason: None,
             on_click: None,
@@ -211,6 +213,11 @@ impl IconButton {
 
     pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
         self.tooltip = Some(text.into());
+        self
+    }
+
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
         self
     }
 
@@ -237,6 +244,12 @@ impl RenderOnce for IconButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
 
+        let hover_bg = if self.active {
+            theme.colors.accent.opacity(0.55)
+        } else {
+            theme.colors.accent
+        };
+
         let mut button = div()
             .id(self.id)
             .flex()
@@ -247,7 +260,10 @@ impl RenderOnce for IconButton {
             .text_color(theme.colors.foreground)
             .cursor_pointer()
             .focusable()
-            .hover(|this| this.bg(theme.colors.accent))
+            .when(self.active, |this| {
+                this.bg(theme.colors.accent.opacity(0.35))
+            })
+            .hover(move |this| this.bg(hover_bg))
             .focus(|mut style| {
                 style.border_color = Some(theme.colors.ring);
                 style

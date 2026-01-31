@@ -2725,24 +2725,15 @@ impl Render for EpicSessionPaneHost {
             Some(_) => self
                 .pinned_chat_summary()
                 .and_then(|summary| summary.title.clone())
+                .or_else(|| self.pinned_session_id.map(|id| id.to_string()))
                 .unwrap_or_else(|| "Pinned chat".to_string()),
         };
 
         let header_subtitle = match self.selected_epic.as_ref() {
-            None => "Select an epic".to_string(),
+            None => Some("Select an epic".to_string()),
             Some(epic) => match self.pinned_session_id {
-                None => epic.slug.clone(),
-                Some(session_id) => {
-                    let closed = self
-                        .pinned_chat_summary()
-                        .and_then(|summary| summary.closed_at)
-                        .is_some();
-                    if closed {
-                        format!("{} · {session_id} · closed", epic.slug)
-                    } else {
-                        format!("{} · {session_id}", epic.slug)
-                    }
-                }
+                None => Some(epic.slug.clone()),
+                Some(_) => None,
             },
         };
 
@@ -2788,8 +2779,9 @@ impl Render for EpicSessionPaneHost {
                     move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
                 });
 
-        let unpin_button = IconButton::new(("chat_unpin", cx.entity_id()), div().child("⦸"))
+        let pinned_button = IconButton::new(("chat_unpin", cx.entity_id()), div().child("★"))
             .tooltip("Unpin chat")
+            .active(true)
             .disabled(!can_act_on_epic || !has_pinned || self.unpin.in_flight)
             .disabled_reason("No pinned chat")
             .on_click({
@@ -2797,21 +2789,10 @@ impl Render for EpicSessionPaneHost {
                 move |_, _, cx| view.update(cx, |this, cx| this.unpin_chat(cx))
             });
 
-        let close_button = IconButton::new(("chat_close", cx.entity_id()), div().child("×"))
-            .tooltip("Close chat")
-            .disabled(!can_act_on_epic || !has_pinned || self.close_session.in_flight)
-            .disabled_reason("No pinned chat")
-            .on_click({
-                let view = view.clone();
-                move |_, _, cx| view.update(cx, |this, cx| this.close_current_chat(cx))
-            });
-
         header_actions = header_actions
             .child(create_button)
             .child(pin_existing_button)
-            .when(has_pinned, |this| {
-                this.child(unpin_button).child(close_button)
-            });
+            .when(has_pinned, |this| this.child(pinned_button));
         if self.fixture.is_some() {
             let label = if self.emit_demo_in_flight {
                 "Emitting…"
@@ -2846,13 +2827,15 @@ impl Render for EpicSessionPaneHost {
                             .truncate()
                             .child(header_title),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.colors.foreground_muted)
-                            .truncate()
-                            .child(header_subtitle),
-                    ),
+                    .when_some(header_subtitle, |this, subtitle| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.colors.foreground_muted)
+                                .truncate()
+                                .child(subtitle),
+                        )
+                    }),
             )
             .child(header_actions);
 

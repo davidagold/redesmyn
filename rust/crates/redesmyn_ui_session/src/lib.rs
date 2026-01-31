@@ -24,17 +24,19 @@ use redesmyn_protocol::client::{
     ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
     SubscriptionEvent,
 };
-use redesmyn_protocol::session::SessionEventKind;
+use redesmyn_protocol::session::{SessionEventKind, ToolResult};
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, SessionEvent};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
-use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
+use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, TextArea, TextButton, TextInput,
     TextInputEvent,
 };
 use redesmyn_ui::utils::theme_for_window;
+
+use serde_json::Value as JsonValue;
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
@@ -47,6 +49,52 @@ const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
 // `structured_session_conflict` is currently returned for any concurrent task session (even if the
 // conflicting session isn't structured). Consider renaming if we need semantic precision.
 const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
+
+fn parse_exec_command_input_preview(preview: &str) -> (Option<String>, Option<String>) {
+    let Ok(json) = serde_json::from_str::<JsonValue>(preview.trim()) else {
+        return (None, None);
+    };
+
+    let command = json
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
+    let cwd = json
+        .get("cwd")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
+
+    (command, cwd)
+}
+
+fn tidy_shell_command(command: &str) -> String {
+    let command = command.trim();
+
+    let Some(rest) = command.split_once(" -lc ").map(|(_, rest)| rest) else {
+        return command.to_string();
+    };
+
+    rest.trim().trim_matches(&['\'', '"'][..]).to_string()
+}
+
+fn split_exec_command_exit_code(preview: &str) -> (Option<i32>, &str) {
+    let trimmed = preview.trim_start();
+
+    let Some(rest) = trimmed
+        .strip_prefix("exit_code:")
+        .or_else(|| trimmed.strip_prefix("exit_code="))
+    else {
+        return (None, trimmed);
+    };
+
+    let rest = rest.trim_start();
+    let end = rest
+        .find(|ch: char| !ch.is_ascii_digit() && ch != '-')
+        .unwrap_or(rest.len());
+    let (code_str, remainder) = rest.split_at(end);
+    let code = code_str.trim().parse::<i32>().ok();
+    (code, remainder.trim_start())
+}
 
 fn start_client(conn: ClientInProcEndpoint, cx: &mut Context<SessionView>) -> (Client, Task<()>) {
     let (client, client_task) = Client::connect(conn, 64);
@@ -207,6 +255,8 @@ pub struct SessionView {
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     expanded_tool_events: HashSet<SessionEventId>,
+    exec_command_result_by_invocation: Rc<HashMap<SessionEventId, (SessionEventId, ToolResult)>>,
+    grouped_exec_command_result_event_ids: Rc<HashSet<SessionEventId>>,
     markdown_cache: Rc<RefCell<HashMap<SessionEventId, Arc<MarkdownDoc>>>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
@@ -289,6 +339,8 @@ impl SessionView {
             pending_focus_composer: false,
             feed: None,
             expanded_tool_events: HashSet::new(),
+            exec_command_result_by_invocation: Rc::new(HashMap::new()),
+            grouped_exec_command_result_event_ids: Rc::new(HashSet::new()),
             markdown_cache: Rc::new(RefCell::new(HashMap::new())),
             client,
             _client_task: client_task,
@@ -318,6 +370,8 @@ impl SessionView {
             self.error = None;
             self.feed = None;
             self.expanded_tool_events.clear();
+            self.exec_command_result_by_invocation = Rc::new(HashMap::new());
+            self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
             self.markdown_cache.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
             self.timeline_needs_refresh = false;
@@ -384,6 +438,8 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.expanded_tool_events.clear();
+        self.exec_command_result_by_invocation = Rc::new(HashMap::new());
+        self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
         self.markdown_cache.borrow_mut().clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
@@ -604,11 +660,7 @@ impl SessionView {
         }));
     }
 
-    fn on_subscription_event(
-        &mut self,
-        event: SubscriptionEvent,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_subscription_event(&mut self, event: SubscriptionEvent, cx: &mut Context<Self>) {
         let Some(feed) = self.feed.as_mut() else {
             return;
         };
@@ -770,11 +822,51 @@ impl SessionView {
 
     fn set_timeline_items(&mut self, items: Vec<SessionTimelineItem>) {
         let old_items = std::mem::replace(&mut self.timeline_items, Rc::new(items));
+        self.rebuild_exec_command_groups();
         sync_list_state(
             &self.timeline_list_state,
             old_items.as_ref(),
             self.timeline_items.as_ref(),
         );
+    }
+
+    fn rebuild_exec_command_groups(&mut self) {
+        let mut result_by_invocation = HashMap::new();
+        let mut grouped_result_ids = HashSet::new();
+        let mut invocations_by_call_id: HashMap<String, SessionEventId> = HashMap::new();
+
+        for item in self.timeline_items.iter() {
+            let SessionTimelineItem::Event(event) = item else {
+                continue;
+            };
+
+            match &event.content {
+                SessionEventItemContent::ToolInvocation(invocation)
+                    if invocation.tool_name == "exec_command" =>
+                {
+                    if let Some(call_id) = invocation.tool_call_id.as_ref() {
+                        invocations_by_call_id.insert(call_id.clone(), event.session_event_id);
+                    }
+                }
+                SessionEventItemContent::ToolResult(result)
+                    if result.tool_name == "exec_command" =>
+                {
+                    if let Some(call_id) = result.tool_call_id.as_ref() {
+                        if let Some(invocation_id) = invocations_by_call_id.get(call_id) {
+                            result_by_invocation.insert(
+                                invocation_id.clone(),
+                                (event.session_event_id, result.clone()),
+                            );
+                            grouped_result_ids.insert(event.session_event_id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.exec_command_result_by_invocation = Rc::new(result_by_invocation);
+        self.grouped_exec_command_result_event_ids = Rc::new(grouped_result_ids);
     }
 
     fn refresh_timeline_items(&mut self) {
@@ -927,6 +1019,9 @@ impl Render for SessionView {
         let items = Rc::clone(&self.timeline_items);
         let markdown_cache = Rc::clone(&self.markdown_cache);
         let expanded_tool_events = self.expanded_tool_events.clone();
+        let exec_command_results = Rc::clone(&self.exec_command_result_by_invocation);
+        let grouped_exec_command_result_ids =
+            Rc::clone(&self.grouped_exec_command_result_event_ids);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
 
@@ -1005,7 +1100,7 @@ impl Render for SessionView {
 
                             let (bg, align_right) = match role {
                                 redesmyn_session_view_model::SessionMessageRole::User => {
-                                    (Some(theme.colors.accent.opacity(0.4)), true)
+                                    (Some(theme.colors.surface_elevated), true)
                                 }
                                 redesmyn_session_view_model::SessionMessageRole::Assistant => {
                                     (None, false)
@@ -1110,15 +1205,31 @@ impl Render for SessionView {
                             // Hide session lifecycle and status noise in the primary timeline.
                             // (These remain available via the semantic snapshot/debug surfaces.)
                             match other {
-                                redesmyn_session_view_model::SessionEventItemContent::ToolInvocation(
-                                    tool,
-                                ) => {
+                                SessionEventItemContent::ToolInvocation(tool) => {
                                     let expanded = expanded_tool_events.contains(&item.session_event_id);
                                     let chevron = if expanded { "▾" } else { "▸" };
                                     let toggle_view = timeline_view.clone();
                                     let session_event_id = item.session_event_id;
-                                    let summary_text =
-                                        format!("{} — {}", tool.tool_name, tool.input_preview);
+
+                                    let exec_command_result = (tool.tool_name == "exec_command")
+                                        .then(|| exec_command_results.get(&session_event_id))
+                                        .flatten();
+
+                                    let (summary_main, exit_code) = if let Some((_result_id, result)) =
+                                        exec_command_result
+                                    {
+                                        let (command, _cwd) =
+                                            parse_exec_command_input_preview(&tool.input_preview);
+                                        let command = command
+                                            .as_deref()
+                                            .map(tidy_shell_command)
+                                            .unwrap_or_else(|| tool.input_preview.clone());
+                                        let (exit_code, _remainder) =
+                                            split_exec_command_exit_code(&result.output_preview);
+                                        (command, exit_code)
+                                    } else {
+                                        (tool.input_preview.clone(), None)
+                                    };
 
                                     let summary = div()
                                         .id((bubble_id.clone(), "summary"))
@@ -1126,11 +1237,6 @@ impl Render for SessionView {
                                         .flex_row()
                                         .items_center()
                                         .gap(theme.spacing.sm)
-                                        .px(theme.spacing.md)
-                                        .py(theme.spacing.sm)
-                                        .rounded_sm()
-                                        .bg(theme.colors.surface_elevated.opacity(0.3))
-                                        .hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.4)))
                                         .cursor_pointer()
                                         .focusable()
                                         .on_click(move |event, _window, cx| {
@@ -1147,94 +1253,11 @@ impl Render for SessionView {
                                                 .child(chevron),
                                         )
                                         .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_sm()
-                                                .text_color(theme.colors.foreground)
-                                                .truncate()
-                                                .child(summary_text),
-                                        );
-
-                                    let mut block = div()
-                                        .id(bubble_id.clone())
-                                        .w_full()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(theme.spacing.xs)
-                                        .child(summary);
-
-                                    if expanded {
-                                        let mut details = div()
-                                            .id((bubble_id.clone(), "details"))
-                                            .px(theme.spacing.md)
-                                            .py(theme.spacing.sm)
-                                            .rounded_sm()
-                                            .bg(theme.colors.surface_elevated.opacity(0.18))
-                                            .flex()
-                                            .flex_col()
-                                            .gap(theme.spacing.xs);
-
-                                        if let Some(call_id) = tool.tool_call_id.as_ref() {
-                                            details = details.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child(format!("call id: {call_id}")),
-                                            );
-                                        }
-
-                                        details = details.child(
                                             div()
                                                 .font(theme.typography.mono.font.clone())
                                                 .text_size(theme.typography.mono.size)
-                                                .text_color(theme.colors.foreground)
-                                                .child(tool.input_preview.clone()),
-                                        );
-
-                                        block = block.child(details);
-                                    }
-
-                                    list.child(block)
-                                }
-                                redesmyn_session_view_model::SessionEventItemContent::ToolResult(
-                                    tool,
-                                ) => {
-                                    let expanded = expanded_tool_events.contains(&item.session_event_id);
-                                    let chevron = if expanded { "▾" } else { "▸" };
-                                    let toggle_view = timeline_view.clone();
-                                    let session_event_id = item.session_event_id;
-
-                                    let summary_text =
-                                        format!("{} — {}", tool.tool_name, tool.output_preview);
-                                    let has_error = tool.error.is_some();
-
-                                    let summary = div()
-                                        .id((bubble_id.clone(), "summary"))
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(theme.spacing.sm)
-                                        .px(theme.spacing.md)
-                                        .py(theme.spacing.sm)
-                                        .rounded_sm()
-                                        .bg(theme.colors.surface_elevated.opacity(0.3))
-                                        .hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.4)))
-                                        .cursor_pointer()
-                                        .focusable()
-                                        .on_click(move |event, _window, cx| {
-                                            if event.standard_click() {
-                                                toggle_view.update(cx, |this, cx| {
-                                                    this.toggle_tool_event(session_event_id, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .text_xs()
                                                 .text_color(theme.colors.foreground_muted)
-                                                .child(chevron),
+                                                .child(tool.tool_name.clone()),
                                         )
                                         .child(
                                             div()
@@ -1243,14 +1266,19 @@ impl Render for SessionView {
                                                 .text_sm()
                                                 .text_color(theme.colors.foreground)
                                                 .truncate()
-                                                .child(summary_text),
+                                                .child(summary_main),
                                         )
-                                        .when(has_error, |this| {
+                                        .when_some(exit_code, |this, exit_code| {
+                                            let color = if exit_code == 0 {
+                                                theme.colors.foreground_muted
+                                            } else {
+                                                theme.colors.danger
+                                            };
                                             this.child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(theme.colors.danger)
-                                                    .child("error"),
+                                                    .text_color(color)
+                                                    .child(format!("exit {exit_code}")),
                                             )
                                         });
 
@@ -1261,15 +1289,14 @@ impl Render for SessionView {
                                         .flex()
                                         .flex_col()
                                         .gap(theme.spacing.xs)
+                                        .px(theme.spacing.sm)
+                                        .py(theme.spacing.xs)
                                         .child(summary);
 
                                     if expanded {
                                         let mut details = div()
                                             .id((bubble_id.clone(), "details"))
-                                            .px(theme.spacing.md)
-                                            .py(theme.spacing.sm)
-                                            .rounded_sm()
-                                            .bg(theme.colors.surface_elevated.opacity(0.18))
+                                            .pl(theme.spacing.lg)
                                             .flex()
                                             .flex_col()
                                             .gap(theme.spacing.xs);
@@ -1283,27 +1310,187 @@ impl Render for SessionView {
                                             );
                                         }
 
-                                        if let Some(error) = tool.error.as_ref() {
+                                        if let Some((_result_id, result)) = exec_command_result {
+                                            let (command, cwd) =
+                                                parse_exec_command_input_preview(&tool.input_preview);
+                                            if let Some(cwd) = cwd.as_deref() {
+                                                details = details.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child(format!("cwd: {cwd}")),
+                                                );
+                                            }
+
+                                            let command = command
+                                                .as_deref()
+                                                .map(tidy_shell_command)
+                                                .unwrap_or_else(|| tool.input_preview.clone());
                                             details = details.child(
                                                 div()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.danger)
-                                                    .child(error.message.clone()),
+                                                    .font(theme.typography.mono.font.clone())
+                                                    .text_size(theme.typography.mono.size)
+                                                    .text_color(theme.colors.foreground)
+                                                    .child(command),
+                                            );
+
+                                            let (exit_code, remainder) =
+                                                split_exec_command_exit_code(&result.output_preview);
+                                            if let Some(exit_code) = exit_code {
+                                                let color = if exit_code == 0 {
+                                                    theme.colors.foreground_muted
+                                                } else {
+                                                    theme.colors.danger
+                                                };
+                                                details = details.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(color)
+                                                        .child(format!("exit {exit_code}")),
+                                                );
+                                            }
+
+                                            if let Some(error) = result.error.as_ref() {
+                                                details = details.child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(theme.colors.danger)
+                                                        .child(error.message.clone()),
+                                                );
+                                            }
+
+                                            if !remainder.is_empty() {
+                                                details = details.child(
+                                                    div()
+                                                        .font(theme.typography.mono.font.clone())
+                                                        .text_size(theme.typography.mono.size)
+                                                        .text_color(theme.colors.foreground)
+                                                        .child(remainder.to_string()),
+                                                );
+                                            }
+                                        } else {
+                                            details = details.child(
+                                                div()
+                                                    .font(theme.typography.mono.font.clone())
+                                                    .text_size(theme.typography.mono.size)
+                                                    .text_color(theme.colors.foreground)
+                                                    .child(tool.input_preview.clone()),
                                             );
                                         }
-
-                                        details = details.child(
-                                            div()
-                                                .font(theme.typography.mono.font.clone())
-                                                .text_size(theme.typography.mono.size)
-                                                .text_color(theme.colors.foreground)
-                                                .child(tool.output_preview.clone()),
-                                        );
 
                                         block = block.child(details);
                                     }
 
                                     list.child(block)
+                                }
+                                SessionEventItemContent::ToolResult(tool) => {
+                                    if grouped_exec_command_result_ids.contains(&item.session_event_id) {
+                                        div()
+                                    } else {
+                                        let expanded =
+                                            expanded_tool_events.contains(&item.session_event_id);
+                                        let chevron = if expanded { "▾" } else { "▸" };
+                                        let toggle_view = timeline_view.clone();
+                                        let session_event_id = item.session_event_id;
+
+                                        let has_error = tool.error.is_some();
+
+                                        let summary = div()
+                                            .id((bubble_id.clone(), "summary"))
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.sm)
+                                            .cursor_pointer()
+                                            .focusable()
+                                            .on_click(move |event, _window, cx| {
+                                                if event.standard_click() {
+                                                    toggle_view.update(cx, |this, cx| {
+                                                        this.toggle_tool_event(session_event_id, cx);
+                                                    });
+                                                }
+                                            })
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme.colors.foreground_muted)
+                                                    .child(chevron),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font(theme.typography.mono.font.clone())
+                                                    .text_size(theme.typography.mono.size)
+                                                    .text_color(theme.colors.foreground_muted)
+                                                    .child(tool.tool_name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_sm()
+                                                    .text_color(theme.colors.foreground)
+                                                    .truncate()
+                                                    .child(tool.output_preview.clone()),
+                                            )
+                                            .when(has_error, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.danger)
+                                                        .child("error"),
+                                                )
+                                            });
+
+                                        let mut block = div()
+                                            .id(bubble_id.clone())
+                                            .w_full()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs)
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.xs)
+                                            .child(summary);
+
+                                        if expanded {
+                                            let mut details = div()
+                                                .id((bubble_id.clone(), "details"))
+                                                .pl(theme.spacing.lg)
+                                                .flex()
+                                                .flex_col()
+                                                .gap(theme.spacing.xs);
+
+                                            if let Some(call_id) = tool.tool_call_id.as_ref() {
+                                                details = details.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child(format!("call id: {call_id}")),
+                                                );
+                                            }
+
+                                            if let Some(error) = tool.error.as_ref() {
+                                                details = details.child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(theme.colors.danger)
+                                                        .child(error.message.clone()),
+                                                );
+                                            }
+
+                                            details = details.child(
+                                                div()
+                                                    .font(theme.typography.mono.font.clone())
+                                                    .text_size(theme.typography.mono.size)
+                                                    .text_color(theme.colors.foreground)
+                                                    .child(tool.output_preview.clone()),
+                                            );
+
+                                            block = block.child(details);
+                                        }
+
+                                        list.child(block)
+                                    }
                                 }
                                 redesmyn_session_view_model::SessionEventItemContent::ArtifactEmitted(
                                     artifact,
