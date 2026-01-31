@@ -2760,34 +2760,57 @@ impl Render for EpicSessionPaneHost {
         let can_act_on_epic = self.selected_epic.is_some() && !self.load.in_flight;
         let has_pinned = self.pinned_session_id.is_some();
 
-        let create_button = IconButton::new(("chat_create", cx.entity_id()), div().child("+"))
-            .tooltip("Create chat")
-            .disabled(!can_act_on_epic || self.create_and_pin.in_flight)
-            .disabled_reason("Loading…")
-            .on_click({
-                let view = view.clone();
-                move |_, _, cx| view.update(cx, |this, cx| this.create_and_pin_chat(cx))
-            });
+        let create_button = IconButton::new(
+            ("chat_create", cx.entity_id()),
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .child("+"),
+        )
+        .tooltip("Create chat")
+        .disabled(!can_act_on_epic || self.create_and_pin.in_flight)
+        .disabled_reason("Loading…")
+        .on_click({
+            let view = view.clone();
+            move |_, _, cx| view.update(cx, |this, cx| this.create_and_pin_chat(cx))
+        });
 
-        let pin_existing_button =
-            IconButton::new(("chat_pin_existing", cx.entity_id()), div().child("☰"))
-                .tooltip("Pin existing chat…")
-                .disabled(!can_act_on_epic || self.pin_existing.in_flight)
-                .disabled_reason("Loading…")
-                .on_click({
-                    let view = view.clone();
-                    move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
-                });
+        let pin_existing_button = IconButton::new(
+            ("chat_pin_existing", cx.entity_id()),
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .child("☰"),
+        )
+        .tooltip("Pin existing chat…")
+        .disabled(!can_act_on_epic || self.pin_existing.in_flight)
+        .disabled_reason("Loading…")
+        .on_click({
+            let view = view.clone();
+            move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
+        });
 
-        let pinned_button = IconButton::new(("chat_unpin", cx.entity_id()), div().child("★"))
-            .tooltip("Unpin chat")
-            .active(true)
-            .disabled(!can_act_on_epic || !has_pinned || self.unpin.in_flight)
-            .disabled_reason("No pinned chat")
-            .on_click({
-                let view = view.clone();
-                move |_, _, cx| view.update(cx, |this, cx| this.unpin_chat(cx))
-            });
+        let pinned_button = IconButton::new(
+            ("chat_unpin", cx.entity_id()),
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .child("★"),
+        )
+        .tooltip("Unpin chat")
+        .active(true)
+        .disabled(!can_act_on_epic || !has_pinned || self.unpin.in_flight)
+        .disabled_reason("No pinned chat")
+        .on_click({
+            let view = view.clone();
+            move |_, _, cx| view.update(cx, |this, cx| this.unpin_chat(cx))
+        });
 
         header_actions = header_actions
             .child(create_button)
@@ -2808,8 +2831,9 @@ impl Render for EpicSessionPaneHost {
         }
 
         let header = div()
-            .h(px(44.0))
+            .min_h(px(44.0))
             .px(theme.spacing.md)
+            .py(theme.spacing.sm)
             .flex()
             .items_center()
             .justify_between()

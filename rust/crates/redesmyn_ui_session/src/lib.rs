@@ -1211,25 +1211,29 @@ impl Render for SessionView {
                                     let toggle_view = timeline_view.clone();
                                     let session_event_id = item.session_event_id;
 
-                                    let exec_command_result = (tool.tool_name == "exec_command")
+                                    let is_exec_command = tool.tool_name == "exec_command";
+                                    let exec_command_result = is_exec_command
                                         .then(|| exec_command_results.get(&session_event_id))
                                         .flatten();
 
-                                    let (summary_main, exit_code) = if let Some((_result_id, result)) =
-                                        exec_command_result
-                                    {
-                                        let (command, _cwd) =
-                                            parse_exec_command_input_preview(&tool.input_preview);
-                                        let command = command
+                                    let (exec_command, exec_cwd) = if is_exec_command {
+                                        parse_exec_command_input_preview(&tool.input_preview)
+                                    } else {
+                                        (None, None)
+                                    };
+
+                                    let summary_main = if is_exec_command {
+                                        exec_command
                                             .as_deref()
                                             .map(tidy_shell_command)
-                                            .unwrap_or_else(|| tool.input_preview.clone());
-                                        let (exit_code, _remainder) =
-                                            split_exec_command_exit_code(&result.output_preview);
-                                        (command, exit_code)
+                                            .unwrap_or_else(|| tool.input_preview.clone())
                                     } else {
-                                        (tool.input_preview.clone(), None)
+                                        tool.input_preview.clone()
                                     };
+
+                                    let exit_code = exec_command_result.and_then(|(_id, result)| {
+                                        split_exec_command_exit_code(&result.output_preview).0
+                                    });
 
                                     let summary = div()
                                         .id((bubble_id.clone(), "summary"))
@@ -1237,6 +1241,8 @@ impl Render for SessionView {
                                         .flex_row()
                                         .items_center()
                                         .gap(theme.spacing.sm)
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
                                         .cursor_pointer()
                                         .focusable()
                                         .on_click(move |event, _window, cx| {
@@ -1248,14 +1254,11 @@ impl Render for SessionView {
                                         })
                                         .child(
                                             div()
-                                                .text_xs()
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(chevron),
                                         )
                                         .child(
                                             div()
-                                                .font(theme.typography.mono.font.clone())
-                                                .text_size(theme.typography.mono.size)
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(tool.tool_name.clone()),
                                         )
@@ -1263,7 +1266,6 @@ impl Render for SessionView {
                                             div()
                                                 .flex_1()
                                                 .min_w_0()
-                                                .text_sm()
                                                 .text_color(theme.colors.foreground)
                                                 .truncate()
                                                 .child(summary_main),
@@ -1276,7 +1278,6 @@ impl Render for SessionView {
                                             };
                                             this.child(
                                                 div()
-                                                    .text_xs()
                                                     .text_color(color)
                                                     .child(format!("exit {exit_code}")),
                                             )
@@ -1299,80 +1300,74 @@ impl Render for SessionView {
                                             .pl(theme.spacing.lg)
                                             .flex()
                                             .flex_col()
-                                            .gap(theme.spacing.xs);
+                                            .gap(theme.spacing.xs)
+                                            .font(theme.typography.mono.font.clone())
+                                            .text_size(theme.typography.caption.size);
 
                                         if let Some(call_id) = tool.tool_call_id.as_ref() {
                                             details = details.child(
                                                 div()
-                                                    .text_xs()
                                                     .text_color(theme.colors.foreground_muted)
                                                     .child(format!("call id: {call_id}")),
                                             );
                                         }
 
-                                        if let Some((_result_id, result)) = exec_command_result {
-                                            let (command, cwd) =
-                                                parse_exec_command_input_preview(&tool.input_preview);
-                                            if let Some(cwd) = cwd.as_deref() {
+                                        if is_exec_command {
+                                            if let Some(cwd) = exec_cwd.as_deref() {
                                                 details = details.child(
                                                     div()
-                                                        .text_xs()
                                                         .text_color(theme.colors.foreground_muted)
                                                         .child(format!("cwd: {cwd}")),
                                                 );
                                             }
 
-                                            let command = command
-                                                .as_deref()
-                                                .map(tidy_shell_command)
-                                                .unwrap_or_else(|| tool.input_preview.clone());
                                             details = details.child(
                                                 div()
-                                                    .font(theme.typography.mono.font.clone())
-                                                    .text_size(theme.typography.mono.size)
                                                     .text_color(theme.colors.foreground)
-                                                    .child(command),
+                                                    .child(
+                                                        exec_command
+                                                            .as_deref()
+                                                            .map(tidy_shell_command)
+                                                            .unwrap_or_else(|| tool.input_preview.clone()),
+                                                    ),
                                             );
 
-                                            let (exit_code, remainder) =
-                                                split_exec_command_exit_code(&result.output_preview);
-                                            if let Some(exit_code) = exit_code {
-                                                let color = if exit_code == 0 {
-                                                    theme.colors.foreground_muted
-                                                } else {
-                                                    theme.colors.danger
-                                                };
-                                                details = details.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(color)
-                                                        .child(format!("exit {exit_code}")),
+                                            if let Some((_result_id, result)) = exec_command_result {
+                                                let (exit_code, remainder) = split_exec_command_exit_code(
+                                                    &result.output_preview,
                                                 );
-                                            }
+                                                if let Some(exit_code) = exit_code {
+                                                    let color = if exit_code == 0 {
+                                                        theme.colors.foreground_muted
+                                                    } else {
+                                                        theme.colors.danger
+                                                    };
+                                                    details = details.child(
+                                                        div()
+                                                            .text_color(color)
+                                                            .child(format!("exit {exit_code}")),
+                                                    );
+                                                }
 
-                                            if let Some(error) = result.error.as_ref() {
-                                                details = details.child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(theme.colors.danger)
-                                                        .child(error.message.clone()),
-                                                );
-                                            }
+                                                if let Some(error) = result.error.as_ref() {
+                                                    details = details.child(
+                                                        div()
+                                                            .text_color(theme.colors.danger)
+                                                            .child(error.message.clone()),
+                                                    );
+                                                }
 
-                                            if !remainder.is_empty() {
-                                                details = details.child(
-                                                    div()
-                                                        .font(theme.typography.mono.font.clone())
-                                                        .text_size(theme.typography.mono.size)
-                                                        .text_color(theme.colors.foreground)
-                                                        .child(remainder.to_string()),
-                                                );
+                                                if !remainder.is_empty() {
+                                                    details = details.child(
+                                                        div()
+                                                            .text_color(theme.colors.foreground)
+                                                            .child(remainder.to_string()),
+                                                    );
+                                                }
                                             }
                                         } else {
                                             details = details.child(
                                                 div()
-                                                    .font(theme.typography.mono.font.clone())
-                                                    .text_size(theme.typography.mono.size)
                                                     .text_color(theme.colors.foreground)
                                                     .child(tool.input_preview.clone()),
                                             );
@@ -1401,6 +1396,8 @@ impl Render for SessionView {
                                             .flex_row()
                                             .items_center()
                                             .gap(theme.spacing.sm)
+                                            .font(theme.typography.mono.font.clone())
+                                            .text_size(theme.typography.caption.size)
                                             .cursor_pointer()
                                             .focusable()
                                             .on_click(move |event, _window, cx| {
@@ -1412,14 +1409,11 @@ impl Render for SessionView {
                                             })
                                             .child(
                                                 div()
-                                                    .text_xs()
                                                     .text_color(theme.colors.foreground_muted)
                                                     .child(chevron),
                                             )
                                             .child(
                                                 div()
-                                                    .font(theme.typography.mono.font.clone())
-                                                    .text_size(theme.typography.mono.size)
                                                     .text_color(theme.colors.foreground_muted)
                                                     .child(tool.tool_name.clone()),
                                             )
@@ -1427,7 +1421,6 @@ impl Render for SessionView {
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .text_sm()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(tool.output_preview.clone()),
@@ -1458,12 +1451,13 @@ impl Render for SessionView {
                                                 .pl(theme.spacing.lg)
                                                 .flex()
                                                 .flex_col()
-                                                .gap(theme.spacing.xs);
+                                                .gap(theme.spacing.xs)
+                                                .font(theme.typography.mono.font.clone())
+                                                .text_size(theme.typography.caption.size);
 
                                             if let Some(call_id) = tool.tool_call_id.as_ref() {
                                                 details = details.child(
                                                     div()
-                                                        .text_xs()
                                                         .text_color(theme.colors.foreground_muted)
                                                         .child(format!("call id: {call_id}")),
                                                 );
@@ -1472,7 +1466,6 @@ impl Render for SessionView {
                                             if let Some(error) = tool.error.as_ref() {
                                                 details = details.child(
                                                     div()
-                                                        .text_sm()
                                                         .text_color(theme.colors.danger)
                                                         .child(error.message.clone()),
                                                 );
@@ -1480,8 +1473,6 @@ impl Render for SessionView {
 
                                             details = details.child(
                                                 div()
-                                                    .font(theme.typography.mono.font.clone())
-                                                    .text_size(theme.typography.mono.size)
                                                     .text_color(theme.colors.foreground)
                                                     .child(tool.output_preview.clone()),
                                             );
