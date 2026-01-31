@@ -246,13 +246,21 @@ impl EditHistory {
     ) {
         self.redo.clear();
 
-        let can_group = kind == EditKind::TypingInsert
+        let can_group_typed_inserts = kind == EditKind::TypingInsert
             && self
                 .last_edit
                 .as_ref()
                 .is_some_and(|last| last.kind == EditKind::TypingInsert
                     && now.duration_since(last.at) <= TYPING_GROUP_TIMEOUT
                     && last.cursor_after == insertion_point);
+
+        let can_group_ime = before.marked_range.is_some()
+            && self
+                .last_edit
+                .as_ref()
+                .is_some_and(|last| last.kind == EditKind::Ime);
+
+        let can_group = can_group_typed_inserts || can_group_ime;
 
         if !can_group {
             if self.undo.len() >= EDIT_HISTORY_LIMIT {
@@ -2915,6 +2923,28 @@ mod tests {
             self.marked_range = None;
         }
 
+        fn apply_marked_edit(&mut self, replacement_range: Range<usize>, new_text: &str, now: Instant) {
+            let before = self.snapshot();
+            let insertion_point = replacement_range.start;
+            let cursor_after = replacement_range.start + new_text.len();
+            self.history.record_undo_step_at(
+                now,
+                before,
+                EditKind::Ime,
+                insertion_point,
+                cursor_after,
+            );
+
+            let mut content = self.content.to_string();
+            content.replace_range(replacement_range.clone(), new_text);
+            self.content = content.into();
+
+            self.marked_range = (!new_text.is_empty())
+                .then(|| replacement_range.start..replacement_range.start + new_text.len());
+            self.selected_range = cursor_after..cursor_after;
+            self.selection_reversed = false;
+        }
+
         fn undo(&mut self) {
             let current = self.snapshot();
             if let Some(prev) = self.history.undo(current) {
@@ -3090,6 +3120,22 @@ mod tests {
         assert_eq!(editor.content.as_ref(), "hello");
         editor.redo();
         assert_eq!(editor.content.as_ref(), "hey");
+    }
+
+    #[test]
+    fn undo_redo_groups_ime_composition() {
+        let mut editor = TestEditor::new("");
+        let t0 = Instant::now();
+
+        editor.apply_marked_edit(0..0, "h", t0);
+        editor.apply_marked_edit(0..1, "hi", t0 + Duration::from_millis(50));
+        editor.apply_edit(0..2, "hi", None, t0 + Duration::from_millis(100));
+
+        assert_eq!(editor.content.as_ref(), "hi");
+        assert_eq!(editor.history.undo.len(), 1);
+
+        editor.undo();
+        assert_eq!(editor.content.as_ref(), "");
     }
 
     #[test]
