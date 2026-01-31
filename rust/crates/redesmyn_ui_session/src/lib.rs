@@ -11,7 +11,8 @@ use std::time::Instant;
 
 use gpui::{
     App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
-    ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, div, list, px,
+    ListOffset, ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, div, list,
+    px,
 };
 
 use gpui::prelude::*;
@@ -34,13 +35,14 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, TextArea, TextButton, TextInput,
     TextInputEvent,
 };
+use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::theme_for_window;
 
 use serde_json::Value as JsonValue;
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
-    u64::from_be_bytes(bytes[0..8].try_into().expect("slice length"))
+    u64::from_be_bytes(bytes[8..16].try_into().expect("slice length"))
 }
 
 const CONFLICT_CODE_KEY: &str = "conflict_code";
@@ -50,21 +52,89 @@ const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
 // conflicting session isn't structured). Consider renaming if we need semantic precision.
 const CONFLICT_CODE_TASK_SESSION_CONFLICT: &str = "structured_session_conflict";
 
+fn extract_json_string_field(preview: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let start = preview.find(&needle)?;
+    let mut i = start + needle.len();
+
+    let bytes = preview.as_bytes();
+    while i < bytes.len() && bytes[i] != b':' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    i += 1;
+
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'"' {
+        return None;
+    }
+    i += 1;
+
+    let mut out = String::new();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => return Some(out),
+            b'\\' => {
+                i += 1;
+                if i >= bytes.len() {
+                    break;
+                }
+                match bytes[i] {
+                    b'"' => out.push('"'),
+                    b'\\' => out.push('\\'),
+                    b'n' => out.push('\n'),
+                    b'r' => out.push('\r'),
+                    b't' => out.push('\t'),
+                    b'u' => {
+                        if i + 4 < bytes.len() {
+                            let hex = &preview[i + 1..i + 5];
+                            if let Ok(value) = u16::from_str_radix(hex, 16)
+                                && let Some(ch) = char::from_u32(value.into())
+                            {
+                                out.push(ch);
+                                i += 4;
+                            }
+                        }
+                    }
+                    other => out.push(other as char),
+                }
+            }
+            other => out.push(other as char),
+        }
+        i += 1;
+    }
+
+    if out.is_empty() { None } else { Some(out) }
+}
+
 fn parse_exec_command_input_preview(preview: &str) -> (Option<String>, Option<String>) {
-    let Ok(json) = serde_json::from_str::<JsonValue>(preview.trim()) else {
-        return (None, None);
-    };
+    let trimmed = preview.trim();
+    let candidate = trimmed
+        .find('{')
+        .map(|start| &trimmed[start..])
+        .unwrap_or(trimmed);
 
-    let command = json
-        .get("command")
-        .and_then(JsonValue::as_str)
-        .map(ToOwned::to_owned);
-    let cwd = json
-        .get("cwd")
-        .and_then(JsonValue::as_str)
-        .map(ToOwned::to_owned);
+    if let Ok(json) = serde_json::from_str::<JsonValue>(candidate) {
+        let command = json
+            .get("command")
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned);
+        let cwd = json
+            .get("cwd")
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned);
 
-    (command, cwd)
+        return (command, cwd);
+    }
+
+    (
+        extract_json_string_field(candidate, "command"),
+        extract_json_string_field(candidate, "cwd"),
+    )
 }
 
 fn tidy_shell_command(command: &str) -> String {
@@ -248,7 +318,8 @@ pub struct SessionView {
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
-    timeline_needs_refresh: bool,
+    timeline_list_reset_scheduled: bool,
+    timeline_autoload_scheduled: bool,
     show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
@@ -332,7 +403,8 @@ impl SessionView {
             timeline_items: Rc::new(Vec::new()),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
-            timeline_needs_refresh: false,
+            timeline_list_reset_scheduled: false,
+            timeline_autoload_scheduled: false,
             show_debug_controls,
             session_id_input,
             composer_input,
@@ -374,7 +446,8 @@ impl SessionView {
             self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
             self.markdown_cache.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
-            self.timeline_needs_refresh = false;
+            self.timeline_list_reset_scheduled = false;
+            self.timeline_autoload_scheduled = false;
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
@@ -707,6 +780,10 @@ impl SessionView {
             return;
         };
 
+        if self.timeline_autoload_scheduled {
+            return;
+        }
+
         if feed.history.loading_older || feed.history.next_cursor.is_none() {
             return;
         }
@@ -716,7 +793,20 @@ impl SessionView {
             return;
         }
 
-        self.start_loading_older(cx);
+        self.timeline_autoload_scheduled = true;
+        let view = cx.entity();
+        cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.timeline_autoload_scheduled = false;
+                        this.start_loading_older(cx);
+                    })
+                });
+            }
+        })
+        .detach();
     }
 
     fn start_loading_older(&mut self, cx: &mut Context<Self>) {
@@ -789,6 +879,50 @@ impl SessionView {
             Err(err) => {
                 feed.apply_history_error(err.message);
             }
+        }
+
+        cx.notify();
+    }
+
+    fn schedule_list_reset(&mut self, scroll_top: ListOffset, cx: &mut Context<Self>) {
+        if self.timeline_list_reset_scheduled {
+            return;
+        }
+
+        self.timeline_list_reset_scheduled = true;
+        let view = cx.entity();
+        cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.timeline_list_reset_scheduled = false;
+                        this.timeline_list_state.reset(this.timeline_items.len());
+                        this.timeline_list_state.scroll_to(scroll_top);
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn on_timeline_scrolled(
+        &mut self,
+        visible_range_end: usize,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        let was_at_bottom = feed.scroll.at_bottom;
+        let at_bottom = visible_range_end >= count;
+        feed.set_at_bottom(at_bottom);
+
+        if feed.scroll.at_bottom != was_at_bottom {
+            self.refresh_timeline_items();
         }
 
         cx.notify();
@@ -921,27 +1055,23 @@ impl Render for SessionView {
             let view = view.clone();
             self.timeline_list_state
                 .set_scroll_handler(move |event, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        let Some(feed) = this.feed.as_mut() else {
-                            return;
-                        };
+                    let visible_end = event.visible_range.end;
+                    let count = event.count;
+                    let view = view.clone();
 
-                        let was_at_bottom = feed.scroll.at_bottom;
-                        let at_bottom = event.visible_range.end >= event.count;
-                        feed.set_at_bottom(at_bottom);
-
-                        if feed.scroll.at_bottom != was_at_bottom {
-                            this.timeline_needs_refresh = true;
+                    cx.spawn(move |cx: &mut AsyncApp| {
+                        let cx = cx.clone();
+                        async move {
+                            let _ = cx.update(|cx| {
+                                view.update(cx, |this, cx| {
+                                    this.on_timeline_scrolled(visible_end, count, cx);
+                                })
+                            });
                         }
-                        cx.notify();
-                    });
+                    })
+                    .detach();
                 });
             self.timeline_scroll_handler_installed = true;
-        }
-
-        if self.timeline_needs_refresh {
-            self.timeline_needs_refresh = false;
-            self.refresh_timeline_items();
         }
 
         if self.pending_focus_composer && self.feed.is_some() {
@@ -956,8 +1086,7 @@ impl Render for SessionView {
                 .is_some_and(|prev| prev != viewport_width)
             {
                 let scroll_top = self.timeline_list_state.logical_scroll_top();
-                self.timeline_list_state.reset(self.timeline_items.len());
-                self.timeline_list_state.scroll_to(scroll_top);
+                self.schedule_list_reset(scroll_top, cx);
             }
             self.timeline_viewport_width = Some(viewport_width);
         }
@@ -1098,20 +1227,31 @@ impl Render for SessionView {
                                 full_text_artifact,
                             } = msg;
 
-                            let (bg, align_right) = match role {
+                            let (bg, text_color, align_right) = match role {
                                 redesmyn_session_view_model::SessionMessageRole::User => {
-                                    (Some(theme.colors.surface_elevated), true)
+                                    let (bg, text_color) = match theme.mode {
+                                        ThemeMode::Dark => (
+                                            theme.colors.accent_foreground.opacity(0.9),
+                                            theme.colors.surface,
+                                        ),
+                                        ThemeMode::Light => (
+                                            theme.colors.accent.opacity(0.9),
+                                            theme.colors.foreground,
+                                        ),
+                                    };
+                                    (Some(bg), Some(text_color), true)
                                 }
                                 redesmyn_session_view_model::SessionMessageRole::Assistant => {
-                                    (None, false)
+                                    (None, None, false)
                                 }
                                 redesmyn_session_view_model::SessionMessageRole::Tool => {
-                                    (Some(theme.colors.surface_elevated.opacity(0.45)), false)
+                                    (Some(theme.colors.surface_elevated.opacity(0.45)), None, false)
                                 }
                             };
 
                             let show_truncation_notice = full_text_artifact.is_none();
-                            let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
+                            let cached =
+                                { markdown_cache.borrow().get(&session_event_id).cloned() };
                             let doc = cached.unwrap_or_else(|| {
                                 let doc = Arc::new(parse_markdown(
                                     text.as_str(),
@@ -1123,23 +1263,39 @@ impl Render for SessionView {
                                 doc
                             });
 
+                            let bubble_max_width = if align_right {
+                                viewport_width * 0.8
+                            } else {
+                                px(560.0)
+                            };
+                            let bubble_padding_x = if align_right {
+                                theme.spacing.md
+                            } else {
+                                theme.spacing.sm
+                            };
+
                             let mut bubble = div()
                                 .id(bubble_id.clone())
                                 .flex()
                                 .flex_col()
                                 .gap(theme.spacing.sm)
                                 .w_full()
-                                .max_w(px(560.0))
+                                .max_w(bubble_max_width)
                                 .min_w_0()
-                                .px(theme.spacing.md)
-                                .py(theme.spacing.md)
+                                .px(bubble_padding_x)
+                                .py(theme.spacing.sm)
                                 .rounded_md()
                                 .when_some(bg, |this, bg| this.bg(bg))
-                                .child(
-                                    MarkdownView::new((bubble_id.clone(), "markdown"), doc)
-                                        .show_truncation_notice(show_truncation_notice)
-                                        .into_any_element(),
-                                );
+                                .child({
+                                    let mut view =
+                                        MarkdownView::new((bubble_id.clone(), "markdown"), doc)
+                                            .show_truncation_notice(show_truncation_notice)
+                                            .text_size(theme.typography.caption.size);
+                                    if let Some(text_color) = text_color {
+                                        view = view.text_color(text_color);
+                                    }
+                                    view.into_any_element()
+                                });
 
                             if let Some(artifact) = full_text_artifact {
                                 let artifact_id = artifact.artifact_id.to_string();
@@ -1198,6 +1354,7 @@ impl Render for SessionView {
                             } else {
                                 row = row.justify_start();
                             }
+                            row = row.pb(theme.spacing.xs);
 
                             list.child(row.child(bubble))
                         }
@@ -1254,11 +1411,15 @@ impl Render for SessionView {
                                         })
                                         .child(
                                             div()
+                                                .flex_shrink_0()
+                                                .whitespace_nowrap()
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(chevron),
                                         )
                                         .child(
                                             div()
+                                                .flex_shrink_0()
+                                                .whitespace_nowrap()
                                                 .text_color(theme.colors.foreground_muted)
                                                 .child(tool.tool_name.clone()),
                                         )
@@ -1278,6 +1439,8 @@ impl Render for SessionView {
                                             };
                                             this.child(
                                                 div()
+                                                    .flex_shrink_0()
+                                                    .whitespace_nowrap()
                                                     .text_color(color)
                                                     .child(format!("exit {exit_code}")),
                                             )
@@ -1304,14 +1467,6 @@ impl Render for SessionView {
                                             .font(theme.typography.mono.font.clone())
                                             .text_size(theme.typography.caption.size);
 
-                                        if let Some(call_id) = tool.tool_call_id.as_ref() {
-                                            details = details.child(
-                                                div()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child(format!("call id: {call_id}")),
-                                            );
-                                        }
-
                                         if is_exec_command {
                                             if let Some(cwd) = exec_cwd.as_deref() {
                                                 details = details.child(
@@ -1336,10 +1491,10 @@ impl Render for SessionView {
                                                 let (exit_code, remainder) = split_exec_command_exit_code(
                                                     &result.output_preview,
                                                 );
-                                                if let Some(exit_code) = exit_code {
-                                                    let color = if exit_code == 0 {
-                                                        theme.colors.foreground_muted
-                                                    } else {
+                                            if let Some(exit_code) = exit_code {
+                                                let color = if exit_code == 0 {
+                                                    theme.colors.foreground_muted
+                                                } else {
                                                         theme.colors.danger
                                                     };
                                                     details = details.child(
@@ -1409,11 +1564,15 @@ impl Render for SessionView {
                                             })
                                             .child(
                                                 div()
+                                                    .flex_shrink_0()
+                                                    .whitespace_nowrap()
                                                     .text_color(theme.colors.foreground_muted)
                                                     .child(chevron),
                                             )
                                             .child(
                                                 div()
+                                                    .flex_shrink_0()
+                                                    .whitespace_nowrap()
                                                     .text_color(theme.colors.foreground_muted)
                                                     .child(tool.tool_name.clone()),
                                             )
@@ -1454,14 +1613,6 @@ impl Render for SessionView {
                                                 .gap(theme.spacing.xs)
                                                 .font(theme.typography.mono.font.clone())
                                                 .text_size(theme.typography.caption.size);
-
-                                            if let Some(call_id) = tool.tool_call_id.as_ref() {
-                                                details = details.child(
-                                                    div()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .child(format!("call id: {call_id}")),
-                                                );
-                                            }
 
                                             if let Some(error) = tool.error.as_ref() {
                                                 details = details.child(
@@ -1525,10 +1676,6 @@ impl Render for SessionView {
                 .flex_col()
                 .flex_1()
                 .min_h(px(0.0))
-                .border_1()
-                .border_color(theme.colors.border.opacity(0.4))
-                .rounded_md()
-                .bg(theme.colors.surface)
                 .child(feed_list),
         );
 

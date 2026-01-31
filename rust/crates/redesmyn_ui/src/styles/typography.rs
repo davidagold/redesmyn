@@ -18,6 +18,7 @@ impl Default for TypographyTokens {
         let system_ui = font(".SystemUIFont");
 
         let mono_fallbacks = FontFallbacks::from_fonts(vec![
+            "Berkeley Mono".into(),
             "SF Mono".into(),
             "Menlo".into(),
             "Monaco".into(),
@@ -25,7 +26,7 @@ impl Default for TypographyTokens {
             "DejaVu Sans Mono".into(),
         ]);
         let mono_font = {
-            let mut font = font("SF Mono");
+            let mut font = font("Berkeley Mono");
             font.weight = FontWeight::MEDIUM;
             font.fallbacks = Some(mono_fallbacks);
             font

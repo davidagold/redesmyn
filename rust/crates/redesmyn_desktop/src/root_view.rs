@@ -2722,18 +2722,13 @@ impl Render for EpicSessionPaneHost {
 
         let header_title = match self.selected_epic.as_ref() {
             None => "Chat".to_string(),
-            Some(_) => self
-                .pinned_chat_summary()
-                .and_then(|summary| summary.title.clone())
-                .or_else(|| self.pinned_session_id.map(|id| id.to_string()))
-                .unwrap_or_else(|| "Pinned chat".to_string()),
-        };
-
-        let header_subtitle = match self.selected_epic.as_ref() {
-            None => Some("Select an epic".to_string()),
             Some(epic) => match self.pinned_session_id {
-                None => Some(epic.slug.clone()),
-                Some(_) => None,
+                None => epic.slug.clone(),
+                Some(_) => self
+                    .pinned_chat_summary()
+                    .and_then(|summary| summary.title.clone())
+                    .or_else(|| self.pinned_session_id.map(|id| id.to_string()))
+                    .unwrap_or_else(|| "Pinned chat".to_string()),
             },
         };
 
@@ -2831,35 +2826,20 @@ impl Render for EpicSessionPaneHost {
         }
 
         let header = div()
-            .min_h(px(44.0))
+            .h(px(44.0))
             .px(theme.spacing.md)
-            .py(theme.spacing.sm)
             .flex()
             .items_center()
             .justify_between()
             .bg(theme.colors.surface_elevated)
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w_0()
-                    .gap(theme.spacing.xs)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground)
-                            .truncate()
-                            .child(header_title),
-                    )
-                    .when_some(header_subtitle, |this, subtitle| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.colors.foreground_muted)
-                                .truncate()
-                                .child(subtitle),
-                        )
-                    }),
+                div().flex().min_w_0().child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.foreground)
+                        .truncate()
+                        .child(header_title),
+                ),
             )
             .child(header_actions);
 
@@ -2893,9 +2873,8 @@ impl Render for EpicSessionPaneHost {
         match self.selected_epic.as_ref() {
             None => {
                 body = body.child(
-                    Callout::new("Select an epic to view or pin a chat session.")
-                        .kind(CalloutKind::Info)
-                        .title("Chat"),
+                    Callout::new("Choose an epic above to view or pin a chat session.")
+                        .kind(CalloutKind::Info),
                 );
             }
             Some(_) if self.load.in_flight => {
