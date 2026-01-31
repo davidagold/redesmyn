@@ -9,8 +9,8 @@ use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProce
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
     InterruptTaskAgentTurnCommand, ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand,
-    SESSION_AGENT_INTERRUPT_TURN, SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE,
-    SESSION_AGENT_START,
+    StartTaskAgentSessionCommand, TASK_AGENT_START, SESSION_AGENT_INTERRUPT_TURN,
+    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_START,
 };
 use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
 use redesmyn_protocol::daemon::{
@@ -101,6 +101,7 @@ async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFr
 
     match dispatch.command_kind.as_str() {
         SESSION_AGENT_START => handle_session_agent_start(router, &frames_tx, dispatch).await,
+        TASK_AGENT_START => handle_task_agent_start(router, &frames_tx, dispatch).await,
         SESSION_AGENT_RESUME_BY_ID_TURN => {
             handle_session_agent_resume_by_id_turn(router, &frames_tx, dispatch).await
         }
@@ -141,6 +142,40 @@ async fn handle_session_agent_start(
         }
     };
 
+    handle_agent_start(router, frames_tx, dispatch, cmd).await;
+}
+
+async fn handle_task_agent_start(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: StartTaskAgentSessionCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    let mapped = StartAgentSessionCommand {
+        session_id: cmd.session_id,
+        task_id: Some(cmd.task_id),
+        agent_kind: cmd.agent_kind,
+        interface_mode: cmd.interface_mode,
+        initial_prompt: cmd.initial_prompt,
+        stop_session_ids: cmd.stop_session_ids,
+    };
+
+    handle_agent_start(router, frames_tx, dispatch, mapped).await;
+}
+
+async fn handle_agent_start(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+    cmd: StartAgentSessionCommand,
+) {
     if cmd.agent_kind != AgentKind::Codex {
         reject_command(
             frames_tx,
@@ -173,13 +208,27 @@ async fn handle_session_agent_start(
         }
     }
 
-    if let Err(err) = send_command_update(frames_tx, &dispatch, CommandState::Accepted, Some("accepted".to_owned()), None, None, None).await {
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
     for stop_session_id in cmd.stop_session_ids {
         if let Err(err) = router.app_server.stop_session(stop_session_id).await {
-            tracing::debug!(session_id = %stop_session_id, error = %err, "failed to stop session");
+            tracing::debug!(
+                session_id = %stop_session_id,
+                error = %err,
+                "failed to stop session"
+            );
         }
     }
 
@@ -207,19 +256,39 @@ async fn handle_session_agent_start(
         .start_session(cmd.session_id, cmd.task_id, spec)
         .await
     {
-        fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
+        fail_command(
+            frames_tx,
+            dispatch,
+            ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+        )
+        .await;
         return;
     }
 
     if let Some(prompt) = cmd.initial_prompt {
         let intent = AppServerTurnIntent::StartNew { prompt };
         if let Err(err) = router.app_server.send_message(cmd.session_id, intent).await {
-            fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
             return;
         }
     }
 
-    if let Err(err) = send_command_update(frames_tx, &dispatch, CommandState::Succeeded, Some("dispatched".to_owned()), None, None, None).await {
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Succeeded,
+        Some("dispatched".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
         tracing::warn!(error = ?err, "failed to send succeeded command update");
     }
 }
