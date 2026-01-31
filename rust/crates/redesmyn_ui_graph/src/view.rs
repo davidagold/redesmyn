@@ -31,7 +31,7 @@ use crate::hit_test::{hit_test, GraphHit};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
 use redesmyn_protocol::client::{MergeReadiness, TaskState};
-use redesmyn_ui_session::{SessionView, SessionViewEvent};
+use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
 #[derive(Debug, Clone)]
 struct FpsOverlay {
@@ -1879,9 +1879,12 @@ impl Render for GraphView {
                         }
                     };
                     let start_agent_action = {
-                        let graph = graph.clone();
+                        let task_session_view = self.task_session_view.clone();
                         move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-                            graph.update(cx, |this, cx| this.start_demo_action(node_id, cx));
+                            let GraphNodeId::Task(task_id) = node_id else {
+                                return;
+                            };
+                            task_session_view.update(cx, |view, cx| view.start_agent_for_task(task_id, cx));
                         }
                     };
 
@@ -2003,13 +2006,20 @@ impl Render for GraphView {
                                                         let mut this = this;
 
                                                         if task_session_state.in_flight {
+                                                            let label = if task_session_state.operation
+                                                                == Some(TaskSessionOperation::StartAgent)
+                                                            {
+                                                                "Starting agent…"
+                                                            } else {
+                                                                "Loading latest session…"
+                                                            };
                                                             this = this.child(
                                                                 div()
                                                                     .text_sm()
                                                                     .text_color(
                                                                         theme.colors.foreground_muted,
                                                                     )
-                                                                    .child("Loading latest session…"),
+                                                                    .child(label),
                                                             );
                                                         } else if let Some(err) = task_session_state.error.clone() {
                                                             let refresh_button_id = (
@@ -2021,6 +2031,10 @@ impl Render for GraphView {
                                                             );
                                                             let task_session_view =
                                                                 self.task_session_view.clone();
+                                                            let is_start_agent_error = task_session_state.operation
+                                                                == Some(TaskSessionOperation::StartAgent);
+                                                            let action_label =
+                                                                if is_start_agent_error { "Start agent" } else { "Retry" };
 
                                                             this = this.child(
                                                                 Callout::new(err)
@@ -2029,16 +2043,28 @@ impl Render for GraphView {
                                                                     .action(
                                                                         TextButton::new(
                                                                             refresh_button_id,
-                                                                            "Retry",
+                                                                            action_label,
                                                                         )
                                                                         .kind(ButtonKind::Secondary)
                                                                         .on_click(move |_, _, cx| {
-                                                                            task_session_view.update(
-                                                                                cx,
-                                                                                |view, cx| {
-                                                                                    view.refresh_latest_task_session(cx)
-                                                                                },
-                                                                            );
+                                                                            if is_start_agent_error {
+                                                                                let GraphNodeId::Task(task_id) = node_id else {
+                                                                                    return;
+                                                                                };
+                                                                                task_session_view.update(
+                                                                                    cx,
+                                                                                    |view, cx| {
+                                                                                        view.start_agent_for_task(task_id, cx)
+                                                                                    },
+                                                                                );
+                                                                            } else {
+                                                                                task_session_view.update(
+                                                                                    cx,
+                                                                                    |view, cx| {
+                                                                                        view.refresh_latest_task_session(cx)
+                                                                                    },
+                                                                                );
+                                                                            }
                                                                         }),
                                                                     ),
                                                             );
