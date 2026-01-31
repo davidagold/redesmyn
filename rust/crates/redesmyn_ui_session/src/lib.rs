@@ -200,6 +200,7 @@ pub struct SessionView {
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
+    timeline_needs_refresh: bool,
     show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
@@ -281,6 +282,7 @@ impl SessionView {
             timeline_items: Rc::new(Vec::new()),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
+            timeline_needs_refresh: false,
             show_debug_controls,
             session_id_input,
             composer_input,
@@ -318,6 +320,7 @@ impl SessionView {
             self.expanded_tool_events.clear();
             self.markdown_cache.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
+            self.timeline_needs_refresh = false;
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
@@ -836,14 +839,17 @@ impl Render for SessionView {
                         feed.set_at_bottom(at_bottom);
 
                         if feed.scroll.at_bottom != was_at_bottom {
-                            this.refresh_timeline_items();
+                            this.timeline_needs_refresh = true;
                         }
-
-                        this.maybe_autoload_older(cx);
                         cx.notify();
                     });
                 });
             self.timeline_scroll_handler_installed = true;
+        }
+
+        if self.timeline_needs_refresh {
+            self.timeline_needs_refresh = false;
+            self.refresh_timeline_items();
         }
 
         if self.pending_focus_composer && self.feed.is_some() {
@@ -863,6 +869,10 @@ impl Render for SessionView {
             }
             self.timeline_viewport_width = Some(viewport_width);
         }
+
+        // Note: do not call `ListState` methods from within the scroll handler (it runs while the
+        // list state is mutably borrowed). We instead evaluate autoloading here during render.
+        self.maybe_autoload_older(cx);
 
         let mut content = div()
             .flex()
