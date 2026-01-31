@@ -10,7 +10,7 @@ rn:
     - T-62
 ---
 
-# T-64 Expanded task card: show latest task session (conversation) via SessionView (Domain 7)
+# T-64 Expanded task card: show latest task session via SessionView (Domain 7)
 
 ## Problem
 
@@ -32,7 +32,7 @@ In the GPUI port we want a more coherent session viewer:
 
 Integrate the reusable `SessionView` into the expanded task card (T-55) so users can:
 
-- see the latest task session’s conversation history (session == conversation),
+- see the latest task session’s history,
 - send messages with the same conflict semantics as v0,
 - and observe turn lifecycle/status updates.
 
@@ -82,11 +82,19 @@ At minimum:
 - focusing the expanded card allows tabbing to the composer,
 - hitting “Send” keeps focus predictable (return to input).
 
+### 6) Camera framing
+
+The graph view should guide focus to the expanded card:
+
+- When the user selects a task: animate pan/zoom so the expanded task card is centered and fills ~80% of the viewport.
+- When the user collapses the task card (clears selection): restore the zoom level that was active when the task was selected (no need to restore pan).
+
 ## Acceptance criteria
 
-- Selecting a task shows its latest session’s conversation (or empty state).
+- Selecting a task shows its latest session (or empty state).
 - User can send a message and immediately sees pending state and subsequent events.
 - Interactive sessions show a clear attach placeholder.
+- Selecting a task animates the camera to frame the expanded card; collapsing restores the previous zoom level.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
