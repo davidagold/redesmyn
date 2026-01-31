@@ -2,14 +2,16 @@
 
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui::{
     App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
-    Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window, div, px,
+    ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, div, list, px,
 };
 
 use gpui::prelude::*;
@@ -29,8 +31,8 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, ScrollArea, TextArea, TextButton,
-    TextInput, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, TextArea, TextButton, TextInput,
+    TextInputEvent,
 };
 use redesmyn_ui::utils::theme_for_window;
 
@@ -107,31 +109,34 @@ async fn send_session_message(
     }
 }
 
-fn update_scroll_state(feed: &mut SessionFeedState, scroll_handle: &ScrollHandle) {
-    let offset_y = scroll_handle.offset().y;
-    let max_y = scroll_handle.max_offset().height;
-    let threshold = px(24.0);
-    let effective = if max_y > threshold {
-        max_y - threshold
-    } else {
-        px(0.0)
-    };
-    let at_bottom = max_y == px(0.0) || offset_y <= -effective;
-    feed.set_at_bottom(at_bottom);
-}
-
-fn apply_scroll_intents(feed: &mut SessionFeedState, scroll_handle: &ScrollHandle) {
-    if feed.scroll.pending_scroll_to_bottom {
-        scroll_handle.scroll_to_bottom();
-        feed.clear_scroll_intents();
+fn sync_list_state(
+    list_state: &ListState,
+    old_items: &[SessionTimelineItem],
+    new_items: &[SessionTimelineItem],
+) {
+    if old_items == new_items {
+        return;
     }
-}
 
-#[derive(Clone, Copy)]
-struct ScrollRestore {
-    top_index: usize,
-    top_offset: gpui::Pixels,
-    top_event_id: Option<SessionEventId>,
+    let old_len = old_items.len();
+    let new_len = new_items.len();
+
+    let mut prefix = 0;
+    while prefix < old_len && prefix < new_len && old_items[prefix] == new_items[prefix] {
+        prefix += 1;
+    }
+
+    let mut suffix = 0;
+    while suffix < old_len.saturating_sub(prefix)
+        && suffix < new_len.saturating_sub(prefix)
+        && old_items[old_len - 1 - suffix] == new_items[new_len - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let old_range = prefix..old_len.saturating_sub(suffix);
+    let new_count = new_len.saturating_sub(prefix + suffix);
+    list_state.splice(old_range, new_count);
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -191,14 +196,17 @@ fn cache_markdown_for_events(
 
 pub struct SessionView {
     focus_handle: FocusHandle,
-    scroll_handle: ScrollHandle,
+    timeline_list_state: ListState,
+    timeline_items: Rc<Vec<SessionTimelineItem>>,
+    timeline_scroll_handler_installed: bool,
+    timeline_viewport_width: Option<gpui::Pixels>,
     show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     expanded_tool_events: HashSet<SessionEventId>,
-    markdown_cache: HashMap<SessionEventId, Arc<MarkdownDoc>>,
+    markdown_cache: Rc<RefCell<HashMap<SessionEventId, Arc<MarkdownDoc>>>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -206,7 +214,6 @@ pub struct SessionView {
     load_task: Option<Task<()>>,
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
-    pending_scroll_restore: Option<ScrollRestore>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -224,7 +231,7 @@ impl SessionView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let scroll_handle = ScrollHandle::new();
+        let timeline_list_state = ListState::new(0, gpui::ListAlignment::Top, px(400.0));
         let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
@@ -270,14 +277,17 @@ impl SessionView {
 
         let mut this = Self {
             focus_handle,
-            scroll_handle,
+            timeline_list_state,
+            timeline_items: Rc::new(Vec::new()),
+            timeline_scroll_handler_installed: false,
+            timeline_viewport_width: None,
             show_debug_controls,
             session_id_input,
             composer_input,
             pending_focus_composer: false,
             feed: None,
             expanded_tool_events: HashSet::new(),
-            markdown_cache: HashMap::new(),
+            markdown_cache: Rc::new(RefCell::new(HashMap::new())),
             client,
             _client_task: client_task,
             subscription_task: None,
@@ -285,7 +295,6 @@ impl SessionView {
             load_task: None,
             load_older_task: None,
             send_task: None,
-            pending_scroll_restore: None,
             error: None,
             _subscriptions: subscriptions,
         };
@@ -304,11 +313,11 @@ impl SessionView {
             self.subscription_task = None;
             self.load_task = None;
             self.load_older_task = None;
-            self.pending_scroll_restore = None;
             self.error = None;
             self.feed = None;
             self.expanded_tool_events.clear();
-            self.markdown_cache.clear();
+            self.markdown_cache.borrow_mut().clear();
+            self.set_timeline_items(Vec::new());
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
@@ -371,13 +380,12 @@ impl SessionView {
         self.load_task = None;
         self.load_older_task = None;
         self.send_task = None;
-        self.pending_scroll_restore = None;
         self.expanded_tool_events.clear();
-        self.markdown_cache.clear();
+        self.markdown_cache.borrow_mut().clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
             .update(cx, |input, cx| input.set_text("", cx));
-        self.scroll_handle.scroll_to_bottom();
+        self.set_timeline_items(Vec::new());
         cx.notify();
 
         let view = cx.entity();
@@ -459,7 +467,7 @@ impl SessionView {
                 }
 
                 let stats = cache_markdown_for_events(
-                    &mut self.markdown_cache,
+                    &mut *self.markdown_cache.borrow_mut(),
                     std::slice::from_ref(&resp.event),
                 );
                 if stats.truncated > 0 {
@@ -471,7 +479,8 @@ impl SessionView {
                 }
 
                 feed.apply_live_event(resp.event);
-                apply_scroll_intents(feed, &self.scroll_handle);
+                self.refresh_timeline_items();
+                self.apply_scroll_intents();
             }
             Err(err) => {
                 if err.category == ErrorCategory::Conflict {
@@ -510,7 +519,8 @@ impl SessionView {
                     session_event_id: event.session_event_id,
                 });
 
-                let stats = cache_markdown_for_events(&mut self.markdown_cache, &resp.events);
+                let stats =
+                    cache_markdown_for_events(&mut *self.markdown_cache.borrow_mut(), &resp.events);
                 if stats.cached > 0 {
                     let span = redesmyn_logging::redesmyn_info_span!(
                         "session_markdown_cache_history",
@@ -527,8 +537,9 @@ impl SessionView {
 
                 feed.apply_history_page(resp.events, resp.next_cursor);
                 feed.set_at_bottom(true);
-                self.scroll_handle.scroll_to_bottom();
                 feed.clear_scroll_intents();
+                self.refresh_timeline_items();
+                self.scroll_to_bottom();
                 self.start_subscription(after, cx);
             }
             Err(err) => {
@@ -548,7 +559,6 @@ impl SessionView {
         };
 
         let session_id = feed.session_id;
-        let scroll_handle = self.scroll_handle.clone();
         let view = cx.entity();
 
         self.subscription_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -583,7 +593,7 @@ impl SessionView {
                 while let Some(event) = events_rx.recv().await {
                     let _ = cx.update(|cx| {
                         view.update(cx, |this, cx| {
-                            this.on_subscription_event(event, &scroll_handle, cx);
+                            this.on_subscription_event(event, cx);
                         })
                     });
                 }
@@ -594,22 +604,21 @@ impl SessionView {
     fn on_subscription_event(
         &mut self,
         event: SubscriptionEvent,
-        scroll_handle: &ScrollHandle,
         cx: &mut Context<Self>,
     ) {
         let Some(feed) = self.feed.as_mut() else {
             return;
         };
 
-        update_scroll_state(feed, scroll_handle);
-
         match event {
             SubscriptionEvent::SessionEvent(ev) => {
                 if ev.session_id != feed.session_id {
                     return;
                 }
-                let stats =
-                    cache_markdown_for_events(&mut self.markdown_cache, std::slice::from_ref(&ev));
+                let stats = cache_markdown_for_events(
+                    &mut *self.markdown_cache.borrow_mut(),
+                    std::slice::from_ref(&ev),
+                );
                 if stats.truncated > 0 {
                     redesmyn_logging::tracing::warn!(
                         session_event_id = %ev.session_event_id,
@@ -618,14 +627,16 @@ impl SessionView {
                     );
                 }
                 feed.apply_live_event(ev);
-                apply_scroll_intents(feed, scroll_handle);
+                self.refresh_timeline_items();
+                self.apply_scroll_intents();
             }
             SubscriptionEvent::SessionLiveEvent(ev) => {
                 if ev.session_id != feed.session_id {
                     return;
                 }
                 feed.apply_live_session_event(ev);
-                apply_scroll_intents(feed, scroll_handle);
+                self.refresh_timeline_items();
+                self.apply_scroll_intents();
             }
             SubscriptionEvent::Error(err) => {
                 feed.apply_live_error(err.message);
@@ -634,54 +645,6 @@ impl SessionView {
         }
 
         cx.notify();
-    }
-
-    fn capture_scroll_restore(&mut self) {
-        let Some(feed) = self.feed.as_ref() else {
-            return;
-        };
-
-        let (ix, offset) = self.scroll_handle.logical_scroll_top();
-        let items = feed.timeline_items();
-        let top_event_id = items.get(ix).and_then(|item| match item {
-            SessionTimelineItem::Event(ev) => Some(ev.session_event_id),
-            _ => None,
-        });
-
-        self.pending_scroll_restore = Some(ScrollRestore {
-            top_index: ix,
-            top_offset: offset,
-            top_event_id,
-        });
-    }
-
-    fn restore_scroll_after_prepend(&mut self, restore: ScrollRestore, cx: &mut Context<Self>) {
-        let Some(feed) = self.feed.as_ref() else {
-            return;
-        };
-
-        let items = feed.timeline_items();
-        let target_index = restore
-            .top_event_id
-            .and_then(|id| {
-                items.iter().position(|item| match item {
-                    SessionTimelineItem::Event(ev) => ev.session_event_id == id,
-                    _ => false,
-                })
-            })
-            .unwrap_or(restore.top_index)
-            .min(items.len().saturating_sub(1));
-
-        self.scroll_handle.scroll_to_top_of_item(target_index);
-
-        let scroll_handle = self.scroll_handle.clone();
-        let offset = restore.top_offset;
-        cx.spawn(move |_: WeakEntity<Self>, _cx: &mut AsyncApp| async move {
-            gpui::Timer::after(Duration::from_millis(0)).await;
-            let current = scroll_handle.offset();
-            scroll_handle.set_offset(gpui::point(current.x, current.y + offset));
-        })
-        .detach();
     }
 
     fn maybe_autoload_older(&mut self, cx: &mut Context<Self>) {
@@ -693,8 +656,8 @@ impl SessionView {
             return;
         }
 
-        let scroll = self.scroll_handle.offset();
-        if scroll.y < px(-24.0) {
+        let scroll_top = self.timeline_list_state.logical_scroll_top();
+        if scroll_top.item_ix != 0 || scroll_top.offset_in_item > px(24.0) {
             return;
         }
 
@@ -718,10 +681,10 @@ impl SessionView {
             return;
         };
 
-        self.capture_scroll_restore();
         if let Some(feed) = self.feed.as_mut() {
             feed.start_loading_older();
         }
+        self.refresh_timeline_items();
         cx.notify();
 
         let Some(session_id) = self.feed.as_ref().map(|feed| feed.session_id) else {
@@ -749,7 +712,8 @@ impl SessionView {
 
         match response {
             Ok(resp) => {
-                let stats = cache_markdown_for_events(&mut self.markdown_cache, &resp.events);
+                let stats =
+                    cache_markdown_for_events(&mut *self.markdown_cache.borrow_mut(), &resp.events);
                 if stats.cached > 0 {
                     let span = redesmyn_logging::redesmyn_info_span!(
                         "session_markdown_cache_older",
@@ -765,9 +729,7 @@ impl SessionView {
                 }
 
                 feed.apply_history_page(resp.events, resp.next_cursor);
-                if let Some(restore) = self.pending_scroll_restore.take() {
-                    self.restore_scroll_after_prepend(restore, cx);
-                }
+                self.refresh_timeline_items();
             }
             Err(err) => {
                 feed.apply_history_error(err.message);
@@ -783,6 +745,7 @@ impl SessionView {
         } else {
             self.expanded_tool_events.insert(session_event_id);
         }
+        self.invalidate_timeline_item(session_event_id);
         cx.notify();
     }
 
@@ -798,8 +761,59 @@ impl SessionView {
 
         feed.set_at_bottom(true);
         feed.clear_scroll_intents();
-        self.scroll_handle.scroll_to_bottom();
+        self.scroll_to_bottom();
         cx.notify();
+    }
+
+    fn set_timeline_items(&mut self, items: Vec<SessionTimelineItem>) {
+        let old_items = std::mem::replace(&mut self.timeline_items, Rc::new(items));
+        sync_list_state(
+            &self.timeline_list_state,
+            old_items.as_ref(),
+            self.timeline_items.as_ref(),
+        );
+    }
+
+    fn refresh_timeline_items(&mut self) {
+        let items = self
+            .feed
+            .as_ref()
+            .map(SessionFeedState::timeline_items)
+            .unwrap_or_default();
+        self.set_timeline_items(items);
+    }
+
+    fn invalidate_timeline_item(&mut self, session_event_id: SessionEventId) {
+        if let Some(ix) = self.timeline_items.iter().position(|item| {
+            matches!(
+                item,
+                SessionTimelineItem::Event(ev) if ev.session_event_id == session_event_id
+            )
+        }) {
+            self.timeline_list_state.splice(ix..ix + 1, 1);
+        }
+    }
+
+    fn apply_scroll_intents(&mut self) {
+        let should_scroll = self
+            .feed
+            .as_ref()
+            .is_some_and(|feed| feed.scroll.pending_scroll_to_bottom);
+        if !should_scroll {
+            return;
+        }
+
+        self.scroll_to_bottom();
+        if let Some(feed) = self.feed.as_mut() {
+            feed.clear_scroll_intents();
+        }
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        let Some(ix) = self.timeline_items.len().checked_sub(1) else {
+            return;
+        };
+        self.timeline_list_state.scroll_to_reveal_item(ix);
     }
 }
 
@@ -808,9 +822,46 @@ impl Render for SessionView {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
 
+        if !self.timeline_scroll_handler_installed {
+            let view = view.clone();
+            self.timeline_list_state
+                .set_scroll_handler(move |event, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        let Some(feed) = this.feed.as_mut() else {
+                            return;
+                        };
+
+                        let was_at_bottom = feed.scroll.at_bottom;
+                        let at_bottom = event.visible_range.end >= event.count;
+                        feed.set_at_bottom(at_bottom);
+
+                        if feed.scroll.at_bottom != was_at_bottom {
+                            this.refresh_timeline_items();
+                        }
+
+                        this.maybe_autoload_older(cx);
+                        cx.notify();
+                    });
+                });
+            self.timeline_scroll_handler_installed = true;
+        }
+
         if self.pending_focus_composer && self.feed.is_some() {
             self.pending_focus_composer = false;
             window.focus(&self.composer_input.focus_handle(cx));
+        }
+
+        let viewport_width = self.timeline_list_state.viewport_bounds().size.width;
+        if viewport_width > px(0.0) {
+            if self
+                .timeline_viewport_width
+                .is_some_and(|prev| prev != viewport_width)
+            {
+                let scroll_top = self.timeline_list_state.logical_scroll_top();
+                self.timeline_list_state.reset(self.timeline_items.len());
+                self.timeline_list_state.scroll_to(scroll_top);
+            }
+            self.timeline_viewport_width = Some(viewport_width);
         }
 
         let mut content = div()
@@ -863,24 +914,21 @@ impl Render for SessionView {
             content = content.child(controls);
         }
 
-        let items = self
-            .feed
-            .as_ref()
-            .map(SessionFeedState::timeline_items)
-            .unwrap_or_default();
+        let items = Rc::clone(&self.timeline_items);
+        let markdown_cache = Rc::clone(&self.markdown_cache);
+        let expanded_tool_events = self.expanded_tool_events.clone();
+        let entity_id = cx.entity_id();
+        let timeline_view = view.clone();
 
-        let markdown_options = MarkdownParseOptions::default();
-        let markdown_cache = &mut self.markdown_cache;
-        let expanded_tool_events = &self.expanded_tool_events;
+        let feed_list = list(self.timeline_list_state.clone(), move |ix, window, cx| {
+            let theme = theme_for_window(window, cx);
+            let list = div().w_full().min_w_0().pb(theme.spacing.sm);
 
-        let feed_list = items.into_iter().enumerate().fold(
-            div()
-                .flex()
-                .flex_col()
-                .gap(theme.spacing.sm)
-                .w_full()
-                .min_w_0(),
-            |list, (ix, item)| match item {
+            let Some(item) = items.get(ix).cloned() else {
+                return div().into_any_element();
+            };
+
+            let rendered = match item {
                 SessionTimelineItem::LoadOlder(row) => {
                     let label = if row.in_flight {
                         "Loading older…"
@@ -905,11 +953,11 @@ impl Render for SessionView {
                 SessionTimelineItem::NewMessages(row) => list.child(
                     div().id(("session_item_new_messages", ix)).w_full().child(
                         TextButton::new(
-                            ("session_jump_bottom", cx.entity_id()),
+                            ("session_jump_bottom", entity_id),
                             format!("New messages ({}) — Jump to bottom", row.count),
                         )
                         .on_click({
-                            let view = view.clone();
+                            let view = timeline_view.clone();
                             move |event, window, cx| {
                                 view.update(cx, |this, cx| this.jump_to_bottom(event, window, cx))
                             }
@@ -929,6 +977,7 @@ impl Render for SessionView {
                         .child(item.text),
                 ),
                 SessionTimelineItem::Event(item) => {
+                    let session_event_id = item.session_event_id;
                     let event_key = session_event_id_key(item.session_event_id);
                     let bubble_id: ElementId = ("session_event", event_key).into();
 
@@ -957,21 +1006,24 @@ impl Render for SessionView {
                             };
 
                             let show_truncation_notice = full_text_artifact.is_none();
-                            let doc = markdown_cache
-                                .get(&item.session_event_id)
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    let doc =
-                                        Arc::new(parse_markdown(text.as_str(), markdown_options));
-                                    markdown_cache.insert(item.session_event_id, doc.clone());
-                                    doc
-                                });
+                            let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
+                            let doc = cached.unwrap_or_else(|| {
+                                let doc = Arc::new(parse_markdown(
+                                    text.as_str(),
+                                    MarkdownParseOptions::default(),
+                                ));
+                                markdown_cache
+                                    .borrow_mut()
+                                    .insert(session_event_id, doc.clone());
+                                doc
+                            });
 
                             let mut bubble = div()
                                 .id(bubble_id.clone())
                                 .flex()
                                 .flex_col()
                                 .gap(theme.spacing.sm)
+                                .w_full()
                                 .max_w(px(560.0))
                                 .min_w_0()
                                 .px(theme.spacing.md)
@@ -1035,14 +1087,14 @@ impl Render for SessionView {
                                 .min_w_0()
                                 .flex()
                                 .flex_row()
-                                .gap(theme.spacing.sm);
+                                .px(theme.spacing.sm);
                             if align_right {
-                                row = row.child(div().flex_1()).child(bubble);
+                                row = row.justify_end();
                             } else {
-                                row = row.child(bubble).child(div().flex_1());
+                                row = row.justify_start();
                             }
 
-                            list.child(row)
+                            list.child(row.child(bubble))
                         }
                         other => {
                             // Hide session lifecycle and status noise in the primary timeline.
@@ -1053,7 +1105,7 @@ impl Render for SessionView {
                                 ) => {
                                     let expanded = expanded_tool_events.contains(&item.session_event_id);
                                     let chevron = if expanded { "▾" } else { "▸" };
-                                    let toggle_view = view.clone();
+                                    let toggle_view = timeline_view.clone();
                                     let session_event_id = item.session_event_id;
                                     let summary_text =
                                         format!("{} — {}", tool.tool_name, tool.input_preview);
@@ -1141,7 +1193,7 @@ impl Render for SessionView {
                                 ) => {
                                     let expanded = expanded_tool_events.contains(&item.session_event_id);
                                     let chevron = if expanded { "▾" } else { "▸" };
-                                    let toggle_view = view.clone();
+                                    let toggle_view = timeline_view.clone();
                                     let session_event_id = item.session_event_id;
 
                                     let summary_text =
@@ -1264,29 +1316,20 @@ impl Render for SessionView {
                                                 .to_string(),
                                         ),
                                 ),
-                                _ => list,
+                                _ => div(),
                             }
                         }
                     }
                 }
-            },
-        );
+            };
 
-        let body = ScrollArea::new(
-            ("session_scroll", cx.entity_id()),
-            self.scroll_handle.clone(),
-        )
-        .bg(theme.colors.surface)
-        .scrollbar_width(px(10.0))
-        .child(
-            feed_list.on_scroll_wheel(cx.listener(|this, _event, _window, cx| {
-                if let Some(feed) = this.feed.as_mut() {
-                    update_scroll_state(feed, &this.scroll_handle);
-                }
-                this.maybe_autoload_older(cx);
-                cx.notify();
-            })),
-        );
+            rendered.into_any_element()
+        })
+        .flex_1()
+        .min_h(px(0.0))
+        .w_full()
+        .min_w_0()
+        .bg(theme.colors.surface);
 
         content = content.child(
             div()
@@ -1298,7 +1341,7 @@ impl Render for SessionView {
                 .border_color(theme.colors.border.opacity(0.4))
                 .rounded_md()
                 .bg(theme.colors.surface)
-                .child(body),
+                .child(feed_list),
         );
 
         if let Some(feed) = self.feed.as_ref() {
