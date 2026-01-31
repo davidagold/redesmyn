@@ -198,6 +198,9 @@ pub struct GraphView {
     layout_animation: Option<LayoutAnimation>,
     layout_animation_guard: Option<UiActivityGuard>,
     pending_pan_to_selection: Option<GraphNodeId>,
+    task_focus_zoom_before: Option<f32>,
+    pending_focus_task_card: Option<GraphNodeId>,
+    pending_restore_task_focus_zoom: Option<f32>,
     did_initial_fit: bool,
     fit_suppressed: bool,
     edge_label_cache: RefCell<HashMap<gpui::SharedString, gpui::ShapedLine>>,
@@ -257,6 +260,9 @@ impl GraphView {
             layout_animation: None,
             layout_animation_guard: None,
             pending_pan_to_selection: None,
+            task_focus_zoom_before: None,
+            pending_focus_task_card: None,
+            pending_restore_task_focus_zoom: None,
             did_initial_fit: false,
             fit_suppressed: false,
             edge_label_cache: RefCell::new(HashMap::new()),
@@ -370,6 +376,25 @@ impl GraphView {
             }
 
             self.pending_pan_to_selection = next_selection.selected_node;
+            self.pending_focus_task_card = None;
+            self.pending_restore_task_focus_zoom = None;
+
+            let was_task_selected =
+                matches!(previous_selection.selected_node, Some(GraphNodeId::Task(_)));
+            let is_task_selected = matches!(next_selection.selected_node, Some(GraphNodeId::Task(_)));
+
+            if is_task_selected {
+                if !was_task_selected {
+                    self.task_focus_zoom_before
+                        .get_or_insert(self.camera.zoom());
+                }
+                self.pending_focus_task_card = next_selection.selected_node;
+                self.pending_pan_to_selection = None;
+            } else if was_task_selected {
+                if let Some(zoom_before) = self.task_focus_zoom_before.take() {
+                    self.pending_restore_task_focus_zoom = Some(zoom_before);
+                }
+            }
         }
 
         self.update_selection_bar_target(cx);
@@ -684,6 +709,119 @@ impl GraphView {
         }
 
         self.did_initial_fit = true;
+        did_start
+    }
+
+    fn try_focus_task_card_for_render(&mut self) -> bool {
+        const FILL_RATIO: f32 = 0.8;
+
+        let Some(node_id) = self.pending_focus_task_card else {
+            return false;
+        };
+
+        if self.pan_drag.is_some() {
+            return false;
+        }
+
+        let Some(canvas_bounds) = self.last_canvas_bounds else {
+            return false;
+        };
+
+        if self.scene.node(node_id).is_none() {
+            self.pending_focus_task_card = None;
+            return false;
+        }
+
+        let node_rect = NodeWorldRect::from_scene(&self.scene, node_id);
+        if node_rect.width <= 0.0 || node_rect.height <= 0.0 {
+            self.pending_focus_task_card = None;
+            return false;
+        }
+
+        let viewport_width = f32::from(canvas_bounds.size.width);
+        let viewport_height = f32::from(canvas_bounds.size.height);
+
+        let desired_width = viewport_width * FILL_RATIO;
+        let desired_height = viewport_height * FILL_RATIO;
+        if desired_width <= 0.0 || desired_height <= 0.0 {
+            return false;
+        }
+
+        let mut camera = self.camera;
+        camera.set_zoom((desired_width / node_rect.width).min(desired_height / node_rect.height));
+        let target_zoom = camera.zoom();
+
+        let node_center_world = gpui::point(
+            node_rect.origin.x + node_rect.width / 2.0,
+            node_rect.origin.y + node_rect.height / 2.0,
+        );
+        let viewport_center_world = gpui::point(
+            (viewport_width / 2.0) / target_zoom,
+            (viewport_height / 2.0) / target_zoom,
+        );
+        let target_origin = gpui::point(
+            node_center_world.x - viewport_center_world.x,
+            node_center_world.y - viewport_center_world.y,
+        );
+
+        self.pending_focus_task_card = None;
+        self.pending_pan_to_selection = None;
+
+        let did_start =
+            self.try_start_camera_animation(target_origin, target_zoom, Duration::from_millis(240));
+        if did_start {
+            redesmyn_logging::tracing::info!(
+                node_id = %node_id,
+                origin_world = ?target_origin,
+                zoom = target_zoom,
+                "graph focus task card"
+            );
+        }
+        did_start
+    }
+
+    fn try_restore_task_focus_zoom_for_render(&mut self) -> bool {
+        let Some(target_zoom) = self.pending_restore_task_focus_zoom else {
+            return false;
+        };
+
+        if self.pan_drag.is_some() {
+            return false;
+        }
+
+        let Some(canvas_bounds) = self.last_canvas_bounds else {
+            return false;
+        };
+
+        let mut camera = self.camera;
+        camera.set_zoom(target_zoom);
+        let target_zoom = camera.zoom();
+
+        let viewport_center_screen = gpui::point(
+            canvas_bounds.size.width / 2.0,
+            canvas_bounds.size.height / 2.0,
+        );
+        let viewport_center_world = self.camera.screen_to_world(viewport_center_screen);
+        let viewport_center_world_for_target_zoom = gpui::point(
+            f32::from(viewport_center_screen.x) / target_zoom,
+            f32::from(viewport_center_screen.y) / target_zoom,
+        );
+        let target_origin = gpui::point(
+            viewport_center_world.x - viewport_center_world_for_target_zoom.x,
+            viewport_center_world.y - viewport_center_world_for_target_zoom.y,
+        );
+
+        self.pending_restore_task_focus_zoom = None;
+
+        let did_start =
+            self.try_start_camera_animation(target_origin, target_zoom, Duration::from_millis(200));
+        if did_start {
+            redesmyn_logging::tracing::info!(
+                origin_world = ?target_origin,
+                zoom = target_zoom,
+                "graph restore task focus zoom"
+            );
+        }
         did_start
     }
 
@@ -1661,9 +1799,25 @@ impl Render for GraphView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.fps_overlay.on_frame();
         self.step_camera_animation_for_render(window);
-        let started_fit = self.try_initial_fit_for_render();
-        let started_pan = self.try_pan_to_selection_for_render();
-        if (started_fit || started_pan) && self.camera_animation.is_some() {
+        let started_restore = self.try_restore_task_focus_zoom_for_render();
+        let started_focus = if started_restore {
+            false
+        } else {
+            self.try_focus_task_card_for_render()
+        };
+        let started_fit = if started_restore || started_focus {
+            false
+        } else {
+            self.try_initial_fit_for_render()
+        };
+        let started_pan = if started_restore || started_focus {
+            false
+        } else {
+            self.try_pan_to_selection_for_render()
+        };
+        if (started_restore || started_focus || started_fit || started_pan)
+            && self.camera_animation.is_some()
+        {
             if self.camera_animation_guard.is_none() {
                 self.camera_animation_guard =
                     ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
