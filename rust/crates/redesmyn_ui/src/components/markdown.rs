@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{
     AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle, FontWeight,
-    Hsla, RenderOnce, StyledText, TextRun, UnderlineStyle, Window, div, px,
+    Hsla, RenderOnce, TextRun, UnderlineStyle, Window, div, px,
 };
 
 use gpui::prelude::*;
@@ -11,7 +11,7 @@ use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
 use crate::utils::{OpenExternalUrl as _, theme_for_window};
 
-use super::{ButtonKind, TextButton};
+use super::{ButtonKind, RoundedBackgroundStyle, RoundedStyledText, TextButton};
 
 #[derive(IntoElement)]
 pub struct MarkdownView {
@@ -335,7 +335,7 @@ fn render_inline_segments(
 
         let has_links = atoms.iter().any(|atom| atom.link.is_some());
         if !has_links {
-            // Render entire non-link lines as a single `StyledText` to avoid GPUI flex-wrap
+            // Render entire non-link lines as a single text element to avoid GPUI flex-wrap
             // layout/paint artifacts that can show up when we emit many inline chunks.
             flow = flow.child(styled_text_block(
                 line_id,
@@ -547,7 +547,14 @@ fn styled_text_div(
         .id(id)
         .min_w_0()
         .flex_shrink()
-        .child(StyledText::new(text).with_runs(runs))
+        .child(
+            RoundedStyledText::new(text)
+                .with_runs(runs)
+                .background_style(RoundedBackgroundStyle {
+                    corner_radius: theme.radius.sm,
+                    ..Default::default()
+                }),
+        )
 }
 
 fn styled_text_block(
@@ -627,7 +634,14 @@ fn styled_text_block(
         .id(id)
         .min_w_0()
         .w_full()
-        .child(StyledText::new(text).with_runs(runs))
+        .child(
+            RoundedStyledText::new(text)
+                .with_runs(runs)
+                .background_style(RoundedBackgroundStyle {
+                    corner_radius: theme.radius.sm,
+                    ..Default::default()
+                }),
+        )
 }
 
 enum InlineItem {
