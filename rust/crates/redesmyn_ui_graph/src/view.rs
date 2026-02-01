@@ -322,7 +322,6 @@ pub struct GraphView {
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
     quick_action_opacity: HashMap<TaskId, OpacityTransitionState>,
-    expanded_session_opacity: HashMap<TaskId, OpacityTransitionState>,
     collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
     collapsed_markdown_cache:
         BoundedCache<redesmyn_ids::SessionEventId, Arc<[MarkdownInlineAtom]>>,
@@ -390,7 +389,6 @@ impl GraphView {
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
             quick_action_opacity: HashMap::new(),
-            expanded_session_opacity: HashMap::new(),
             collapsed_title_cache: HashMap::new(),
             collapsed_markdown_cache: BoundedCache::new(512),
             _subscriptions: subscriptions,
@@ -414,8 +412,6 @@ impl GraphView {
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
         self.quick_action_opacity
-            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
-        self.expanded_session_opacity
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
         self.collapsed_title_cache
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
@@ -2570,24 +2566,6 @@ impl Render for GraphView {
                     let merge_readiness = node.merge_readiness;
                     let agent_status = node.agent_status;
                     let branch_name = node.branch_name.clone();
-                    let task_id = match node_id {
-                        GraphNodeId::Task(task_id) => task_id,
-                        GraphNodeId::Trunk => unreachable!("trunk nodes are skipped above"),
-                    };
-                    let show_expanded_session_view =
-                        is_primary_selected && !is_animating_expand && !is_animating_collapse;
-                    let expanded_session_view_opacity = if show_expanded_session_view {
-                        Self::opacity_transition_for_render(
-                            &mut self.expanded_session_opacity,
-                            task_id,
-                            true,
-                            quick_actions_fade_duration,
-                            window,
-                        )
-                    } else {
-                        self.expanded_session_opacity.remove(&task_id);
-                        0.0
-                    };
 
                     let close_button_id = (
                         gpui::ElementId::from(("task_card_close", entity_id)),
@@ -2864,39 +2842,8 @@ impl Render for GraphView {
                                                             div()
                                                                 .flex_1()
                                                                 .min_h(px(0.0))
-                                                                .when(
-                                                                    expanded_session_view_opacity
-                                                                        > 0.01,
-                                                                    |this| {
-                                                                        this.opacity(
-                                                                            expanded_session_view_opacity,
-                                                                        )
-                                                                        .child(
-                                                                            self.task_session_view
-                                                                                .clone(),
-                                                                        )
-                                                                    },
-                                                                )
-                                                                .when(
-                                                                    expanded_session_view_opacity
-                                                                        <= 0.01,
-                                                                    |this| {
-                                                                        this.flex()
-                                                                            .items_center()
-                                                                            .justify_center()
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_sm()
-                                                                                    .text_color(
-                                                                                        theme
-                                                                                            .colors
-                                                                                            .foreground_muted,
-                                                                                    )
-                                                                                    .child(
-                                                                                        "Preparing…",
-                                                                                    ),
-                                                                            )
-                                                                    },
+                                                                .child(
+                                                                    self.task_session_view.clone(),
                                                                 ),
                                                         )
                                                     }),
