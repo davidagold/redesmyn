@@ -74,28 +74,50 @@ impl RenderOnce for MarkdownView {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MarkdownInlineSingleLineContent {
+    atoms: Arc<[MarkdownInlineAtom]>,
+}
+
+impl MarkdownInlineSingleLineContent {
+    pub fn from_doc(doc: &MarkdownDoc) -> Self {
+        let mut atoms = first_markdown_inline_line_atoms(doc).unwrap_or_default();
+        for atom in &mut atoms {
+            atom.link = None;
+        }
+
+        if atoms.is_empty() {
+            atoms.push(MarkdownInlineAtom {
+                text: " ".to_string(),
+                style: MarkdownInlineStyle::default(),
+                link: None,
+            });
+        }
+
+        Self {
+            atoms: Arc::from(atoms.into_boxed_slice()),
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct MarkdownInlineSingleLineView {
     id: ElementId,
-    source: MarkdownInlineSingleLineSource,
+    content: MarkdownInlineSingleLineContent,
     color: Option<gpui::Hsla>,
 }
 
 impl MarkdownInlineSingleLineView {
-    pub fn new(id: impl Into<ElementId>, doc: Arc<MarkdownDoc>) -> Self {
+    pub fn new(id: impl Into<ElementId>, content: MarkdownInlineSingleLineContent) -> Self {
         Self {
             id: id.into(),
-            source: MarkdownInlineSingleLineSource::Doc(doc),
+            content,
             color: None,
         }
     }
 
-    pub fn from_atoms(id: impl Into<ElementId>, atoms: Arc<[MarkdownInlineAtom]>) -> Self {
-        Self {
-            id: id.into(),
-            source: MarkdownInlineSingleLineSource::Atoms(atoms),
-            color: None,
-        }
+    pub fn from_doc(id: impl Into<ElementId>, doc: &MarkdownDoc) -> Self {
+        Self::new(id, MarkdownInlineSingleLineContent::from_doc(doc))
     }
 
     pub fn text_color(mut self, color: gpui::Hsla) -> Self {
@@ -108,23 +130,7 @@ impl RenderOnce for MarkdownInlineSingleLineView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
 
-        let mut atoms_owned;
-        let mut atoms = match &self.source {
-            MarkdownInlineSingleLineSource::Doc(doc) => {
-                atoms_owned = first_markdown_inline_line_atoms(doc).unwrap_or_default();
-                atoms_owned.as_slice()
-            }
-            MarkdownInlineSingleLineSource::Atoms(atoms) => atoms.as_ref(),
-        };
-
-        if atoms.is_empty() {
-            atoms_owned = vec![MarkdownInlineAtom {
-                text: " ".to_string(),
-                style: MarkdownInlineStyle::default(),
-                link: None,
-            }];
-            atoms = atoms_owned.as_slice();
-        }
+        let atoms = self.content.atoms.as_ref();
 
         let default_color = self.color.unwrap_or(theme.colors.foreground);
         let (text, runs) = build_styled_text(atoms, default_color, None, &theme);
@@ -136,12 +142,6 @@ impl RenderOnce for MarkdownInlineSingleLineView {
             .truncate()
             .child(StyledText::new(text).with_runs(runs))
     }
-}
-
-#[derive(Debug, Clone)]
-enum MarkdownInlineSingleLineSource {
-    Doc(Arc<MarkdownDoc>),
-    Atoms(Arc<[MarkdownInlineAtom]>),
 }
 
 fn render_block(
@@ -311,17 +311,17 @@ impl InlineSegmentsStyle {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct MarkdownInlineStyle {
-    pub bold: bool,
-    pub italic: bool,
-    pub code: bool,
+struct MarkdownInlineStyle {
+    bold: bool,
+    italic: bool,
+    code: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkdownInlineAtom {
-    pub text: String,
-    pub style: MarkdownInlineStyle,
-    pub link: Option<String>,
+struct MarkdownInlineAtom {
+    text: String,
+    style: MarkdownInlineStyle,
+    link: Option<String>,
 }
 
 fn render_inline_segments(
@@ -583,7 +583,7 @@ enum InlineItem {
     HardBreak,
 }
 
-pub fn first_markdown_inline_line_atoms(doc: &MarkdownDoc) -> Option<Vec<MarkdownInlineAtom>> {
+fn first_markdown_inline_line_atoms(doc: &MarkdownDoc) -> Option<Vec<MarkdownInlineAtom>> {
     let inlines = first_inline_content(&doc.blocks)?;
     let items = flatten_inlines(inlines);
     let lines = split_inline_items_into_lines(items);

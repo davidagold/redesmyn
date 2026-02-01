@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -15,9 +14,8 @@ use redesmyn_ids::TaskId;
 use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineAtom, MarkdownInlineSingleLineView,
-    ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
-    first_markdown_inline_line_atoms,
+    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineSingleLineContent,
+    MarkdownInlineSingleLineView, ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
 };
 use redesmyn_ui::utils::{
     BoundedCache, TransitionMap, UiActivityGuard, UserActionState, theme_for_window,
@@ -249,7 +247,7 @@ pub struct GraphView {
     quick_action_opacity: TransitionMap<TaskId>,
     collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
     collapsed_markdown_cache:
-        BoundedCache<redesmyn_ids::SessionEventId, Arc<[MarkdownInlineAtom]>>,
+        BoundedCache<redesmyn_ids::SessionEventId, MarkdownInlineSingleLineContent>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2298,27 +2296,22 @@ impl Render for GraphView {
                         window,
                     );
 
-                    let preview_atoms = latest_session.as_ref().and_then(|session| {
+                    let preview_content = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
-                        if let Some(atoms) =
+                        if let Some(content) =
                             self.collapsed_markdown_cache.get(&session.session_event_id)
                         {
-                            return Some(atoms.clone());
+                            return Some(content.clone());
                         }
 
                         let doc = parse_markdown(
                             preview.as_str(),
                             MarkdownParseOptions::default(),
                         );
-                        let mut atoms = first_markdown_inline_line_atoms(&doc).unwrap_or_default();
-                        for atom in &mut atoms {
-                            atom.link = None;
-                        }
-
-                        let atoms: Arc<[MarkdownInlineAtom]> = Arc::from(atoms.into_boxed_slice());
+                        let content = MarkdownInlineSingleLineContent::from_doc(&doc);
                         self.collapsed_markdown_cache
-                            .insert(session.session_event_id, atoms.clone());
-                        Some(atoms)
+                            .insert(session.session_event_id, content.clone());
+                        Some(content)
                     });
 
                     let mut collapsed_content = div()
@@ -2406,7 +2399,7 @@ impl Render for GraphView {
                                 }),
                         );
 
-                    if let Some(atoms) = preview_atoms {
+                    if let Some(content) = preview_content {
                         let preview_id: gpui::ElementId =
                             (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
@@ -2414,7 +2407,7 @@ impl Render for GraphView {
                                 .text_size(rems(0.66 * zoom))
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
-                                    MarkdownInlineSingleLineView::from_atoms(preview_id, atoms)
+                                    MarkdownInlineSingleLineView::new(preview_id, content)
                                         .text_color(theme.colors.foreground_muted),
                                 ),
                         );
