@@ -1977,30 +1977,135 @@ impl Render for GraphView {
                     });
 
                 if collapsed_opacity > 0.01 {
+                    let title = node.title.clone();
                     let task_slug = node.task_slug.clone();
+                    let state = node.state;
+                    let latest_session = node.latest_session.clone();
                     let padding_x = px(f32::from(theme.spacing.sm) * zoom);
                     let padding_y = px(f32::from(theme.spacing.xs) * zoom);
 
-                    card = card.child(
+                    let pill = |label: gpui::SharedString,
+                                bg: gpui::Hsla,
+                                fg: gpui::Hsla|
+                     -> gpui::Div {
+                        let padding_x = px(f32::from(theme.spacing.sm) * zoom);
+                        let padding_y = px(f32::from(theme.spacing.xs) * zoom);
+                        let radius = px(f32::from(theme.radius.lg) * zoom);
                         div()
-                            .absolute()
-                            .inset_0()
                             .px(padding_x)
                             .py(padding_y)
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .opacity(collapsed_opacity)
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(rems(0.82 * zoom))
-                                    .text_color(theme.colors.foreground)
-                                    .truncate()
-                                    .child(task_slug),
-                            ),
-                    );
+                            .rounded(radius)
+                            .bg(bg)
+                            .text_size(rems(0.62 * zoom))
+                            .text_color(fg)
+                            .child(label)
+                    };
+
+                    let (state_bg, state_fg) = match state {
+                        TaskState::InProgress => {
+                            (theme.colors.ring.opacity(0.18), theme.colors.foreground)
+                        }
+                        TaskState::Blocked => {
+                            (theme.colors.warning.opacity(0.18), theme.colors.foreground)
+                        }
+                        TaskState::Done => (
+                            theme.colors.accent.opacity(0.75),
+                            theme.colors.foreground_muted,
+                        ),
+                        TaskState::Todo | TaskState::Unknown => (
+                            theme.colors.surface.opacity(0.9),
+                            theme.colors.foreground_muted,
+                        ),
+                    };
+
+                    let preview = latest_session
+                        .as_ref()
+                        .and_then(|session| session.message_preview.clone());
+                    let agent_kind = latest_session
+                        .as_ref()
+                        .map(|session| session_kind_label(&session.kind).into());
+                    let agent_turn_id = latest_session
+                        .as_ref()
+                        .and_then(|session| session.turn_id.clone());
+
+                    let mut collapsed_content = div()
+                        .absolute()
+                        .inset_0()
+                        .px(padding_x)
+                        .py(padding_y)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .opacity(collapsed_opacity)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(8.0 * zoom))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .text_size(rems(0.60 * zoom))
+                                        .text_color(theme.colors.foreground_muted)
+                                        .truncate()
+                                        .child(task_slug),
+                                )
+                                .child(pill(
+                                    task_state_label(state).into(),
+                                    state_bg,
+                                    state_fg,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(rems(0.78 * zoom))
+                                .text_color(theme.colors.foreground)
+                                .truncate()
+                                .child(title),
+                        );
+
+                    if let Some(preview) = preview {
+                        collapsed_content = collapsed_content.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.0 * zoom))
+                                .text_size(rems(0.66 * zoom))
+                                .text_color(theme.colors.foreground_muted)
+                                .child("•")
+                                .child(div().min_w_0().truncate().child(preview)),
+                        );
+                    }
+
+                    let mut meta_row = div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0 * zoom));
+
+                    if let Some(turn_id) = agent_turn_id {
+                        meta_row = meta_row.child(pill(
+                            turn_id,
+                            theme.colors.surface.opacity(0.9),
+                            theme.colors.foreground_muted,
+                        ));
+                    }
+
+                    if let Some(kind) = agent_kind {
+                        meta_row = meta_row.child(pill(
+                            kind,
+                            theme.colors.surface.opacity(0.9),
+                            theme.colors.foreground_muted,
+                        ));
+                    }
+
+                    collapsed_content = collapsed_content.child(meta_row);
+                    card = card.child(collapsed_content);
                 }
 
                 if expanded_opacity > 0.01 {
@@ -2648,6 +2753,34 @@ fn task_state_label(state: TaskState) -> &'static str {
         TaskState::Done => "Done",
         TaskState::Unknown => "Unknown",
     }
+}
+
+fn session_kind_label(kind: &str) -> String {
+    let trimmed = kind.trim();
+    if trimmed.is_empty() {
+        return "Session".to_string();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    match lower.as_str() {
+        "codex" => return "Codex".to_string(),
+        "claude_code" => return "Claude Code".to_string(),
+        "claude" => return "Claude".to_string(),
+        "shell" => return "Shell".to_string(),
+        _ => {}
+    }
+
+    let normalized = trimmed.replace(['_', '-'], " ");
+    normalized
+        .split_whitespace()
+        .filter_map(|word| {
+            let mut chars = word.chars();
+            let first = chars.next()?;
+            let rest: String = chars.collect();
+            Some(format!("{}{}", first.to_uppercase(), rest))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn task_state_chip(state: TaskState, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {

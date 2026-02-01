@@ -60,6 +60,14 @@ pub struct GraphSceneNode {
     pub merge_readiness: MergeReadiness,
     pub agent_status: AgentStatus,
     pub branch_name: Option<SharedString>,
+    pub latest_session: Option<TaskSessionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSessionSummary {
+    pub kind: SharedString,
+    pub turn_id: Option<SharedString>,
+    pub message_preview: Option<SharedString>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +174,7 @@ impl GraphScene {
             merge_readiness: MergeReadiness::Unknown,
             agent_status: AgentStatus::Running,
             branch_name: Some("feat/root".into()),
+            latest_session: None,
         });
         scene.insert_node(GraphSceneNode {
             id: b,
@@ -176,6 +185,7 @@ impl GraphScene {
             merge_readiness: MergeReadiness::Blocked,
             agent_status: AgentStatus::Blocked,
             branch_name: Some("feat/child-a".into()),
+            latest_session: None,
         });
         scene.insert_node(GraphSceneNode {
             id: c,
@@ -186,6 +196,7 @@ impl GraphScene {
             merge_readiness: MergeReadiness::Ready,
             agent_status: AgentStatus::Stopped,
             branch_name: Some("feat/child-b".into()),
+            latest_session: None,
         });
         scene.insert_node(GraphSceneNode {
             id: d,
@@ -196,6 +207,7 @@ impl GraphScene {
             merge_readiness: MergeReadiness::Ready,
             agent_status: AgentStatus::Stopped,
             branch_name: Some("feat/grandchild".into()),
+            latest_session: None,
         });
 
         scene.insert_edge(GraphEdgeId { from: a, to: b }, Some(12));
@@ -261,6 +273,7 @@ impl GraphScene {
             merge_readiness: MergeReadiness::Unknown,
             agent_status: AgentStatus::Unknown,
             branch_name: None,
+            latest_session: None,
         });
         self.relayout();
     }
@@ -436,6 +449,7 @@ impl GraphScene {
         let mut parent_by_child = BTreeMap::new();
 
         let agent_status_by_task_id = agent_status_by_task_id(graph);
+        let latest_session_by_task_id = latest_session_by_task_id(graph);
 
         let mut edges = BTreeMap::new();
         for edge in &graph.edges {
@@ -506,6 +520,9 @@ impl GraphScene {
                         .branch_name
                         .as_ref()
                         .map(|name| SharedString::new(name.clone())),
+                    latest_session: node
+                        .task_id
+                        .and_then(|id| latest_session_by_task_id.get(&id).cloned()),
                 },
             );
         }
@@ -619,6 +636,7 @@ impl GraphScene {
                 merge_readiness: MergeReadiness::Unknown,
                 agent_status: AgentStatus::Unknown,
                 branch_name: None,
+                latest_session: None,
             },
         );
         self.node_sizes.insert(trunk_id, trunk_default_size());
@@ -958,6 +976,52 @@ fn agent_status_by_task_id(
             .or_insert(status);
     }
     out
+}
+
+fn latest_session_by_task_id(
+    graph: &redesmyn_protocol::client::EpicGraph,
+) -> BTreeMap<TaskId, TaskSessionSummary> {
+    fn collapse_whitespace(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        let mut saw_space = false;
+        for ch in value.chars() {
+            if ch.is_whitespace() {
+                if !saw_space {
+                    out.push(' ');
+                    saw_space = true;
+                }
+                continue;
+            }
+            out.push(ch);
+            saw_space = false;
+        }
+        out.trim().to_string()
+    }
+
+    let mut out: BTreeMap<TaskId, (redesmyn_protocol::Timestamp, TaskSessionSummary)> =
+        BTreeMap::new();
+    for session in &graph.session_summaries {
+        let summary = TaskSessionSummary {
+            kind: SharedString::new(session.kind.clone()),
+            turn_id: session.turn_id.as_ref().map(|id| SharedString::new(id.clone())),
+            message_preview: session
+                .message_preview
+                .as_deref()
+                .map(collapse_whitespace)
+                .and_then(|preview| (!preview.is_empty()).then(|| SharedString::new(preview))),
+        };
+
+        out.entry(session.task_id)
+            .and_modify(|(existing_at, existing)| {
+                if session.last_event_at > *existing_at {
+                    *existing_at = session.last_event_at;
+                    *existing = summary.clone();
+                }
+            })
+            .or_insert((session.last_event_at, summary));
+    }
+
+    out.into_iter().map(|(task_id, (_, summary))| (task_id, summary)).collect()
 }
 
 fn temporary_task_id_for_slug(slug: &str) -> TaskId {
