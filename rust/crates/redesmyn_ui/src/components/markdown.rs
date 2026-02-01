@@ -486,7 +486,7 @@ fn styled_text_div(
             // In dark mode we invert user message bubbles (light background + dark text). Use a
             // darker chip background there so inline code remains visible.
             if base_text_color == theme.colors.surface {
-                theme.colors.border.opacity(0.35)
+                theme.colors.border.opacity(0.45)
             } else {
                 theme.colors.accent_foreground.opacity(0.12)
             }
@@ -499,8 +499,6 @@ fn styled_text_div(
             }
         }
     };
-    let code_color = theme.colors.pine;
-
     let mut text = String::new();
     let mut runs = Vec::new();
 
@@ -516,6 +514,8 @@ fn styled_text_div(
         ),
     };
 
+    let code_color = default_color.blend(theme.colors.foreground_muted.alpha(0.45));
+
     for atom in atoms {
         if atom.text.is_empty() {
             continue;
@@ -528,7 +528,8 @@ fn styled_text_div(
         } = atom;
 
         if atom_style.code {
-            atom_text = format!("\u{00A0}{atom_text}\u{00A0}");
+            // Add small horizontal padding around inline code chips without affecting wrapping.
+            atom_text = format!("\u{202F}{atom_text}\u{202F}");
         }
 
         let mut font = if atom_style.code {
@@ -588,7 +589,7 @@ fn styled_text_block(
             // In dark mode we invert user message bubbles (light background + dark text). Use a
             // darker chip background there so inline code remains visible.
             if base_text_color == theme.colors.surface {
-                theme.colors.border.opacity(0.35)
+                theme.colors.border.opacity(0.45)
             } else {
                 theme.colors.accent_foreground.opacity(0.12)
             }
@@ -601,8 +602,6 @@ fn styled_text_block(
             }
         }
     };
-    let code_color = theme.colors.pine;
-
     let mut text = String::new();
     let mut runs = Vec::new();
 
@@ -618,6 +617,8 @@ fn styled_text_block(
         ),
     };
 
+    let code_color = default_color.blend(theme.colors.foreground_muted.alpha(0.45));
+
     for atom in atoms {
         if atom.text.is_empty() {
             continue;
@@ -630,7 +631,8 @@ fn styled_text_block(
         } = atom;
 
         if atom_style.code {
-            atom_text = format!("\u{00A0}{atom_text}\u{00A0}");
+            // Add small horizontal padding around inline code chips without affecting wrapping.
+            atom_text = format!("\u{202F}{atom_text}\u{202F}");
         }
 
         let mut font = if atom_style.code {
