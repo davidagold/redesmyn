@@ -20,7 +20,8 @@ use redesmyn_ui::components::{
     first_markdown_inline_line_atoms,
 };
 use redesmyn_ui::utils::{
-    BoundedCache, UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    BoundedCache, TransitionMap, UiActivityGuard, UserActionState, theme_for_window,
+    ui_idle_tracker,
     ui_test_mode_animation_duration,
 };
 
@@ -191,32 +192,6 @@ struct BulkCommandState {
     task: Option<Task<()>>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct OpacityTransition {
-    started_at: Instant,
-    from: f32,
-    to: f32,
-    duration: Duration,
-}
-
-impl OpacityTransition {
-    fn progress(&self) -> f32 {
-        if self.duration == Duration::from_millis(0) {
-            return 1.0;
-        }
-
-        let elapsed = self.started_at.elapsed().as_secs_f32();
-        let total = self.duration.as_secs_f32();
-        ease_out_cubic((elapsed / total).clamp(0.0, 1.0))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct OpacityTransitionState {
-    value: f32,
-    transition: Option<OpacityTransition>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskQuickActionKind {
     Start,
@@ -270,7 +245,7 @@ pub struct GraphView {
     selection_bar_guard: Option<UiActivityGuard>,
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
-    quick_action_opacity: HashMap<TaskId, OpacityTransitionState>,
+    quick_action_opacity: TransitionMap<TaskId>,
     collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
     collapsed_markdown_cache:
         BoundedCache<redesmyn_ids::SessionEventId, Arc<[MarkdownInlineAtom]>>,
@@ -337,7 +312,7 @@ impl GraphView {
             selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
-            quick_action_opacity: HashMap::new(),
+            quick_action_opacity: TransitionMap::new(),
             collapsed_title_cache: HashMap::new(),
             collapsed_markdown_cache: BoundedCache::new(512),
             _subscriptions: subscriptions,
@@ -361,7 +336,7 @@ impl GraphView {
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
         self.quick_action_opacity
-            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+            .retain(|task_id| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
         self.collapsed_title_cache
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
         let referenced_session_events: HashSet<redesmyn_ids::SessionEventId> = self
@@ -524,57 +499,6 @@ impl GraphView {
         self.expanded_details_scroll = ScrollHandle::new();
         self.demo_action = UserActionState::default();
         self.demo_action_task = None;
-    }
-
-    fn opacity_transition_for_render(
-        opacity: &mut HashMap<TaskId, OpacityTransitionState>,
-        task_id: TaskId,
-        visible: bool,
-        duration: Duration,
-        window: &Window,
-    ) -> f32 {
-        let target = if visible { 1.0 } else { 0.0 };
-        let should_prune;
-        let value = {
-            let state = opacity.entry(task_id).or_default();
-
-            if let Some(transition) = state.transition {
-                let t = transition.progress();
-                state.value = lerp_f32(transition.from, transition.to, t);
-                if t >= 1.0 {
-                    state.transition = None;
-                } else {
-                    window.request_animation_frame();
-                }
-            }
-
-            let active_target = state.transition.map(|transition| transition.to);
-            if active_target != Some(target) && (state.value - target).abs() > 1e-3 {
-                if duration == Duration::from_millis(0) {
-                    state.value = target;
-                    state.transition = None;
-                } else {
-                    state.transition = Some(OpacityTransition {
-                        started_at: Instant::now(),
-                        from: state.value,
-                        to: target,
-                        duration,
-                    });
-                    window.request_animation_frame();
-                }
-            }
-
-            should_prune =
-                !visible && state.transition.is_none() && state.value.abs().max(target.abs()) < 1e-3;
-            state.value
-        };
-
-        if should_prune {
-            opacity.remove(&task_id);
-            0.0
-        } else {
-            value
-        }
     }
 
     fn snapshot_scene_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
@@ -2357,8 +2281,7 @@ impl Render for GraphView {
                     let padding_bottom = px(f32::from(theme.spacing.md) * zoom);
                     let is_hovered = hovered_node == Some(node_id);
                     let show_quick_actions = is_hovered || is_primary_selected;
-                    let quick_actions_opacity = Self::opacity_transition_for_render(
-                        &mut self.quick_action_opacity,
+                    let quick_actions_opacity = self.quick_action_opacity.opacity_for_render(
                         task_id,
                         show_quick_actions,
                         quick_actions_fade_duration,
