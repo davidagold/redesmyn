@@ -482,7 +482,15 @@ fn styled_text_div(
 ) -> impl IntoElement {
     let theme = theme_for_window(window, cx);
     let code_bg = match theme.mode {
-        crate::styles::ThemeMode::Dark => theme.colors.accent_foreground.opacity(0.12),
+        crate::styles::ThemeMode::Dark => {
+            // In dark mode we invert user message bubbles (light background + dark text). Use a
+            // darker chip background there so inline code remains visible.
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.35)
+            } else {
+                theme.colors.accent_foreground.opacity(0.12)
+            }
+        }
         crate::styles::ThemeMode::Light => {
             if base_text_color == theme.colors.surface {
                 theme.colors.border.opacity(0.35)
@@ -576,7 +584,15 @@ fn styled_text_block(
     // layout stable when inline spans mix styles).
     let theme = theme_for_window(window, cx);
     let code_bg = match theme.mode {
-        crate::styles::ThemeMode::Dark => theme.colors.accent_foreground.opacity(0.12),
+        crate::styles::ThemeMode::Dark => {
+            // In dark mode we invert user message bubbles (light background + dark text). Use a
+            // darker chip background there so inline code remains visible.
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.35)
+            } else {
+                theme.colors.accent_foreground.opacity(0.12)
+            }
+        }
         crate::styles::ThemeMode::Light => {
             if base_text_color == theme.colors.surface {
                 theme.colors.border.opacity(0.35)

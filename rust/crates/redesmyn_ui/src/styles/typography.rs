@@ -24,7 +24,8 @@ impl Default for TypographyTokens {
             "DejaVu Sans Mono".into(),
         ]);
         let mono_font = {
-            let mut font = font("SF Mono");
+            // `SF Mono` isn't installed by default on every macOS system; `Menlo` is.
+            let mut font = font("Menlo");
             font.weight = FontWeight::NORMAL;
             font.fallbacks = Some(mono_fallbacks);
             font
