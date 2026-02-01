@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
@@ -36,13 +36,19 @@ use redesmyn_ui::components::{
     TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
-use redesmyn_ui::utils::theme_for_window;
+use redesmyn_ui::utils::{
+    UiActivityGuard, theme_for_window, ui_idle_tracker, ui_test_mode_animation_duration,
+};
 
 use serde_json::Value as JsonValue;
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
     u64::from_be_bytes(bytes[8..16].try_into().expect("slice length"))
+}
+
+fn ease_out_cubic(t: f32) -> f32 {
+    1.0 - (1.0 - t).powi(3)
 }
 
 const CONFLICT_CODE_KEY: &str = "conflict_code";
@@ -265,6 +271,62 @@ struct MarkdownCacheStats {
     total_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolEventGroupKind {
+    ExecCommands,
+    ToolActivity,
+}
+
+impl ToolEventGroupKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::ExecCommands => "Commands",
+            Self::ToolActivity => "Tool activity",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ToolEventGroup {
+    start_ix: usize,
+    end_ix: usize,
+    count: usize,
+    kind: ToolEventGroupKind,
+    last_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolEventGroupMembership {
+    group_id: SessionEventId,
+    is_first: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolGroupTransition {
+    started_at: Instant,
+    from: f32,
+    to: f32,
+    duration: Duration,
+}
+
+impl ToolGroupTransition {
+    fn value(&self) -> f32 {
+        if self.duration == Duration::from_millis(0) {
+            return self.to;
+        }
+
+        let elapsed = self.started_at.elapsed().as_secs_f32();
+        let total = self.duration.as_secs_f32();
+        let t = (elapsed / total).clamp(0.0, 1.0);
+        let eased = ease_out_cubic(t);
+        self.from + (self.to - self.from) * eased
+    }
+
+    fn is_done(&self) -> bool {
+        self.duration == Duration::from_millis(0) || self.started_at.elapsed() >= self.duration
+    }
+}
+
 fn cache_markdown_for_events(
     cache: &mut HashMap<SessionEventId, Arc<MarkdownDoc>>,
     events: &[SessionEvent],
@@ -326,8 +388,13 @@ pub struct SessionView {
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     expanded_tool_events: HashSet<SessionEventId>,
+    expanded_tool_groups: HashSet<SessionEventId>,
+    tool_group_transitions: Rc<HashMap<SessionEventId, ToolGroupTransition>>,
+    tool_group_transition_guards: HashMap<SessionEventId, UiActivityGuard>,
     exec_command_result_by_invocation: Rc<HashMap<SessionEventId, (SessionEventId, ToolResult)>>,
     grouped_exec_command_result_event_ids: Rc<HashSet<SessionEventId>>,
+    tool_event_groups: Rc<HashMap<SessionEventId, ToolEventGroup>>,
+    tool_event_group_membership: Rc<HashMap<SessionEventId, ToolEventGroupMembership>>,
     markdown_cache: Rc<RefCell<HashMap<SessionEventId, Arc<MarkdownDoc>>>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
@@ -411,8 +478,13 @@ impl SessionView {
             pending_focus_composer: false,
             feed: None,
             expanded_tool_events: HashSet::new(),
+            expanded_tool_groups: HashSet::new(),
+            tool_group_transitions: Rc::new(HashMap::new()),
+            tool_group_transition_guards: HashMap::new(),
             exec_command_result_by_invocation: Rc::new(HashMap::new()),
             grouped_exec_command_result_event_ids: Rc::new(HashSet::new()),
+            tool_event_groups: Rc::new(HashMap::new()),
+            tool_event_group_membership: Rc::new(HashMap::new()),
             markdown_cache: Rc::new(RefCell::new(HashMap::new())),
             client,
             _client_task: client_task,
@@ -442,8 +514,13 @@ impl SessionView {
             self.error = None;
             self.feed = None;
             self.expanded_tool_events.clear();
+            self.expanded_tool_groups.clear();
+            self.tool_group_transitions = Rc::new(HashMap::new());
+            self.tool_group_transition_guards.clear();
             self.exec_command_result_by_invocation = Rc::new(HashMap::new());
             self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
+            self.tool_event_groups = Rc::new(HashMap::new());
+            self.tool_event_group_membership = Rc::new(HashMap::new());
             self.markdown_cache.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
             self.timeline_list_reset_scheduled = false;
@@ -511,8 +588,13 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.expanded_tool_events.clear();
+        self.expanded_tool_groups.clear();
+        self.tool_group_transitions = Rc::new(HashMap::new());
+        self.tool_group_transition_guards.clear();
         self.exec_command_result_by_invocation = Rc::new(HashMap::new());
         self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
+        self.tool_event_groups = Rc::new(HashMap::new());
+        self.tool_event_group_membership = Rc::new(HashMap::new());
         self.markdown_cache.borrow_mut().clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
@@ -938,6 +1020,52 @@ impl SessionView {
         cx.notify();
     }
 
+    fn toggle_tool_group(&mut self, group_id: SessionEventId, cx: &mut Context<Self>) {
+        let was_expanded = self.expanded_tool_groups.contains(&group_id);
+        if was_expanded {
+            self.expanded_tool_groups.remove(&group_id);
+        } else {
+            self.expanded_tool_groups.insert(group_id);
+        }
+
+        let target = if was_expanded { 0.0 } else { 1.0 };
+        let current = self
+            .tool_group_transitions
+            .get(&group_id)
+            .map(|transition| transition.value())
+            .unwrap_or_else(|| if was_expanded { 1.0 } else { 0.0 });
+
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
+        let mut transitions: HashMap<SessionEventId, ToolGroupTransition> =
+            self.tool_group_transitions.as_ref().clone();
+
+        if duration == Duration::from_millis(0) || (current - target).abs() < 1e-3 {
+            transitions.remove(&group_id);
+            self.tool_group_transition_guards.remove(&group_id);
+        } else {
+            transitions.insert(
+                group_id,
+                ToolGroupTransition {
+                    started_at: Instant::now(),
+                    from: current,
+                    to: target,
+                    duration,
+                },
+            );
+
+            if !self.tool_group_transition_guards.contains_key(&group_id)
+                && let Some(tracker) = ui_idle_tracker(cx)
+            {
+                self.tool_group_transition_guards
+                    .insert(group_id, tracker.begin_transition());
+            }
+        }
+
+        self.tool_group_transitions = Rc::new(transitions);
+        self.invalidate_tool_group(group_id);
+        cx.notify();
+    }
+
     fn jump_to_bottom(
         &mut self,
         _event: &ClickEvent,
@@ -957,6 +1085,7 @@ impl SessionView {
     fn set_timeline_items(&mut self, items: Vec<SessionTimelineItem>) {
         let old_items = std::mem::replace(&mut self.timeline_items, Rc::new(items));
         self.rebuild_exec_command_groups();
+        self.rebuild_tool_event_groups();
         sync_list_state(
             &self.timeline_list_state,
             old_items.as_ref(),
@@ -1003,6 +1132,144 @@ impl SessionView {
         self.grouped_exec_command_result_event_ids = Rc::new(grouped_result_ids);
     }
 
+    fn rebuild_tool_event_groups(&mut self) {
+        const MIN_GROUP_LEN: usize = 4;
+
+        let mut groups: HashMap<SessionEventId, ToolEventGroup> = HashMap::new();
+        let mut membership: HashMap<SessionEventId, ToolEventGroupMembership> = HashMap::new();
+
+        let mut run_start_ix: Option<usize> = None;
+        let mut run_end_ix: Option<usize> = None;
+        let mut run_event_ids: Vec<SessionEventId> = Vec::new();
+        let mut run_kind = ToolEventGroupKind::ExecCommands;
+        let mut last_summary: Option<String> = None;
+
+        let mut flush_run = |run_start_ix: &mut Option<usize>,
+                             run_end_ix: &mut Option<usize>,
+                             run_event_ids: &mut Vec<SessionEventId>,
+                             run_kind: &mut ToolEventGroupKind,
+                             last_summary: &mut Option<String>| {
+            let Some(start_ix) = run_start_ix.take() else {
+                return;
+            };
+            let Some(end_ix) = run_end_ix.take() else {
+                return;
+            };
+
+            if run_event_ids.len() >= MIN_GROUP_LEN {
+                let group_id = run_event_ids[0];
+
+                groups.insert(
+                    group_id,
+                    ToolEventGroup {
+                        start_ix,
+                        end_ix,
+                        count: run_event_ids.len(),
+                        kind: *run_kind,
+                        last_summary: last_summary.clone(),
+                    },
+                );
+
+                for (ix, event_id) in run_event_ids.iter().copied().enumerate() {
+                    membership.insert(
+                        event_id,
+                        ToolEventGroupMembership {
+                            group_id,
+                            is_first: ix == 0,
+                        },
+                    );
+                }
+            }
+
+            run_event_ids.clear();
+            *run_kind = ToolEventGroupKind::ExecCommands;
+            *last_summary = None;
+        };
+
+        for (ix, item) in self.timeline_items.iter().enumerate() {
+            let SessionTimelineItem::Event(event) = item else {
+                flush_run(
+                    &mut run_start_ix,
+                    &mut run_end_ix,
+                    &mut run_event_ids,
+                    &mut run_kind,
+                    &mut last_summary,
+                );
+                continue;
+            };
+
+            match &event.content {
+                SessionEventItemContent::ToolInvocation(tool) => {
+                    let is_exec_command = tool.tool_name == "exec_command";
+                    let summary_main = if is_exec_command {
+                        let (command, _cwd) = parse_exec_command_input_preview(&tool.input_preview);
+                        command
+                            .as_deref()
+                            .map(tidy_shell_command)
+                            .unwrap_or_else(|| tool.input_preview.clone())
+                    } else {
+                        tool.input_preview.clone()
+                    };
+
+                    if run_start_ix.is_none() {
+                        run_start_ix = Some(ix);
+                    }
+                    run_end_ix = Some(ix + 1);
+                    run_event_ids.push(event.session_event_id);
+                    last_summary = Some(summary_main);
+
+                    if !is_exec_command {
+                        run_kind = ToolEventGroupKind::ToolActivity;
+                    }
+                }
+                SessionEventItemContent::ToolResult(_tool)
+                    if self
+                        .grouped_exec_command_result_event_ids
+                        .contains(&event.session_event_id) =>
+                {
+                    // `exec_command` results are already surfaced via their invocation rows; keep
+                    // groups contiguous across the invocation/result pairs.
+                    if run_start_ix.is_none() {
+                        run_start_ix = Some(ix);
+                    }
+                    run_end_ix = Some(ix + 1);
+                }
+                SessionEventItemContent::ToolResult(tool) => {
+                    if run_start_ix.is_none() {
+                        run_start_ix = Some(ix);
+                    }
+                    run_end_ix = Some(ix + 1);
+                    run_event_ids.push(event.session_event_id);
+                    last_summary = Some(tool.output_preview.clone());
+
+                    if tool.tool_name != "exec_command" {
+                        run_kind = ToolEventGroupKind::ToolActivity;
+                    }
+                }
+                _ => {
+                    flush_run(
+                        &mut run_start_ix,
+                        &mut run_end_ix,
+                        &mut run_event_ids,
+                        &mut run_kind,
+                        &mut last_summary,
+                    );
+                }
+            }
+        }
+
+        flush_run(
+            &mut run_start_ix,
+            &mut run_end_ix,
+            &mut run_event_ids,
+            &mut run_kind,
+            &mut last_summary,
+        );
+
+        self.tool_event_groups = Rc::new(groups);
+        self.tool_event_group_membership = Rc::new(membership);
+    }
+
     fn refresh_timeline_items(&mut self) {
         let items = self
             .feed
@@ -1020,6 +1287,53 @@ impl SessionView {
             )
         }) {
             self.timeline_list_state.splice(ix..ix + 1, 1);
+        }
+    }
+
+    fn invalidate_tool_group(&mut self, group_id: SessionEventId) {
+        let Some(group) = self.tool_event_groups.get(&group_id) else {
+            return;
+        };
+        let count = group.end_ix.saturating_sub(group.start_ix);
+        if count == 0 {
+            return;
+        }
+        self.timeline_list_state.splice(group.start_ix..group.end_ix, count);
+    }
+
+    fn tick_tool_group_transitions_for_render(
+        &mut self,
+        window: &mut Window,
+    ) {
+        if self.tool_group_transitions.is_empty() {
+            return;
+        }
+
+        let transitions = Rc::clone(&self.tool_group_transitions);
+        let mut next: HashMap<SessionEventId, ToolGroupTransition> = HashMap::new();
+        let mut invalidations: Vec<SessionEventId> = Vec::new();
+
+        for (group_id, transition) in transitions.iter() {
+            if transition.is_done() {
+                self.tool_group_transition_guards.remove(group_id);
+                invalidations.push(*group_id);
+            } else {
+                next.insert(*group_id, *transition);
+            }
+        }
+
+        if next.len() != self.tool_group_transitions.len() {
+            self.tool_group_transitions = Rc::new(next);
+        } else {
+            // Keep the same Rc when nothing changes so list closures don't churn.
+        }
+
+        for group_id in invalidations {
+            self.invalidate_tool_group(group_id);
+        }
+
+        if !self.tool_group_transitions.is_empty() {
+            window.request_animation_frame();
         }
     }
 
@@ -1094,6 +1408,7 @@ impl Render for SessionView {
         // Note: do not call `ListState` methods from within the scroll handler (it runs while the
         // list state is mutably borrowed). We instead evaluate autoloading here during render.
         self.maybe_autoload_older(cx);
+        self.tick_tool_group_transitions_for_render(window);
 
         let mut content = div()
             .flex()
@@ -1148,9 +1463,13 @@ impl Render for SessionView {
         let items = Rc::clone(&self.timeline_items);
         let markdown_cache = Rc::clone(&self.markdown_cache);
         let expanded_tool_events = self.expanded_tool_events.clone();
+        let expanded_tool_groups = self.expanded_tool_groups.clone();
         let exec_command_results = Rc::clone(&self.exec_command_result_by_invocation);
         let grouped_exec_command_result_ids =
             Rc::clone(&self.grouped_exec_command_result_event_ids);
+        let tool_event_groups = Rc::clone(&self.tool_event_groups);
+        let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
+        let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
 
@@ -1214,6 +1533,68 @@ impl Render for SessionView {
                     let session_event_id = item.session_event_id;
                     let event_key = session_event_id_key(item.session_event_id);
                     let bubble_id: ElementId = ("session_event", event_key).into();
+
+                    let render_tool_group_row = |chevron: &'static str,
+                                                 group_id: SessionEventId,
+                                                 title: &'static str,
+                                                 count: usize,
+                                                 last: Option<String>| {
+                        let toggle_view = timeline_view.clone();
+                        div()
+                            .id(("session_tool_group", session_event_id_key(group_id)))
+                            .w_full()
+                            .min_w_0()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.sm)
+                            .px(theme.spacing.sm)
+                            .py(theme.spacing.xs)
+                            .rounded_sm()
+                            .bg(theme.colors.surface_elevated.opacity(0.18))
+                            .font(theme.typography.mono.font.clone())
+                            .text_size(theme.typography.caption.size)
+                            .cursor_pointer()
+                            .focusable()
+                            .on_click(move |event, _window, cx| {
+                                if event.standard_click() {
+                                    toggle_view.update(cx, |this, cx| {
+                                        this.toggle_tool_group(group_id, cx);
+                                    });
+                                }
+                            })
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .whitespace_nowrap()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(chevron),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .whitespace_nowrap()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .whitespace_nowrap()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(count.to_string()),
+                            )
+                            .when_some(last, |this, last| {
+                                this.child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_color(theme.colors.foreground)
+                                        .truncate()
+                                        .child(last),
+                                )
+                            })
+                    };
 
                     match item.content {
                         redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg)
@@ -1363,179 +1744,38 @@ impl Render for SessionView {
                             // (These remain available via the semantic snapshot/debug surfaces.)
                             match other {
                                 SessionEventItemContent::ToolInvocation(tool) => {
-                                    let expanded = expanded_tool_events.contains(&item.session_event_id);
-                                    let chevron = if expanded { "▾" } else { "▸" };
-                                    let toggle_view = timeline_view.clone();
-                                    let session_event_id = item.session_event_id;
-
-                                    let is_exec_command = tool.tool_name == "exec_command";
-                                    let exec_command_result = is_exec_command
-                                        .then(|| exec_command_results.get(&session_event_id))
-                                        .flatten();
-
-                                    let (exec_command, exec_cwd) = if is_exec_command {
-                                        parse_exec_command_input_preview(&tool.input_preview)
-                                    } else {
-                                        (None, None)
-                                    };
-
-                                    let summary_main = if is_exec_command {
-                                        exec_command
-                                            .as_deref()
-                                            .map(tidy_shell_command)
-                                            .unwrap_or_else(|| tool.input_preview.clone())
-                                    } else {
-                                        tool.input_preview.clone()
-                                    };
-
-                                    let exit_code = exec_command_result.and_then(|(_id, result)| {
-                                        split_exec_command_exit_code(&result.output_preview).0
+                                    let group_context = tool_event_group_membership
+                                        .get(&item.session_event_id)
+                                        .and_then(|member| {
+                                            tool_event_groups
+                                                .get(&member.group_id)
+                                                .map(|group| (*member, group))
+                                        });
+                                    let group_progress = group_context.as_ref().map(|(member, _)| {
+                                        tool_group_transitions
+                                            .get(&member.group_id)
+                                            .map(|transition| transition.value())
+                                            .unwrap_or_else(|| {
+                                                if expanded_tool_groups.contains(&member.group_id) {
+                                                    1.0
+                                                } else {
+                                                    0.0
+                                                }
+                                            })
                                     });
 
-                                    let summary = div()
-                                        .id((bubble_id.clone(), "summary"))
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(theme.spacing.sm)
-                                        .font(theme.typography.mono.font.clone())
-                                        .text_size(theme.typography.caption.size)
-                                        .cursor_pointer()
-                                        .focusable()
-                                        .on_click(move |event, _window, cx| {
-                                            if event.standard_click() {
-                                                toggle_view.update(cx, |this, cx| {
-                                                    this.toggle_tool_event(session_event_id, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .whitespace_nowrap()
-                                                .text_color(theme.colors.foreground_muted)
-                                                .child(chevron),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .whitespace_nowrap()
-                                                .text_color(theme.colors.foreground_muted)
-                                                .child(tool.tool_name.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_color(theme.colors.foreground)
-                                                .truncate()
-                                                .child(summary_main),
-                                        )
-                                        .when_some(exit_code, |this, exit_code| {
-                                            let color = if exit_code == 0 {
-                                                theme.colors.foreground_muted
-                                            } else {
-                                                theme.colors.danger
-                                            };
-                                            this.child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .whitespace_nowrap()
-                                                    .text_color(color)
-                                                    .child(format!("exit {exit_code}")),
-                                            )
-                                        });
-
-                                    let mut block = div()
-                                        .id(bubble_id.clone())
-                                        .w_full()
-                                        .min_w_0()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(theme.spacing.xs)
-                                        .px(theme.spacing.sm)
-                                        .py(theme.spacing.xs)
-                                        .child(summary);
-
-                                    if expanded {
-                                        let mut details = div()
-                                            .id((bubble_id.clone(), "details"))
-                                            .pl(theme.spacing.lg)
-                                            .flex()
-                                            .flex_col()
-                                            .gap(theme.spacing.xs)
-                                            .font(theme.typography.mono.font.clone())
-                                            .text_size(theme.typography.caption.size);
-
-                                        if is_exec_command {
-                                            if let Some(cwd) = exec_cwd.as_deref() {
-                                                details = details.child(
-                                                    div()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .child(format!("cwd: {cwd}")),
-                                                );
-                                            }
-
-                                            details = details.child(
-                                                div()
-                                                    .text_color(theme.colors.foreground)
-                                                    .child(
-                                                        exec_command
-                                                            .as_deref()
-                                                            .map(tidy_shell_command)
-                                                            .unwrap_or_else(|| tool.input_preview.clone()),
-                                                    ),
-                                            );
-
-                                            if let Some((_result_id, result)) = exec_command_result {
-                                                let (exit_code, remainder) = split_exec_command_exit_code(
-                                                    &result.output_preview,
-                                                );
-                                            if let Some(exit_code) = exit_code {
-                                                let color = if exit_code == 0 {
-                                                    theme.colors.foreground_muted
-                                                } else {
-                                                        theme.colors.danger
-                                                    };
-                                                    details = details.child(
-                                                        div()
-                                                            .text_color(color)
-                                                            .child(format!("exit {exit_code}")),
-                                                    );
-                                                }
-
-                                                if let Some(error) = result.error.as_ref() {
-                                                    details = details.child(
-                                                        div()
-                                                            .text_color(theme.colors.danger)
-                                                            .child(error.message.clone()),
-                                                    );
-                                                }
-
-                                                if !remainder.is_empty() {
-                                                    details = details.child(
-                                                        div()
-                                                            .text_color(theme.colors.foreground)
-                                                            .child(remainder.to_string()),
-                                                    );
-                                                }
-                                            }
-                                        } else {
-                                            details = details.child(
-                                                div()
-                                                    .text_color(theme.colors.foreground)
-                                                    .child(tool.input_preview.clone()),
-                                            );
-                                        }
-
-                                        block = block.child(details);
-                                    }
-
-                                    list.child(block)
-                                }
-                                SessionEventItemContent::ToolResult(tool) => {
-                                    if grouped_exec_command_result_ids.contains(&item.session_event_id) {
-                                        div()
+                                    if let Some((member, group)) = group_context
+                                        && !expanded_tool_groups.contains(&member.group_id)
+                                        && member.is_first
+                                    {
+                                        let group_id = member.group_id;
+                                        list.child(render_tool_group_row(
+                                            "▸",
+                                            group_id,
+                                            group.kind.title(),
+                                            group.count,
+                                            group.last_summary.clone(),
+                                        ))
                                     } else {
                                         let expanded =
                                             expanded_tool_events.contains(&item.session_event_id);
@@ -1543,7 +1783,33 @@ impl Render for SessionView {
                                         let toggle_view = timeline_view.clone();
                                         let session_event_id = item.session_event_id;
 
-                                        let has_error = tool.error.is_some();
+                                        let is_exec_command = tool.tool_name == "exec_command";
+                                        let exec_command_result = is_exec_command
+                                            .then(|| exec_command_results.get(&session_event_id))
+                                            .flatten();
+
+                                        let (exec_command, exec_cwd) = if is_exec_command {
+                                            parse_exec_command_input_preview(&tool.input_preview)
+                                        } else {
+                                            (None, None)
+                                        };
+
+                                        let summary_main = if is_exec_command {
+                                            exec_command
+                                                .as_deref()
+                                                .map(tidy_shell_command)
+                                                .unwrap_or_else(|| tool.input_preview.clone())
+                                        } else {
+                                            tool.input_preview.clone()
+                                        };
+
+                                        let exit_code = exec_command_result
+                                            .and_then(|(_id, result)| {
+                                                split_exec_command_exit_code(
+                                                    &result.output_preview,
+                                                )
+                                                .0
+                                            });
 
                                         let summary = div()
                                             .id((bubble_id.clone(), "summary"))
@@ -1582,14 +1848,20 @@ impl Render for SessionView {
                                                     .min_w_0()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
-                                                    .child(tool.output_preview.clone()),
+                                                    .child(summary_main),
                                             )
-                                            .when(has_error, |this| {
+                                            .when_some(exit_code, |this, exit_code| {
+                                                let color = if exit_code == 0 {
+                                                    theme.colors.foreground_muted
+                                                } else {
+                                                    theme.colors.danger
+                                                };
                                                 this.child(
                                                     div()
-                                                        .text_xs()
-                                                        .text_color(theme.colors.danger)
-                                                        .child("error"),
+                                                        .flex_shrink_0()
+                                                        .whitespace_nowrap()
+                                                        .text_color(color)
+                                                        .child(format!("exit {exit_code}")),
                                                 )
                                             });
 
@@ -1614,24 +1886,335 @@ impl Render for SessionView {
                                                 .font(theme.typography.mono.font.clone())
                                                 .text_size(theme.typography.caption.size);
 
-                                            if let Some(error) = tool.error.as_ref() {
+                                            if is_exec_command {
+                                                if let Some(cwd) = exec_cwd.as_deref() {
+                                                    details = details.child(
+                                                        div()
+                                                            .text_color(theme.colors.foreground_muted)
+                                                            .child(format!("cwd: {cwd}")),
+                                                    );
+                                                }
+
                                                 details = details.child(
                                                     div()
-                                                        .text_color(theme.colors.danger)
-                                                        .child(error.message.clone()),
+                                                        .text_color(theme.colors.foreground)
+                                                        .child(
+                                                            exec_command
+                                                                .as_deref()
+                                                                .map(tidy_shell_command)
+                                                                .unwrap_or_else(|| tool.input_preview.clone()),
+                                                        ),
+                                                );
+
+                                                if let Some((_result_id, result)) = exec_command_result {
+                                                    let (exit_code, remainder) =
+                                                        split_exec_command_exit_code(
+                                                            &result.output_preview,
+                                                        );
+                                                    if let Some(exit_code) = exit_code {
+                                                        let color = if exit_code == 0 {
+                                                            theme.colors.foreground_muted
+                                                        } else {
+                                                            theme.colors.danger
+                                                        };
+                                                        details = details.child(
+                                                            div()
+                                                                .text_color(color)
+                                                                .child(format!("exit {exit_code}")),
+                                                        );
+                                                    }
+
+                                                    if let Some(error) = result.error.as_ref() {
+                                                        details = details.child(
+                                                            div()
+                                                                .text_color(theme.colors.danger)
+                                                                .child(error.message.clone()),
+                                                        );
+                                                    }
+
+                                                    if !remainder.is_empty() {
+                                                        details = details.child(
+                                                            div()
+                                                                .text_color(theme.colors.foreground)
+                                                                .child(remainder.to_string()),
+                                                        );
+                                                    }
+                                                }
+                                            } else {
+                                                details = details.child(
+                                                    div()
+                                                        .text_color(theme.colors.foreground)
+                                                        .child(tool.input_preview.clone()),
                                                 );
                                             }
-
-                                            details = details.child(
-                                                div()
-                                                    .text_color(theme.colors.foreground)
-                                                    .child(tool.output_preview.clone()),
-                                            );
 
                                             block = block.child(details);
                                         }
 
-                                        list.child(block)
+                                        if let Some((member, group)) = group_context
+                                            && expanded_tool_groups.contains(&member.group_id)
+                                        {
+                                            let group_id = member.group_id;
+                                            let group_key = session_event_id_key(group_id);
+                                            let opacity = group_progress.unwrap_or(1.0);
+
+                                            if member.is_first {
+                                                let group_header = render_tool_group_row(
+                                                    "▾",
+                                                    group_id,
+                                                    group.kind.title(),
+                                                    group.count,
+                                                    group.last_summary.clone(),
+                                                );
+                                                list.child(
+                                                    div()
+                                                        .id(("session_tool_group_container", group_key))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap(theme.spacing.xs)
+                                                        .child(group_header)
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .min_w_0()
+                                                                .pl(theme.spacing.lg)
+                                                                .opacity(opacity)
+                                                                .child(block),
+                                                        ),
+                                                )
+                                            } else {
+                                                list.child(
+                                                    div()
+                                                        .id((bubble_id.clone(), "group_member"))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .pl(theme.spacing.lg)
+                                                        .opacity(opacity)
+                                                        .child(block),
+                                                )
+                                            }
+                                        } else if let Some((member, _)) = group_context {
+                                            let group_id = member.group_id;
+                                            let opacity = group_progress.unwrap_or(0.0);
+                                            if expanded_tool_groups.contains(&group_id)
+                                                || opacity > 1e-3
+                                            {
+                                                list.child(
+                                                    div()
+                                                        .id((bubble_id.clone(), "group_member"))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .pl(theme.spacing.lg)
+                                                        .opacity(opacity)
+                                                        .child(block),
+                                                )
+                                            } else {
+                                                div()
+                                            }
+                                        } else {
+                                            list.child(block)
+                                        }
+                                    }
+                                }
+                                SessionEventItemContent::ToolResult(tool) => {
+                                    if grouped_exec_command_result_ids.contains(&item.session_event_id) {
+                                        div()
+                                    } else {
+                                        let group_context = tool_event_group_membership
+                                            .get(&item.session_event_id)
+                                            .and_then(|member| {
+                                                tool_event_groups
+                                                    .get(&member.group_id)
+                                                    .map(|group| (*member, group))
+                                            });
+                                        let group_progress = group_context.as_ref().map(|(member, _)| {
+                                            tool_group_transitions
+                                                .get(&member.group_id)
+                                                .map(|transition| transition.value())
+                                                .unwrap_or_else(|| {
+                                                    if expanded_tool_groups.contains(&member.group_id) {
+                                                        1.0
+                                                    } else {
+                                                        0.0
+                                                    }
+                                                })
+                                        });
+
+                                        if let Some((member, group)) = group_context
+                                            && !expanded_tool_groups.contains(&member.group_id)
+                                            && member.is_first
+                                        {
+                                            let group_id = member.group_id;
+                                            list.child(render_tool_group_row(
+                                                "▸",
+                                                group_id,
+                                                group.kind.title(),
+                                                group.count,
+                                                group.last_summary.clone(),
+                                            ))
+                                        } else {
+                                            let expanded =
+                                                expanded_tool_events.contains(&item.session_event_id);
+                                            let chevron = if expanded { "▾" } else { "▸" };
+                                            let toggle_view = timeline_view.clone();
+                                            let session_event_id = item.session_event_id;
+
+                                            let has_error = tool.error.is_some();
+
+                                            let summary = div()
+                                                .id((bubble_id.clone(), "summary"))
+                                                .flex()
+                                                .flex_row()
+                                                .items_center()
+                                                .gap(theme.spacing.sm)
+                                                .font(theme.typography.mono.font.clone())
+                                                .text_size(theme.typography.caption.size)
+                                                .cursor_pointer()
+                                                .focusable()
+                                                .on_click(move |event, _window, cx| {
+                                                    if event.standard_click() {
+                                                        toggle_view.update(cx, |this, cx| {
+                                                            this.toggle_tool_event(session_event_id, cx);
+                                                        });
+                                                    }
+                                                })
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .whitespace_nowrap()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child(chevron),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .whitespace_nowrap()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child(tool.tool_name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_color(theme.colors.foreground)
+                                                        .truncate()
+                                                        .child(tool.output_preview.clone()),
+                                                )
+                                                .when(has_error, |this| {
+                                                    this.child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(theme.colors.danger)
+                                                            .child("error"),
+                                                    )
+                                                });
+
+                                            let mut block = div()
+                                                .id(bubble_id.clone())
+                                                .w_full()
+                                                .min_w_0()
+                                                .flex()
+                                                .flex_col()
+                                                .gap(theme.spacing.xs)
+                                                .px(theme.spacing.sm)
+                                                .py(theme.spacing.xs)
+                                                .child(summary);
+
+                                            if expanded {
+                                                let mut details = div()
+                                                    .id((bubble_id.clone(), "details"))
+                                                    .pl(theme.spacing.lg)
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(theme.spacing.xs)
+                                                    .font(theme.typography.mono.font.clone())
+                                                    .text_size(theme.typography.caption.size);
+
+                                                if let Some(error) = tool.error.as_ref() {
+                                                    details = details.child(
+                                                        div()
+                                                            .text_color(theme.colors.danger)
+                                                            .child(error.message.clone()),
+                                                    );
+                                                }
+
+                                                details = details.child(
+                                                    div()
+                                                        .text_color(theme.colors.foreground)
+                                                        .child(tool.output_preview.clone()),
+                                                );
+
+                                                block = block.child(details);
+                                            }
+
+                                            if let Some((member, group)) = group_context
+                                                && expanded_tool_groups.contains(&member.group_id)
+                                            {
+                                                let group_id = member.group_id;
+                                                let group_key = session_event_id_key(group_id);
+                                                let opacity = group_progress.unwrap_or(1.0);
+
+                                                if member.is_first {
+                                                    let group_header = render_tool_group_row(
+                                                        "▾",
+                                                        group_id,
+                                                        group.kind.title(),
+                                                        group.count,
+                                                        group.last_summary.clone(),
+                                                    );
+                                                    list.child(
+                                                        div()
+                                                            .id(("session_tool_group_container", group_key))
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap(theme.spacing.xs)
+                                                            .child(group_header)
+                                                            .child(
+                                                                div()
+                                                                    .w_full()
+                                                                    .min_w_0()
+                                                                    .pl(theme.spacing.lg)
+                                                                    .opacity(opacity)
+                                                                    .child(block),
+                                                            ),
+                                                    )
+                                                } else {
+                                                    list.child(
+                                                        div()
+                                                            .id((bubble_id.clone(), "group_member"))
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .pl(theme.spacing.lg)
+                                                            .opacity(opacity)
+                                                            .child(block),
+                                                    )
+                                                }
+                                            } else if let Some((member, _)) = group_context {
+                                                let group_id = member.group_id;
+                                                let opacity = group_progress.unwrap_or(0.0);
+                                                if expanded_tool_groups.contains(&group_id)
+                                                    || opacity > 1e-3
+                                                {
+                                                    list.child(
+                                                        div()
+                                                            .id((bubble_id.clone(), "group_member"))
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .pl(theme.spacing.lg)
+                                                            .opacity(opacity)
+                                                            .child(block),
+                                                    )
+                                                } else {
+                                                    div()
+                                                }
+                                            } else {
+                                                list.child(block)
+                                            }
+                                        }
                                     }
                                 }
                                 redesmyn_session_view_model::SessionEventItemContent::ArtifactEmitted(
