@@ -1166,7 +1166,10 @@ impl SessionView {
                         end_ix,
                         count: run_event_ids.len(),
                         kind: *run_kind,
-                        last_summary: last_summary.clone(),
+                        last_summary: match *run_kind {
+                            ToolEventGroupKind::ExecCommands => None,
+                            ToolEventGroupKind::ToolActivity => last_summary.clone(),
+                        },
                     },
                 );
 
