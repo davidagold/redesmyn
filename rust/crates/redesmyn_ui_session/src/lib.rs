@@ -1298,25 +1298,25 @@ impl SessionView {
         if count == 0 {
             return;
         }
-        self.timeline_list_state.splice(group.start_ix..group.end_ix, count);
+        self.timeline_list_state
+            .splice(group.start_ix..group.end_ix, count);
     }
 
-    fn tick_tool_group_transitions_for_render(
-        &mut self,
-        window: &mut Window,
-    ) {
+    fn tick_tool_group_transitions_for_render(&mut self, window: &mut Window) {
         if self.tool_group_transitions.is_empty() {
             return;
         }
 
         let transitions = Rc::clone(&self.tool_group_transitions);
+        // While a group is animating we need to invalidate its whole range every frame so GPUI's
+        // list re-measures the evolving row heights. Otherwise the list will keep the initial
+        // cached heights and the animation will "jump" once at the end.
+        let active_group_ids: Vec<SessionEventId> = transitions.keys().copied().collect();
         let mut next: HashMap<SessionEventId, ToolGroupTransition> = HashMap::new();
-        let mut invalidations: Vec<SessionEventId> = Vec::new();
 
         for (group_id, transition) in transitions.iter() {
             if transition.is_done() {
                 self.tool_group_transition_guards.remove(group_id);
-                invalidations.push(*group_id);
             } else {
                 next.insert(*group_id, *transition);
             }
@@ -1328,7 +1328,7 @@ impl SessionView {
             // Keep the same Rc when nothing changes so list closures don't churn.
         }
 
-        for group_id in invalidations {
+        for group_id in active_group_ids {
             self.invalidate_tool_group(group_id);
         }
 
@@ -1596,6 +1596,15 @@ impl Render for SessionView {
                             })
                     };
 
+                    let tool_group_member_row_height = {
+                        let caption_line_height = window
+                            .text_style()
+                            .line_height
+                            .to_pixels(theme.typography.caption.size, window.rem_size())
+                            .round();
+                        caption_line_height + theme.spacing.xs * 2.0
+                    };
+
                     match item.content {
                         redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg)
                         | redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
@@ -1763,19 +1772,30 @@ impl Render for SessionView {
                                                 }
                                             })
                                     });
-
-                                    if let Some((member, group)) = group_context
-                                        && !expanded_tool_groups.contains(&member.group_id)
-                                        && member.is_first
-                                    {
+                                    let group_state = group_context.map(|(member, group)| {
                                         let group_id = member.group_id;
-                                        list.child(render_tool_group_row(
-                                            "▸",
-                                            group_id,
-                                            group.kind.title(),
-                                            group.count,
-                                            group.last_summary.clone(),
-                                        ))
+                                        let is_expanded = expanded_tool_groups.contains(&group_id);
+                                        let progress = group_progress
+                                            .unwrap_or_else(|| if is_expanded { 1.0 } else { 0.0 });
+                                        (member, group_id, group, progress, is_expanded)
+                                    });
+
+                                    if let Some((member, group_id, group, progress, is_expanded)) =
+                                        group_state
+                                        && !is_expanded
+                                        && progress <= 1e-3
+                                    {
+                                        if member.is_first {
+                                            list.child(render_tool_group_row(
+                                                "▸",
+                                                group_id,
+                                                group.kind.title(),
+                                                group.count,
+                                                group.last_summary.clone(),
+                                            ))
+                                        } else {
+                                            div()
+                                        }
                                     } else {
                                         let expanded =
                                             expanded_tool_events.contains(&item.session_event_id);
@@ -1951,14 +1971,21 @@ impl Render for SessionView {
                                             block = block.child(details);
                                         }
 
-                                        if let Some((member, group)) = group_context
-                                            && expanded_tool_groups.contains(&member.group_id)
+                                        if let Some((member, group_id, group, progress, _)) =
+                                            group_state
                                         {
-                                            let group_id = member.group_id;
-                                            let group_key = session_event_id_key(group_id);
-                                            let opacity = group_progress.unwrap_or(1.0);
+                                            let opacity = progress;
+                                            let is_animating =
+                                                tool_group_transitions.contains_key(&group_id);
+                                            let max_h = tool_group_member_row_height * opacity;
 
                                             if member.is_first {
+                                                let group_key = session_event_id_key(group_id);
+                                                let gap = if is_animating {
+                                                    theme.spacing.xs * opacity
+                                                } else {
+                                                    theme.spacing.xs
+                                                };
                                                 let group_header = render_tool_group_row(
                                                     "▾",
                                                     group_id,
@@ -1966,6 +1993,18 @@ impl Render for SessionView {
                                                     group.count,
                                                     group.last_summary.clone(),
                                                 );
+
+                                                let mut member_body = div()
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .pl(theme.spacing.lg)
+                                                    .opacity(opacity);
+                                                if is_animating {
+                                                    member_body = member_body
+                                                        .overflow_hidden()
+                                                        .max_h(max_h);
+                                                }
+
                                                 list.child(
                                                     div()
                                                         .id(("session_tool_group_container", group_key))
@@ -1973,45 +2012,22 @@ impl Render for SessionView {
                                                         .min_w_0()
                                                         .flex()
                                                         .flex_col()
-                                                        .gap(theme.spacing.xs)
+                                                        .gap(gap)
                                                         .child(group_header)
-                                                        .child(
-                                                            div()
-                                                                .w_full()
-                                                                .min_w_0()
-                                                                .pl(theme.spacing.lg)
-                                                                .opacity(opacity)
-                                                                .child(block),
-                                                        ),
+                                                        .child(member_body.child(block)),
                                                 )
                                             } else {
-                                                list.child(
-                                                    div()
-                                                        .id((bubble_id.clone(), "group_member"))
-                                                        .w_full()
-                                                        .min_w_0()
-                                                        .pl(theme.spacing.lg)
-                                                        .opacity(opacity)
-                                                        .child(block),
-                                                )
-                                            }
-                                        } else if let Some((member, _)) = group_context {
-                                            let group_id = member.group_id;
-                                            let opacity = group_progress.unwrap_or(0.0);
-                                            if expanded_tool_groups.contains(&group_id)
-                                                || opacity > 1e-3
-                                            {
-                                                list.child(
-                                                    div()
-                                                        .id((bubble_id.clone(), "group_member"))
-                                                        .w_full()
-                                                        .min_w_0()
-                                                        .pl(theme.spacing.lg)
-                                                        .opacity(opacity)
-                                                        .child(block),
-                                                )
-                                            } else {
-                                                div()
+                                                let mut member_row = div()
+                                                    .id((bubble_id.clone(), "group_member"))
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .pl(theme.spacing.lg)
+                                                    .opacity(opacity);
+                                                if is_animating {
+                                                    member_row =
+                                                        member_row.overflow_hidden().max_h(max_h);
+                                                }
+                                                list.child(member_row.child(block))
                                             }
                                         } else {
                                             list.child(block)
@@ -2041,19 +2057,30 @@ impl Render for SessionView {
                                                     }
                                                 })
                                         });
-
-                                        if let Some((member, group)) = group_context
-                                            && !expanded_tool_groups.contains(&member.group_id)
-                                            && member.is_first
-                                        {
+                                        let group_state = group_context.map(|(member, group)| {
                                             let group_id = member.group_id;
-                                            list.child(render_tool_group_row(
-                                                "▸",
-                                                group_id,
-                                                group.kind.title(),
-                                                group.count,
-                                                group.last_summary.clone(),
-                                            ))
+                                            let is_expanded = expanded_tool_groups.contains(&group_id);
+                                            let progress = group_progress
+                                                .unwrap_or_else(|| if is_expanded { 1.0 } else { 0.0 });
+                                            (member, group_id, group, progress, is_expanded)
+                                        });
+
+                                        if let Some((member, group_id, group, progress, is_expanded)) =
+                                            group_state
+                                            && !is_expanded
+                                            && progress <= 1e-3
+                                        {
+                                            if member.is_first {
+                                                list.child(render_tool_group_row(
+                                                    "▸",
+                                                    group_id,
+                                                    group.kind.title(),
+                                                    group.count,
+                                                    group.last_summary.clone(),
+                                                ))
+                                            } else {
+                                                div()
+                                            }
                                         } else {
                                             let expanded =
                                                 expanded_tool_events.contains(&item.session_event_id);
@@ -2149,14 +2176,21 @@ impl Render for SessionView {
                                                 block = block.child(details);
                                             }
 
-                                            if let Some((member, group)) = group_context
-                                                && expanded_tool_groups.contains(&member.group_id)
+                                            if let Some((member, group_id, group, progress, _)) =
+                                                group_state
                                             {
-                                                let group_id = member.group_id;
-                                                let group_key = session_event_id_key(group_id);
-                                                let opacity = group_progress.unwrap_or(1.0);
+                                                let opacity = progress;
+                                                let is_animating =
+                                                    tool_group_transitions.contains_key(&group_id);
+                                                let max_h = tool_group_member_row_height * opacity;
 
                                                 if member.is_first {
+                                                    let group_key = session_event_id_key(group_id);
+                                                    let gap = if is_animating {
+                                                        theme.spacing.xs * opacity
+                                                    } else {
+                                                        theme.spacing.xs
+                                                    };
                                                     let group_header = render_tool_group_row(
                                                         "▾",
                                                         group_id,
@@ -2164,6 +2198,18 @@ impl Render for SessionView {
                                                         group.count,
                                                         group.last_summary.clone(),
                                                     );
+
+                                                    let mut member_body = div()
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .pl(theme.spacing.lg)
+                                                        .opacity(opacity);
+                                                    if is_animating {
+                                                        member_body = member_body
+                                                            .overflow_hidden()
+                                                            .max_h(max_h);
+                                                    }
+
                                                     list.child(
                                                         div()
                                                             .id(("session_tool_group_container", group_key))
@@ -2171,45 +2217,23 @@ impl Render for SessionView {
                                                             .min_w_0()
                                                             .flex()
                                                             .flex_col()
-                                                            .gap(theme.spacing.xs)
+                                                            .gap(gap)
                                                             .child(group_header)
-                                                            .child(
-                                                                div()
-                                                                    .w_full()
-                                                                    .min_w_0()
-                                                                    .pl(theme.spacing.lg)
-                                                                    .opacity(opacity)
-                                                                    .child(block),
-                                                            ),
+                                                            .child(member_body.child(block)),
                                                     )
                                                 } else {
-                                                    list.child(
-                                                        div()
-                                                            .id((bubble_id.clone(), "group_member"))
-                                                            .w_full()
-                                                            .min_w_0()
-                                                            .pl(theme.spacing.lg)
-                                                            .opacity(opacity)
-                                                            .child(block),
-                                                    )
-                                                }
-                                            } else if let Some((member, _)) = group_context {
-                                                let group_id = member.group_id;
-                                                let opacity = group_progress.unwrap_or(0.0);
-                                                if expanded_tool_groups.contains(&group_id)
-                                                    || opacity > 1e-3
-                                                {
-                                                    list.child(
-                                                        div()
-                                                            .id((bubble_id.clone(), "group_member"))
-                                                            .w_full()
-                                                            .min_w_0()
-                                                            .pl(theme.spacing.lg)
-                                                            .opacity(opacity)
-                                                            .child(block),
-                                                    )
-                                                } else {
-                                                    div()
+                                                    let mut member_row = div()
+                                                        .id((bubble_id.clone(), "group_member"))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .pl(theme.spacing.lg)
+                                                        .opacity(opacity);
+                                                    if is_animating {
+                                                        member_row = member_row
+                                                            .overflow_hidden()
+                                                            .max_h(max_h);
+                                                    }
+                                                    list.child(member_row.child(block))
                                                 }
                                             } else {
                                                 list.child(block)
