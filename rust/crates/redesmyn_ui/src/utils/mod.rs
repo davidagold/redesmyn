@@ -1,12 +1,14 @@
 //! Small UI helpers.
 
 mod external_url;
+mod bounded_cache;
 mod idle;
 mod test_mode;
 pub(crate) mod text_editing;
 mod theme;
 mod user_action;
 
+pub use bounded_cache::BoundedCache;
 pub use external_url::{OpenExternalUrl, is_http_https_url};
 pub use idle::{UiActivityGuard, UiIdleTracker, ui_idle_tracker};
 pub use test_mode::{

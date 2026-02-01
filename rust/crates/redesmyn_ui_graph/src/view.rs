@@ -1,6 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-use std::hash::Hash;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,7 +20,7 @@ use redesmyn_ui::components::{
     first_markdown_inline_line_atoms,
 };
 use redesmyn_ui::utils::{
-    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    BoundedCache, UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
     ui_test_mode_animation_duration,
 };
 
@@ -242,56 +241,6 @@ struct CollapsedTitleCacheEntry {
     font_size_px: i32,
     line1: gpui::SharedString,
     line2: Option<gpui::SharedString>,
-}
-
-#[derive(Debug)]
-struct BoundedCache<K, V> {
-    entries: HashMap<K, V>,
-    order: VecDeque<K>,
-    capacity: usize,
-}
-
-impl<K, V> BoundedCache<K, V>
-where
-    K: Clone + Eq + Hash,
-{
-    fn new(capacity: usize) -> Self {
-        Self {
-            entries: HashMap::new(),
-            order: VecDeque::new(),
-            capacity,
-        }
-    }
-
-    fn get(&self, key: &K) -> Option<&V> {
-        self.entries.get(key)
-    }
-
-    fn insert(&mut self, key: K, value: V) {
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key, value);
-            return;
-        }
-
-        self.entries.insert(key.clone(), value);
-        self.order.push_back(key);
-        self.prune();
-    }
-
-    fn retain(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
-        self.entries.retain(|k, v| f(k, v));
-        self.order.retain(|key| self.entries.contains_key(key));
-        self.prune();
-    }
-
-    fn prune(&mut self) {
-        while self.capacity > 0 && self.entries.len() > self.capacity {
-            let Some(key) = self.order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&key);
-        }
-    }
 }
 
 pub struct GraphView {
