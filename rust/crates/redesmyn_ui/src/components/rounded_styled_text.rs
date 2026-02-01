@@ -516,7 +516,7 @@ fn max_whitespace_cover_before(
 
     let prev_x = line.unwrapped_layout.x_for_index(prev_start);
     let whitespace_width = (span_start_x - prev_x).max(px(0.0));
-    let min_gap = style.padding_x;
+    let min_gap = style.padding_x * 0.5;
     (whitespace_width - min_gap)
         .max(px(0.0))
         .min(style.padding_x)
@@ -544,7 +544,7 @@ fn max_whitespace_cover_after(
     let next_end = span_end + next_ch.len_utf8();
     let next_end_x = line.unwrapped_layout.x_for_index(next_end);
     let whitespace_width = (next_end_x - span_end_x).max(px(0.0));
-    let min_gap = style.padding_x;
+    let min_gap = style.padding_x * 0.5;
     (whitespace_width - min_gap)
         .max(px(0.0))
         .min(style.padding_x)

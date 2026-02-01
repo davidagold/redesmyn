@@ -568,7 +568,8 @@ fn styled_text_div(
                 .background_style(RoundedBackgroundStyle {
                     corner_radius: theme.radius.sm,
                     trim_horizontal: true,
-                    padding_x: px(3.0),
+                    padding_x: px(5.0),
+                    padding_y: px(2.5),
                     ..Default::default()
                 }),
         )
@@ -672,7 +673,8 @@ fn styled_text_block(
                 .background_style(RoundedBackgroundStyle {
                     corner_radius: theme.radius.sm,
                     trim_horizontal: true,
-                    padding_x: px(3.0),
+                    padding_x: px(5.0),
+                    padding_y: px(2.5),
                     ..Default::default()
                 }),
         )
