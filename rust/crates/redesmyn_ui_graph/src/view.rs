@@ -2180,7 +2180,6 @@ impl Render for GraphView {
                     .border_1()
                     .border_color(border)
                     .overflow_hidden()
-                    .block_mouse_except_scroll()
                     .on_mouse_down(MouseButton::Left, {
                         let focus_handle = self.focus_handle.clone();
                         let graph = graph.clone();
@@ -2199,11 +2198,11 @@ impl Render for GraphView {
 
                 if collapsed_opacity > 0.01 {
                     let title = node.title.clone();
-                    let task_slug = node.task_slug.clone();
+                    let branch_slug = node.branch_slug.clone();
                     let state = node.state;
                     let latest_session = node.latest_session.clone();
-                    let padding_x = px(f32::from(theme.spacing.sm) * zoom);
-                    let padding_y = px(f32::from(theme.spacing.xs) * zoom);
+                    let padding_x = px(f32::from(theme.spacing.md) * zoom);
+                    let padding_y = px(f32::from(theme.spacing.sm) * zoom);
                     let is_hovered = self.scene.selection().hovered_node == Some(node_id);
                     let show_quick_actions = is_hovered || is_primary_selected;
 
@@ -2240,13 +2239,15 @@ impl Render for GraphView {
                                 .items_center()
                                 .justify_between()
                                 .gap(px(8.0 * zoom))
+                                .h(px(24.0 * zoom))
                                 .child(
                                     div()
                                         .min_w_0()
                                         .flex_1()
                                         .text_size(rems(0.60 * zoom))
                                         .text_color(theme.colors.foreground_muted)
-                                        .child(task_slug),
+                                        .truncate()
+                                        .child(branch_slug),
                                 )
                                 .child(
                                     div()
@@ -2957,7 +2958,11 @@ fn collapsed_task_border_color(
         return theme.colors.warning;
     }
 
-    if matches!(state, TaskState::Done) || matches!(merge_readiness, MergeReadiness::Ready) {
+    if matches!(state, TaskState::Done) {
+        return theme.colors.ring;
+    }
+
+    if matches!(merge_readiness, MergeReadiness::Ready) {
         return theme.colors.success;
     }
 

@@ -54,6 +54,7 @@ impl fmt::Display for GraphEdgeId {
 pub struct GraphSceneNode {
     pub id: GraphNodeId,
     pub task_slug: SharedString,
+    pub branch_slug: SharedString,
     pub title: SharedString,
     pub parent_id: Option<GraphNodeId>,
     pub state: TaskState,
@@ -168,6 +169,7 @@ impl GraphScene {
         scene.insert_node(GraphSceneNode {
             id: a,
             task_slug: "T-1".into(),
+            branch_slug: "root".into(),
             title: "T-1 Root".into(),
             parent_id: None,
             state: TaskState::InProgress,
@@ -179,6 +181,7 @@ impl GraphScene {
         scene.insert_node(GraphSceneNode {
             id: b,
             task_slug: "T-2".into(),
+            branch_slug: "child-a".into(),
             title: "T-2 Child A".into(),
             parent_id: Some(a),
             state: TaskState::Blocked,
@@ -190,6 +193,7 @@ impl GraphScene {
         scene.insert_node(GraphSceneNode {
             id: c,
             task_slug: "T-3".into(),
+            branch_slug: "child-b".into(),
             title: "T-3 Child B".into(),
             parent_id: Some(a),
             state: TaskState::Todo,
@@ -201,6 +205,7 @@ impl GraphScene {
         scene.insert_node(GraphSceneNode {
             id: d,
             task_slug: "T-4".into(),
+            branch_slug: "grandchild".into(),
             title: "T-4 Grandchild".into(),
             parent_id: Some(b),
             state: TaskState::Done,
@@ -267,6 +272,7 @@ impl GraphScene {
         self.insert_node(GraphSceneNode {
             id,
             task_slug: "demo".into(),
+            branch_slug: "demo".into(),
             title: "demo".into(),
             parent_id: None,
             state: TaskState::Unknown,
@@ -508,6 +514,13 @@ impl GraphScene {
                 GraphSceneNode {
                     id,
                     task_slug: SharedString::new(node.task_slug.clone()),
+                    branch_slug: node
+                        .branch_name
+                        .as_ref()
+                        .and_then(|name| name.rsplit('/').next())
+                        .filter(|slug| !slug.is_empty())
+                        .map(|slug| SharedString::new(slug.to_string()))
+                        .unwrap_or_else(|| SharedString::new(node.task_slug.clone())),
                     title: SharedString::new(node.title.clone()),
                     parent_id,
                     state: node.state,
@@ -630,6 +643,7 @@ impl GraphScene {
             GraphSceneNode {
                 id: trunk_id,
                 task_slug: "trunk".into(),
+                branch_slug: "trunk".into(),
                 title: "Trunk".into(),
                 parent_id: None,
                 state: TaskState::Unknown,
