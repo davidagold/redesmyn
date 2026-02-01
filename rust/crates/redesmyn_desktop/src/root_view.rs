@@ -2849,6 +2849,7 @@ impl Render for EpicSessionPaneHost {
             .flex_1()
             .min_h(px(0.0))
             .px(theme.spacing.md)
+            .pb(theme.spacing.md)
             .gap(theme.spacing.sm);
 
         let error = self

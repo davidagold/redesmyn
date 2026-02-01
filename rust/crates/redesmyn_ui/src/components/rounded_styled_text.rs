@@ -14,6 +14,7 @@ use gpui::{
 pub struct RoundedBackgroundStyle {
     pub corner_radius: Pixels,
     pub trim_horizontal: bool,
+    pub padding_x: Pixels,
     pub padding_y: Pixels,
 }
 
@@ -22,6 +23,7 @@ impl Default for RoundedBackgroundStyle {
         Self {
             corner_radius: px(4.0),
             trim_horizontal: false,
+            padding_x: px(3.0),
             padding_y: px(2.0),
         }
     }
@@ -397,6 +399,10 @@ fn paint_rounded_background_span(
             x0 = trimmed_start - seg_start_x;
             x1 = trimmed_end - seg_start_x;
         }
+
+        let segment_width = (seg_end_x - seg_start_x).max(px(0.0));
+        x0 = (x0 - style.padding_x).max(px(0.0));
+        x1 = (x1 + style.padding_x).min(segment_width);
 
         let width = (x1 - x0).max(px(0.0));
         if width <= px(0.0) {
