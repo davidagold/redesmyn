@@ -414,6 +414,11 @@ impl SessionView {
     }
 
     #[must_use]
+    pub fn client(&self) -> Option<Client> {
+        self.client.clone()
+    }
+
+    #[must_use]
     pub fn scroll_handle(&self) -> ScrollHandle {
         self.scroll_handle.clone()
     }
