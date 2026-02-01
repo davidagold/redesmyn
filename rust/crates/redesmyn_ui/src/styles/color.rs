@@ -16,6 +16,8 @@ pub struct ColorTokens {
     pub warning: Hsla,
     /// Informational/neutral highlight (non-error, non-warning).
     pub info: Hsla,
+    /// "Completed"/done state highlight (distinct from selection ring).
+    pub completed: Hsla,
 }
 
 impl ColorTokens {
@@ -35,6 +37,7 @@ impl ColorTokens {
             danger: hsla(rgb(0xb4637a)),
             warning: hsla(rgb(0xea9d34)),
             info: hsla(rgb(0x286983)),
+            completed: hsla(rgb(0x746691)),
         }
     }
 
@@ -54,6 +57,7 @@ impl ColorTokens {
             danger: hsla(rgb(0xeb6f92)),
             warning: hsla(rgb(0xf6c177)),
             info: hsla(rgb(0x31748f)),
+            completed: hsla(rgb(0x82729c)),
         }
     }
 }

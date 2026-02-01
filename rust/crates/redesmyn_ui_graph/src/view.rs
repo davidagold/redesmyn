@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    canvas, div, fill, prelude::*, px, quad, rems, App, AsyncApp, ClickEvent, Context, CursorStyle,
-    Entity, FocusHandle, Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Render, ScrollHandle, ScrollWheelEvent, Subscription, Task, TextRun, Window,
+    App, AsyncApp, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent,
+    Subscription, Task, TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
 };
 
 use redesmyn_ids::CommandId;
@@ -19,8 +19,8 @@ use redesmyn_ui::components::{
     ProgressPillKind, ScrollArea, TextButton, Tooltip,
 };
 use redesmyn_ui::utils::{
-    theme_for_window, ui_idle_tracker, ui_test_mode_animation_duration, UiActivityGuard,
-    UserActionState,
+    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    ui_test_mode_animation_duration,
 };
 
 use crate::camera::{GraphCamera, GraphCameraLimits};
@@ -28,10 +28,10 @@ use crate::constants::{
     TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH,
 };
 use crate::geometry::{
-    edge_lod_band, edge_route_between_points_in_window, edge_route_in_window, EdgeLodBand,
-    EdgeRoute, DEFAULT_EDGE_STROKE_PX,
+    DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band,
+    edge_route_between_points_in_window, edge_route_in_window,
 };
-use crate::hit_test::{hit_test, GraphHit};
+use crate::hit_test::{GraphHit, hit_test};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
@@ -410,7 +410,8 @@ impl GraphView {
 
             let was_task_selected =
                 matches!(previous_selection.selected_node, Some(GraphNodeId::Task(_)));
-            let is_task_selected = matches!(next_selection.selected_node, Some(GraphNodeId::Task(_)));
+            let is_task_selected =
+                matches!(next_selection.selected_node, Some(GraphNodeId::Task(_)));
 
             if is_task_selected {
                 if !was_task_selected {
@@ -1008,12 +1009,14 @@ impl GraphView {
         task_id: TaskId,
         agent_status: AgentStatus,
         has_session: bool,
+        visible: bool,
         theme: &redesmyn_ui::styles::UiTheme,
         zoom: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let graph = cx.entity();
         let entity_id = cx.entity_id();
+        let interactive = visible;
 
         let action_state = self.quick_actions.get(&task_id);
         let start_disabled = action_state.is_some_and(|state| state.start.in_flight);
@@ -1035,7 +1038,10 @@ impl GraphView {
                 TaskQuickActionKind::Restart => "task_quick_action_restart",
                 TaskQuickActionKind::Stop => "task_quick_action_stop",
             };
-            let id = (gpui::ElementId::from((base_id, entity_id)), node_key.clone());
+            let id = (
+                gpui::ElementId::from((base_id, entity_id)),
+                node_key.clone(),
+            );
 
             let mut button = div()
                 .id(id)
@@ -1046,24 +1052,30 @@ impl GraphView {
                 .rounded(px(f32::from(theme.radius.md) * zoom))
                 .text_size(rems(0.70 * zoom))
                 .text_color(fg)
-                .cursor_pointer()
-                .focusable()
-                .hover(move |this| this.bg(hover_bg))
-                .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip)).into())
                 .child(label);
 
-            if disabled {
-                button = button.opacity(0.55).cursor_not_allowed();
+            if interactive {
+                button = button
+                    .cursor_pointer()
+                    .focusable()
+                    .hover(move |this| this.bg(hover_bg))
+                    .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip)).into());
+
+                if disabled {
+                    button = button.opacity(0.55).cursor_not_allowed();
+                } else {
+                    let graph = graph.clone();
+                    button = button.on_click(move |event, _window, cx| {
+                        if event.standard_click() {
+                            graph.update(cx, |this, cx| {
+                                this.trigger_task_quick_action(task_id, kind, cx);
+                            });
+                        }
+                        cx.stop_propagation();
+                    });
+                }
             } else {
-                let graph = graph.clone();
-                button = button.on_click(move |event, _window, cx| {
-                    if event.standard_click() {
-                        graph.update(cx, |this, cx| {
-                            this.trigger_task_quick_action(task_id, kind, cx);
-                        });
-                    }
-                    cx.stop_propagation();
-                });
+                button = button.cursor(CursorStyle::Arrow);
             }
 
             button
@@ -1073,7 +1085,8 @@ impl GraphView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(2.0 * zoom));
+            .gap(px(2.0 * zoom))
+            .opacity(if visible { 1.0 } else { 0.0 });
 
         if show_start {
             row = row.child(button(
@@ -1144,18 +1157,20 @@ impl GraphView {
         cx.notify();
 
         let view = cx.entity();
-        *task_slot = Some(cx.spawn(move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
-            let client = client.clone();
-            let cx = cx.clone();
-            async move {
-                let result = task_quick_action_request(&client, task_id, kind).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        this.on_task_quick_action_completed(task_id, kind, result, cx);
-                    })
-                });
-            }
-        }));
+        *task_slot = Some(
+            cx.spawn(move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
+                let client = client.clone();
+                let cx = cx.clone();
+                async move {
+                    let result = task_quick_action_request(&client, task_id, kind).await;
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_task_quick_action_completed(task_id, kind, result, cx);
+                        })
+                    });
+                }
+            }),
+        );
     }
 
     fn on_task_quick_action_completed(
@@ -2201,14 +2216,20 @@ impl Render for GraphView {
                     let branch_slug = node.branch_slug.clone();
                     let state = node.state;
                     let latest_session = node.latest_session.clone();
+                    let task_id = match node_id {
+                        GraphNodeId::Task(task_id) => task_id,
+                        GraphNodeId::Trunk => unreachable!("trunk nodes are skipped above"),
+                    };
                     let padding_x = px(f32::from(theme.spacing.md) * zoom);
-                    let padding_y = px(f32::from(theme.spacing.sm) * zoom);
+                    let padding_top = px(f32::from(theme.spacing.sm) * zoom);
+                    let padding_bottom = px(f32::from(theme.spacing.md) * zoom);
                     let is_hovered = self.scene.selection().hovered_node == Some(node_id);
                     let show_quick_actions = is_hovered || is_primary_selected;
 
                     let preview_doc = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
-                        if let Some(doc) = self.collapsed_markdown_cache.get(&session.session_event_id)
+                        if let Some(doc) =
+                            self.collapsed_markdown_cache.get(&session.session_event_id)
                         {
                             return Some(doc.clone());
                         }
@@ -2226,7 +2247,8 @@ impl Render for GraphView {
                         .absolute()
                         .inset_0()
                         .px(padding_x)
-                        .py(padding_y)
+                        .pt(padding_top)
+                        .pb(padding_bottom)
                         .size_full()
                         .flex()
                         .flex_col()
@@ -2255,20 +2277,16 @@ impl Render for GraphView {
                                         .flex_row()
                                         .items_center()
                                         .gap(px(4.0 * zoom))
-                                        .when(show_quick_actions, |this| {
-                                            let GraphNodeId::Task(task_id) = node_id else {
-                                                return this;
-                                            };
-                                            this.child(self.task_quick_actions_row(
-                                                node_key.clone(),
-                                                task_id,
-                                                node.agent_status,
-                                                latest_session.as_ref().is_some(),
-                                                &theme,
-                                                zoom,
-                                                cx,
-                                            ))
-                                        })
+                                        .child(self.task_quick_actions_row(
+                                            node_key.clone(),
+                                            task_id,
+                                            node.agent_status,
+                                            latest_session.as_ref().is_some(),
+                                            show_quick_actions,
+                                            &theme,
+                                            zoom,
+                                            cx,
+                                        ))
                                         .child(agent_status_dot(
                                             state,
                                             node.agent_status,
@@ -2296,7 +2314,7 @@ impl Render for GraphView {
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
                                     MarkdownInlineSingleLineView::new(preview_id, doc)
-                                    .text_color(theme.colors.foreground_muted),
+                                        .text_color(theme.colors.foreground_muted),
                                 ),
                         );
                     }
@@ -2338,7 +2356,8 @@ impl Render for GraphView {
                             let GraphNodeId::Task(task_id) = node_id else {
                                 return;
                             };
-                            task_session_view.update(cx, |view, cx| view.start_agent_for_task(task_id, cx));
+                            task_session_view
+                                .update(cx, |view, cx| view.start_agent_for_task(task_id, cx));
                         }
                     };
 
@@ -2959,7 +2978,7 @@ fn collapsed_task_border_color(
     }
 
     if matches!(state, TaskState::Done) {
-        return theme.colors.ring;
+        return theme.colors.completed;
     }
 
     if matches!(merge_readiness, MergeReadiness::Ready) {
