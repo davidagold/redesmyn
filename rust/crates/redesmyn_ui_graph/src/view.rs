@@ -1045,6 +1045,7 @@ impl GraphView {
         interactive: bool,
         theme: &redesmyn_ui::styles::UiTheme,
         zoom: f32,
+        rem_size: gpui::Pixels,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let graph = cx.entity();
@@ -1082,7 +1083,7 @@ impl GraphView {
                 .justify_center()
                 .size(px(22.0 * zoom))
                 .rounded(px(f32::from(theme.radius.md) * zoom))
-                .text_size(rems(0.70 * zoom))
+                .text_size(quantized_zoom_text_size(rem_size, 0.70, zoom))
                 .text_color(fg)
                 .child(label);
 
@@ -2095,6 +2096,7 @@ impl Render for GraphView {
         }
 
         let theme = theme_for_window(window, cx);
+        let rem_size = window.rem_size();
         let label = self.selection_label();
         let zoom = self.camera.zoom();
         let controls_hint = if cfg!(target_os = "macos") {
@@ -2277,7 +2279,7 @@ impl Render for GraphView {
                         window,
                     );
 
-                    let title_font_size_unzoomed = rems(0.78).to_pixels(window.rem_size());
+                    let title_font_size_unzoomed = rems(0.78).to_pixels(rem_size);
                     let title_wrap_width_unzoomed = {
                         let width = (f32::from(bounds_in_window.size.width)
                             - 2.0 * f32::from(padding_x))
@@ -2295,6 +2297,10 @@ impl Render for GraphView {
                         theme.colors.foreground,
                         window,
                     );
+
+                    let branch_slug_text_size = quantized_zoom_text_size(rem_size, 0.60, zoom);
+                    let title_text_size = quantized_zoom_text_size(rem_size, 0.78, zoom);
+                    let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
 
                     let preview_content = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
@@ -2333,15 +2339,15 @@ impl Render for GraphView {
                                 .justify_between()
                                 .gap(px(8.0 * zoom))
                                 .h(px(24.0 * zoom))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .text_size(rems(0.60 * zoom))
-                                        .text_color(theme.colors.foreground_muted)
-                                        .truncate()
-                                        .child(branch_slug),
-                                )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .flex_1()
+                                                .text_size(branch_slug_text_size)
+                                                .text_color(theme.colors.foreground_muted)
+                                                .truncate()
+                                                .child(branch_slug),
+                                        )
                                 .child(
                                     div()
                                         .flex()
@@ -2357,6 +2363,7 @@ impl Render for GraphView {
                                             show_quick_actions,
                                             &theme,
                                             zoom,
+                                            rem_size,
                                             cx,
                                         ))
                                         .child(agent_status_dot(
@@ -2380,7 +2387,7 @@ impl Render for GraphView {
                                         .min_w_0()
                                         .w_full()
                                         .font(theme.typography.body.font.clone())
-                                        .text_size(rems(0.78 * zoom))
+                                        .text_size(title_text_size)
                                         .text_color(theme.colors.foreground)
                                         .truncate()
                                         .child(title_line1),
@@ -2391,7 +2398,7 @@ impl Render for GraphView {
                                             .min_w_0()
                                             .w_full()
                                             .font(theme.typography.body.font.clone())
-                                            .text_size(rems(0.78 * zoom))
+                                            .text_size(title_text_size)
                                             .text_color(theme.colors.foreground)
                                             .truncate()
                                             .child(line2),
@@ -2404,7 +2411,7 @@ impl Render for GraphView {
                             (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
                             div()
-                                .text_size(rems(0.66 * zoom))
+                                .text_size(preview_text_size)
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
                                     MarkdownInlineSingleLineView::new(preview_id, content)
@@ -2967,6 +2974,15 @@ fn ease_out_cubic(t: f32) -> f32 {
 
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
+}
+
+fn quantized_zoom_text_size(rem_size: gpui::Pixels, base_rems: f32, zoom: f32) -> gpui::Pixels {
+    // Quantize continuous zoom-driven font sizes to keep GPUI's glyph caches bounded.
+    const STEP_PX: f32 = 0.5;
+    let base_px = rems(base_rems).to_pixels(rem_size);
+    let scaled = f32::from(base_px) * zoom.max(0.0);
+    let quantized = (scaled / STEP_PX).round() * STEP_PX;
+    px(quantized.max(1.0))
 }
 
 fn lerp_rgba(a: gpui::Rgba, b: gpui::Rgba, t: f32) -> gpui::Rgba {
