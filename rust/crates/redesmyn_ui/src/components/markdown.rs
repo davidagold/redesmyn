@@ -567,6 +567,7 @@ fn styled_text_div(
                 .with_runs(runs)
                 .background_style(RoundedBackgroundStyle {
                     corner_radius: theme.radius.sm,
+                    trim_horizontal: true,
                     ..Default::default()
                 }),
         )
@@ -669,6 +670,7 @@ fn styled_text_block(
                 .with_runs(runs)
                 .background_style(RoundedBackgroundStyle {
                     corner_radius: theme.radius.sm,
+                    trim_horizontal: true,
                     ..Default::default()
                 }),
         )

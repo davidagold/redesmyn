@@ -13,6 +13,7 @@ use gpui::{
 #[derive(Debug, Clone, Copy)]
 pub struct RoundedBackgroundStyle {
     pub corner_radius: Pixels,
+    pub trim_horizontal: bool,
     pub padding_y: Pixels,
 }
 
@@ -20,6 +21,7 @@ impl Default for RoundedBackgroundStyle {
     fn default() -> Self {
         Self {
             corner_radius: px(4.0),
+            trim_horizontal: false,
             padding_y: px(2.0),
         }
     }
@@ -239,6 +241,7 @@ impl RoundedTextLayout {
 
         let line_height = element_state.line_height;
         let text_style = window.text_style();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
 
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0usize;
@@ -283,6 +286,7 @@ impl RoundedTextLayout {
                         line_origin,
                         bounds.size.width,
                         text_style.text_align,
+                        font_size,
                         line_height,
                         style,
                         window,
@@ -342,6 +346,7 @@ fn paint_rounded_background_span(
     line_origin: Point<Pixels>,
     align_width: Pixels,
     align: TextAlign,
+    font_size: Pixels,
     line_height: Pixels,
     style: RoundedBackgroundStyle,
     window: &mut Window,
@@ -382,8 +387,17 @@ fn paint_rounded_background_span(
         let segment_origin_x =
             aligned_origin_x(line_origin.x, align_width, seg_end_x - seg_start_x, align);
 
-        let x0 = line.unwrapped_layout.x_for_index(local_start) - seg_start_x;
-        let x1 = line.unwrapped_layout.x_for_index(local_end) - seg_start_x;
+        let mut x0 = line.unwrapped_layout.x_for_index(local_start) - seg_start_x;
+        let mut x1 = line.unwrapped_layout.x_for_index(local_end) - seg_start_x;
+
+        if style.trim_horizontal
+            && let Some((trimmed_start, trimmed_end)) =
+                trim_span_horizontal(line, local_start, local_end, font_size, window)
+        {
+            x0 = trimmed_start - seg_start_x;
+            x1 = trimmed_end - seg_start_x;
+        }
+
         let width = (x1 - x0).max(px(0.0));
         if width <= px(0.0) {
             segment_y += line_height;
@@ -408,6 +422,55 @@ fn paint_rounded_background_span(
         );
 
         segment_y += line_height;
+    }
+}
+
+fn trim_span_horizontal(
+    line: &gpui::WrappedLine,
+    start: usize,
+    end: usize,
+    font_size: Pixels,
+    window: &Window,
+) -> Option<(Pixels, Pixels)> {
+    if start >= end {
+        return None;
+    }
+
+    let text = line.text.as_ref();
+    let span_text = text.get(start..end)?;
+
+    let mut chars = span_text.char_indices();
+    let (_, first_char) = chars.next()?;
+    let (last_offset, last_char) = span_text
+        .char_indices()
+        .last()
+        .unwrap_or((0, first_char));
+    let last_index = start + last_offset;
+
+    let font_id_start = line.unwrapped_layout.font_id_for_index(start)?;
+    let font_id_end = line.unwrapped_layout.font_id_for_index(last_index)?;
+
+    let text_system = window.text_system();
+    let first_bounds = text_system
+        .typographic_bounds(font_id_start, font_size, first_char)
+        .ok()?;
+    let last_bounds = text_system
+        .typographic_bounds(font_id_end, font_size, last_char)
+        .ok()?;
+
+    let untrimmed_start = line.unwrapped_layout.x_for_index(start);
+    let untrimmed_end = line.unwrapped_layout.x_for_index(end);
+
+    let trimmed_start = untrimmed_start + first_bounds.origin.x.max(px(0.0));
+
+    let last_origin_x = line.unwrapped_layout.x_for_index(last_index);
+    let last_right_x = last_bounds.origin.x + last_bounds.size.width;
+    let trimmed_end = (last_origin_x + last_right_x).min(untrimmed_end);
+
+    if trimmed_end > trimmed_start {
+        Some((trimmed_start, trimmed_end))
+    } else {
+        None
     }
 }
 
