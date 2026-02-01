@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod camera;
+mod culling;
 mod constants;
 mod geometry;
 mod hit_test;

@@ -25,6 +25,7 @@ use redesmyn_ui::utils::{
     ui_test_mode_animation_duration,
 };
 
+use crate::culling::{DEFAULT_NODE_CULLING_OVERSCAN_PX, viewport_bounds_with_overscan};
 use crate::camera::{GraphCamera, GraphCameraLimits};
 use crate::constants::{
     TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH,
@@ -2159,21 +2160,11 @@ impl Render for GraphView {
             let hovered_node = selection_snapshot.hovered_node;
             let quick_actions_fade_duration = ui_test_mode_animation_duration(theme.animation.fast);
             let task_session_state = self.task_session_view.read(cx).task_binding_state();
-            let viewport_bounds = {
-                // Overscan avoids popping nodes in/out right at the viewport edge while panning.
-                let overscan = px(200.0);
-                let overscan_2x = px(400.0);
-                gpui::Bounds {
-                    origin: gpui::Point {
-                        x: canvas_bounds.origin.x - overscan,
-                        y: canvas_bounds.origin.y - overscan,
-                    },
-                    size: gpui::Size {
-                        width: canvas_bounds.size.width + overscan_2x,
-                        height: canvas_bounds.size.height + overscan_2x,
-                    },
-                }
-            };
+            // Overscan avoids popping nodes in/out right at the viewport edge while panning.
+            let viewport_bounds = viewport_bounds_with_overscan(
+                canvas_bounds,
+                px(DEFAULT_NODE_CULLING_OVERSCAN_PX),
+            );
 
             let mut layer = div().absolute().inset_0();
 
