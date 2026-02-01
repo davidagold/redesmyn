@@ -1748,7 +1748,102 @@ impl Render for SessionView {
                             } else {
                                 row = row.justify_start();
                             }
-                            row = row.py(timeline_item_gap_y);
+
+                            let mut row_pad_top = timeline_item_gap_y;
+                            let mut row_pad_bottom = timeline_item_gap_y;
+
+                            if matches!(
+                                role,
+                                redesmyn_session_view_model::SessionMessageRole::User
+                            ) {
+                                let tool_event_hidden_in_collapsed_group =
+                                    |session_event_id: SessionEventId| {
+                                        let Some(member) =
+                                            tool_event_group_membership.get(&session_event_id)
+                                        else {
+                                            return false;
+                                        };
+
+                                        let group_id = member.group_id;
+                                        let is_expanded = expanded_tool_groups.contains(&group_id);
+                                        let progress = tool_group_transitions
+                                            .get(&group_id)
+                                            .map(|transition| transition.value())
+                                            .unwrap_or_else(|| {
+                                                if is_expanded {
+                                                    1.0
+                                                } else {
+                                                    0.0
+                                                }
+                                            });
+                                        !is_expanded && progress <= 1e-3 && !member.is_first
+                                    };
+
+                                let visible_neighbor_is_tool_call = |neighbor_ix: isize,
+                                                                     step: isize| {
+                                    let mut cursor = neighbor_ix;
+                                    let len = items.len() as isize;
+                                    while cursor >= 0 && cursor < len {
+                                        let candidate_ix = cursor as usize;
+                                        let Some(item) = items.get(candidate_ix) else {
+                                            break;
+                                        };
+
+                                        let visible_kind = match item {
+                                            SessionTimelineItem::Event(event) => {
+                                                let session_event_id = event.session_event_id;
+                                                match &event.content {
+                                                    SessionEventItemContent::ToolInvocation(_tool)
+                                                        if tool_event_hidden_in_collapsed_group(
+                                                            session_event_id,
+                                                        ) =>
+                                                    {
+                                                        None
+                                                    }
+                                                    SessionEventItemContent::ToolResult(_tool)
+                                                        if grouped_exec_command_result_ids
+                                                            .contains(&session_event_id)
+                                                            || tool_event_hidden_in_collapsed_group(
+                                                                session_event_id,
+                                                            ) =>
+                                                    {
+                                                        None
+                                                    }
+                                                    SessionEventItemContent::ToolInvocation(_)
+                                                    | SessionEventItemContent::ToolResult(_) => {
+                                                        Some(true)
+                                                    }
+                                                    SessionEventItemContent::UserMessage(_)
+                                                    | SessionEventItemContent::AssistantMessage(_)
+                                                    | SessionEventItemContent::ArtifactEmitted(
+                                                        _,
+                                                    ) => Some(false),
+                                                    _ => None,
+                                                }
+                                            }
+                                            _ => Some(false),
+                                        };
+
+                                        if let Some(is_tool_call) = visible_kind {
+                                            return is_tool_call;
+                                        }
+
+                                        cursor += step;
+                                    }
+
+                                    false
+                                };
+
+                                let extra_gap = theme.spacing.sm;
+                                if visible_neighbor_is_tool_call(ix as isize - 1, -1) {
+                                    row_pad_top += extra_gap;
+                                }
+                                if visible_neighbor_is_tool_call(ix as isize + 1, 1) {
+                                    row_pad_bottom += extra_gap;
+                                }
+                            }
+
+                            row = row.pt(row_pad_top).pb(row_pad_bottom);
 
                             list.child(row.child(bubble))
                         }
