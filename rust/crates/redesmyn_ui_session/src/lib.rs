@@ -1541,6 +1541,7 @@ impl Render for SessionView {
                                                  count: usize,
                                                  last: Option<String>| {
                         let toggle_view = timeline_view.clone();
+                        let is_expanded = chevron == "▾";
                         div()
                             .id(("session_tool_group", session_event_id_key(group_id)))
                             .w_full()
@@ -1552,7 +1553,9 @@ impl Render for SessionView {
                             .px(theme.spacing.sm)
                             .py(timeline_item_gap_y)
                             .rounded_sm()
-                            .bg(theme.colors.surface_elevated.opacity(0.18))
+                            .when(is_expanded, |this| {
+                                this.bg(theme.colors.surface_elevated.opacity(0.18))
+                            })
                             .font(theme.typography.mono.font.clone())
                             .text_size(theme.typography.caption.size)
                             .cursor_pointer()
@@ -1603,7 +1606,7 @@ impl Render for SessionView {
                             .line_height
                             .to_pixels(theme.typography.caption.size, window.rem_size())
                             .round();
-                        caption_line_height + theme.spacing.xs * 2.0
+                        caption_line_height + timeline_item_gap_y * 2.0
                     };
 
                     match item.content {
