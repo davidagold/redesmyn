@@ -1533,6 +1533,7 @@ impl Render for SessionView {
                     let session_event_id = item.session_event_id;
                     let event_key = session_event_id_key(item.session_event_id);
                     let bubble_id: ElementId = ("session_event", event_key).into();
+                    let timeline_item_gap_y = theme.spacing.xs * 2.0;
 
                     let render_tool_group_row = |chevron: &'static str,
                                                  group_id: SessionEventId,
@@ -1549,7 +1550,7 @@ impl Render for SessionView {
                             .items_center()
                             .gap(theme.spacing.sm)
                             .px(theme.spacing.sm)
-                            .py(theme.spacing.xs)
+                            .py(timeline_item_gap_y)
                             .rounded_sm()
                             .bg(theme.colors.surface_elevated.opacity(0.18))
                             .font(theme.typography.mono.font.clone())
@@ -1744,8 +1745,7 @@ impl Render for SessionView {
                             } else {
                                 row = row.justify_start();
                             }
-                            let bubble_gap_y = theme.spacing.xs * 2.0;
-                            row = row.py(bubble_gap_y);
+                            row = row.py(timeline_item_gap_y);
 
                             list.child(row.child(bubble))
                         }
@@ -1894,7 +1894,7 @@ impl Render for SessionView {
                                             .flex_col()
                                             .gap(theme.spacing.xs)
                                             .px(theme.spacing.sm)
-                                            .py(theme.spacing.xs)
+                                            .py(timeline_item_gap_y)
                                             .child(summary);
 
                                         if expanded {
@@ -2147,7 +2147,7 @@ impl Render for SessionView {
                                                 .flex_col()
                                                 .gap(theme.spacing.xs)
                                                 .px(theme.spacing.sm)
-                                                .py(theme.spacing.xs)
+                                                .py(timeline_item_gap_y)
                                                 .child(summary);
 
                                             if expanded {
