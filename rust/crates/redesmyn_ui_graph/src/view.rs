@@ -2290,6 +2290,21 @@ impl Render for GraphView {
             let hovered_node = selection_snapshot.hovered_node;
             let quick_actions_fade_duration = ui_test_mode_animation_duration(theme.animation.fast);
             let task_session_state = self.task_session_view.read(cx).task_binding_state();
+            let viewport_bounds = {
+                // Overscan avoids popping nodes in/out right at the viewport edge while panning.
+                let overscan = px(200.0);
+                let overscan_2x = px(400.0);
+                gpui::Bounds {
+                    origin: gpui::Point {
+                        x: canvas_bounds.origin.x - overscan,
+                        y: canvas_bounds.origin.y - overscan,
+                    },
+                    size: gpui::Size {
+                        width: canvas_bounds.size.width + overscan_2x,
+                        height: canvas_bounds.size.height + overscan_2x,
+                    },
+                }
+            };
 
             let mut layer = div().absolute().inset_0();
 
@@ -2299,6 +2314,9 @@ impl Render for GraphView {
                 }
                 let bounds_in_window =
                     self.node_bounds_in_window_for_progress(node.id, canvas_bounds, t);
+                if !bounds_in_window.intersects(&viewport_bounds) {
+                    continue;
+                }
                 let local_origin = bounds_in_window.origin - canvas_bounds.origin;
                 let node_id = node.id;
                 let node_key: gpui::SharedString = node_id.to_string().into();
