@@ -1284,7 +1284,7 @@ impl Render for SessionView {
                                 .min_w_0()
                                 .px(bubble_padding_x)
                                 .py(theme.spacing.sm)
-                                .rounded_md()
+                                .rounded(theme.radius.xl)
                                 .when_some(bg, |this, bg| this.bg(bg))
                                 .child({
                                     let mut view =

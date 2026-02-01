@@ -12,6 +12,7 @@ pub struct ColorTokens {
     pub accent: Hsla,
     pub accent_foreground: Hsla,
     pub success: Hsla,
+    pub pine: Hsla,
     pub danger: Hsla,
     pub warning: Hsla,
     /// Informational/neutral highlight (non-error, non-warning).
@@ -34,6 +35,7 @@ impl ColorTokens {
             accent: hsla(rgb(0xf2e9e1)),
             accent_foreground: hsla(rgb(0x575279)),
             success: hsla(rgb(0x34d399)),
+            pine: hsla(rgb(0x286983)),
             danger: hsla(rgb(0xb4637a)),
             warning: hsla(rgb(0xea9d34)),
             info: hsla(rgb(0x286983)),
@@ -54,6 +56,7 @@ impl ColorTokens {
             accent: hsla(rgb(0x26233a)),
             accent_foreground: hsla(rgb(0xe0def4)),
             success: hsla(rgb(0x34d399)),
+            pine: hsla(rgb(0x31748f)),
             danger: hsla(rgb(0xeb6f92)),
             warning: hsla(rgb(0xf6c177)),
             info: hsla(rgb(0x31748f)),

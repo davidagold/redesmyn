@@ -25,7 +25,7 @@ impl Default for TypographyTokens {
         ]);
         let mono_font = {
             let mut font = font("SF Mono");
-            font.weight = FontWeight::MEDIUM;
+            font.weight = FontWeight::NORMAL;
             font.fallbacks = Some(mono_fallbacks);
             font
         };

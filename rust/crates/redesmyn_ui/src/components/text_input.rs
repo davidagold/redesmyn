@@ -2709,7 +2709,7 @@ impl Render for TextArea {
             .bg(theme.colors.surface_elevated)
             .border_1()
             .border_color(theme.colors.border)
-            .rounded(theme.radius.md)
+            .rounded(theme.radius.xl)
             .overflow_hidden()
             .line_height(line_height)
             .text_size(window.text_style().font_size)

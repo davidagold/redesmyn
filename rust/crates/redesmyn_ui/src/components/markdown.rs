@@ -481,11 +481,17 @@ fn styled_text_div(
     cx: &mut App,
 ) -> impl IntoElement {
     let theme = theme_for_window(window, cx);
-    let code_bg = if base_text_color == theme.colors.surface {
-        theme.colors.border.opacity(0.35)
-    } else {
-        theme.colors.accent.opacity(0.65)
+    let code_bg = match theme.mode {
+        crate::styles::ThemeMode::Dark => theme.colors.accent_foreground.opacity(0.12),
+        crate::styles::ThemeMode::Light => {
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.35)
+            } else {
+                theme.colors.accent.opacity(0.65)
+            }
+        }
     };
+    let code_color = theme.colors.pine;
 
     let mut text = String::new();
     let mut runs = Vec::new();
@@ -531,11 +537,12 @@ fn styled_text_div(
         }
 
         let background_color = atom_style.code.then_some(code_bg);
+        let color = if atom_style.code { code_color } else { default_color };
 
         runs.push(TextRun {
             len: atom_text.len(),
             font,
-            color: default_color,
+            color,
             background_color,
             underline,
             strikethrough: None,
@@ -568,11 +575,17 @@ fn styled_text_block(
     // Similar to `styled_text_div`, but forces the line to take full width (which helps keep GPUI's
     // layout stable when inline spans mix styles).
     let theme = theme_for_window(window, cx);
-    let code_bg = if base_text_color == theme.colors.surface {
-        theme.colors.border.opacity(0.35)
-    } else {
-        theme.colors.accent.opacity(0.65)
+    let code_bg = match theme.mode {
+        crate::styles::ThemeMode::Dark => theme.colors.accent_foreground.opacity(0.12),
+        crate::styles::ThemeMode::Light => {
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.35)
+            } else {
+                theme.colors.accent.opacity(0.65)
+            }
+        }
     };
+    let code_color = theme.colors.pine;
 
     let mut text = String::new();
     let mut runs = Vec::new();
@@ -618,11 +631,12 @@ fn styled_text_block(
         }
 
         let background_color = atom_style.code.then_some(code_bg);
+        let color = if atom_style.code { code_color } else { default_color };
 
         runs.push(TextRun {
             len: atom_text.len(),
             font,
-            color: default_color,
+            color,
             background_color,
             underline,
             strikethrough: None,
