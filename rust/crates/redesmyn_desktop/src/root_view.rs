@@ -2871,10 +2871,6 @@ impl Render for EpicSessionPaneHost {
 
         match self.selected_epic.as_ref() {
             None => {
-                body = body.child(
-                    Callout::new("Choose an epic above to view or pin a chat session.")
-                        .kind(CalloutKind::Info),
-                );
             }
             Some(_) if self.load.in_flight => {
                 body = body.child(
