@@ -74,6 +74,63 @@ impl RenderOnce for MarkdownView {
     }
 }
 
+#[derive(IntoElement)]
+pub struct MarkdownInlineSingleLineView {
+    id: ElementId,
+    doc: Arc<MarkdownDoc>,
+    color: Option<gpui::Hsla>,
+}
+
+impl MarkdownInlineSingleLineView {
+    pub fn new(id: impl Into<ElementId>, doc: Arc<MarkdownDoc>) -> Self {
+        Self {
+            id: id.into(),
+            doc,
+            color: None,
+        }
+    }
+
+    pub fn text_color(mut self, color: gpui::Hsla) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+impl RenderOnce for MarkdownInlineSingleLineView {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme_for_window(window, cx);
+
+        let atoms = first_markdown_inline_line(&self.doc)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut atom| {
+                atom.link = None;
+                atom
+            })
+            .collect::<Vec<_>>();
+
+        let atoms = if atoms.is_empty() {
+            vec![InlineAtom {
+                text: " ".to_string(),
+                style: InlineStyle::default(),
+                link: None,
+            }]
+        } else {
+            atoms
+        };
+
+        let default_color = self.color.unwrap_or(theme.colors.foreground);
+        let (text, runs) = build_styled_text(atoms, default_color, None, &theme);
+
+        div()
+            .id(self.id)
+            .min_w_0()
+            .w_full()
+            .truncate()
+            .child(StyledText::new(text).with_runs(runs))
+    }
+}
+
 fn render_block(
     id: ElementId,
     block: &MarkdownBlock,
@@ -396,29 +453,14 @@ enum TextFlavor {
     Link(gpui::Hsla),
 }
 
-fn styled_text_div(
-    id: ElementId,
+fn build_styled_text(
     atoms: Vec<InlineAtom>,
-    flavor: TextFlavor,
-    window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement {
-    let theme = theme_for_window(window, cx);
-
+    default_color: gpui::Hsla,
+    underline: Option<UnderlineStyle>,
+    theme: &crate::styles::UiTheme,
+) -> (String, Vec<TextRun>) {
     let mut text = String::new();
     let mut runs = Vec::new();
-
-    let (default_color, underline) = match flavor {
-        TextFlavor::Body => (theme.colors.foreground, None),
-        TextFlavor::Link(color) => (
-            color,
-            Some(UnderlineStyle {
-                color: Some(color),
-                thickness: px(1.0),
-                wavy: false,
-            }),
-        ),
-    };
 
     for atom in atoms {
         if atom.text.is_empty() {
@@ -454,6 +496,32 @@ fn styled_text_div(
         });
         text.push_str(&atom.text);
     }
+
+    (text, runs)
+}
+
+fn styled_text_div(
+    id: ElementId,
+    atoms: Vec<InlineAtom>,
+    flavor: TextFlavor,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let theme = theme_for_window(window, cx);
+
+    let (default_color, underline) = match flavor {
+        TextFlavor::Body => (theme.colors.foreground, None),
+        TextFlavor::Link(color) => (
+            color,
+            Some(UnderlineStyle {
+                color: Some(color),
+                thickness: px(1.0),
+                wavy: false,
+            }),
+        ),
+    };
+
+    let (text, runs) = build_styled_text(atoms, default_color, underline, &theme);
 
     div()
         .id(id)
@@ -473,9 +541,6 @@ fn styled_text_block(
     // layout stable when inline spans mix styles).
     let theme = theme_for_window(window, cx);
 
-    let mut text = String::new();
-    let mut runs = Vec::new();
-
     let (default_color, underline) = match flavor {
         TextFlavor::Body => (theme.colors.foreground, None),
         TextFlavor::Link(color) => (
@@ -488,40 +553,7 @@ fn styled_text_block(
         ),
     };
 
-    for atom in atoms {
-        if atom.text.is_empty() {
-            continue;
-        }
-
-        let mut font = if atom.style.code {
-            theme.typography.mono.font.clone()
-        } else {
-            theme.typography.body.font.clone()
-        };
-
-        if atom.style.bold {
-            font.weight = FontWeight::BOLD;
-        }
-        if atom.style.italic {
-            font.style = FontStyle::Italic;
-        }
-
-        let background_color = if atom.style.code {
-            Some(theme.colors.accent.opacity(0.65))
-        } else {
-            None
-        };
-
-        runs.push(TextRun {
-            len: atom.text.len(),
-            font,
-            color: default_color,
-            background_color,
-            underline,
-            strikethrough: None,
-        });
-        text.push_str(&atom.text);
-    }
+    let (text, runs) = build_styled_text(atoms, default_color, underline, &theme);
 
     div()
         .id(id)
@@ -533,6 +565,29 @@ fn styled_text_block(
 enum InlineItem {
     Atom(InlineAtom),
     HardBreak,
+}
+
+fn first_markdown_inline_line(doc: &MarkdownDoc) -> Option<Vec<InlineAtom>> {
+    let inlines = first_inline_content(&doc.blocks)?;
+    let items = flatten_inlines(inlines);
+    let lines = split_inline_items_into_lines(items);
+    lines.into_iter().next()
+}
+
+fn first_inline_content<'a>(blocks: &'a [MarkdownBlock]) -> Option<&'a [MarkdownInline]> {
+    blocks.iter().find_map(first_inline_content_in_block)
+}
+
+fn first_inline_content_in_block<'a>(block: &'a MarkdownBlock) -> Option<&'a [MarkdownInline]> {
+    match block {
+        MarkdownBlock::Paragraph { content, .. } => Some(content),
+        MarkdownBlock::Heading { content, .. } => Some(content),
+        MarkdownBlock::BlockQuote { content, .. } => first_inline_content(content),
+        MarkdownBlock::List { items, .. } => items
+            .iter()
+            .find_map(|item| first_inline_content(&item.blocks)),
+        MarkdownBlock::CodeBlock { .. } => None,
+    }
 }
 
 fn flatten_inlines(inlines: &[MarkdownInline]) -> Vec<InlineItem> {
