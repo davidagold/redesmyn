@@ -9,7 +9,7 @@ use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
     redesmyn_graph_layout::Size {
         width: 320,
-        height: 96,
+        height: 112,
     };
 
 pub(crate) const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
@@ -1035,7 +1035,9 @@ fn latest_session_by_task_id(
             .or_insert((session.last_event_at, summary));
     }
 
-    out.into_iter().map(|(task_id, (_, summary))| (task_id, summary)).collect()
+    out.into_iter()
+        .map(|(task_id, (_, summary))| (task_id, summary))
+        .collect()
 }
 
 fn temporary_task_id_for_slug(slug: &str) -> TaskId {

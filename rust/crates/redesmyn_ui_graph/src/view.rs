@@ -190,6 +190,32 @@ struct BulkCommandState {
     task: Option<Task<()>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OpacityTransition {
+    started_at: Instant,
+    from: f32,
+    to: f32,
+    duration: Duration,
+}
+
+impl OpacityTransition {
+    fn progress(&self) -> f32 {
+        if self.duration == Duration::from_millis(0) {
+            return 1.0;
+        }
+
+        let elapsed = self.started_at.elapsed().as_secs_f32();
+        let total = self.duration.as_secs_f32();
+        ease_out_cubic((elapsed / total).clamp(0.0, 1.0))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct OpacityTransitionState {
+    value: f32,
+    transition: Option<OpacityTransition>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TaskQuickActionKind {
     Start,
@@ -234,6 +260,7 @@ pub struct GraphView {
     selection_bar_guard: Option<UiActivityGuard>,
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
+    quick_action_opacity: HashMap<TaskId, OpacityTransitionState>,
     collapsed_markdown_cache: HashMap<redesmyn_ids::SessionEventId, Arc<MarkdownDoc>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -298,6 +325,7 @@ impl GraphView {
             selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
+            quick_action_opacity: HashMap::new(),
             collapsed_markdown_cache: HashMap::new(),
             _subscriptions: subscriptions,
         };
@@ -319,6 +347,8 @@ impl GraphView {
 
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
+        self.quick_action_opacity
+            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
 
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
@@ -466,6 +496,46 @@ impl GraphView {
         self.expanded_details_scroll = ScrollHandle::new();
         self.demo_action = UserActionState::default();
         self.demo_action_task = None;
+    }
+
+    fn quick_actions_opacity_for_render(
+        quick_action_opacity: &mut HashMap<TaskId, OpacityTransitionState>,
+        task_id: TaskId,
+        visible: bool,
+        duration: Duration,
+        window: &Window,
+    ) -> f32 {
+        let target = if visible { 1.0 } else { 0.0 };
+        let state = quick_action_opacity.entry(task_id).or_default();
+
+        if let Some(transition) = state.transition {
+            let t = transition.progress();
+            state.value = lerp_f32(transition.from, transition.to, t);
+            if t >= 1.0 {
+                state.transition = None;
+            } else {
+                window.request_animation_frame();
+            }
+        }
+
+        let active_target = state.transition.map(|transition| transition.to);
+        if active_target != Some(target) && (state.value - target).abs() > 1e-3 {
+            if duration == Duration::from_millis(0) {
+                state.value = target;
+                state.transition = None;
+                return state.value;
+            }
+
+            state.transition = Some(OpacityTransition {
+                started_at: Instant::now(),
+                from: state.value,
+                to: target,
+                duration,
+            });
+            window.request_animation_frame();
+        }
+
+        state.value
     }
 
     fn snapshot_scene_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
@@ -1009,14 +1079,14 @@ impl GraphView {
         task_id: TaskId,
         agent_status: AgentStatus,
         has_session: bool,
-        visible: bool,
+        opacity: f32,
+        interactive: bool,
         theme: &redesmyn_ui::styles::UiTheme,
         zoom: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let graph = cx.entity();
         let entity_id = cx.entity_id();
-        let interactive = visible;
 
         let action_state = self.quick_actions.get(&task_id);
         let start_disabled = action_state.is_some_and(|state| state.start.in_flight);
@@ -1086,7 +1156,7 @@ impl GraphView {
             .flex_row()
             .items_center()
             .gap(px(2.0 * zoom))
-            .opacity(if visible { 1.0 } else { 0.0 });
+            .opacity(opacity);
 
         if show_start {
             row = row.child(button(
@@ -2121,8 +2191,10 @@ impl Render for GraphView {
         let nodes_layer = if let Some(canvas_bounds) = self.last_canvas_bounds {
             let entity_id = cx.entity_id();
             let primary_selected = self.visual_selected_node();
-            let selected_nodes = &self.scene.selection().selected_nodes;
-            let layout_animation = self.layout_animation.as_ref();
+            let selection_snapshot = self.scene.selection().clone();
+            let selected_nodes = selection_snapshot.selected_nodes;
+            let hovered_node = selection_snapshot.hovered_node;
+            let quick_actions_fade_duration = ui_test_mode_animation_duration(theme.animation.fast);
             let task_session_state = self.task_session_view.read(cx).task_binding_state();
 
             let mut layer = div().absolute().inset_0();
@@ -2139,12 +2211,15 @@ impl Render for GraphView {
                 let is_primary_selected = primary_selected == Some(node_id);
                 let is_multi_selected = selected_nodes.contains(&node_id);
 
-                let is_animating_expand = layout_animation
+                let is_animating_expand = self
+                    .layout_animation
+                    .as_ref()
                     .is_some_and(|animation| animation.to_selected_node == Some(node_id));
-                let is_animating_collapse = layout_animation.is_some_and(|animation| {
-                    animation.from_selected_node == Some(node_id)
-                        && animation.to_selected_node != Some(node_id)
-                });
+                let is_animating_collapse =
+                    self.layout_animation.as_ref().is_some_and(|animation| {
+                        animation.from_selected_node == Some(node_id)
+                            && animation.to_selected_node != Some(node_id)
+                    });
 
                 let expandedness = if is_animating_expand {
                     t
@@ -2223,8 +2298,15 @@ impl Render for GraphView {
                     let padding_x = px(f32::from(theme.spacing.md) * zoom);
                     let padding_top = px(f32::from(theme.spacing.sm) * zoom);
                     let padding_bottom = px(f32::from(theme.spacing.md) * zoom);
-                    let is_hovered = self.scene.selection().hovered_node == Some(node_id);
+                    let is_hovered = hovered_node == Some(node_id);
                     let show_quick_actions = is_hovered || is_primary_selected;
+                    let quick_actions_opacity = Self::quick_actions_opacity_for_render(
+                        &mut self.quick_action_opacity,
+                        task_id,
+                        show_quick_actions,
+                        quick_actions_fade_duration,
+                        window,
+                    );
 
                     let preview_doc = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
@@ -2282,6 +2364,7 @@ impl Render for GraphView {
                                             task_id,
                                             node.agent_status,
                                             latest_session.as_ref().is_some(),
+                                            quick_actions_opacity,
                                             show_quick_actions,
                                             &theme,
                                             zoom,

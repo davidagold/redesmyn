@@ -37,7 +37,7 @@ impl ColorTokens {
             danger: hsla(rgb(0xb4637a)),
             warning: hsla(rgb(0xea9d34)),
             info: hsla(rgb(0x286983)),
-            completed: hsla(rgb(0x746691)),
+            completed: hsla(rgb(0x6d28d9)),
         }
     }
 
@@ -57,7 +57,7 @@ impl ColorTokens {
             danger: hsla(rgb(0xeb6f92)),
             warning: hsla(rgb(0xf6c177)),
             info: hsla(rgb(0x31748f)),
-            completed: hsla(rgb(0x82729c)),
+            completed: hsla(rgb(0x6d28d9)),
         }
     }
 }
