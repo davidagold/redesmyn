@@ -4973,9 +4973,11 @@ name = "redesmyn_ui_graph"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "redesmyn_client_api",
  "redesmyn_graph_layout",
  "redesmyn_ids",
  "redesmyn_logging",
+ "redesmyn_markdown",
  "redesmyn_protocol",
  "redesmyn_ui",
  "redesmyn_ui_session",

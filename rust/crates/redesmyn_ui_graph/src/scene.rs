@@ -3,7 +3,7 @@ use std::fmt;
 
 use gpui::SharedString;
 use redesmyn_graph_layout::{ForestLayoutEngine, LayoutConfig, LayoutNode, LayoutOptions};
-use redesmyn_ids::TaskId;
+use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 
 pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
@@ -65,8 +65,8 @@ pub struct GraphSceneNode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSessionSummary {
-    pub kind: SharedString,
-    pub turn_id: Option<SharedString>,
+    pub session_id: SessionId,
+    pub session_event_id: SessionEventId,
     pub message_preview: Option<SharedString>,
 }
 
@@ -1002,8 +1002,8 @@ fn latest_session_by_task_id(
         BTreeMap::new();
     for session in &graph.session_summaries {
         let summary = TaskSessionSummary {
-            kind: SharedString::new(session.kind.clone()),
-            turn_id: session.turn_id.as_ref().map(|id| SharedString::new(id.clone())),
+            session_id: session.session_id,
+            session_event_id: session.session_event_id,
             message_preview: session
                 .message_preview
                 .as_deref()

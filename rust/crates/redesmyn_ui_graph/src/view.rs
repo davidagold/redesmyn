@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -9,10 +10,13 @@ use gpui::{
 };
 
 use redesmyn_ids::CommandId;
+use redesmyn_ids::TaskId;
+
+use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
-    TextButton,
+    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineSingleLineView, ProgressPill,
+    ProgressPillKind, ScrollArea, TextButton, Tooltip,
 };
 use redesmyn_ui::utils::{
     theme_for_window, ui_idle_tracker, ui_test_mode_animation_duration, UiActivityGuard,
@@ -30,7 +34,11 @@ use crate::geometry::{
 use crate::hit_test::{hit_test, GraphHit};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
-use redesmyn_protocol::client::{MergeReadiness, TaskState};
+use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
+use redesmyn_protocol::client::{
+    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload,
+    ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
+};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
 #[derive(Debug, Clone)]
@@ -182,6 +190,23 @@ struct BulkCommandState {
     task: Option<Task<()>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskQuickActionKind {
+    Start,
+    Restart,
+    Stop,
+}
+
+#[derive(Debug, Default)]
+struct TaskQuickActionState {
+    start: UserActionState,
+    start_task: Option<Task<()>>,
+    restart: UserActionState,
+    restart_task: Option<Task<()>>,
+    stop: UserActionState,
+    stop_task: Option<Task<()>>,
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
@@ -208,6 +233,8 @@ pub struct GraphView {
     selection_bar_transition: Option<SelectionBarTransition>,
     selection_bar_guard: Option<UiActivityGuard>,
     bulk_start: BulkCommandState,
+    quick_actions: HashMap<TaskId, TaskQuickActionState>,
+    collapsed_markdown_cache: HashMap<redesmyn_ids::SessionEventId, Arc<MarkdownDoc>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -270,6 +297,8 @@ impl GraphView {
             selection_bar_transition: None,
             selection_bar_guard: None,
             bulk_start: BulkCommandState::default(),
+            quick_actions: HashMap::new(),
+            collapsed_markdown_cache: HashMap::new(),
             _subscriptions: subscriptions,
         };
 
@@ -971,6 +1000,199 @@ impl GraphView {
                 }
             },
         ));
+    }
+
+    fn task_quick_actions_row(
+        &self,
+        node_key: gpui::SharedString,
+        task_id: TaskId,
+        agent_status: AgentStatus,
+        has_session: bool,
+        theme: &redesmyn_ui::styles::UiTheme,
+        zoom: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let graph = cx.entity();
+        let entity_id = cx.entity_id();
+
+        let action_state = self.quick_actions.get(&task_id);
+        let start_disabled = action_state.is_some_and(|state| state.start.in_flight);
+        let restart_disabled = action_state.is_some_and(|state| state.restart.in_flight);
+        let stop_disabled = action_state.is_some_and(|state| state.stop.in_flight);
+
+        let show_stop = matches!(agent_status, AgentStatus::Running | AgentStatus::Blocked);
+        let show_restart = has_session || show_stop;
+        let show_start = !show_restart;
+
+        let button = |kind: TaskQuickActionKind,
+                      label: &'static str,
+                      tooltip: &'static str,
+                      fg: gpui::Hsla,
+                      hover_bg: gpui::Hsla,
+                      disabled: bool| {
+            let base_id = match kind {
+                TaskQuickActionKind::Start => "task_quick_action_start",
+                TaskQuickActionKind::Restart => "task_quick_action_restart",
+                TaskQuickActionKind::Stop => "task_quick_action_stop",
+            };
+            let id = (gpui::ElementId::from((base_id, entity_id)), node_key.clone());
+
+            let mut button = div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(22.0 * zoom))
+                .rounded(px(f32::from(theme.radius.md) * zoom))
+                .text_size(rems(0.70 * zoom))
+                .text_color(fg)
+                .cursor_pointer()
+                .focusable()
+                .hover(move |this| this.bg(hover_bg))
+                .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip)).into())
+                .child(label);
+
+            if disabled {
+                button = button.opacity(0.55).cursor_not_allowed();
+            } else {
+                let graph = graph.clone();
+                button = button.on_click(move |event, _window, cx| {
+                    if event.standard_click() {
+                        graph.update(cx, |this, cx| {
+                            this.trigger_task_quick_action(task_id, kind, cx);
+                        });
+                    }
+                    cx.stop_propagation();
+                });
+            }
+
+            button
+        };
+
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.0 * zoom));
+
+        if show_start {
+            row = row.child(button(
+                TaskQuickActionKind::Start,
+                "▶",
+                "Start agent",
+                theme.colors.foreground_muted,
+                theme.colors.accent.opacity(0.65),
+                start_disabled,
+            ));
+        }
+
+        if show_restart {
+            row = row.child(button(
+                TaskQuickActionKind::Restart,
+                "↻",
+                "Restart agent",
+                theme.colors.foreground_muted,
+                theme.colors.accent.opacity(0.65),
+                restart_disabled,
+            ));
+        }
+
+        if show_stop {
+            row = row.child(button(
+                TaskQuickActionKind::Stop,
+                "■",
+                "Stop agent",
+                theme.colors.danger,
+                theme.colors.danger.opacity(0.10),
+                stop_disabled,
+            ));
+        }
+
+        row
+    }
+
+    fn quick_action_state_mut(&mut self, task_id: TaskId) -> &mut TaskQuickActionState {
+        self.quick_actions.entry(task_id).or_default()
+    }
+
+    fn trigger_task_quick_action(
+        &mut self,
+        task_id: TaskId,
+        kind: TaskQuickActionKind,
+        cx: &mut Context<Self>,
+    ) {
+        let client = self.task_session_view.read(cx).client();
+
+        let state = self.quick_action_state_mut(task_id);
+        let (action, task_slot) = match kind {
+            TaskQuickActionKind::Start => (&mut state.start, &mut state.start_task),
+            TaskQuickActionKind::Restart => (&mut state.restart, &mut state.restart_task),
+            TaskQuickActionKind::Stop => (&mut state.stop, &mut state.stop_task),
+        };
+
+        if action.in_flight {
+            return;
+        }
+
+        let Some(client) = client else {
+            action.fail("Control plane client is unavailable.");
+            cx.notify();
+            return;
+        };
+
+        action.start();
+        cx.notify();
+
+        let view = cx.entity();
+        *task_slot = Some(cx.spawn(move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = task_quick_action_request(&client, task_id, kind).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_task_quick_action_completed(task_id, kind, result, cx);
+                    })
+                });
+            }
+        }));
+    }
+
+    fn on_task_quick_action_completed(
+        &mut self,
+        task_id: TaskId,
+        kind: TaskQuickActionKind,
+        result: Result<ResponseResult, redesmyn_protocol::ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.quick_actions.get_mut(&task_id) else {
+            return;
+        };
+
+        let (action, task_slot) = match kind {
+            TaskQuickActionKind::Start => (&mut state.start, &mut state.start_task),
+            TaskQuickActionKind::Restart => (&mut state.restart, &mut state.restart_task),
+            TaskQuickActionKind::Stop => (&mut state.stop, &mut state.stop_task),
+        };
+        *task_slot = None;
+
+        let message = match result {
+            Ok(ResponseResult::StartAgent(_)) if kind == TaskQuickActionKind::Start => None,
+            Ok(ResponseResult::RestartAgent(_)) if kind == TaskQuickActionKind::Restart => None,
+            Ok(ResponseResult::StopAgent(_)) if kind == TaskQuickActionKind::Stop => None,
+            Ok(ResponseResult::Error(err)) => Some(err.message),
+            Err(err) => Some(err.message),
+            Ok(other) => Some(format!("Unexpected response: {other:?}")),
+        };
+
+        if let Some(message) = message {
+            action.fail(message);
+        } else {
+            action.succeed();
+            action.clear_error();
+        }
+
+        cx.notify();
     }
 
     fn on_mouse_down(
@@ -1936,11 +2158,10 @@ impl Render for GraphView {
                     theme.colors.ring,
                     0.10 * selection_t,
                 );
-                let border = lerp_hsla(
-                    theme.colors.border.opacity(0.8),
-                    theme.colors.ring,
-                    selection_t,
-                );
+                let base_border =
+                    collapsed_task_border_color(node.state, node.merge_readiness, &theme)
+                        .opacity(0.8);
+                let border = lerp_hsla(base_border, theme.colors.ring, selection_t);
 
                 let node_element_id = (
                     gpui::ElementId::from(("graph_node", entity_id)),
@@ -1948,7 +2169,7 @@ impl Render for GraphView {
                 );
 
                 let mut card = div()
-                    .id(node_element_id)
+                    .id(node_element_id.clone())
                     .absolute()
                     .top(local_origin.y)
                     .left(local_origin.x)
@@ -1983,50 +2204,24 @@ impl Render for GraphView {
                     let latest_session = node.latest_session.clone();
                     let padding_x = px(f32::from(theme.spacing.sm) * zoom);
                     let padding_y = px(f32::from(theme.spacing.xs) * zoom);
+                    let is_hovered = self.scene.selection().hovered_node == Some(node_id);
+                    let show_quick_actions = is_hovered || is_primary_selected;
 
-                    let pill = |label: gpui::SharedString,
-                                bg: gpui::Hsla,
-                                fg: gpui::Hsla|
-                     -> gpui::Div {
-                        let padding_x = px(f32::from(theme.spacing.sm) * zoom);
-                        let padding_y = px(f32::from(theme.spacing.xs) * zoom);
-                        let radius = px(f32::from(theme.radius.lg) * zoom);
-                        div()
-                            .px(padding_x)
-                            .py(padding_y)
-                            .rounded(radius)
-                            .bg(bg)
-                            .text_size(rems(0.62 * zoom))
-                            .text_color(fg)
-                            .child(label)
-                    };
-
-                    let (state_bg, state_fg) = match state {
-                        TaskState::InProgress => {
-                            (theme.colors.ring.opacity(0.18), theme.colors.foreground)
+                    let preview_doc = latest_session.as_ref().and_then(|session| {
+                        let preview = session.message_preview.as_ref()?;
+                        if let Some(doc) = self.collapsed_markdown_cache.get(&session.session_event_id)
+                        {
+                            return Some(doc.clone());
                         }
-                        TaskState::Blocked => {
-                            (theme.colors.warning.opacity(0.18), theme.colors.foreground)
-                        }
-                        TaskState::Done => (
-                            theme.colors.accent.opacity(0.75),
-                            theme.colors.foreground_muted,
-                        ),
-                        TaskState::Todo | TaskState::Unknown => (
-                            theme.colors.surface.opacity(0.9),
-                            theme.colors.foreground_muted,
-                        ),
-                    };
 
-                    let preview = latest_session
-                        .as_ref()
-                        .and_then(|session| session.message_preview.clone());
-                    let agent_kind = latest_session
-                        .as_ref()
-                        .map(|session| session_kind_label(&session.kind).into());
-                    let agent_turn_id = latest_session
-                        .as_ref()
-                        .and_then(|session| session.turn_id.clone());
+                        let doc = Arc::new(parse_markdown(
+                            preview.as_str(),
+                            MarkdownParseOptions::default(),
+                        ));
+                        self.collapsed_markdown_cache
+                            .insert(session.session_event_id, doc.clone());
+                        Some(doc)
+                    });
 
                     let mut collapsed_content = div()
                         .absolute()
@@ -2036,7 +2231,7 @@ impl Render for GraphView {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .justify_between()
+                        .gap(px(6.0 * zoom))
                         .opacity(collapsed_opacity)
                         .child(
                             div()
@@ -2051,60 +2246,59 @@ impl Render for GraphView {
                                         .flex_1()
                                         .text_size(rems(0.60 * zoom))
                                         .text_color(theme.colors.foreground_muted)
-                                        .truncate()
                                         .child(task_slug),
                                 )
-                                .child(pill(
-                                    task_state_label(state).into(),
-                                    state_bg,
-                                    state_fg,
-                                )),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(4.0 * zoom))
+                                        .when(show_quick_actions, |this| {
+                                            let GraphNodeId::Task(task_id) = node_id else {
+                                                return this;
+                                            };
+                                            this.child(self.task_quick_actions_row(
+                                                node_key.clone(),
+                                                task_id,
+                                                node.agent_status,
+                                                latest_session.as_ref().is_some(),
+                                                &theme,
+                                                zoom,
+                                                cx,
+                                            ))
+                                        })
+                                        .child(agent_status_dot(
+                                            state,
+                                            node.agent_status,
+                                            latest_session.as_ref().is_some(),
+                                            &theme,
+                                            zoom,
+                                        )),
+                                ),
                         )
                         .child(
                             div()
+                                .min_w_0()
+                                .w_full()
                                 .text_size(rems(0.78 * zoom))
                                 .text_color(theme.colors.foreground)
-                                .truncate()
                                 .child(title),
                         );
 
-                    if let Some(preview) = preview {
+                    if let Some(doc) = preview_doc {
+                        let preview_id: gpui::ElementId =
+                            (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
                             div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(6.0 * zoom))
                                 .text_size(rems(0.66 * zoom))
                                 .text_color(theme.colors.foreground_muted)
-                                .child("•")
-                                .child(div().min_w_0().truncate().child(preview)),
+                                .child(
+                                    MarkdownInlineSingleLineView::new(preview_id, doc)
+                                    .text_color(theme.colors.foreground_muted),
+                                ),
                         );
                     }
-
-                    let mut meta_row = div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0 * zoom));
-
-                    if let Some(turn_id) = agent_turn_id {
-                        meta_row = meta_row.child(pill(
-                            turn_id,
-                            theme.colors.surface.opacity(0.9),
-                            theme.colors.foreground_muted,
-                        ));
-                    }
-
-                    if let Some(kind) = agent_kind {
-                        meta_row = meta_row.child(pill(
-                            kind,
-                            theme.colors.surface.opacity(0.9),
-                            theme.colors.foreground_muted,
-                        ));
-                    }
-
-                    collapsed_content = collapsed_content.child(meta_row);
                     card = card.child(collapsed_content);
                 }
 
@@ -2729,6 +2923,82 @@ fn should_defer_pan_to_scroll_view(
     }
 }
 
+async fn task_quick_action_request(
+    client: &Client,
+    task_id: TaskId,
+    kind: TaskQuickActionKind,
+) -> Result<ResponseResult, redesmyn_protocol::ErrorEnvelope> {
+    let payload = match kind {
+        TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
+            task_id,
+            agent_kind: AgentKind::Codex,
+            interface_mode: AgentInterfaceMode::AppServer,
+            initial_prompt: None,
+            on_conflict: AgentMessageConflictAction::Fail,
+        }),
+        TaskQuickActionKind::Restart => RequestPayload::RestartAgent(RestartAgentRequest {
+            task_id,
+            agent_kind: AgentKind::Codex,
+            interface_mode: AgentInterfaceMode::AppServer,
+            initial_prompt: None,
+        }),
+        TaskQuickActionKind::Stop => RequestPayload::StopAgent(StopAgentRequest { task_id }),
+    };
+
+    client.request(payload).await
+}
+
+fn collapsed_task_border_color(
+    state: TaskState,
+    merge_readiness: MergeReadiness,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> gpui::Hsla {
+    if matches!(state, TaskState::Blocked) || matches!(merge_readiness, MergeReadiness::Blocked) {
+        return theme.colors.warning;
+    }
+
+    if matches!(state, TaskState::Done) || matches!(merge_readiness, MergeReadiness::Ready) {
+        return theme.colors.success;
+    }
+
+    theme.colors.border
+}
+
+fn agent_status_dot(
+    task_state: TaskState,
+    agent_status: AgentStatus,
+    continuable: bool,
+    theme: &redesmyn_ui::styles::UiTheme,
+    zoom: f32,
+) -> gpui::Div {
+    let size = px(12.0 * zoom);
+    let radius = px(999.0);
+    let transparent = theme.colors.surface.opacity(0.0);
+
+    let (border, bg) = match task_state {
+        TaskState::Blocked => (theme.colors.warning, theme.colors.warning),
+        TaskState::Done => {
+            let muted = theme.colors.foreground_muted.opacity(0.40);
+            (muted, muted)
+        }
+        _ => match agent_status {
+            AgentStatus::Unknown => (theme.colors.foreground_muted.opacity(0.60), transparent),
+            AgentStatus::Running => (theme.colors.success, theme.colors.success),
+            AgentStatus::Blocked => (theme.colors.warning, theme.colors.warning),
+            AgentStatus::Error => (theme.colors.danger, theme.colors.danger),
+            AgentStatus::Stopped if continuable => (theme.colors.info, transparent),
+            AgentStatus::Stopped => (theme.colors.foreground_muted.opacity(0.60), transparent),
+        },
+    };
+
+    div()
+        .size(size)
+        .rounded(radius)
+        .border_1()
+        .border_color(border)
+        .bg(bg)
+}
+
 fn status_chip(
     label: impl Into<gpui::SharedString>,
     bg: gpui::Hsla,
@@ -2753,34 +3023,6 @@ fn task_state_label(state: TaskState) -> &'static str {
         TaskState::Done => "Done",
         TaskState::Unknown => "Unknown",
     }
-}
-
-fn session_kind_label(kind: &str) -> String {
-    let trimmed = kind.trim();
-    if trimmed.is_empty() {
-        return "Session".to_string();
-    }
-
-    let lower = trimmed.to_ascii_lowercase();
-    match lower.as_str() {
-        "codex" => return "Codex".to_string(),
-        "claude_code" => return "Claude Code".to_string(),
-        "claude" => return "Claude".to_string(),
-        "shell" => return "Shell".to_string(),
-        _ => {}
-    }
-
-    let normalized = trimmed.replace(['_', '-'], " ");
-    normalized
-        .split_whitespace()
-        .filter_map(|word| {
-            let mut chars = word.chars();
-            let first = chars.next()?;
-            let rest: String = chars.collect();
-            Some(format!("{}{}", first.to_uppercase(), rest))
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn task_state_chip(state: TaskState, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
