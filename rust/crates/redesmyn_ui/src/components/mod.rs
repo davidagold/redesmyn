@@ -11,7 +11,10 @@ mod tooltip;
 
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
-pub use markdown::{MarkdownInlineSingleLineView, MarkdownView};
+pub use markdown::{
+    MarkdownInlineAtom, MarkdownInlineSingleLineView, MarkdownInlineStyle, MarkdownView,
+    first_markdown_inline_line_atoms,
+};
 pub use progress::{ProgressPill, ProgressPillKind};
 pub use scroll_area::ScrollArea;
 pub use split_pane::{SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState};

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,8 +16,9 @@ use redesmyn_ids::TaskId;
 use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineSingleLineView, ProgressPill,
-    ProgressPillKind, ScrollArea, TextButton, Tooltip,
+    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineAtom, MarkdownInlineSingleLineView,
+    ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
+    first_markdown_inline_line_atoms,
 };
 use redesmyn_ui::utils::{
     UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
@@ -34,7 +36,7 @@ use crate::geometry::{
 use crate::hit_test::{GraphHit, hit_test};
 use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkKind};
 
-use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
+use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload,
     ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
@@ -242,6 +244,56 @@ struct CollapsedTitleCacheEntry {
     line2: Option<gpui::SharedString>,
 }
 
+#[derive(Debug)]
+struct BoundedCache<K, V> {
+    entries: HashMap<K, V>,
+    order: VecDeque<K>,
+    capacity: usize,
+}
+
+impl<K, V> BoundedCache<K, V>
+where
+    K: Clone + Eq + Hash,
+{
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    fn get(&self, key: &K) -> Option<&V> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: K, value: V) {
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key, value);
+            return;
+        }
+
+        self.entries.insert(key.clone(), value);
+        self.order.push_back(key);
+        self.prune();
+    }
+
+    fn retain(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.entries.retain(|k, v| f(k, v));
+        self.order.retain(|key| self.entries.contains_key(key));
+        self.prune();
+    }
+
+    fn prune(&mut self) {
+        while self.capacity > 0 && self.entries.len() > self.capacity {
+            let Some(key) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&key);
+        }
+    }
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
@@ -270,8 +322,10 @@ pub struct GraphView {
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
     quick_action_opacity: HashMap<TaskId, OpacityTransitionState>,
+    expanded_session_opacity: HashMap<TaskId, OpacityTransitionState>,
     collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
-    collapsed_markdown_cache: HashMap<redesmyn_ids::SessionEventId, Arc<MarkdownDoc>>,
+    collapsed_markdown_cache:
+        BoundedCache<redesmyn_ids::SessionEventId, Arc<[MarkdownInlineAtom]>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -336,8 +390,9 @@ impl GraphView {
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
             quick_action_opacity: HashMap::new(),
+            expanded_session_opacity: HashMap::new(),
             collapsed_title_cache: HashMap::new(),
-            collapsed_markdown_cache: HashMap::new(),
+            collapsed_markdown_cache: BoundedCache::new(512),
             _subscriptions: subscriptions,
         };
 
@@ -360,8 +415,23 @@ impl GraphView {
         self.edge_label_cache.borrow_mut().clear();
         self.quick_action_opacity
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+        self.expanded_session_opacity
+            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
         self.collapsed_title_cache
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+        let referenced_session_events: HashSet<redesmyn_ids::SessionEventId> = self
+            .scene
+            .nodes()
+            .filter_map(|node| {
+                let session = node.latest_session.as_ref()?;
+                session
+                    .message_preview
+                    .as_ref()
+                    .map(|_| session.session_event_id)
+            })
+            .collect();
+        self.collapsed_markdown_cache
+            .retain(|event_id, _| referenced_session_events.contains(event_id));
 
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
@@ -511,44 +581,55 @@ impl GraphView {
         self.demo_action_task = None;
     }
 
-    fn quick_actions_opacity_for_render(
-        quick_action_opacity: &mut HashMap<TaskId, OpacityTransitionState>,
+    fn opacity_transition_for_render(
+        opacity: &mut HashMap<TaskId, OpacityTransitionState>,
         task_id: TaskId,
         visible: bool,
         duration: Duration,
         window: &Window,
     ) -> f32 {
         let target = if visible { 1.0 } else { 0.0 };
-        let state = quick_action_opacity.entry(task_id).or_default();
+        let should_prune;
+        let value = {
+            let state = opacity.entry(task_id).or_default();
 
-        if let Some(transition) = state.transition {
-            let t = transition.progress();
-            state.value = lerp_f32(transition.from, transition.to, t);
-            if t >= 1.0 {
-                state.transition = None;
-            } else {
-                window.request_animation_frame();
-            }
-        }
-
-        let active_target = state.transition.map(|transition| transition.to);
-        if active_target != Some(target) && (state.value - target).abs() > 1e-3 {
-            if duration == Duration::from_millis(0) {
-                state.value = target;
-                state.transition = None;
-                return state.value;
+            if let Some(transition) = state.transition {
+                let t = transition.progress();
+                state.value = lerp_f32(transition.from, transition.to, t);
+                if t >= 1.0 {
+                    state.transition = None;
+                } else {
+                    window.request_animation_frame();
+                }
             }
 
-            state.transition = Some(OpacityTransition {
-                started_at: Instant::now(),
-                from: state.value,
-                to: target,
-                duration,
-            });
-            window.request_animation_frame();
-        }
+            let active_target = state.transition.map(|transition| transition.to);
+            if active_target != Some(target) && (state.value - target).abs() > 1e-3 {
+                if duration == Duration::from_millis(0) {
+                    state.value = target;
+                    state.transition = None;
+                } else {
+                    state.transition = Some(OpacityTransition {
+                        started_at: Instant::now(),
+                        from: state.value,
+                        to: target,
+                        duration,
+                    });
+                    window.request_animation_frame();
+                }
+            }
 
-        state.value
+            should_prune =
+                !visible && state.transition.is_none() && state.value.abs().max(target.abs()) < 1e-3;
+            state.value
+        };
+
+        if should_prune {
+            opacity.remove(&task_id);
+            0.0
+        } else {
+            value
+        }
     }
 
     fn snapshot_scene_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
@@ -2313,7 +2394,7 @@ impl Render for GraphView {
                     let padding_bottom = px(f32::from(theme.spacing.md) * zoom);
                     let is_hovered = hovered_node == Some(node_id);
                     let show_quick_actions = is_hovered || is_primary_selected;
-                    let quick_actions_opacity = Self::quick_actions_opacity_for_render(
+                    let quick_actions_opacity = Self::opacity_transition_for_render(
                         &mut self.quick_action_opacity,
                         task_id,
                         show_quick_actions,
@@ -2340,21 +2421,27 @@ impl Render for GraphView {
                         window,
                     );
 
-                    let preview_doc = latest_session.as_ref().and_then(|session| {
+                    let preview_atoms = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
-                        if let Some(doc) =
+                        if let Some(atoms) =
                             self.collapsed_markdown_cache.get(&session.session_event_id)
                         {
-                            return Some(doc.clone());
+                            return Some(atoms.clone());
                         }
 
-                        let doc = Arc::new(parse_markdown(
+                        let doc = parse_markdown(
                             preview.as_str(),
                             MarkdownParseOptions::default(),
-                        ));
+                        );
+                        let mut atoms = first_markdown_inline_line_atoms(&doc).unwrap_or_default();
+                        for atom in &mut atoms {
+                            atom.link = None;
+                        }
+
+                        let atoms: Arc<[MarkdownInlineAtom]> = Arc::from(atoms.into_boxed_slice());
                         self.collapsed_markdown_cache
-                            .insert(session.session_event_id, doc.clone());
-                        Some(doc)
+                            .insert(session.session_event_id, atoms.clone());
+                        Some(atoms)
                     });
 
                     let mut collapsed_content = div()
@@ -2442,7 +2529,7 @@ impl Render for GraphView {
                                 }),
                         );
 
-                    if let Some(doc) = preview_doc {
+                    if let Some(atoms) = preview_atoms {
                         let preview_id: gpui::ElementId =
                             (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
@@ -2450,7 +2537,7 @@ impl Render for GraphView {
                                 .text_size(rems(0.66 * zoom))
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
-                                    MarkdownInlineSingleLineView::new(preview_id, doc)
+                                    MarkdownInlineSingleLineView::from_atoms(preview_id, atoms)
                                         .text_color(theme.colors.foreground_muted),
                                 ),
                         );
@@ -2465,6 +2552,24 @@ impl Render for GraphView {
                     let merge_readiness = node.merge_readiness;
                     let agent_status = node.agent_status;
                     let branch_name = node.branch_name.clone();
+                    let task_id = match node_id {
+                        GraphNodeId::Task(task_id) => task_id,
+                        GraphNodeId::Trunk => unreachable!("trunk nodes are skipped above"),
+                    };
+                    let show_expanded_session_view =
+                        is_primary_selected && !is_animating_expand && !is_animating_collapse;
+                    let expanded_session_view_opacity = if show_expanded_session_view {
+                        Self::opacity_transition_for_render(
+                            &mut self.expanded_session_opacity,
+                            task_id,
+                            true,
+                            quick_actions_fade_duration,
+                            window,
+                        )
+                    } else {
+                        self.expanded_session_opacity.remove(&task_id);
+                        0.0
+                    };
 
                     let close_button_id = (
                         gpui::ElementId::from(("task_card_close", entity_id)),
@@ -2741,7 +2846,40 @@ impl Render for GraphView {
                                                             div()
                                                                 .flex_1()
                                                                 .min_h(px(0.0))
-                                                                .child(self.task_session_view.clone()),
+                                                                .when(
+                                                                    expanded_session_view_opacity
+                                                                        > 0.01,
+                                                                    |this| {
+                                                                        this.opacity(
+                                                                            expanded_session_view_opacity,
+                                                                        )
+                                                                        .child(
+                                                                            self.task_session_view
+                                                                                .clone(),
+                                                                        )
+                                                                    },
+                                                                )
+                                                                .when(
+                                                                    expanded_session_view_opacity
+                                                                        <= 0.01,
+                                                                    |this| {
+                                                                        this.flex()
+                                                                            .items_center()
+                                                                            .justify_center()
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_sm()
+                                                                                    .text_color(
+                                                                                        theme
+                                                                                            .colors
+                                                                                            .foreground_muted,
+                                                                                    )
+                                                                                    .child(
+                                                                                        "Preparing…",
+                                                                                    ),
+                                                                            )
+                                                                    },
+                                                                ),
                                                         )
                                                     }),
                                             ),

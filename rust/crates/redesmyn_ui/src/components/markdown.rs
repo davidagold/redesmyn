@@ -77,7 +77,7 @@ impl RenderOnce for MarkdownView {
 #[derive(IntoElement)]
 pub struct MarkdownInlineSingleLineView {
     id: ElementId,
-    doc: Arc<MarkdownDoc>,
+    source: MarkdownInlineSingleLineSource,
     color: Option<gpui::Hsla>,
 }
 
@@ -85,7 +85,15 @@ impl MarkdownInlineSingleLineView {
     pub fn new(id: impl Into<ElementId>, doc: Arc<MarkdownDoc>) -> Self {
         Self {
             id: id.into(),
-            doc,
+            source: MarkdownInlineSingleLineSource::Doc(doc),
+            color: None,
+        }
+    }
+
+    pub fn from_atoms(id: impl Into<ElementId>, atoms: Arc<[MarkdownInlineAtom]>) -> Self {
+        Self {
+            id: id.into(),
+            source: MarkdownInlineSingleLineSource::Atoms(atoms),
             color: None,
         }
     }
@@ -100,24 +108,23 @@ impl RenderOnce for MarkdownInlineSingleLineView {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
 
-        let atoms = first_markdown_inline_line(&self.doc)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|mut atom| {
-                atom.link = None;
-                atom
-            })
-            .collect::<Vec<_>>();
-
-        let atoms = if atoms.is_empty() {
-            vec![InlineAtom {
-                text: " ".to_string(),
-                style: InlineStyle::default(),
-                link: None,
-            }]
-        } else {
-            atoms
+        let mut atoms_owned;
+        let mut atoms = match &self.source {
+            MarkdownInlineSingleLineSource::Doc(doc) => {
+                atoms_owned = first_markdown_inline_line_atoms(doc).unwrap_or_default();
+                atoms_owned.as_slice()
+            }
+            MarkdownInlineSingleLineSource::Atoms(atoms) => atoms.as_ref(),
         };
+
+        if atoms.is_empty() {
+            atoms_owned = vec![MarkdownInlineAtom {
+                text: " ".to_string(),
+                style: MarkdownInlineStyle::default(),
+                link: None,
+            }];
+            atoms = atoms_owned.as_slice();
+        }
 
         let default_color = self.color.unwrap_or(theme.colors.foreground);
         let (text, runs) = build_styled_text(atoms, default_color, None, &theme);
@@ -129,6 +136,12 @@ impl RenderOnce for MarkdownInlineSingleLineView {
             .truncate()
             .child(StyledText::new(text).with_runs(runs))
     }
+}
+
+#[derive(Debug, Clone)]
+enum MarkdownInlineSingleLineSource {
+    Doc(Arc<MarkdownDoc>),
+    Atoms(Arc<[MarkdownInlineAtom]>),
 }
 
 fn render_block(
@@ -298,17 +311,17 @@ impl InlineSegmentsStyle {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct InlineStyle {
-    bold: bool,
-    italic: bool,
-    code: bool,
+pub struct MarkdownInlineStyle {
+    pub bold: bool,
+    pub italic: bool,
+    pub code: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct InlineAtom {
-    text: String,
-    style: InlineStyle,
-    link: Option<String>,
+pub struct MarkdownInlineAtom {
+    pub text: String,
+    pub style: MarkdownInlineStyle,
+    pub link: Option<String>,
 }
 
 fn render_inline_segments(
@@ -334,9 +347,9 @@ fn render_inline_segments(
         if atoms.is_empty() {
             flow = flow.child(styled_text_div(
                 line_id,
-                vec![InlineAtom {
+                vec![MarkdownInlineAtom {
                     text: " ".to_string(),
-                    style: InlineStyle::default(),
+                    style: MarkdownInlineStyle::default(),
                     link: None,
                 }],
                 TextFlavor::Body,
@@ -374,7 +387,7 @@ fn render_inline_segments(
     flow.into_any_element()
 }
 
-fn split_inline_items_into_lines(items: Vec<InlineItem>) -> Vec<Vec<InlineAtom>> {
+fn split_inline_items_into_lines(items: Vec<InlineItem>) -> Vec<Vec<MarkdownInlineAtom>> {
     let mut lines = Vec::new();
     let mut current = Vec::new();
 
@@ -392,8 +405,11 @@ fn split_inline_items_into_lines(items: Vec<InlineItem>) -> Vec<Vec<InlineAtom>>
 }
 
 enum InlineChunk {
-    Text(Vec<InlineAtom>),
-    Link { destination: String, atoms: Vec<InlineAtom> },
+    Text(Vec<MarkdownInlineAtom>),
+    Link {
+        destination: String,
+        atoms: Vec<MarkdownInlineAtom>,
+    },
 }
 
 fn render_inline_chunk(
@@ -454,7 +470,7 @@ enum TextFlavor {
 }
 
 fn build_styled_text(
-    atoms: Vec<InlineAtom>,
+    atoms: &[MarkdownInlineAtom],
     default_color: gpui::Hsla,
     underline: Option<UnderlineStyle>,
     theme: &crate::styles::UiTheme,
@@ -502,7 +518,7 @@ fn build_styled_text(
 
 fn styled_text_div(
     id: ElementId,
-    atoms: Vec<InlineAtom>,
+    atoms: Vec<MarkdownInlineAtom>,
     flavor: TextFlavor,
     window: &mut Window,
     cx: &mut App,
@@ -521,7 +537,7 @@ fn styled_text_div(
         ),
     };
 
-    let (text, runs) = build_styled_text(atoms, default_color, underline, &theme);
+    let (text, runs) = build_styled_text(&atoms, default_color, underline, &theme);
 
     div()
         .id(id)
@@ -532,7 +548,7 @@ fn styled_text_div(
 
 fn styled_text_block(
     id: ElementId,
-    atoms: Vec<InlineAtom>,
+    atoms: Vec<MarkdownInlineAtom>,
     flavor: TextFlavor,
     window: &mut Window,
     cx: &mut App,
@@ -553,7 +569,7 @@ fn styled_text_block(
         ),
     };
 
-    let (text, runs) = build_styled_text(atoms, default_color, underline, &theme);
+    let (text, runs) = build_styled_text(&atoms, default_color, underline, &theme);
 
     div()
         .id(id)
@@ -563,11 +579,11 @@ fn styled_text_block(
 }
 
 enum InlineItem {
-    Atom(InlineAtom),
+    Atom(MarkdownInlineAtom),
     HardBreak,
 }
 
-fn first_markdown_inline_line(doc: &MarkdownDoc) -> Option<Vec<InlineAtom>> {
+pub fn first_markdown_inline_line_atoms(doc: &MarkdownDoc) -> Option<Vec<MarkdownInlineAtom>> {
     let inlines = first_inline_content(&doc.blocks)?;
     let items = flatten_inlines(inlines);
     let lines = split_inline_items_into_lines(items);
@@ -593,7 +609,7 @@ fn first_inline_content_in_block<'a>(block: &'a MarkdownBlock) -> Option<&'a [Ma
 fn flatten_inlines(inlines: &[MarkdownInline]) -> Vec<InlineItem> {
     let mut out = Vec::new();
     for inline in inlines {
-        flatten_inline(inline, InlineStyle::default(), None, &mut out);
+        flatten_inline(inline, MarkdownInlineStyle::default(), None, &mut out);
     }
 
     out
@@ -601,7 +617,7 @@ fn flatten_inlines(inlines: &[MarkdownInline]) -> Vec<InlineItem> {
 
 fn flatten_inline(
     inline: &MarkdownInline,
-    style: InlineStyle,
+    style: MarkdownInlineStyle,
     link: Option<&str>,
     out: &mut Vec<InlineItem>,
 ) {
@@ -640,7 +656,12 @@ fn flatten_inline(
     }
 }
 
-fn push_atom(text: &str, style: InlineStyle, link: Option<&str>, out: &mut Vec<InlineItem>) {
+fn push_atom(
+    text: &str,
+    style: MarkdownInlineStyle,
+    link: Option<&str>,
+    out: &mut Vec<InlineItem>,
+) {
     if text.is_empty() {
         return;
     }
@@ -656,14 +677,14 @@ fn push_atom(text: &str, style: InlineStyle, link: Option<&str>, out: &mut Vec<I
         }
     }
 
-    out.push(InlineItem::Atom(InlineAtom {
+    out.push(InlineItem::Atom(MarkdownInlineAtom {
         text: text.to_string(),
         style,
         link,
     }));
 }
 
-fn chunk_atoms(atoms: Vec<InlineAtom>) -> Vec<InlineChunk> {
+fn chunk_atoms(atoms: Vec<MarkdownInlineAtom>) -> Vec<InlineChunk> {
     let mut chunks = Vec::new();
     let mut current: Option<InlineChunk> = None;
 
@@ -692,7 +713,7 @@ fn chunk_atoms(atoms: Vec<InlineAtom>) -> Vec<InlineChunk> {
     chunks
 }
 
-fn new_chunk(mut atom: InlineAtom) -> InlineChunk {
+fn new_chunk(mut atom: MarkdownInlineAtom) -> InlineChunk {
     match atom.link.take() {
         Some(destination) => InlineChunk::Link {
             destination,
