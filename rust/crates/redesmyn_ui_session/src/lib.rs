@@ -1156,7 +1156,7 @@ impl Render for SessionView {
 
         let feed_list = list(self.timeline_list_state.clone(), move |ix, window, cx| {
             let theme = theme_for_window(window, cx);
-            let list = div().w_full().min_w_0().pb(theme.spacing.sm);
+            let list = div().w_full().min_w_0();
 
             let Some(item) = items.get(ix).cloned() else {
                 return div().into_any_element();
@@ -1264,7 +1264,7 @@ impl Render for SessionView {
                             });
 
                             let bubble_max_width = if align_right {
-                                viewport_width * 0.8
+                                viewport_width * 0.85
                             } else {
                                 px(560.0)
                             };
@@ -1670,15 +1670,7 @@ impl Render for SessionView {
         .min_w_0()
         .bg(theme.colors.surface);
 
-        content = content.child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.0))
-                .child(feed_list),
-        );
-
+        let mut composer_callout = None;
         if let Some(feed) = self.feed.as_ref() {
             if let Some(prompt) = feed.composer.conflict_prompt.clone() {
                 let (message, action): (SharedString, _) = match prompt.code.as_str() {
@@ -1785,18 +1777,19 @@ impl Render for SessionView {
                         ),
                     ),
                 };
-
-                content = content.child(
+                composer_callout = Some(
                     Callout::new(message)
                         .kind(CalloutKind::Warning)
                         .title("Send message")
-                        .action(action),
+                        .action(action)
+                        .into_any_element(),
                 );
             } else if let Some(error) = feed.composer.last_error.clone() {
-                content = content.child(
+                composer_callout = Some(
                     Callout::new(error)
                         .kind(CalloutKind::Danger)
-                        .title("Send message"),
+                        .title("Send message")
+                        .into_any_element(),
                 );
             }
         }
@@ -1843,7 +1836,19 @@ impl Render for SessionView {
                     .child(send_button),
             );
 
-        content = content.child(composer);
+        let mut timeline = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
+            .child(feed_list);
+
+        if let Some(callout) = composer_callout {
+            timeline = timeline.child(callout);
+        }
+
+        timeline = timeline.child(composer);
+        content = content.child(timeline);
 
         div()
             .flex()

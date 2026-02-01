@@ -514,7 +514,11 @@ fn styled_text_div(
         ),
     };
 
-    let code_color = default_color.blend(theme.colors.foreground_muted.alpha(0.45));
+    let code_color = if base_text_color == theme.colors.surface {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.25))
+    } else {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.45))
+    };
 
     for atom in atoms {
         if atom.text.is_empty() {
@@ -522,15 +526,10 @@ fn styled_text_div(
         }
 
         let InlineAtom {
-            text: mut atom_text,
+            text: atom_text,
             style: atom_style,
             link: _,
         } = atom;
-
-        if atom_style.code {
-            // Add small horizontal padding around inline code chips without affecting wrapping.
-            atom_text = format!("\u{202F}{atom_text}\u{202F}");
-        }
 
         let mut font = if atom_style.code {
             theme.typography.mono.font.clone()
@@ -617,7 +616,11 @@ fn styled_text_block(
         ),
     };
 
-    let code_color = default_color.blend(theme.colors.foreground_muted.alpha(0.45));
+    let code_color = if base_text_color == theme.colors.surface {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.25))
+    } else {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.45))
+    };
 
     for atom in atoms {
         if atom.text.is_empty() {
@@ -625,15 +628,10 @@ fn styled_text_block(
         }
 
         let InlineAtom {
-            text: mut atom_text,
+            text: atom_text,
             style: atom_style,
             link: _,
         } = atom;
-
-        if atom_style.code {
-            // Add small horizontal padding around inline code chips without affecting wrapping.
-            atom_text = format!("\u{202F}{atom_text}\u{202F}");
-        }
 
         let mut font = if atom_style.code {
             theme.typography.mono.font.clone()
