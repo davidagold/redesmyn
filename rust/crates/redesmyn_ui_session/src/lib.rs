@@ -1744,7 +1744,8 @@ impl Render for SessionView {
                             } else {
                                 row = row.justify_start();
                             }
-                            row = row.pb(theme.spacing.xs);
+                            let bubble_gap_y = theme.spacing.xs * 2.0;
+                            row = row.py(bubble_gap_y);
 
                             list.child(row.child(bubble))
                         }
