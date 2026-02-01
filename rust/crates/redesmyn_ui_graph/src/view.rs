@@ -233,6 +233,15 @@ struct TaskQuickActionState {
     stop_task: Option<Task<()>>,
 }
 
+#[derive(Debug, Clone)]
+struct CollapsedTitleCacheEntry {
+    title: gpui::SharedString,
+    wrap_width_px: i32,
+    font_size_px: i32,
+    line1: gpui::SharedString,
+    line2: Option<gpui::SharedString>,
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
@@ -261,6 +270,7 @@ pub struct GraphView {
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
     quick_action_opacity: HashMap<TaskId, OpacityTransitionState>,
+    collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
     collapsed_markdown_cache: HashMap<redesmyn_ids::SessionEventId, Arc<MarkdownDoc>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -326,6 +336,7 @@ impl GraphView {
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
             quick_action_opacity: HashMap::new(),
+            collapsed_title_cache: HashMap::new(),
             collapsed_markdown_cache: HashMap::new(),
             _subscriptions: subscriptions,
         };
@@ -348,6 +359,8 @@ impl GraphView {
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
         self.quick_action_opacity
+            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+        self.collapsed_title_cache
             .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
 
         let next_selection = self.scene.selection().clone();
@@ -2308,6 +2321,25 @@ impl Render for GraphView {
                         window,
                     );
 
+                    let title_font_size_unzoomed = rems(0.78).to_pixels(window.rem_size());
+                    let title_wrap_width_unzoomed = {
+                        let width = (f32::from(bounds_in_window.size.width)
+                            - 2.0 * f32::from(padding_x))
+                            / zoom.max(1e-3);
+                        // Leave a little slack to avoid wrap jitter at extreme zooms / pixel snapping.
+                        px((width - 4.0).max(0.0))
+                    };
+                    let (title_line1, title_line2) = collapsed_title_lines(
+                        &mut self.collapsed_title_cache,
+                        task_id,
+                        title.clone(),
+                        title_wrap_width_unzoomed,
+                        theme.typography.body.font.clone(),
+                        title_font_size_unzoomed,
+                        theme.colors.foreground,
+                        window,
+                    );
+
                     let preview_doc = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
                         if let Some(doc) =
@@ -2383,9 +2415,31 @@ impl Render for GraphView {
                             div()
                                 .min_w_0()
                                 .w_full()
-                                .text_size(rems(0.78 * zoom))
-                                .text_color(theme.colors.foreground)
-                                .child(title),
+                                .flex()
+                                .flex_col()
+                                .gap(px(0.0))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .w_full()
+                                        .font(theme.typography.body.font.clone())
+                                        .text_size(rems(0.78 * zoom))
+                                        .text_color(theme.colors.foreground)
+                                        .truncate()
+                                        .child(title_line1),
+                                )
+                                .when_some(title_line2, |this, line2| {
+                                    this.child(
+                                        div()
+                                            .min_w_0()
+                                            .w_full()
+                                            .font(theme.typography.body.font.clone())
+                                            .text_size(rems(0.78 * zoom))
+                                            .text_color(theme.colors.foreground)
+                                            .truncate()
+                                            .child(line2),
+                                    )
+                                }),
                         );
 
                     if let Some(doc) = preview_doc {
@@ -3120,6 +3174,188 @@ fn status_chip(
         .text_sm()
         .text_color(fg)
         .child(label.into())
+}
+
+fn collapsed_title_lines(
+    cache: &mut HashMap<TaskId, CollapsedTitleCacheEntry>,
+    task_id: TaskId,
+    title: gpui::SharedString,
+    wrap_width_unzoomed: gpui::Pixels,
+    font: gpui::Font,
+    font_size_unzoomed: gpui::Pixels,
+    color: gpui::Hsla,
+    window: &Window,
+) -> (gpui::SharedString, Option<gpui::SharedString>) {
+    let wrap_width_px = f32::from(wrap_width_unzoomed).round() as i32;
+    let font_size_px = f32::from(font_size_unzoomed).round() as i32;
+
+    if let Some(entry) = cache.get(&task_id)
+        && entry.title == title
+        && entry.wrap_width_px == wrap_width_px
+        && entry.font_size_px == font_size_px
+    {
+        return (entry.line1.clone(), entry.line2.clone());
+    }
+
+    let sanitized = title.as_ref().replace(['\r', '\n'], " ").trim().to_string();
+
+    let (line1, line2) = wrap_two_lines_wordwise(
+        &sanitized,
+        wrap_width_unzoomed,
+        &font,
+        font_size_unzoomed,
+        color,
+        window,
+    );
+
+    let line1 = gpui::SharedString::new(line1);
+    let line2 = line2.map(gpui::SharedString::new);
+
+    cache.insert(
+        task_id,
+        CollapsedTitleCacheEntry {
+            title,
+            wrap_width_px,
+            font_size_px,
+            line1: line1.clone(),
+            line2: line2.clone(),
+        },
+    );
+
+    (line1, line2)
+}
+
+fn wrap_two_lines_wordwise(
+    text: &str,
+    max_width: gpui::Pixels,
+    font: &gpui::Font,
+    font_size: gpui::Pixels,
+    color: gpui::Hsla,
+    window: &Window,
+) -> (String, Option<String>) {
+    if text.is_empty() {
+        return (String::new(), None);
+    }
+
+    let full_width = measure_text_width(text, font, font_size, color, window);
+    if full_width <= max_width {
+        return (text.to_string(), None);
+    }
+
+    let line1_end = fit_prefix_end(text, max_width, font, font_size, color, window);
+    let line1 = text[..line1_end].trim_end().to_string();
+
+    let remainder = text[line1_end..].trim_start();
+    if remainder.is_empty() {
+        return (line1, None);
+    }
+
+    (line1, Some(remainder.to_string()))
+}
+
+fn fit_prefix_end(
+    text: &str,
+    max_width: gpui::Pixels,
+    font: &gpui::Font,
+    font_size: gpui::Pixels,
+    color: gpui::Hsla,
+    window: &Window,
+) -> usize {
+    let mut candidates: Vec<usize> = Vec::new();
+    let mut in_word = false;
+
+    for (ix, ch) in text.char_indices() {
+        if ch.is_whitespace() {
+            if in_word {
+                candidates.push(ix);
+                in_word = false;
+            }
+        } else {
+            in_word = true;
+        }
+    }
+
+    if in_word {
+        candidates.push(text.len());
+    }
+
+    candidates.sort_unstable();
+    candidates.dedup();
+
+    let mut best = 0usize;
+    let mut lo = 0usize;
+    let mut hi = candidates.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let end = candidates[mid];
+        let candidate = text[..end].trim_end();
+        let width = measure_text_width(candidate, font, font_size, color, window);
+        if width <= max_width {
+            best = end;
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+
+    if best > 0 {
+        return best;
+    }
+
+    // Fall back to char-level fitting when even the first "word" does not fit.
+    let mut char_ends: Vec<usize> = text
+        .char_indices()
+        .map(|(ix, ch)| ix + ch.len_utf8())
+        .collect();
+    char_ends.sort_unstable();
+    char_ends.dedup();
+
+    let mut lo = 0usize;
+    let mut hi = char_ends.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let end = char_ends[mid];
+        let candidate = text[..end].trim_end();
+        let width = measure_text_width(candidate, font, font_size, color, window);
+        if width <= max_width {
+            best = end;
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+
+    best.max(text.chars().next().map(|ch| ch.len_utf8()).unwrap_or(0))
+}
+
+fn measure_text_width(
+    text: &str,
+    font: &gpui::Font,
+    font_size: gpui::Pixels,
+    color: gpui::Hsla,
+    window: &Window,
+) -> gpui::Pixels {
+    if text.is_empty() {
+        return px(0.0);
+    }
+
+    let run = TextRun {
+        len: text.len(),
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+
+    let shaped = window.text_system().shape_line(
+        gpui::SharedString::new(text.to_string()),
+        font_size,
+        std::slice::from_ref(&run),
+        None,
+    );
+
+    shaped.width
 }
 
 fn task_state_label(state: TaskState) -> &'static str {
