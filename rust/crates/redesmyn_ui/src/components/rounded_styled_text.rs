@@ -369,6 +369,9 @@ fn paint_rounded_background_span(
         .filter(|&ix| ix > 0 && ix < line_len)
         .chain(std::iter::once(line_len));
 
+    let span_start_x = line.unwrapped_layout.x_for_index(span_start);
+    let span_end_x = line.unwrapped_layout.x_for_index(span_end);
+
     let mut segment_start = 0usize;
     let mut segment_y = px(0.0);
 
@@ -401,8 +404,20 @@ fn paint_rounded_background_span(
         }
 
         let segment_width = (seg_end_x - seg_start_x).max(px(0.0));
-        x0 = (x0 - style.padding_x).max(px(0.0));
-        x1 = (x1 + style.padding_x).min(segment_width);
+        let mut min_x0 = px(0.0);
+        if local_start == span_start && seg_start < span_start {
+            let max_cover = max_whitespace_cover_before(line, span_start, span_start_x, style);
+            min_x0 = (span_start_x - max_cover) - seg_start_x;
+        }
+
+        let mut max_x1 = segment_width;
+        if local_end == span_end && seg_end > span_end {
+            let max_cover = max_whitespace_cover_after(line, span_end, span_end_x, style);
+            max_x1 = (span_end_x + max_cover) - seg_start_x;
+        }
+
+        x0 = (x0 - style.padding_x).max(min_x0).max(px(0.0));
+        x1 = (x1 + style.padding_x).min(max_x1).min(segment_width);
 
         let width = (x1 - x0).max(px(0.0));
         if width <= px(0.0) {
@@ -478,6 +493,73 @@ fn trim_span_horizontal(
     } else {
         None
     }
+}
+
+fn max_whitespace_cover_before(
+    line: &gpui::WrappedLine,
+    span_start: usize,
+    span_start_x: Pixels,
+    style: RoundedBackgroundStyle,
+) -> Pixels {
+    if span_start == 0 {
+        return style.padding_x;
+    }
+
+    let text = line.text.as_ref();
+    let Some((prev_start, prev_ch)) = char_before(text, span_start) else {
+        return px(0.0);
+    };
+
+    if !prev_ch.is_whitespace() {
+        return px(0.0);
+    }
+
+    let prev_x = line.unwrapped_layout.x_for_index(prev_start);
+    let whitespace_width = (span_start_x - prev_x).max(px(0.0));
+    let min_gap = style.padding_x;
+    (whitespace_width - min_gap)
+        .max(px(0.0))
+        .min(style.padding_x)
+}
+
+fn max_whitespace_cover_after(
+    line: &gpui::WrappedLine,
+    span_end: usize,
+    span_end_x: Pixels,
+    style: RoundedBackgroundStyle,
+) -> Pixels {
+    let text = line.text.as_ref();
+    if span_end >= text.len() {
+        return style.padding_x;
+    }
+
+    let Some(next_ch) = char_at(text, span_end) else {
+        return px(0.0);
+    };
+
+    if !next_ch.is_whitespace() {
+        return px(0.0);
+    }
+
+    let next_end = span_end + next_ch.len_utf8();
+    let next_end_x = line.unwrapped_layout.x_for_index(next_end);
+    let whitespace_width = (next_end_x - span_end_x).max(px(0.0));
+    let min_gap = style.padding_x;
+    (whitespace_width - min_gap)
+        .max(px(0.0))
+        .min(style.padding_x)
+}
+
+fn char_before(text: &str, index: usize) -> Option<(usize, char)> {
+    let prefix = text.get(..index)?;
+    prefix
+        .char_indices()
+        .last()
+        .map(|(offset, ch)| (offset, ch))
+}
+
+fn char_at(text: &str, index: usize) -> Option<char> {
+    text.get(index..)?.chars().next()
 }
 
 fn aligned_origin_x(
