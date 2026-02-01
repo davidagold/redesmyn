@@ -2,7 +2,6 @@
 
 #![forbid(unsafe_code)]
 
-use std::collections::HashMap;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,7 +33,7 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, MarkdownView, ScrollArea, TextArea, TextButton, TextInput,
     TextInputEvent,
 };
-use redesmyn_ui::utils::{UserActionState, theme_for_window};
+use redesmyn_ui::utils::{BoundedCache, UserActionState, theme_for_window};
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
@@ -189,8 +188,10 @@ struct MarkdownCacheStats {
     total_bytes: usize,
 }
 
+const SESSION_MARKDOWN_CACHE_CAPACITY: usize = 256;
+
 fn cache_markdown_for_events(
-    cache: &mut HashMap<SessionEventId, Arc<MarkdownDoc>>,
+    cache: &mut BoundedCache<SessionEventId, Arc<MarkdownDoc>>,
     events: &[SessionEvent],
 ) -> MarkdownCacheStats {
     let mut stats = MarkdownCacheStats::default();
@@ -206,7 +207,7 @@ fn cache_markdown_for_events(
         stats.message_events = stats.message_events.saturating_add(1);
         stats.total_bytes = stats.total_bytes.saturating_add(text.len());
 
-        if cache.contains_key(&event.session_event_id) {
+        if cache.get(&event.session_event_id).is_some() {
             continue;
         }
 
@@ -264,7 +265,7 @@ pub struct SessionView {
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
-    markdown_cache: HashMap<SessionEventId, Arc<MarkdownDoc>>,
+    markdown_cache: BoundedCache<SessionEventId, Arc<MarkdownDoc>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -355,7 +356,7 @@ impl SessionView {
             composer_input,
             pending_focus_composer: false,
             feed: None,
-            markdown_cache: HashMap::new(),
+            markdown_cache: BoundedCache::new(SESSION_MARKDOWN_CACHE_CAPACITY),
             client,
             _client_task: client_task,
             subscription_task: None,

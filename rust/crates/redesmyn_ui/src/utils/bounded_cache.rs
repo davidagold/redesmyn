@@ -28,6 +28,15 @@ where
         self.capacity
     }
 
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.lru_order.clear();
+    }
+
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.entries.contains_key(key)
+    }
+
     pub fn get(&mut self, key: &K) -> Option<&V> {
         if self.entries.contains_key(key) {
             self.touch(key);
@@ -112,4 +121,3 @@ mod tests {
         assert_eq!(cache.len(), 2);
     }
 }
-
