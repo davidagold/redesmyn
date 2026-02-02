@@ -287,11 +287,8 @@ impl SessionFeedState {
             }));
         }
 
-        let mut event_items: Vec<SessionEventItem> = self
-            .events
-            .iter()
-            .map(SessionEventItem::from_row)
-            .collect();
+        let mut event_items: Vec<SessionEventItem> =
+            self.events.iter().map(SessionEventItem::from_row).collect();
         reorder_reasoning_before_assistant_messages(&mut event_items);
 
         let mut assistant_message_ix_by_turn: HashMap<String, usize> = HashMap::new();
@@ -307,7 +304,9 @@ impl SessionFeedState {
             items.push(SessionTimelineItem::Event(event));
         }
 
-        let mut tail_ephemeral: Vec<SessionTimelineItem> = Vec::new();
+        let mut tail_ephemeral_reasoning: Vec<SessionTimelineItem> = Vec::new();
+        let mut tail_ephemeral_tool: Vec<SessionTimelineItem> = Vec::new();
+        let mut tail_ephemeral_assistant: Vec<SessionTimelineItem> = Vec::new();
         let mut ephemeral_insertions: Vec<(usize, SessionTimelineItem)> = Vec::new();
 
         for ephemeral in self.ephemeral.values().cloned() {
@@ -319,12 +318,21 @@ impl SessionFeedState {
                         ephemeral_insertions
                             .push((ix, SessionTimelineItem::EphemeralReasoning(item)));
                     } else {
-                        tail_ephemeral.push(SessionTimelineItem::EphemeralReasoning(item));
+                        tail_ephemeral_reasoning
+                            .push(SessionTimelineItem::EphemeralReasoning(item));
                     }
                 }
-                EphemeralItem::Text(item) => {
-                    tail_ephemeral.push(SessionTimelineItem::EphemeralText(item));
-                }
+                EphemeralItem::Text(item) => match item.role {
+                    SessionMessageRole::Tool => {
+                        tail_ephemeral_tool.push(SessionTimelineItem::EphemeralText(item));
+                    }
+                    SessionMessageRole::Assistant => {
+                        tail_ephemeral_assistant.push(SessionTimelineItem::EphemeralText(item));
+                    }
+                    SessionMessageRole::User => {
+                        tail_ephemeral_assistant.push(SessionTimelineItem::EphemeralText(item));
+                    }
+                },
             }
         }
 
@@ -333,7 +341,9 @@ impl SessionFeedState {
             items.insert(ix, item);
         }
 
-        items.extend(tail_ephemeral);
+        items.extend(tail_ephemeral_reasoning);
+        items.extend(tail_ephemeral_tool);
+        items.extend(tail_ephemeral_assistant);
 
         if !self.scroll.at_bottom && self.scroll.unseen_count > 0 {
             items.push(SessionTimelineItem::NewMessages(NewMessagesRow {
@@ -417,11 +427,26 @@ impl SessionFeedState {
             SessionEventKind::ToolResult(ev) => Some(ev.tool_call_id.clone()),
             _ => None,
         };
+        let clear_all_ephemeral = matches!(&event.kind, SessionEventKind::TurnCompleted(_));
+        let clear_ephemeral_turn_id = clear_all_ephemeral.then(|| event.turn_id.clone());
         let inserted = self.insert_event(SessionEventRow::from_event(event));
 
         let Some(inserted_at_end) = inserted else {
             return;
         };
+
+        if clear_all_ephemeral {
+            if let Some(turn_id) = clear_ephemeral_turn_id.flatten() {
+                self.ephemeral.retain(|_, item| match item {
+                    EphemeralItem::Text(item) => item.turn_id.as_deref() != Some(turn_id.as_str()),
+                    EphemeralItem::Reasoning(item) => {
+                        item.turn_id.as_deref() != Some(turn_id.as_str())
+                    }
+                });
+            } else {
+                self.ephemeral.clear();
+            }
+        }
 
         if inserted_at_end {
             if clear_assistant_ephemeral {
@@ -443,18 +468,20 @@ impl SessionFeedState {
                     }
                 }
             }
-            if let Some(reasoning_item_id) = clear_reasoning_ephemeral {
-                match reasoning_item_id {
-                    Some(item_id) => {
-                        self.ephemeral.remove(&item_id);
-                    }
-                    None => {
-                        self.ephemeral.retain(|_, item| match item {
-                            EphemeralItem::Reasoning(_) => false,
-                            EphemeralItem::Text(_) => true,
-                        });
-                    }
+        }
+
+        if let Some(reasoning_item_id) = clear_reasoning_ephemeral {
+            match reasoning_item_id {
+                Some(item_id) => {
+                    self.ephemeral.remove(&item_id);
                 }
+                None if inserted_at_end => {
+                    self.ephemeral.retain(|_, item| match item {
+                        EphemeralItem::Reasoning(_) => false,
+                        EphemeralItem::Text(_) => true,
+                    });
+                }
+                None => {}
             }
         }
 
@@ -1017,6 +1044,27 @@ mod tests {
         }
     }
 
+    fn turn_completed_event_with_turn(
+        session_id: SessionId,
+        id: SessionEventId,
+        created_at: Timestamp,
+        turn_id: &str,
+    ) -> SessionEvent {
+        SessionEvent {
+            session_event_id: id,
+            created_at,
+            scope: redesmyn_protocol::SessionScope::Chat,
+            session_id,
+            turn_id: Some(turn_id.to_owned()),
+            kind: SessionEventKind::TurnCompleted(TurnCompleted {
+                interface_mode: redesmyn_protocol::session::InterfaceMode::Structured,
+                external_session_ref: None,
+                exit_code: Some(0),
+                error: None,
+            }),
+        }
+    }
+
     fn tool_result_event(
         session_id: SessionId,
         id: SessionEventId,
@@ -1437,6 +1485,50 @@ mod tests {
         assert!(
             ephemeral_reasoning_ix < message_ix,
             "expected ephemeral reasoning before message, got {ephemeral_reasoning_ix} >= {message_ix}"
+        );
+    }
+
+    #[test]
+    fn test_turn_completed_clears_ephemeral_even_if_inserted_out_of_order() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+
+        state.apply_live_event(assistant_event_with_turn(
+            session_id,
+            SessionEventId::new(),
+            ts(10),
+            "turn_1",
+            "assistant",
+        ));
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(9),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+                redesmyn_protocol::session_live::AssistantReasoningSummaryPartAdded {
+                    summary_index: 0,
+                },
+            ),
+        });
+
+        assert!(
+            !state.ephemeral.is_empty(),
+            "expected ephemeral state before TurnCompleted"
+        );
+
+        // Insert TurnCompleted *out of order* (cursor earlier than the current tail).
+        state.apply_live_event(turn_completed_event_with_turn(
+            session_id,
+            SessionEventId::new(),
+            ts(5),
+            "turn_1",
+        ));
+
+        assert!(
+            state.ephemeral.is_empty(),
+            "expected TurnCompleted to clear ephemeral state"
         );
     }
 
