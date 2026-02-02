@@ -2282,11 +2282,11 @@ impl Render for GraphView {
                     // Compute a stable (pixel-snapped) content width for text measurement and
                     // rendering so we don't flicker between neighboring wrap/truncation states
                     // while zooming.
-                    const TITLE_WRAP_SLACK_PX: f32 = 10.0;
-                    let title_wrap_width = px(
+                    const COLLAPSED_TEXT_WIDTH_SLACK_PX: f32 = 10.0;
+                    let collapsed_text_width = px(
                         (f32::from(bounds_in_window.size.width)
                             - 2.0 * f32::from(padding_x)
-                            - TITLE_WRAP_SLACK_PX)
+                            - COLLAPSED_TEXT_WIDTH_SLACK_PX)
                             .max(0.0)
                             .floor(),
                     );
@@ -2295,7 +2295,7 @@ impl Render for GraphView {
                         &mut self.collapsed_title_cache,
                         task_id,
                         title.clone(),
-                        title_wrap_width,
+                        collapsed_text_width,
                         theme.typography.body.font.clone(),
                         title_text_size,
                         theme.colors.foreground,
@@ -2388,7 +2388,7 @@ impl Render for GraphView {
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .w(title_wrap_width)
+                                        .w(collapsed_text_width)
                                         .font(theme.typography.body.font.clone())
                                         .text_size(title_text_size)
                                         .text_color(theme.colors.foreground)
@@ -2399,7 +2399,7 @@ impl Render for GraphView {
                                     this.child(
                                         div()
                                             .min_w_0()
-                                            .w(title_wrap_width)
+                                            .w(collapsed_text_width)
                                             .font(theme.typography.body.font.clone())
                                             .text_size(title_text_size)
                                             .text_color(theme.colors.foreground)
@@ -2414,7 +2414,7 @@ impl Render for GraphView {
                             (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
                             div()
-                                .w(title_wrap_width)
+                                .w(collapsed_text_width)
                                 .text_size(preview_text_size)
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
@@ -3160,14 +3160,14 @@ fn collapsed_title_lines(
     cache: &mut HashMap<TaskId, CollapsedTitleCacheEntry>,
     task_id: TaskId,
     title: gpui::SharedString,
-    wrap_width_unzoomed: gpui::Pixels,
+    wrap_width: gpui::Pixels,
     font: gpui::Font,
-    font_size_unzoomed: gpui::Pixels,
+    font_size: gpui::Pixels,
     color: gpui::Hsla,
     window: &Window,
 ) -> (gpui::SharedString, Option<gpui::SharedString>) {
-    let wrap_width_px = f32::from(wrap_width_unzoomed).round() as i32;
-    let font_size_px = f32::from(font_size_unzoomed).round() as i32;
+    let wrap_width_px = f32::from(wrap_width).round() as i32;
+    let font_size_px = f32::from(font_size).round() as i32;
 
     if let Some(entry) = cache.get(&task_id)
         && entry.title == title
@@ -3181,9 +3181,9 @@ fn collapsed_title_lines(
 
     let (line1, line2) = wrap_two_lines_wordwise(
         &sanitized,
-        wrap_width_unzoomed,
+        wrap_width,
         &font,
-        font_size_unzoomed,
+        font_size,
         color,
         window,
     );
