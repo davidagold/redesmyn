@@ -2281,11 +2281,15 @@ impl Render for GraphView {
 
                     let title_font_size_unzoomed = rems(0.78).to_pixels(rem_size);
                     let title_wrap_width_unzoomed = {
-                        let width = (f32::from(bounds_in_window.size.width)
+                        // Leave slack in *window* pixels so we don't hit borderline measurements at
+                        // small zooms (which would otherwise cause the first title line to truncate).
+                        const TITLE_WRAP_SLACK_PX: f32 = 8.0;
+                        let width_in_window = (f32::from(bounds_in_window.size.width)
                             - 2.0 * f32::from(padding_x))
-                            / zoom.max(1e-3);
-                        // Leave a little slack to avoid wrap jitter at extreme zooms / pixel snapping.
-                        px((width - 4.0).max(0.0))
+                            .max(0.0);
+                        let width_unzoomed =
+                            (width_in_window - TITLE_WRAP_SLACK_PX).max(0.0) / zoom.max(1e-3);
+                        px(width_unzoomed)
                     };
                     let (title_line1, title_line2) = collapsed_title_lines(
                         &mut self.collapsed_title_cache,
@@ -2978,7 +2982,8 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
 
 fn quantized_zoom_text_size(rem_size: gpui::Pixels, base_rems: f32, zoom: f32) -> gpui::Pixels {
     // Quantize continuous zoom-driven font sizes to keep GPUI's glyph caches bounded.
-    const STEP_PX: f32 = 0.5;
+    // Keep the step fine enough to be visually smooth while zooming.
+    const STEP_PX: f32 = 0.1;
     let base_px = rems(base_rems).to_pixels(rem_size);
     let scaled = f32::from(base_px) * zoom.max(0.0);
     let quantized = (scaled / STEP_PX).round() * STEP_PX;
