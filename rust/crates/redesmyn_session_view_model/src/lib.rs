@@ -314,6 +314,12 @@ impl SessionFeedState {
         }
     }
 
+    pub fn request_scroll_to_bottom(&mut self) {
+        self.scroll.at_bottom = true;
+        self.scroll.unseen_count = 0;
+        self.scroll.pending_scroll_to_bottom = true;
+    }
+
     pub fn clear_scroll_intents(&mut self) {
         self.scroll.pending_scroll_to_bottom = false;
         self.scroll.pending_prepend_anchor = None;

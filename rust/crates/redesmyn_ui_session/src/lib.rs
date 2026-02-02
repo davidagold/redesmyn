@@ -389,7 +389,7 @@ pub struct SessionView {
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
-    expanded_reasoning: HashSet<String>,
+    collapsed_reasoning: HashSet<String>,
     expanded_tool_events: HashSet<SessionEventId>,
     expanded_tool_groups: HashSet<SessionEventId>,
     tool_group_transitions: Rc<HashMap<SessionEventId, ToolGroupTransition>>,
@@ -482,7 +482,7 @@ impl SessionView {
             composer_input,
             pending_focus_composer: false,
             feed: None,
-            expanded_reasoning: HashSet::new(),
+            collapsed_reasoning: HashSet::new(),
             expanded_tool_events: HashSet::new(),
             expanded_tool_groups: HashSet::new(),
             tool_group_transitions: Rc::new(HashMap::new()),
@@ -519,7 +519,7 @@ impl SessionView {
             self.load_older_task = None;
             self.error = None;
             self.feed = None;
-            self.expanded_reasoning.clear();
+            self.collapsed_reasoning.clear();
             self.expanded_tool_events.clear();
             self.expanded_tool_groups.clear();
             self.tool_group_transitions = Rc::new(HashMap::new());
@@ -596,6 +596,7 @@ impl SessionView {
         self.load_task = None;
         self.load_older_task = None;
         self.send_task = None;
+        self.collapsed_reasoning.clear();
         self.expanded_tool_events.clear();
         self.expanded_tool_groups.clear();
         self.tool_group_transitions = Rc::new(HashMap::new());
@@ -650,6 +651,8 @@ impl SessionView {
 
         let session_id = feed.session_id;
         feed.start_sending();
+        feed.request_scroll_to_bottom();
+        self.scroll_to_bottom();
         cx.notify();
 
         let view = cx.entity();
@@ -1030,10 +1033,10 @@ impl SessionView {
     }
 
     fn toggle_reasoning(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.expanded_reasoning.contains(key) {
-            self.expanded_reasoning.remove(key);
+        if self.collapsed_reasoning.contains(key) {
+            self.collapsed_reasoning.remove(key);
         } else {
-            self.expanded_reasoning.insert(key.to_owned());
+            self.collapsed_reasoning.insert(key.to_owned());
         }
         self.invalidate_reasoning_item(key);
         cx.notify();
@@ -1569,7 +1572,7 @@ impl Render for SessionView {
         let markdown_cache = Rc::clone(&self.markdown_cache);
         let expanded_tool_events = self.expanded_tool_events.clone();
         let expanded_tool_groups = self.expanded_tool_groups.clone();
-        let expanded_reasoning = self.expanded_reasoning.clone();
+        let collapsed_reasoning = self.collapsed_reasoning.clone();
         let reasoning_shimmer_alpha = self.reasoning_shimmer_alpha();
         let exec_command_results = Rc::clone(&self.exec_command_result_by_invocation);
         let grouped_exec_command_result_ids =
@@ -1638,14 +1641,10 @@ impl Render for SessionView {
                 ),
                 SessionTimelineItem::EphemeralReasoning(item) => {
                     let key = item.key.clone();
-                    let show_raw = expanded_reasoning.contains(&key);
-                    let chevron = if show_raw { "▾" } else { "▸" };
+                    let is_expanded = !collapsed_reasoning.contains(&key);
+                    let chevron = if is_expanded { "▾" } else { "▸" };
                     let summary_text = (!item.summary.is_empty()).then(|| item.summary.join("\n"));
-                    let raw_text = if show_raw && !item.raw.is_empty() {
-                        Some(item.raw.join("\n"))
-                    } else {
-                        None
-                    };
+                    let raw_text = (!item.raw.is_empty()).then(|| item.raw.join("\n"));
 
                     let toggle_view = timeline_view.clone();
                     let mut container = div()
@@ -1697,53 +1696,75 @@ impl Render for SessionView {
                             ),
                     );
 
-                    container = container.child(
-                        div()
-                            .id(("session_item_ephemeral_reasoning_summary", ix))
-                            .max_h(px(160.0))
-                            .overflow_y_scroll()
-                            .block_mouse_except_scroll()
-                            .child(if let Some(summary_text) = summary_text {
-                                div()
-                                    .text_size(theme.typography.caption.size)
-                                    .text_color(theme.colors.foreground)
-                                    .child(summary_text)
-                                    .into_any_element()
-                            } else {
-                                let bar_color = theme
-                                    .colors
-                                    .foreground_muted
-                                    .opacity((0.12 + 0.12 * reasoning_shimmer_alpha).clamp(0.0, 1.0));
-                                let line_height = px(10.0);
-
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(theme.spacing.xs)
-                                    .child(div().h(line_height).w(relative(0.92)).rounded_sm().bg(bar_color))
-                                    .child(div().h(line_height).w(relative(0.78)).rounded_sm().bg(bar_color))
-                                    .child(div().h(line_height).w(relative(0.64)).rounded_sm().bg(bar_color))
-                                    .into_any_element()
-                            }),
-                    );
-
-                    if let Some(raw_text) = raw_text {
+                    if is_expanded {
                         container = container.child(
                             div()
-                                .h(px(1.0))
-                                .bg(theme.colors.border.opacity(0.2)),
-                        );
-                        container = container.child(
-                            div()
-                                .id(("session_item_ephemeral_reasoning_raw", ix))
-                                .max_h(px(200.0))
+                                .id(("session_item_ephemeral_reasoning_summary", ix))
+                                .max_h(px(160.0))
                                 .overflow_y_scroll()
                                 .block_mouse_except_scroll()
-                                .font(theme.typography.mono.font.clone())
-                                .text_size(theme.typography.caption.size)
-                                .text_color(theme.colors.foreground)
-                                .child(raw_text),
+                                .child(if let Some(summary_text) = summary_text {
+                                    div()
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground)
+                                        .child(summary_text)
+                                        .into_any_element()
+                                } else {
+                                    let bar_color = theme
+                                        .colors
+                                        .foreground_muted
+                                        .opacity(
+                                            (0.12 + 0.12 * reasoning_shimmer_alpha).clamp(0.0, 1.0),
+                                        );
+                                    let line_height = px(10.0);
+
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.92))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.78))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.64))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .into_any_element()
+                                }),
                         );
+
+                        if let Some(raw_text) = raw_text {
+                            container = container.child(
+                                div()
+                                    .h(px(1.0))
+                                    .bg(theme.colors.border.opacity(0.2)),
+                            );
+                            container = container.child(
+                                div()
+                                    .id(("session_item_ephemeral_reasoning_raw", ix))
+                                    .max_h(px(200.0))
+                                    .overflow_y_scroll()
+                                    .block_mouse_except_scroll()
+                                    .font(theme.typography.mono.font.clone())
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground)
+                                    .child(raw_text),
+                            );
+                        }
                     }
 
                     list.child(container)
@@ -1834,23 +1855,8 @@ impl Render for SessionView {
                                 .item_id
                                 .clone()
                                 .unwrap_or_else(|| session_event_id.to_string());
-                            let show_raw = expanded_reasoning.contains(&key);
-                            let chevron = if show_raw { "▾" } else { "▸" };
-
-                            let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
-                            let summary_doc = cached.unwrap_or_else(|| {
-                                let doc = Arc::new(parse_markdown(
-                                    reasoning.summary.text.as_str(),
-                                    MarkdownParseOptions::default(),
-                                ));
-                                markdown_cache
-                                    .borrow_mut()
-                                    .insert(session_event_id, doc.clone());
-                                doc
-                            });
-
-                            let show_truncation_notice =
-                                reasoning.summary.full_text_artifact.is_none();
+                            let is_expanded = !collapsed_reasoning.contains(&key);
+                            let chevron = if is_expanded { "▾" } else { "▸" };
 
                             let toggle_view = timeline_view.clone();
                             let mut container = div()
@@ -1897,43 +1903,58 @@ impl Render for SessionView {
                                     ),
                             );
 
-                            container = container.child(
-                                div()
-                                    .id((bubble_id.clone(), "reasoning_summary_scroll"))
-                                    .max_h(px(180.0))
-                                    .overflow_y_scroll()
-                                    .block_mouse_except_scroll()
-                                    .child(
-                                        MarkdownView::new(
-                                            (bubble_id.clone(), "reasoning_summary"),
-                                            summary_doc,
-                                        )
-                                        .show_truncation_notice(show_truncation_notice)
-                                        .text_size(theme.typography.caption.size)
-                                        .into_any_element(),
-                                    ),
-                            );
+                            if is_expanded {
+                                let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
+                                let summary_doc = cached.unwrap_or_else(|| {
+                                    let doc = Arc::new(parse_markdown(
+                                        reasoning.summary.text.as_str(),
+                                        MarkdownParseOptions::default(),
+                                    ));
+                                    markdown_cache
+                                        .borrow_mut()
+                                        .insert(session_event_id, doc.clone());
+                                    doc
+                                });
 
-                            if show_raw
-                                && let Some(raw) = reasoning.raw
-                            {
-                                container = container.child(
-                                    div()
-                                        .h(px(1.0))
-                                        .bg(theme.colors.border.opacity(0.2)),
-                                );
+                                let show_truncation_notice =
+                                    reasoning.summary.full_text_artifact.is_none();
 
                                 container = container.child(
                                     div()
-                                        .id((bubble_id.clone(), "reasoning_raw_scroll"))
-                                        .max_h(px(240.0))
+                                        .id((bubble_id.clone(), "reasoning_summary_scroll"))
+                                        .max_h(px(180.0))
                                         .overflow_y_scroll()
                                         .block_mouse_except_scroll()
-                                        .font(theme.typography.mono.font.clone())
-                                        .text_size(theme.typography.caption.size)
-                                        .text_color(theme.colors.foreground)
-                                        .child(raw.text),
+                                        .child(
+                                            MarkdownView::new(
+                                                (bubble_id.clone(), "reasoning_summary"),
+                                                summary_doc,
+                                            )
+                                            .show_truncation_notice(show_truncation_notice)
+                                            .text_size(theme.typography.caption.size)
+                                            .into_any_element(),
+                                        ),
                                 );
+
+                                if let Some(raw) = reasoning.raw {
+                                    container = container.child(
+                                        div()
+                                            .h(px(1.0))
+                                            .bg(theme.colors.border.opacity(0.2)),
+                                    );
+
+                                    container = container.child(
+                                        div()
+                                            .id((bubble_id.clone(), "reasoning_raw_scroll"))
+                                            .max_h(px(240.0))
+                                            .overflow_y_scroll()
+                                            .block_mouse_except_scroll()
+                                            .font(theme.typography.mono.font.clone())
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground)
+                                            .child(raw.text),
+                                    );
+                                }
                             }
 
                             list.child(container)
