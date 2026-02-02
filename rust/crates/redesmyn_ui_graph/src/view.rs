@@ -1389,8 +1389,10 @@ impl GraphView {
             return;
         }
 
-        let session_scroll = self.task_session_view.read(cx).scroll_handle();
-        if should_defer_pan_to_scroll_view(&session_scroll, event.position, delta)
+        if self
+            .task_session_view
+            .read(cx)
+            .should_defer_pan_to_scroll_view(event.position, delta)
             || should_defer_pan_to_scroll_view(&self.expanded_details_scroll, event.position, delta)
         {
             return;

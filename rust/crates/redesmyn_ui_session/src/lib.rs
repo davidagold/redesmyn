@@ -19,12 +19,13 @@ use gpui::{
 use gpui::prelude::*;
 
 use redesmyn_client_api::Client;
-use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId};
+use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentMessageConflictAction, GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
-    ResponseResult, SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
-    SubscriptionEvent,
+    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
+    GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload, ResponseResult,
+    SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor, StartAgentRequest,
+    StartAgentResponse, SubscriptionEvent,
 };
 use redesmyn_protocol::session::{SessionEventKind, ToolResult};
 use redesmyn_protocol::ui_driver::UiComposerState;
@@ -38,7 +39,8 @@ use redesmyn_ui::components::{
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
-    UiActivityGuard, theme_for_window, ui_idle_tracker, ui_test_mode_animation_duration,
+    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    ui_test_mode_animation_duration,
 };
 
 use serde_json::Value as JsonValue;
@@ -393,6 +395,26 @@ async fn get_session_events(
     }
 }
 
+async fn get_latest_task_session(
+    client: &Client,
+    task_id: TaskId,
+) -> Result<Option<SessionId>, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::GetLatestTaskSession(
+            GetLatestTaskSessionRequest { task_id },
+        ))
+        .await?;
+
+    match response {
+        ResponseResult::GetLatestTaskSession(resp) => Ok(resp.session_id),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
 async fn send_session_message(
     client: &Client,
     session_id: SessionId,
@@ -411,6 +433,31 @@ async fn send_session_message(
 
     match response {
         ResponseResult::SendSessionMessage(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
+async fn start_task_agent(
+    client: &Client,
+    task_id: TaskId,
+    on_conflict: AgentMessageConflictAction,
+) -> Result<StartAgentResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::StartAgent(StartAgentRequest {
+            task_id,
+            agent_kind: AgentKind::Codex,
+            interface_mode: AgentInterfaceMode::AppServer,
+            initial_prompt: None,
+            on_conflict,
+        }))
+        .await?;
+
+    match response {
+        ResponseResult::StartAgent(resp) => Ok(resp),
         ResponseResult::Error(err) => Err(err),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::Internal,
@@ -582,6 +629,26 @@ fn cache_markdown_for_events(
     stats
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskSessionOperation {
+    LoadLatest,
+    StartAgent,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskSessionBindingState {
+    pub task_id: Option<TaskId>,
+    pub in_flight: bool,
+    pub error: Option<SharedString>,
+    pub session_id: Option<SessionId>,
+    pub operation: Option<TaskSessionOperation>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SessionViewEvent {
+    TaskBindingStateChanged(TaskSessionBindingState),
+}
+
 pub struct SessionView {
     focus_handle: FocusHandle,
     timeline_list_state: ListState,
@@ -617,6 +684,14 @@ pub struct SessionView {
     load_task: Option<Task<()>>,
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
+    task_binding_task_id: Option<TaskId>,
+    task_binding_action: UserActionState,
+    task_binding_generation: u64,
+    task_binding_task: Option<Task<()>>,
+    task_operation: Option<TaskSessionOperation>,
+    start_agent_action: UserActionState,
+    start_agent_generation: u64,
+    start_agent_task: Option<Task<()>>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -626,6 +701,8 @@ impl Focusable for SessionView {
         self.focus_handle.clone()
     }
 }
+
+impl gpui::EventEmitter<SessionViewEvent> for SessionView {}
 
 impl SessionView {
     pub fn new(
@@ -713,6 +790,14 @@ impl SessionView {
             load_task: None,
             load_older_task: None,
             send_task: None,
+            task_binding_task_id: None,
+            task_binding_action: UserActionState::default(),
+            task_binding_generation: 0,
+            task_binding_task: None,
+            task_operation: None,
+            start_agent_action: UserActionState::default(),
+            start_agent_generation: 0,
+            start_agent_task: None,
             error: None,
             _subscriptions: subscriptions,
         };
@@ -725,8 +810,296 @@ impl SessionView {
         this
     }
 
+    #[must_use]
+    pub fn task_binding_state(&self) -> TaskSessionBindingState {
+        let session_id = self.feed.as_ref().map(|feed| feed.session_id);
+        let in_flight = self.task_binding_action.in_flight || self.start_agent_action.in_flight;
+        let error = self
+            .start_agent_action
+            .error
+            .clone()
+            .or_else(|| self.task_binding_action.error.clone());
+        let operation = if self.start_agent_action.in_flight || self.start_agent_action.error.is_some()
+        {
+            Some(TaskSessionOperation::StartAgent)
+        } else if self.task_binding_action.in_flight || self.task_binding_action.error.is_some() {
+            Some(TaskSessionOperation::LoadLatest)
+        } else {
+            self.task_operation
+        };
+
+        TaskSessionBindingState {
+            task_id: self.task_binding_task_id,
+            in_flight,
+            error,
+            session_id,
+            operation,
+        }
+    }
+
+    #[must_use]
+    pub fn client(&self) -> Option<Client> {
+        self.client.clone()
+    }
+
+    pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
+        if self.task_binding_task_id == task_id {
+            return;
+        }
+
+        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
+        let generation = self.task_binding_generation;
+        self.task_binding_task_id = task_id;
+        self.task_binding_action = UserActionState::default();
+        self.task_binding_task = None;
+        self.start_agent_action = UserActionState::default();
+        self.start_agent_task = None;
+        self.task_operation = Some(TaskSessionOperation::LoadLatest);
+
+        self.set_session_id(None, cx);
+
+        let Some(task_id) = task_id else {
+            cx.notify();
+            return;
+        };
+
+        let Some(client) = self.client.clone() else {
+            self.task_binding_action
+                .fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
+            cx.notify();
+            return;
+        };
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_view.bind_latest_task_session",
+            task_id = %task_id
+        );
+        let _guard = span.enter();
+
+        self.task_binding_action.start();
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.notify();
+
+        let view = cx.entity();
+        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = get_latest_task_session(&client, task_id).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_task_binding_loaded(generation, task_id, result, cx)
+                    })
+                });
+            }
+        }));
+    }
+
+    pub fn refresh_latest_task_session(&mut self, cx: &mut Context<Self>) {
+        let Some(task_id) = self.task_binding_task_id else {
+            return;
+        };
+
+        if self.task_binding_action.in_flight {
+            return;
+        }
+
+        self.task_binding_generation = self.task_binding_generation.wrapping_add(1);
+        let generation = self.task_binding_generation;
+        self.task_binding_action = UserActionState::default();
+        self.task_binding_task = None;
+        self.start_agent_action = UserActionState::default();
+        self.start_agent_task = None;
+        self.task_operation = Some(TaskSessionOperation::LoadLatest);
+
+        self.set_session_id(None, cx);
+
+        let Some(client) = self.client.clone() else {
+            self.task_binding_action
+                .fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+            cx.notify();
+            return;
+        };
+
+        let span = redesmyn_logging::redesmyn_info_span!(
+            "ui.session_view.refresh_latest_task_session",
+            task_id = %task_id
+        );
+        let _guard = span.enter();
+
+        self.task_binding_action.start();
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.notify();
+
+        let view = cx.entity();
+        self.task_binding_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = get_latest_task_session(&client, task_id).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_task_binding_loaded(generation, task_id, result, cx)
+                    })
+                });
+            }
+        }));
+    }
+
+    fn on_task_binding_loaded(
+        &mut self,
+        generation: u64,
+        task_id: TaskId,
+        result: Result<Option<SessionId>, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.task_binding_generation || self.task_binding_task_id != Some(task_id)
+        {
+            return;
+        }
+
+        self.task_binding_task = None;
+
+        match result {
+            Ok(session_id) => {
+                self.task_binding_action.succeed();
+                self.task_binding_action.clear_error();
+                self.set_session_id(session_id, cx);
+            }
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    task_id = %task_id,
+                    error = %err.message,
+                    "failed to load latest task session"
+                );
+                self.task_binding_action.fail(err.message);
+                self.set_session_id(None, cx);
+            }
+        }
+
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
+        cx.notify();
+    }
+
+    pub fn start_agent_for_task(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        if self.start_agent_action.in_flight {
+            return;
+        }
+
+        if self.task_binding_task_id != Some(task_id) {
+            self.task_binding_task_id = Some(task_id);
+        }
+
+        let Some(client) = self.client.clone() else {
+            self.start_agent_action.fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+            cx.notify();
+            return;
+        };
+
+        self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
+        let generation = self.start_agent_generation;
+        self.task_operation = Some(TaskSessionOperation::StartAgent);
+        self.start_agent_action.start();
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.notify();
+
+        let view = cx.entity();
+        self.start_agent_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let client = client.clone();
+            let cx = cx.clone();
+            async move {
+                let result = start_task_agent(&client, task_id, AgentMessageConflictAction::Fail).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_start_agent_completed(generation, task_id, result, cx)
+                    })
+                });
+            }
+        }));
+    }
+
+    fn on_start_agent_completed(
+        &mut self,
+        generation: u64,
+        task_id: TaskId,
+        result: Result<StartAgentResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.start_agent_generation || self.task_binding_task_id != Some(task_id) {
+            return;
+        }
+
+        self.start_agent_task = None;
+        match result {
+            Ok(resp) => {
+                self.start_agent_action.succeed();
+                self.start_agent_action.clear_error();
+                self.set_session_id(Some(resp.session_id), cx);
+            }
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    task_id = %task_id,
+                    error = %err.message,
+                    "failed to start task agent"
+                );
+                self.start_agent_action.fail(err.message);
+            }
+        }
+
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.notify();
+    }
+
+    pub fn should_defer_pan_to_scroll_view(
+        &self,
+        window_point: gpui::Point<gpui::Pixels>,
+        delta: gpui::Point<gpui::Pixels>,
+    ) -> bool {
+        let bounds = self.timeline_list_state.viewport_bounds();
+        if !bounds.contains(&window_point) {
+            return false;
+        }
+
+        let max_y = self.timeline_list_state.max_offset_for_scrollbar().height;
+        if max_y == px(0.0) {
+            return false;
+        }
+
+        let delta_y = if delta.y == px(0.0) { delta.x } else { delta.y };
+        if delta_y == px(0.0) {
+            return false;
+        }
+
+        let offset_y = self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
+        let epsilon = px(1.0);
+
+        if delta_y > px(0.0) {
+            // Scrolling "up": allow pan only when already at the top edge.
+            offset_y < -epsilon
+        } else {
+            // Scrolling "down": allow pan only when already at the bottom edge.
+            offset_y > (-max_y + epsilon)
+        }
+    }
+
     pub fn set_session_id(&mut self, session_id: Option<SessionId>, cx: &mut Context<Self>) {
         let Some(session_id) = session_id else {
+            if let Some(client) = self.client.clone()
+                && let Some(subscription_id) = self.subscription_id.take()
+            {
+                cx.spawn(move |_: WeakEntity<Self>, _cx: &mut AsyncApp| async move {
+                    let _ = client.unsubscribe(subscription_id).await;
+                })
+                .detach();
+            }
+
             self.subscription_id = None;
             self.subscription_task = None;
             self.load_task = None;
@@ -755,6 +1128,9 @@ impl SessionView {
                 .update(cx, |input, cx| input.set_text("", cx));
             self.session_id_input
                 .update(cx, |input, cx| input.set_text("", cx));
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
             cx.notify();
             return;
         };
@@ -762,6 +1138,7 @@ impl SessionView {
         self.session_id_input
             .update(cx, |input, cx| input.set_text(session_id.to_string(), cx));
         self.load_session_id(&session_id.to_string(), cx);
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
     }
 
     pub fn request_focus_composer(&mut self, cx: &mut Context<Self>) {
