@@ -515,6 +515,7 @@ pub struct SessionView {
     timeline_list_state: ListState,
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_follow_bottom: Rc<Cell<bool>>,
+    timeline_last_scroll_offset: gpui::Pixels,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
@@ -610,6 +611,7 @@ impl SessionView {
             timeline_list_state,
             timeline_items: Rc::new(Vec::new()),
             timeline_follow_bottom: Rc::new(Cell::new(false)),
+            timeline_last_scroll_offset: px(0.0),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
@@ -660,6 +662,7 @@ impl SessionView {
             self.error = None;
             self.feed = None;
             self.timeline_follow_bottom.set(false);
+            self.timeline_last_scroll_offset = px(0.0);
             self.collapsed_reasoning.clear();
             self.expanded_tool_events.clear();
             self.expanded_tool_groups.clear();
@@ -1153,11 +1156,21 @@ impl SessionView {
         let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
         let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
         let threshold = px(4.0);
+        let follow_zone = px(96.0);
 
         let was_at_bottom = feed.scroll.at_bottom;
-        let at_bottom = scroll_offset + threshold >= max_offset;
+        let distance_to_bottom = (max_offset - scroll_offset).max(px(0.0));
+        let at_bottom = distance_to_bottom <= threshold;
         feed.set_at_bottom(at_bottom);
-        self.timeline_follow_bottom.set(at_bottom);
+
+        let delta = scroll_offset - self.timeline_last_scroll_offset;
+        self.timeline_last_scroll_offset = scroll_offset;
+
+        if delta < px(-0.5) && distance_to_bottom > threshold {
+            self.timeline_follow_bottom.set(false);
+        } else if distance_to_bottom <= follow_zone {
+            self.timeline_follow_bottom.set(true);
+        }
 
         if feed.scroll.at_bottom != was_at_bottom {
             self.refresh_timeline_items();
@@ -1593,6 +1606,8 @@ impl Render for SessionView {
             let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
             self.timeline_list_state
                 .set_scroll_handler(move |event, _window, cx| {
+                    // Disable follow-bottom immediately on user scroll so we don't "fight" the
+                    // user between this handler and the async update that reads list offsets.
                     follow_bottom.set(false);
                     let visible_end = event.visible_range.end;
                     let count = event.count;
@@ -1613,13 +1628,14 @@ impl Render for SessionView {
             self.timeline_scroll_handler_installed = true;
         }
 
-        if self.timeline_follow_bottom.get() {
-            let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
-            let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
-            if scroll_offset + px(4.0) < max_offset {
-                self.timeline_list_state
-                    .scroll_to_reveal_item(self.timeline_items.len());
-            }
+        let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
+        let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
+        let distance_to_bottom = (max_offset - scroll_offset).max(px(0.0));
+        let threshold = px(4.0);
+
+        if self.timeline_follow_bottom.get() && distance_to_bottom > threshold {
+            self.timeline_list_state
+                .scroll_to_reveal_item(self.timeline_items.len());
         }
 
         if self.pending_focus_composer && self.feed.is_some() {
