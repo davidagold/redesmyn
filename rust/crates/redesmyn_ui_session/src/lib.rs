@@ -1004,15 +1004,16 @@ impl SessionView {
     fn on_timeline_scrolled(
         &mut self,
         visible_range_end: usize,
-        count: usize,
+        _count: usize,
         cx: &mut Context<Self>,
     ) {
+        let effective_count = self.visible_timeline_item_count();
         let Some(feed) = self.feed.as_mut() else {
             return;
         };
 
         let was_at_bottom = feed.scroll.at_bottom;
-        let at_bottom = visible_range_end >= count;
+        let at_bottom = visible_range_end >= effective_count;
         feed.set_at_bottom(at_bottom);
 
         if feed.scroll.at_bottom != was_at_bottom {
@@ -1432,6 +1433,10 @@ impl SessionView {
             self.invalidate_tool_group(group_id);
         }
 
+        if self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
+            self.scroll_to_bottom();
+        }
+
         if !self.tool_group_transitions.is_empty() {
             window.request_animation_frame();
         }
@@ -1453,10 +1458,67 @@ impl SessionView {
     }
 
     fn scroll_to_bottom(&mut self) {
-        let Some(ix) = self.timeline_items.len().checked_sub(1) else {
+        let Some(ix) = self
+            .last_visible_timeline_item_ix()
+            .or_else(|| self.timeline_items.len().checked_sub(1))
+        else {
             return;
         };
         self.timeline_list_state.scroll_to_reveal_item(ix);
+    }
+
+    fn visible_timeline_item_count(&self) -> usize {
+        self.last_visible_timeline_item_ix()
+            .map_or(0, |ix| ix.saturating_add(1))
+    }
+
+    fn last_visible_timeline_item_ix(&self) -> Option<usize> {
+        self.timeline_items
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(ix, item)| (!self.timeline_item_hidden(item)).then_some(ix))
+    }
+
+    fn timeline_item_hidden(&self, item: &SessionTimelineItem) -> bool {
+        match item {
+            SessionTimelineItem::LoadOlder(_)
+            | SessionTimelineItem::NewMessages(_)
+            | SessionTimelineItem::EphemeralText(_)
+            | SessionTimelineItem::EphemeralReasoning(_) => false,
+            SessionTimelineItem::Event(event) => {
+                let session_event_id = event.session_event_id;
+
+                match &event.content {
+                    SessionEventItemContent::ToolResult(_tool)
+                        if self
+                            .grouped_exec_command_result_event_ids
+                            .contains(&session_event_id) =>
+                    {
+                        true
+                    }
+                    SessionEventItemContent::ToolInvocation(_)
+                    | SessionEventItemContent::ToolResult(_) => self
+                        .tool_event_group_membership
+                        .get(&session_event_id)
+                        .is_some_and(|member| {
+                            let group_id = member.group_id;
+                            let is_expanded = self.expanded_tool_groups.contains(&group_id);
+                            let progress = self
+                                .tool_group_transitions
+                                .get(&group_id)
+                                .map(|transition| transition.value())
+                                .unwrap_or_else(|| if is_expanded { 1.0 } else { 0.0 });
+                            !is_expanded && progress <= 1e-3 && !member.is_first
+                        }),
+                    SessionEventItemContent::UserMessage(_)
+                    | SessionEventItemContent::AssistantMessage(_)
+                    | SessionEventItemContent::AssistantReasoning(_)
+                    | SessionEventItemContent::ArtifactEmitted(_) => false,
+                    _ => true,
+                }
+            }
+        }
     }
 }
 
