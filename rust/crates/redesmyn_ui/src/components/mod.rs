@@ -2,6 +2,7 @@
 
 mod button;
 mod callout;
+mod expandable;
 mod markdown;
 mod progress;
 mod rounded_styled_text;
@@ -12,6 +13,7 @@ mod tooltip;
 
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
+pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
 pub use progress::{ProgressPill, ProgressPillKind};
 pub use rounded_styled_text::{RoundedBackgroundStyle, RoundedStyledText};

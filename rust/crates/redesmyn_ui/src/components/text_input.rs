@@ -4,12 +4,11 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId,
-    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point,
-    Render, ScrollHandle, ShapedLine, SharedString, Size, Style, TextRun, UTF16Selection,
-    UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative,
-    size,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, IntoElement,
+    KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point, Render, ScrollHandle, ShapedLine,
+    SharedString, Size, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine,
+    actions, div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::utils::{
@@ -247,12 +246,11 @@ impl EditHistory {
         self.redo.clear();
 
         let can_group_typed_inserts = kind == EditKind::TypingInsert
-            && self
-                .last_edit
-                .as_ref()
-                .is_some_and(|last| last.kind == EditKind::TypingInsert
+            && self.last_edit.as_ref().is_some_and(|last| {
+                last.kind == EditKind::TypingInsert
                     && now.duration_since(last.at) <= TYPING_GROUP_TIMEOUT
-                    && last.cursor_after == insertion_point);
+                    && last.cursor_after == insertion_point
+            });
 
         let can_group_ime = before.marked_range.is_some()
             && self
@@ -537,12 +535,7 @@ impl TextInput {
         self.apply_edit_range(replacement_range, "", None, Instant::now(), cx);
     }
 
-    fn delete_to_line_end(
-        &mut self,
-        _: &DeleteToLineEnd,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn delete_to_line_end(&mut self, _: &DeleteToLineEnd, _: &mut Window, cx: &mut Context<Self>) {
         let replacement_range = self
             .marked_range
             .clone()
@@ -622,7 +615,12 @@ impl TextInput {
         }
     }
 
-    fn on_mouse_up(&mut self, event: &gpui::MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(
+        &mut self,
+        event: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.is_selecting = false;
 
         if event.click_count < 2 {
@@ -775,13 +773,8 @@ impl TextInput {
         let before = self.snapshot();
         let insertion_point = replacement_range.start;
         let cursor_after = replacement_range.start + text.len();
-        self.history.record_undo_step_at(
-            now,
-            before,
-            kind,
-            insertion_point,
-            cursor_after,
-        );
+        self.history
+            .record_undo_step_at(now, before, kind, insertion_point, cursor_after);
 
         let mut content = self.content.to_string();
         content.replace_range(replacement_range, &text);
@@ -812,13 +805,8 @@ impl TextInput {
             .map(|range_utf16| utf8_range_from_utf16(&new_text, range_utf16))
             .unwrap_or_else(|| new_text.len()..new_text.len());
         let cursor_after = replacement_range.start + new_selected_range.end;
-        self.history.record_undo_step_at(
-            now,
-            before,
-            EditKind::Ime,
-            insertion_point,
-            cursor_after,
-        );
+        self.history
+            .record_undo_step_at(now, before, EditKind::Ime, insertion_point, cursor_after);
 
         let mut content = self.content.to_string();
         content.replace_range(replacement_range.clone(), &new_text);
@@ -1192,6 +1180,9 @@ pub struct TextArea {
     scroll_handle: ScrollHandle,
     content: SharedString,
     placeholder: SharedString,
+    min_rows: usize,
+    max_rows: usize,
+    reserved_bottom: Pixels,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -1250,8 +1241,11 @@ trait SegmentedLine {
     fn len(&self) -> usize;
     fn height(&self, line_height: Pixels) -> Pixels;
     fn caret_point_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>>;
-    fn closest_index_for_local_position(&self, position: Point<Pixels>, line_height: Pixels)
-        -> usize;
+    fn closest_index_for_local_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> usize;
 }
 
 fn caret_point_for_segmented_line_index(
@@ -1289,9 +1283,7 @@ fn wrap_boundary_end_indices(line: &WrappedLine) -> impl Iterator<Item = usize> 
     let line_len = line.len();
     line.wrap_boundaries
         .iter()
-        .map(|boundary| {
-            line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
-        })
+        .map(|boundary| line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
         .filter(move |&ix| ix > 0 && ix < line_len)
         .chain(std::iter::once(line_len))
 }
@@ -1417,6 +1409,9 @@ impl TextArea {
             scroll_handle: ScrollHandle::new(),
             content: SharedString::default(),
             placeholder: "Type…".into(),
+            min_rows: TEXT_AREA_MIN_ROWS,
+            max_rows: TEXT_AREA_MAX_ROWS,
+            reserved_bottom: px(0.0),
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -1432,6 +1427,22 @@ impl TextArea {
 
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    pub fn min_rows(mut self, rows: usize) -> Self {
+        self.min_rows = rows.max(1);
+        self.max_rows = self.max_rows.max(self.min_rows);
+        self
+    }
+
+    pub fn max_rows(mut self, rows: usize) -> Self {
+        self.max_rows = rows.max(self.min_rows);
+        self
+    }
+
+    pub fn reserved_bottom(mut self, reserved: Pixels) -> Self {
+        self.reserved_bottom = reserved.max(px(0.0));
         self
     }
 
@@ -1563,7 +1574,7 @@ impl TextArea {
 
         size.height = size
             .height
-            .max(px(f32::from(line_height) * TEXT_AREA_MIN_ROWS as f32));
+            .max(px(f32::from(line_height) * self.min_rows as f32));
         if let Some(wrap_width) = wrap_width {
             size.width = wrap_width;
         }
@@ -1586,10 +1597,7 @@ impl TextArea {
         let layout = self.layout_cache.as_ref()?;
         let line_height = layout.line_height;
         let pos = caret_point_for_offset_in_lines(&layout.lines, index, line_height)?;
-        Some(Bounds::new(
-            bounds.origin + pos,
-            size(px(2.), line_height),
-        ))
+        Some(Bounds::new(bounds.origin + pos, size(px(2.), line_height)))
     }
 
     fn scroll_caret_into_view(&mut self, window: &mut Window, cx: &App) {
@@ -1765,13 +1773,8 @@ impl TextArea {
         let before = self.snapshot();
         let insertion_point = replacement_range.start;
         let cursor_after = replacement_range.start + text.len();
-        self.history.record_undo_step_at(
-            now,
-            before,
-            kind,
-            insertion_point,
-            cursor_after,
-        );
+        self.history
+            .record_undo_step_at(now, before, kind, insertion_point, cursor_after);
 
         let mut content = self.content.to_string();
         content.replace_range(replacement_range, text);
@@ -1805,13 +1808,8 @@ impl TextArea {
             .map(|range_utf16| utf8_range_from_utf16(new_text, range_utf16))
             .unwrap_or_else(|| new_text.len()..new_text.len());
         let cursor_after = replacement_range.start + new_selected_range.end;
-        self.history.record_undo_step_at(
-            now,
-            before,
-            EditKind::Ime,
-            insertion_point,
-            cursor_after,
-        );
+        self.history
+            .record_undo_step_at(now, before, EditKind::Ime, insertion_point, cursor_after);
 
         let mut content = self.content.to_string();
         content.replace_range(replacement_range.clone(), new_text);
@@ -2061,7 +2059,9 @@ impl TextArea {
             .marked_range
             .clone()
             .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
-            .unwrap_or_else(|| line_start_offset(&self.content, self.cursor_offset())..self.cursor_offset());
+            .unwrap_or_else(|| {
+                line_start_offset(&self.content, self.cursor_offset())..self.cursor_offset()
+            });
 
         self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
@@ -2077,7 +2077,9 @@ impl TextArea {
             .marked_range
             .clone()
             .or_else(|| (!self.selected_range.is_empty()).then(|| self.selected_range.clone()))
-            .unwrap_or_else(|| self.cursor_offset()..line_end_offset(&self.content, self.cursor_offset()));
+            .unwrap_or_else(|| {
+                self.cursor_offset()..line_end_offset(&self.content, self.cursor_offset())
+            });
 
         self.apply_edit_range(replacement_range, "", None, Instant::now(), window, cx);
     }
@@ -2164,7 +2166,12 @@ impl TextArea {
         self.scroll_caret_into_view(window, cx);
     }
 
-    fn on_mouse_up(&mut self, event: &gpui::MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_mouse_up(
+        &mut self,
+        event: &gpui::MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.preferred_vertical_x = None;
         self.is_selecting = false;
         if event.click_count < 2 {
@@ -2656,12 +2663,10 @@ impl Render for TextArea {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
         let line_height = window.line_height();
-        let min_h = px(f32::from(line_height) * TEXT_AREA_MIN_ROWS as f32)
-            + theme.spacing.sm
-            + theme.spacing.sm;
-        let max_h = px(f32::from(line_height) * TEXT_AREA_MAX_ROWS as f32)
-            + theme.spacing.sm
-            + theme.spacing.sm;
+        let content_pt = theme.spacing.sm;
+        let content_pb = theme.spacing.sm + self.reserved_bottom;
+        let min_h = px(f32::from(line_height) * self.min_rows as f32) + content_pt + content_pb;
+        let max_h = px(f32::from(line_height) * self.max_rows as f32) + content_pt + content_pb;
 
         div()
             .flex()
@@ -2723,7 +2728,8 @@ impl Render for TextArea {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .px(theme.spacing.sm)
-                    .py(theme.spacing.sm)
+                    .pt(content_pt)
+                    .pb(content_pb)
                     .text_left()
                     .child(TextAreaElement { input: cx.entity() }),
             )
@@ -2812,7 +2818,11 @@ mod tests {
             px(f32::from(line_height) * self.segment_ends.len() as f32)
         }
 
-        fn caret_point_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        fn caret_point_for_index(
+            &self,
+            index: usize,
+            line_height: Pixels,
+        ) -> Option<Point<Pixels>> {
             Some(caret_point_for_segmented_line_index(
                 index,
                 self.len,
@@ -2827,11 +2837,9 @@ mod tests {
             position: Point<Pixels>,
             line_height: Pixels,
         ) -> usize {
+            let segment_index = (f32::from(position.y) / f32::from(line_height)).floor() as isize;
             let segment_index =
-                (f32::from(position.y) / f32::from(line_height)).floor() as isize;
-            let segment_index = segment_index
-                .clamp(0, self.segment_ends.len().saturating_sub(1) as isize)
-                as usize;
+                segment_index.clamp(0, self.segment_ends.len().saturating_sub(1) as isize) as usize;
 
             let segment_start = segment_index
                 .checked_sub(1)
@@ -2906,13 +2914,8 @@ mod tests {
             let before = self.snapshot();
             let insertion_point = replacement_range.start;
             let cursor_after = replacement_range.start + text.len();
-            self.history.record_undo_step_at(
-                now,
-                before,
-                kind,
-                insertion_point,
-                cursor_after,
-            );
+            self.history
+                .record_undo_step_at(now, before, kind, insertion_point, cursor_after);
 
             let mut content = self.content.to_string();
             content.replace_range(replacement_range, text);
@@ -2923,7 +2926,12 @@ mod tests {
             self.marked_range = None;
         }
 
-        fn apply_marked_edit(&mut self, replacement_range: Range<usize>, new_text: &str, now: Instant) {
+        fn apply_marked_edit(
+            &mut self,
+            replacement_range: Range<usize>,
+            new_text: &str,
+            now: Instant,
+        ) {
             let before = self.snapshot();
             let insertion_point = replacement_range.start;
             let cursor_after = replacement_range.start + new_text.len();
@@ -3030,7 +3038,10 @@ mod tests {
         let char_width = px(9.0);
 
         // `0123456789\nx`
-        let lines = vec![TestLine::new(10, vec![], char_width), TestLine::new(1, vec![], char_width)];
+        let lines = vec![
+            TestLine::new(10, vec![], char_width),
+            TestLine::new(1, vec![], char_width),
+        ];
         let content_len = 12;
 
         let mut preferred_x = None;
@@ -3049,7 +3060,10 @@ mod tests {
         let char_width = px(9.0);
 
         // `abc\ndef`
-        let lines = vec![TestLine::new(3, vec![], char_width), TestLine::new(3, vec![], char_width)];
+        let lines = vec![
+            TestLine::new(3, vec![], char_width),
+            TestLine::new(3, vec![], char_width),
+        ];
         let content_len = 7;
 
         let mut preferred_x = None;
@@ -3198,7 +3212,8 @@ mod tests {
         let (line1, col1, desired) = move_vertical_monospaced(&lines, 0, 4, None, 1);
         assert_eq!((line1, col1, desired), (1, 2, 4));
 
-        let (line2, col2, desired2) = move_vertical_monospaced(&lines, line1, col1, Some(desired), 1);
+        let (line2, col2, desired2) =
+            move_vertical_monospaced(&lines, line1, col1, Some(desired), 1);
         assert_eq!((line2, col2, desired2), (2, 4, 4));
     }
 }
