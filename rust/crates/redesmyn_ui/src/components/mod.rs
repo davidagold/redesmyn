@@ -12,7 +12,7 @@ mod tooltip;
 
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
-pub use markdown::MarkdownView;
+pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
 pub use progress::{ProgressPill, ProgressPillKind};
 pub use rounded_styled_text::{RoundedBackgroundStyle, RoundedStyledText};
 pub use scroll_area::ScrollArea;

@@ -90,6 +90,97 @@ impl RenderOnce for MarkdownView {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MarkdownInlineSingleLineContent {
+    atoms: Arc<[InlineAtom]>,
+    plain_text: gpui::SharedString,
+}
+
+impl MarkdownInlineSingleLineContent {
+    pub fn from_doc(doc: &MarkdownDoc) -> Self {
+        let mut atoms = first_markdown_inline_single_line_atoms(doc);
+        for atom in &mut atoms {
+            atom.link = None;
+        }
+
+        if atoms.is_empty() {
+            atoms.push(InlineAtom {
+                text: " ".to_string(),
+                style: InlineStyle::default(),
+                link: None,
+            });
+        }
+
+        let mut plain_text = String::new();
+        for atom in &atoms {
+            plain_text.push_str(&atom.text);
+        }
+
+        Self {
+            atoms: Arc::from(atoms.into_boxed_slice()),
+            plain_text: gpui::SharedString::new(plain_text),
+        }
+    }
+
+    pub fn plain_text(&self) -> gpui::SharedString {
+        self.plain_text.clone()
+    }
+}
+
+#[derive(IntoElement)]
+pub struct MarkdownInlineSingleLineView {
+    id: ElementId,
+    content: MarkdownInlineSingleLineContent,
+    color: Option<gpui::Hsla>,
+}
+
+impl MarkdownInlineSingleLineView {
+    pub fn new(id: impl Into<ElementId>, content: MarkdownInlineSingleLineContent) -> Self {
+        Self {
+            id: id.into(),
+            content,
+            color: None,
+        }
+    }
+
+    pub fn from_doc(id: impl Into<ElementId>, doc: &MarkdownDoc) -> Self {
+        Self::new(id, MarkdownInlineSingleLineContent::from_doc(doc))
+    }
+
+    pub fn text_color(mut self, color: gpui::Hsla) -> Self {
+        self.color = Some(color);
+        self
+    }
+}
+
+impl RenderOnce for MarkdownInlineSingleLineView {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = theme_for_window(window, cx);
+
+        let atoms = self.content.atoms.as_ref();
+        let base_text_color = self.color.unwrap_or(theme.colors.foreground);
+        let (text, runs) = build_inline_single_line_styled_text(atoms, base_text_color, window, cx);
+
+        div()
+            .id(self.id)
+            .min_w_0()
+            .w_full()
+            .whitespace_nowrap()
+            .truncate()
+            .child(
+                RoundedStyledText::new(text)
+                    .with_runs(runs)
+                    .background_style(RoundedBackgroundStyle {
+                        corner_radius: theme.radius.sm,
+                        trim_horizontal: true,
+                        padding_x: px(5.0),
+                        padding_y: px(2.5),
+                        ..Default::default()
+                    }),
+            )
+    }
+}
+
 fn render_block(
     id: ElementId,
     block: &MarkdownBlock,
@@ -189,6 +280,123 @@ fn render_block(
             list.into_any_element()
         }
     }
+}
+
+fn first_markdown_inline_single_line_atoms(doc: &MarkdownDoc) -> Vec<InlineAtom> {
+    let mut out: Vec<InlineAtom> = Vec::new();
+
+    for block in &doc.blocks {
+        let inlines = match block {
+            MarkdownBlock::Paragraph { content, .. } => content.as_slice(),
+            MarkdownBlock::Heading { content, .. } => content.as_slice(),
+            _ => continue,
+        };
+
+        let items = flatten_inlines(inlines);
+        for item in items {
+            match item {
+                InlineItem::HardBreak => break,
+                InlineItem::Atom(mut atom) => {
+                    if atom.text.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(newline_ix) = atom.text.find('\n') {
+                        let prefix = atom.text[..newline_ix].to_string();
+                        if !prefix.is_empty() {
+                            atom.text = prefix;
+                            out.push(atom);
+                        }
+                        break;
+                    }
+
+                    out.push(atom);
+                }
+            }
+        }
+
+        break;
+    }
+
+    out
+}
+
+fn build_inline_single_line_styled_text(
+    atoms: &[InlineAtom],
+    base_text_color: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) -> (String, Vec<TextRun>) {
+    let theme = theme_for_window(window, cx);
+    let code_bg = match theme.mode {
+        crate::styles::ThemeMode::Dark => {
+            // In dark mode we invert user message bubbles (light background + dark text). Use a
+            // darker chip background there so inline code remains visible.
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.45)
+            } else {
+                theme.colors.accent_foreground.opacity(0.12)
+            }
+        }
+        crate::styles::ThemeMode::Light => {
+            if base_text_color == theme.colors.surface {
+                theme.colors.border.opacity(0.35)
+            } else {
+                theme.colors.accent.opacity(0.65)
+            }
+        }
+    };
+
+    let mut text = String::new();
+    let mut runs = Vec::new();
+
+    let default_color = base_text_color;
+
+    let code_color = if base_text_color == theme.colors.surface {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.25))
+    } else {
+        default_color.blend(theme.colors.foreground_muted.alpha(0.45))
+    };
+
+    for atom in atoms {
+        if atom.text.is_empty() {
+            continue;
+        }
+
+        let InlineAtom {
+            text: atom_text,
+            style: atom_style,
+            link: _,
+        } = atom;
+
+        let mut font = if atom_style.code {
+            theme.typography.mono.font.clone()
+        } else {
+            theme.typography.body.font.clone()
+        };
+
+        if atom_style.bold {
+            font.weight = FontWeight::BOLD;
+        }
+        if atom_style.italic {
+            font.style = FontStyle::Italic;
+        }
+
+        let background_color = atom_style.code.then_some(code_bg);
+        let color = if atom_style.code { code_color } else { default_color };
+
+        runs.push(TextRun {
+            len: atom_text.len(),
+            font,
+            color,
+            background_color,
+            underline: None,
+            strikethrough: None,
+        });
+        text.push_str(atom_text);
+    }
+
+    (text, runs)
 }
 
 fn render_blocks_column(
