@@ -2370,6 +2370,10 @@ impl Render for GraphView {
                                                         .absolute()
                                                         .inset_0()
                                                         .opacity(quick_actions_opacity)
+                                                        .flex()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .justify_end()
                                                         .when(should_render_quick_actions, |this| {
                                                             this.child(self.task_quick_actions_row(
                                                                 node_key.clone(),
