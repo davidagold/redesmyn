@@ -76,6 +76,13 @@ where
         window: &Window,
     ) -> f32 {
         let target = if visible { 1.0 } else { 0.0 };
+        // Avoid allocating and immediately removing transition state for keys that are stably
+        // hidden. This is hot in graph views where we compute hover affordance opacity for many
+        // nodes per frame.
+        if !visible && !self.states.contains_key(&key) {
+            return 0.0;
+        }
+
         let value = self.value_for_render(key.clone(), target, duration, window);
 
         if !visible && value.abs() < 1e-3 {
@@ -131,4 +138,3 @@ fn ease_out_cubic(t: f32) -> f32 {
 fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
-
