@@ -15,7 +15,7 @@ use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineSingleLineContent,
-    MarkdownInlineSingleLineView, ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
+    ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
 };
 use redesmyn_ui::utils::{
     BoundedCache, TransitionMap, UiActivityGuard, UserActionState, theme_for_window,
@@ -2278,6 +2278,7 @@ impl Render for GraphView {
                         quick_actions_fade_duration,
                         window,
                     );
+                    let should_render_quick_actions = quick_actions_opacity > 0.01;
 
                     // Compute a stable (pixel-snapped) content width for text measurement and
                     // rendering so we don't flicker between neighboring wrap/truncation states
@@ -2304,6 +2305,8 @@ impl Render for GraphView {
 
                     let branch_slug_text_size = quantized_zoom_text_size(rem_size, 0.60, zoom);
                     let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
+                    let quick_actions_slot_width = px(46.0 * zoom);
+                    let quick_actions_slot_height = px(22.0 * zoom);
 
                     let preview_content = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
@@ -2357,18 +2360,32 @@ impl Render for GraphView {
                                         .flex_row()
                                         .items_center()
                                         .gap(px(4.0 * zoom))
-                                        .child(self.task_quick_actions_row(
-                                            node_key.clone(),
-                                            task_id,
-                                            node.agent_status,
-                                            latest_session.as_ref().is_some(),
-                                            quick_actions_opacity,
-                                            show_quick_actions,
-                                            &theme,
-                                            zoom,
-                                            rem_size,
-                                            cx,
-                                        ))
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .w(quick_actions_slot_width)
+                                                .h(quick_actions_slot_height)
+                                                .child(
+                                                    div()
+                                                        .absolute()
+                                                        .inset_0()
+                                                        .opacity(quick_actions_opacity)
+                                                        .when(should_render_quick_actions, |this| {
+                                                            this.child(self.task_quick_actions_row(
+                                                                node_key.clone(),
+                                                                task_id,
+                                                                node.agent_status,
+                                                                latest_session.as_ref().is_some(),
+                                                                quick_actions_opacity,
+                                                                show_quick_actions,
+                                                                &theme,
+                                                                zoom,
+                                                                rem_size,
+                                                                cx,
+                                                            ))
+                                                        }),
+                                                ),
+                                        )
                                         .child(agent_status_dot(
                                             state,
                                             node.agent_status,
@@ -2410,17 +2427,14 @@ impl Render for GraphView {
                         );
 
                     if let Some(content) = preview_content {
-                        let preview_id: gpui::ElementId =
-                            (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
                             div()
+                                .min_w_0()
                                 .w(collapsed_text_width)
+                                .truncate()
                                 .text_size(preview_text_size)
                                 .text_color(theme.colors.foreground_muted)
-                                .child(
-                                    MarkdownInlineSingleLineView::new(preview_id, content)
-                                        .text_color(theme.colors.foreground_muted),
-                                ),
+                                .child(content.plain_text()),
                         );
                     }
                     card = card.child(collapsed_content);

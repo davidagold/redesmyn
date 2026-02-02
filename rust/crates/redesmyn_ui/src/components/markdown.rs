@@ -77,6 +77,7 @@ impl RenderOnce for MarkdownView {
 #[derive(Clone, Debug)]
 pub struct MarkdownInlineSingleLineContent {
     atoms: Arc<[MarkdownInlineAtom]>,
+    plain_text: gpui::SharedString,
 }
 
 impl MarkdownInlineSingleLineContent {
@@ -94,9 +95,19 @@ impl MarkdownInlineSingleLineContent {
             });
         }
 
+        let mut plain_text = String::new();
+        for atom in &atoms {
+            plain_text.push_str(&atom.text);
+        }
+
         Self {
             atoms: Arc::from(atoms.into_boxed_slice()),
+            plain_text: gpui::SharedString::new(plain_text),
         }
+    }
+
+    pub fn plain_text(&self) -> gpui::SharedString {
+        self.plain_text.clone()
     }
 }
 
