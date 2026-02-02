@@ -115,6 +115,33 @@ pub struct AssistantMessage {
     pub full_text_artifact: Option<ArtifactRef>,
 }
 
+/// Assistant reasoning is bounded; use artifacts for large content.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantReasoningText {
+    pub text: String,
+    pub preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_text_artifact: Option<ArtifactRef>,
+}
+
+/// Structured assistant reasoning (summary + optional raw content).
+///
+/// Notes:
+/// - `item_id` is a provider-scoped identifier (e.g. Codex app-server item id) used to correlate
+///   streaming deltas with the durable event.
+/// - `signature` is provider-specific and may be used to attest to the reasoning content (e.g.
+///   Claude extended thinking).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AssistantReasoning {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    pub summary: AssistantReasoningText,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<AssistantReasoningText>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
 /// Tool invocation parameters are bounded; use artifacts for large inputs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ToolInvocation {
@@ -180,6 +207,7 @@ pub enum SessionEventKind {
     TurnCompleted(TurnCompleted),
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
+    AssistantReasoning(AssistantReasoning),
     ToolInvocation(ToolInvocation),
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),

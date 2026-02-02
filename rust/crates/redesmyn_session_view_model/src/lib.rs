@@ -34,6 +34,7 @@ pub enum SessionEventKindTag {
     TurnCompleted,
     UserMessage,
     AssistantMessage,
+    AssistantReasoning,
     ToolInvocation,
     ToolResult,
     StatusUpdate,
@@ -51,6 +52,7 @@ impl SessionEventKindTag {
             SessionEventKind::TurnCompleted(_) => Self::TurnCompleted,
             SessionEventKind::UserMessage(_) => Self::UserMessage,
             SessionEventKind::AssistantMessage(_) => Self::AssistantMessage,
+            SessionEventKind::AssistantReasoning(_) => Self::AssistantReasoning,
             SessionEventKind::ToolInvocation(_) => Self::ToolInvocation,
             SessionEventKind::ToolResult(_) => Self::ToolResult,
             SessionEventKind::StatusUpdate(_) => Self::StatusUpdate,
@@ -93,6 +95,7 @@ pub enum SessionTimelineItem {
     NewMessages(NewMessagesRow),
     Event(SessionEventItem),
     EphemeralText(EphemeralTextItem),
+    EphemeralReasoning(EphemeralReasoningItem),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -124,6 +127,7 @@ pub enum SessionEventItemContent {
     TurnCompleted(TurnCompleted),
     UserMessage(MessageItem),
     AssistantMessage(MessageItem),
+    AssistantReasoning(ReasoningItem),
     ToolInvocation(ToolInvocation),
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
@@ -141,6 +145,25 @@ pub struct MessageItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TextBlockItem {
+    pub text: String,
+    pub preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_text_artifact: Option<ArtifactRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReasoningItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    pub summary: TextBlockItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<TextBlockItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactEmittedItem {
     pub artifact: ArtifactRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,6 +175,24 @@ pub struct EphemeralTextItem {
     pub key: String,
     pub role: SessionMessageRole,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EphemeralReasoningItem {
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub summary: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raw: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum EphemeralItem {
+    Text(EphemeralTextItem),
+    Reasoning(EphemeralReasoningItem),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -207,7 +248,7 @@ pub struct SessionFeedState {
     pub session_id: SessionId,
     events: Vec<SessionEventRow>,
     event_ids: BTreeSet<SessionEventId>,
-    ephemeral: BTreeMap<String, EphemeralTextItem>,
+    ephemeral: BTreeMap<String, EphemeralItem>,
     pub summary: SessionFeedSummaryState,
     pub composer: SessionComposerState,
     pub history: SessionHistoryState,
@@ -248,12 +289,10 @@ impl SessionFeedState {
                 .map(|row| SessionTimelineItem::Event(SessionEventItem::from_row(row))),
         );
 
-        items.extend(
-            self.ephemeral
-                .values()
-                .cloned()
-                .map(SessionTimelineItem::EphemeralText),
-        );
+        items.extend(self.ephemeral.values().cloned().map(|item| match item {
+            EphemeralItem::Text(item) => SessionTimelineItem::EphemeralText(item),
+            EphemeralItem::Reasoning(item) => SessionTimelineItem::EphemeralReasoning(item),
+        }));
 
         if !self.scroll.at_bottom && self.scroll.unseen_count > 0 {
             items.push(SessionTimelineItem::NewMessages(NewMessagesRow {
@@ -323,6 +362,10 @@ impl SessionFeedState {
     pub fn apply_live_event(&mut self, event: SessionEvent) {
         let clear_assistant_ephemeral =
             matches!(&event.kind, SessionEventKind::AssistantMessage(_));
+        let clear_reasoning_ephemeral = match &event.kind {
+            SessionEventKind::AssistantReasoning(ev) => Some(ev.item_id.clone()),
+            _ => None,
+        };
         let clear_tool_ephemeral = match &event.kind {
             SessionEventKind::ToolResult(ev) => Some(ev.tool_call_id.clone()),
             _ => None,
@@ -335,8 +378,10 @@ impl SessionFeedState {
 
         if inserted_at_end {
             if clear_assistant_ephemeral {
-                self.ephemeral
-                    .retain(|_, item| item.role != SessionMessageRole::Assistant);
+                self.ephemeral.retain(|_, item| match item {
+                    EphemeralItem::Text(item) => item.role != SessionMessageRole::Assistant,
+                    EphemeralItem::Reasoning(_) => true,
+                });
             }
             if let Some(tool_call_id) = clear_tool_ephemeral {
                 match tool_call_id {
@@ -344,8 +389,23 @@ impl SessionFeedState {
                         self.ephemeral.remove(&tool_call_id);
                     }
                     None => {
-                        self.ephemeral
-                            .retain(|_, item| item.role != SessionMessageRole::Tool);
+                        self.ephemeral.retain(|_, item| match item {
+                            EphemeralItem::Text(item) => item.role != SessionMessageRole::Tool,
+                            EphemeralItem::Reasoning(_) => true,
+                        });
+                    }
+                }
+            }
+            if let Some(reasoning_item_id) = clear_reasoning_ephemeral {
+                match reasoning_item_id {
+                    Some(item_id) => {
+                        self.ephemeral.remove(&item_id);
+                    }
+                    None => {
+                        self.ephemeral.retain(|_, item| match item {
+                            EphemeralItem::Reasoning(_) => false,
+                            EphemeralItem::Text(_) => true,
+                        });
                     }
                 }
             }
@@ -377,16 +437,136 @@ impl SessionFeedState {
                     .item_id
                     .unwrap_or_else(|| "assistant_delta".to_owned());
 
-                let entry = self
+                let needs_insert = !self
                     .ephemeral
-                    .entry(key.clone())
-                    .or_insert(EphemeralTextItem {
-                        key,
-                        role: SessionMessageRole::Assistant,
-                        text: String::new(),
-                    });
+                    .get(&key)
+                    .is_some_and(|item| matches!(item, EphemeralItem::Text(_)));
+                if needs_insert {
+                    self.ephemeral.insert(
+                        key.clone(),
+                        EphemeralItem::Text(EphemeralTextItem {
+                            key: key.clone(),
+                            role: SessionMessageRole::Assistant,
+                            text: String::new(),
+                        }),
+                    );
+                }
 
-                entry.text.push_str(&delta.delta);
+                if let Some(EphemeralItem::Text(entry)) = self.ephemeral.get_mut(&key) {
+                    entry.text.push_str(&delta.delta);
+                }
+                if self.scroll.at_bottom {
+                    self.scroll.pending_scroll_to_bottom = true;
+                }
+            }
+            SessionLiveEventKind::AssistantReasoningSummaryPartAdded(part) => {
+                let Some(summary_index) = usize::try_from(part.summary_index).ok() else {
+                    return;
+                };
+
+                let key = event
+                    .item_id
+                    .unwrap_or_else(|| "assistant_reasoning".to_owned());
+
+                let needs_insert = !self
+                    .ephemeral
+                    .get(&key)
+                    .is_some_and(|item| matches!(item, EphemeralItem::Reasoning(_)));
+                if needs_insert {
+                    self.ephemeral.insert(
+                        key.clone(),
+                        EphemeralItem::Reasoning(EphemeralReasoningItem {
+                            key: key.clone(),
+                            summary: Vec::new(),
+                            raw: Vec::new(),
+                            signature: None,
+                        }),
+                    );
+                }
+
+                if let Some(EphemeralItem::Reasoning(entry)) = self.ephemeral.get_mut(&key) {
+                    if entry.summary.len() <= summary_index {
+                        entry.summary.resize(summary_index + 1, String::new());
+                    }
+                }
+                if self.scroll.at_bottom {
+                    self.scroll.pending_scroll_to_bottom = true;
+                }
+            }
+            SessionLiveEventKind::AssistantReasoningSummaryDelta(delta) => {
+                if delta.delta.is_empty() {
+                    return;
+                }
+
+                let Some(summary_index) = usize::try_from(delta.summary_index).ok() else {
+                    return;
+                };
+
+                let key = event
+                    .item_id
+                    .unwrap_or_else(|| "assistant_reasoning".to_owned());
+
+                let needs_insert = !self
+                    .ephemeral
+                    .get(&key)
+                    .is_some_and(|item| matches!(item, EphemeralItem::Reasoning(_)));
+                if needs_insert {
+                    self.ephemeral.insert(
+                        key.clone(),
+                        EphemeralItem::Reasoning(EphemeralReasoningItem {
+                            key: key.clone(),
+                            summary: Vec::new(),
+                            raw: Vec::new(),
+                            signature: None,
+                        }),
+                    );
+                }
+
+                if let Some(EphemeralItem::Reasoning(entry)) = self.ephemeral.get_mut(&key) {
+                    if entry.summary.len() <= summary_index {
+                        entry.summary.resize(summary_index + 1, String::new());
+                    }
+                    entry.summary[summary_index].push_str(&delta.delta);
+                }
+                if self.scroll.at_bottom {
+                    self.scroll.pending_scroll_to_bottom = true;
+                }
+            }
+            SessionLiveEventKind::AssistantReasoningRawDelta(delta) => {
+                if delta.delta.is_empty() {
+                    return;
+                }
+
+                let Some(content_index) = usize::try_from(delta.content_index).ok() else {
+                    return;
+                };
+
+                let key = event
+                    .item_id
+                    .unwrap_or_else(|| "assistant_reasoning".to_owned());
+
+                let needs_insert = !self
+                    .ephemeral
+                    .get(&key)
+                    .is_some_and(|item| matches!(item, EphemeralItem::Reasoning(_)));
+                if needs_insert {
+                    self.ephemeral.insert(
+                        key.clone(),
+                        EphemeralItem::Reasoning(EphemeralReasoningItem {
+                            key: key.clone(),
+                            summary: Vec::new(),
+                            raw: Vec::new(),
+                            signature: None,
+                        }),
+                    );
+                }
+
+                if let Some(EphemeralItem::Reasoning(entry)) = self.ephemeral.get_mut(&key) {
+                    if entry.raw.len() <= content_index {
+                        entry.raw.resize(content_index + 1, String::new());
+                    }
+                    entry.raw[content_index].push_str(&delta.delta);
+                }
                 if self.scroll.at_bottom {
                     self.scroll.pending_scroll_to_bottom = true;
                 }
@@ -400,16 +580,24 @@ impl SessionFeedState {
                     .item_id
                     .unwrap_or_else(|| "tool_output_delta".to_owned());
 
-                let entry = self
+                let needs_insert = !self
                     .ephemeral
-                    .entry(key.clone())
-                    .or_insert(EphemeralTextItem {
-                        key,
-                        role: SessionMessageRole::Tool,
-                        text: format!("{}\n", delta.tool_name),
-                    });
+                    .get(&key)
+                    .is_some_and(|item| matches!(item, EphemeralItem::Text(_)));
+                if needs_insert {
+                    self.ephemeral.insert(
+                        key.clone(),
+                        EphemeralItem::Text(EphemeralTextItem {
+                            key: key.clone(),
+                            role: SessionMessageRole::Tool,
+                            text: format!("{}\n", delta.tool_name),
+                        }),
+                    );
+                }
 
-                entry.text.push_str(&delta.delta);
+                if let Some(EphemeralItem::Text(entry)) = self.ephemeral.get_mut(&key) {
+                    entry.text.push_str(&delta.delta);
+                }
                 if self.scroll.at_bottom {
                     self.scroll.pending_scroll_to_bottom = true;
                 }
@@ -461,11 +649,11 @@ impl SessionFeedState {
         let key = key.into();
         self.ephemeral.insert(
             key.clone(),
-            EphemeralTextItem {
+            EphemeralItem::Text(EphemeralTextItem {
                 key,
                 role,
                 text: text.into(),
-            },
+            }),
         );
     }
 
@@ -535,6 +723,25 @@ impl SessionEventItem {
                     full_text_artifact: ev.full_text_artifact.clone(),
                 })
             }
+            SessionEventKind::AssistantReasoning(ev) => {
+                let summary = TextBlockItem {
+                    text: ev.summary.text.clone(),
+                    preview: ev.summary.preview.clone(),
+                    full_text_artifact: ev.summary.full_text_artifact.clone(),
+                };
+                let raw = ev.raw.as_ref().map(|raw| TextBlockItem {
+                    text: raw.text.clone(),
+                    preview: raw.preview.clone(),
+                    full_text_artifact: raw.full_text_artifact.clone(),
+                });
+
+                SessionEventItemContent::AssistantReasoning(ReasoningItem {
+                    item_id: ev.item_id.clone(),
+                    summary,
+                    raw,
+                    signature: ev.signature.clone(),
+                })
+            }
             SessionEventKind::ToolInvocation(ev) => {
                 SessionEventItemContent::ToolInvocation(ev.clone())
             }
@@ -565,6 +772,7 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
         SessionEventKind::AssistantMessage(AssistantMessage { preview, .. }) => {
             Some(preview.clone())
         }
+        SessionEventKind::AssistantReasoning(ev) => Some(ev.summary.preview.clone()),
         SessionEventKind::ToolInvocation(ToolInvocation { input_preview, .. }) => {
             Some(input_preview.clone())
         }
@@ -806,10 +1014,10 @@ mod tests {
         });
 
         assert_eq!(state.ephemeral.len(), 1);
-        assert_eq!(
-            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
-            Some("hello")
-        );
+        let Some(EphemeralItem::Text(item)) = state.ephemeral.get("item_1") else {
+            panic!("expected ephemeral text item");
+        };
+        assert_eq!(item.text, "hello");
 
         state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
             created_at: ts(2),
@@ -823,10 +1031,10 @@ mod tests {
             ),
         });
 
-        assert_eq!(
-            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
-            Some("hello world")
-        );
+        let Some(EphemeralItem::Text(item)) = state.ephemeral.get("item_1") else {
+            panic!("expected ephemeral text item");
+        };
+        assert_eq!(item.text, "hello world");
 
         state.apply_live_event(assistant_event(
             session_id,
@@ -858,10 +1066,10 @@ mod tests {
         });
 
         assert_eq!(state.ephemeral.len(), 1);
-        assert_eq!(
-            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
-            Some("exec_command\nhello")
-        );
+        let Some(EphemeralItem::Text(item)) = state.ephemeral.get("item_1") else {
+            panic!("expected ephemeral text item");
+        };
+        assert_eq!(item.text, "exec_command\nhello");
 
         state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
             created_at: ts(2),
@@ -876,10 +1084,10 @@ mod tests {
             ),
         });
 
-        assert_eq!(
-            state.ephemeral.get("item_1").map(|item| item.text.as_str()),
-            Some("exec_command\nhello world")
-        );
+        let Some(EphemeralItem::Text(item)) = state.ephemeral.get("item_1") else {
+            panic!("expected ephemeral text item");
+        };
+        assert_eq!(item.text, "exec_command\nhello world");
 
         state.apply_live_event(tool_result_event(
             session_id,
@@ -888,6 +1096,79 @@ mod tests {
             "item_1",
             "done",
         ));
+
+        assert!(state.ephemeral.is_empty());
+    }
+
+    #[test]
+    fn test_live_reasoning_deltas_append_ephemeral_and_clear_on_durable_reasoning() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+        state.set_at_bottom(true);
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(1),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+                redesmyn_protocol::session_live::AssistantReasoningSummaryPartAdded {
+                    summary_index: 0,
+                },
+            ),
+        });
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(2),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryDelta(
+                redesmyn_protocol::session_live::AssistantReasoningSummaryDelta {
+                    summary_index: 0,
+                    delta: "thinking".to_owned(),
+                },
+            ),
+        });
+
+        state.apply_live_session_event(redesmyn_protocol::session_live::SessionLiveEvent {
+            created_at: ts(3),
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            item_id: Some("item_1".to_owned()),
+            kind: redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningRawDelta(
+                redesmyn_protocol::session_live::AssistantReasoningRawDelta {
+                    content_index: 0,
+                    delta: "raw".to_owned(),
+                },
+            ),
+        });
+
+        let Some(EphemeralItem::Reasoning(item)) = state.ephemeral.get("item_1") else {
+            panic!("expected ephemeral reasoning item");
+        };
+        assert_eq!(item.summary, vec!["thinking".to_string()]);
+        assert_eq!(item.raw, vec!["raw".to_string()]);
+
+        state.apply_live_event(SessionEvent {
+            session_event_id: SessionEventId::new(),
+            created_at: ts(10),
+            scope: redesmyn_protocol::SessionScope::Chat,
+            session_id,
+            turn_id: Some("turn_1".to_owned()),
+            kind: SessionEventKind::AssistantReasoning(
+                redesmyn_protocol::session::AssistantReasoning {
+                    item_id: Some("item_1".to_owned()),
+                    summary: redesmyn_protocol::session::AssistantReasoningText {
+                        text: "summary".to_owned(),
+                        preview: "summary".to_owned(),
+                        full_text_artifact: None,
+                    },
+                    raw: None,
+                    signature: None,
+                },
+            ),
+        });
 
         assert!(state.ephemeral.is_empty());
     }

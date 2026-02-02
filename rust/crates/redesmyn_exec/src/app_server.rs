@@ -11,12 +11,14 @@ use redesmyn_protocol::daemon::{
     DaemonFrame, DaemonMessage, SessionEventBatch, SessionLiveEventBatch,
 };
 use redesmyn_protocol::session::{
-    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
-    SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
-    ToolResult, TurnCompleted, TurnStarted, TurnState,
+    ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
+    ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent, SessionEventKind, SessionScope,
+    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
+    TurnState,
 };
 use redesmyn_protocol::session_live::{
-    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
+    AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
+    AssistantReasoningSummaryPartAdded, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
 };
 use redesmyn_protocol::{ErrorEnvelope, ProtocolEnvelope, Timestamp};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -96,6 +98,30 @@ pub enum AppServerEvent {
         turn_id: Option<String>,
         item_id: Option<String>,
         delta: String,
+    },
+    AssistantReasoningSummaryPartAdded {
+        turn_id: Option<String>,
+        item_id: Option<String>,
+        summary_index: i64,
+    },
+    AssistantReasoningSummaryDelta {
+        turn_id: Option<String>,
+        item_id: Option<String>,
+        summary_index: i64,
+        delta: String,
+    },
+    AssistantReasoningRawDelta {
+        turn_id: Option<String>,
+        item_id: Option<String>,
+        content_index: i64,
+        delta: String,
+    },
+    AssistantReasoning {
+        turn_id: Option<String>,
+        item_id: Option<String>,
+        summary: String,
+        raw: Option<String>,
+        signature: Option<String>,
     },
     ToolOutputDelta {
         turn_id: Option<String>,
@@ -663,6 +689,70 @@ async fn run_event_forwarder(
                             try_emit_session_live_event_batch(&frames_tx, std::mem::take(&mut pending_live));
                         }
                     }
+                    AppServerEvent::AssistantReasoningSummaryPartAdded {
+                        turn_id,
+                        item_id,
+                        summary_index,
+                    } => {
+                        pending_live.push(make_reasoning_summary_part_added_live_event(
+                            session_id,
+                            turn_id,
+                            item_id,
+                            summary_index,
+                        ));
+                        if pending_live.len() >= LIVE_FLUSH_MAX_EVENTS {
+                            try_emit_session_live_event_batch(
+                                &frames_tx,
+                                std::mem::take(&mut pending_live),
+                            );
+                        }
+                    }
+                    AppServerEvent::AssistantReasoningSummaryDelta {
+                        turn_id,
+                        item_id,
+                        summary_index,
+                        delta,
+                    } => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        pending_live.push(make_reasoning_summary_delta_live_event(
+                            session_id,
+                            turn_id,
+                            item_id,
+                            summary_index,
+                            delta,
+                        ));
+                        if pending_live.len() >= LIVE_FLUSH_MAX_EVENTS {
+                            try_emit_session_live_event_batch(
+                                &frames_tx,
+                                std::mem::take(&mut pending_live),
+                            );
+                        }
+                    }
+                    AppServerEvent::AssistantReasoningRawDelta {
+                        turn_id,
+                        item_id,
+                        content_index,
+                        delta,
+                    } => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        pending_live.push(make_reasoning_raw_delta_live_event(
+                            session_id,
+                            turn_id,
+                            item_id,
+                            content_index,
+                            delta,
+                        ));
+                        if pending_live.len() >= LIVE_FLUSH_MAX_EVENTS {
+                            try_emit_session_live_event_batch(
+                                &frames_tx,
+                                std::mem::take(&mut pending_live),
+                            );
+                        }
+                    }
                     AppServerEvent::ToolOutputDelta { turn_id, tool_name, tool_call_id, delta } => {
                         if delta.is_empty() {
                             continue;
@@ -792,6 +882,105 @@ async fn emit_app_server_event(
             let event = make_assistant_delta_live_event(session_id, turn_id, item_id, delta);
             try_emit_session_live_event_batch(frames_tx, vec![event]);
             return Ok(());
+        }
+        AppServerEvent::AssistantReasoningSummaryPartAdded {
+            turn_id,
+            item_id,
+            summary_index,
+        } => {
+            let event = make_reasoning_summary_part_added_live_event(
+                session_id,
+                turn_id,
+                item_id,
+                summary_index,
+            );
+            try_emit_session_live_event_batch(frames_tx, vec![event]);
+            return Ok(());
+        }
+        AppServerEvent::AssistantReasoningSummaryDelta {
+            turn_id,
+            item_id,
+            summary_index,
+            delta,
+        } => {
+            let event = make_reasoning_summary_delta_live_event(
+                session_id,
+                turn_id,
+                item_id,
+                summary_index,
+                delta,
+            );
+            try_emit_session_live_event_batch(frames_tx, vec![event]);
+            return Ok(());
+        }
+        AppServerEvent::AssistantReasoningRawDelta {
+            turn_id,
+            item_id,
+            content_index,
+            delta,
+        } => {
+            let event = make_reasoning_raw_delta_live_event(
+                session_id,
+                turn_id,
+                item_id,
+                content_index,
+                delta,
+            );
+            try_emit_session_live_event_batch(frames_tx, vec![event]);
+            return Ok(());
+        }
+        AppServerEvent::AssistantReasoning {
+            turn_id,
+            item_id,
+            summary,
+            raw,
+            signature,
+        } => {
+            let mut summary = AssistantReasoningText {
+                text: summary,
+                preview: String::new(),
+                full_text_artifact: None,
+            };
+            limit_message_event(
+                artifact_store,
+                config.max_message_chars,
+                config.max_preview_chars,
+                &mut summary.text,
+                &mut summary.preview,
+                &mut summary.full_text_artifact,
+            )
+            .await?;
+
+            let raw = match raw {
+                Some(raw) if !raw.trim().is_empty() => {
+                    let mut raw = AssistantReasoningText {
+                        text: raw,
+                        preview: String::new(),
+                        full_text_artifact: None,
+                    };
+                    limit_message_event(
+                        artifact_store,
+                        config.max_message_chars,
+                        config.max_preview_chars,
+                        &mut raw.text,
+                        &mut raw.preview,
+                        &mut raw.full_text_artifact,
+                    )
+                    .await?;
+                    Some(raw)
+                }
+                _ => None,
+            };
+
+            (
+                turn_id,
+                SessionEventKind::AssistantReasoning(AssistantReasoning {
+                    item_id,
+                    summary,
+                    raw,
+                    signature,
+                }),
+            )
         }
         AppServerEvent::ToolOutputDelta {
             turn_id,
@@ -968,6 +1157,63 @@ fn make_assistant_delta_live_event(
         turn_id,
         item_id,
         kind: SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta { delta }),
+    }
+}
+
+fn make_reasoning_summary_part_added_live_event(
+    session_id: SessionId,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    summary_index: i64,
+) -> SessionLiveEvent {
+    SessionLiveEvent {
+        created_at: Timestamp::now_utc(),
+        session_id,
+        turn_id,
+        item_id,
+        kind: SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+            AssistantReasoningSummaryPartAdded { summary_index },
+        ),
+    }
+}
+
+fn make_reasoning_summary_delta_live_event(
+    session_id: SessionId,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    summary_index: i64,
+    delta: String,
+) -> SessionLiveEvent {
+    SessionLiveEvent {
+        created_at: Timestamp::now_utc(),
+        session_id,
+        turn_id,
+        item_id,
+        kind: SessionLiveEventKind::AssistantReasoningSummaryDelta(
+            AssistantReasoningSummaryDelta {
+                summary_index,
+                delta,
+            },
+        ),
+    }
+}
+
+fn make_reasoning_raw_delta_live_event(
+    session_id: SessionId,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    content_index: i64,
+    delta: String,
+) -> SessionLiveEvent {
+    SessionLiveEvent {
+        created_at: Timestamp::now_utc(),
+        session_id,
+        turn_id,
+        item_id,
+        kind: SessionLiveEventKind::AssistantReasoningRawDelta(AssistantReasoningRawDelta {
+            content_index,
+            delta,
+        }),
     }
 }
 

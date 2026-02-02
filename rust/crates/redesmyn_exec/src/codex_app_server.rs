@@ -399,14 +399,13 @@ impl CodexAppServerClient {
                 reason: format!("thread/start failed: {err}"),
             })?;
 
-        let thread_id = parse_thread_id_from_result(&result).ok_or_else(|| {
-            AppServerRequestError::Failed {
+        let thread_id =
+            parse_thread_id_from_result(&result).ok_or_else(|| AppServerRequestError::Failed {
                 reason: format!(
                     "thread/start response missing thread id: {}",
                     result.to_string()
                 ),
-            }
-        })?;
+            })?;
         self.state.set_session_id(thread_id).await;
         Ok(())
     }
@@ -444,11 +443,13 @@ impl CodexAppServerClient {
         let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.turn_start");
         let _guard = span.enter();
 
-        let thread_id = self.state.session_id().await.ok_or_else(|| {
-            AppServerRequestError::Failed {
-                reason: "missing active codex thread id".to_owned(),
-            }
-        })?;
+        let thread_id =
+            self.state
+                .session_id()
+                .await
+                .ok_or_else(|| AppServerRequestError::Failed {
+                    reason: "missing active codex thread id".to_owned(),
+                })?;
 
         let params = TurnStartParams {
             thread_id,
@@ -899,15 +900,16 @@ async fn handle_server_request(
             }
         }
         "item/commandExecution/requestApproval" => {
-            let params: CommandExecutionRequestApprovalParams =
-                match serde_json::from_value(params.clone()) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        tracing::warn!(error = %err, "invalid item/commandExecution/requestApproval params");
-                        conn.respond_error(id, -32602, "invalid params").await;
-                        return;
-                    }
-                };
+            let params: CommandExecutionRequestApprovalParams = match serde_json::from_value(
+                params.clone(),
+            ) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/commandExecution/requestApproval params");
+                    conn.respond_error(id, -32602, "invalid params").await;
+                    return;
+                }
+            };
 
             let tool_call_id = params.item_id.clone();
             let _ = events_tx
@@ -930,8 +932,9 @@ async fn handle_server_request(
                 .await;
         }
         "item/fileChange/requestApproval" => {
-            let params: FileChangeRequestApprovalParams = match serde_json::from_value(params.clone())
-            {
+            let params: FileChangeRequestApprovalParams = match serde_json::from_value(
+                params.clone(),
+            ) {
                 Ok(v) => v,
                 Err(err) => {
                     tracing::warn!(error = %err, "invalid item/fileChange/requestApproval params");
@@ -1048,6 +1051,13 @@ enum ThreadItem {
         #[serde(default)]
         text: String,
     },
+    Reasoning {
+        id: String,
+        #[serde(default)]
+        summary: Vec<String>,
+        #[serde(default)]
+        content: Vec<String>,
+    },
     CommandExecution {
         id: String,
         command: String,
@@ -1105,6 +1115,47 @@ struct AgentMessageDeltaParams {
     #[serde(rename = "itemId")]
     item_id: String,
     delta: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReasoningSummaryPartAddedParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    #[serde(rename = "summaryIndex")]
+    summary_index: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReasoningSummaryTextDeltaParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    delta: String,
+    #[serde(rename = "summaryIndex")]
+    summary_index: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReasoningTextDeltaParams {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    #[serde(rename = "turnId")]
+    turn_id: String,
+    #[serde(rename = "itemId")]
+    item_id: String,
+    delta: String,
+    #[serde(rename = "contentIndex")]
+    content_index: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1195,6 +1246,44 @@ async fn handle_notification(
                 }
             };
             handle_agent_message_delta(state, events_tx, params).await;
+        }
+        "item/reasoning/summaryPartAdded" => {
+            let params: ReasoningSummaryPartAddedParams =
+                match serde_json::from_value(params.clone()) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            "invalid item/reasoning/summaryPartAdded params"
+                        );
+                        return;
+                    }
+                };
+            handle_reasoning_summary_part_added(state, events_tx, params).await;
+        }
+        "item/reasoning/summaryTextDelta" => {
+            let params: ReasoningSummaryTextDeltaParams =
+                match serde_json::from_value(params.clone()) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            "invalid item/reasoning/summaryTextDelta params"
+                        );
+                        return;
+                    }
+                };
+            handle_reasoning_summary_text_delta(state, events_tx, params).await;
+        }
+        "item/reasoning/textDelta" => {
+            let params: ReasoningTextDeltaParams = match serde_json::from_value(params.clone()) {
+                Ok(v) => v,
+                Err(err) => {
+                    tracing::warn!(error = %err, "invalid item/reasoning/textDelta params");
+                    return;
+                }
+            };
+            handle_reasoning_text_delta(state, events_tx, params).await;
         }
         "item/commandExecution/outputDelta" => {
             let params: ItemOutputDeltaParams = match serde_json::from_value(params.clone()) {
@@ -1312,6 +1401,97 @@ async fn handle_agent_message_delta(
         .await;
 }
 
+async fn handle_reasoning_summary_part_added(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: ReasoningSummaryPartAddedParams,
+) {
+    {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn_id.clone());
+    }
+
+    let _ = events_tx
+        .send(AppServerEvent::AssistantReasoningSummaryPartAdded {
+            turn_id: Some(params.turn_id),
+            item_id: Some(params.item_id),
+            summary_index: params.summary_index,
+        })
+        .await;
+}
+
+async fn handle_reasoning_summary_text_delta(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: ReasoningSummaryTextDeltaParams,
+) {
+    if params.delta.is_empty() {
+        return;
+    }
+
+    {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn_id.clone());
+    }
+
+    let _ = events_tx
+        .send(AppServerEvent::AssistantReasoningSummaryDelta {
+            turn_id: Some(params.turn_id),
+            item_id: Some(params.item_id),
+            summary_index: params.summary_index,
+            delta: params.delta,
+        })
+        .await;
+}
+
+async fn handle_reasoning_text_delta(
+    state: &Arc<CodexAppServerState>,
+    events_tx: &mpsc::Sender<AppServerEvent>,
+    params: ReasoningTextDeltaParams,
+) {
+    if params.delta.is_empty() {
+        return;
+    }
+
+    {
+        let mut inner = state.inner.lock().await;
+        match inner.session_id.as_deref() {
+            Some(session_id) if session_id != params.thread_id => return,
+            None => {
+                inner.session_id = Some(params.thread_id.clone());
+            }
+            Some(_) => {}
+        }
+
+        inner.active_turn_id = Some(params.turn_id.clone());
+    }
+
+    let _ = events_tx
+        .send(AppServerEvent::AssistantReasoningRawDelta {
+            turn_id: Some(params.turn_id),
+            item_id: Some(params.item_id),
+            content_index: params.content_index,
+            delta: params.delta,
+        })
+        .await;
+}
+
 async fn handle_tool_output_delta(
     state: &Arc<CodexAppServerState>,
     events_tx: &mpsc::Sender<AppServerEvent>,
@@ -1362,21 +1542,22 @@ async fn handle_item_started(
 
         inner.active_turn_id = Some(params.turn_id.clone());
 
-        let turn_started = inner.emitted_turn_starts.insert(params.turn_id.clone()).then(|| {
-            AppServerEvent::TurnStarted {
+        let turn_started = inner
+            .emitted_turn_starts
+            .insert(params.turn_id.clone())
+            .then(|| AppServerEvent::TurnStarted {
                 turn_id: Some(params.turn_id.clone()),
                 external_session_ref: Some(ExternalSessionRef::CodexThread {
                     thread_id: params.thread_id.clone(),
                     turn_id: Some(params.turn_id.clone()),
                 }),
-            }
-        });
+            });
 
         let tool_invocation = match &params.item {
-            ThreadItem::CommandExecution { id, command, cwd, .. } => inner
-                .emitted_item_starts
-                .insert(id.clone())
-                .then(|| AppServerEvent::ToolInvocation {
+            ThreadItem::CommandExecution {
+                id, command, cwd, ..
+            } => inner.emitted_item_starts.insert(id.clone()).then(|| {
+                AppServerEvent::ToolInvocation {
                     tool_name: "exec_command".to_owned(),
                     tool_call_id: Some(id.clone()),
                     input: serde_json::json!({
@@ -1384,7 +1565,8 @@ async fn handle_item_started(
                         "cwd": cwd,
                     })
                     .to_string(),
-                }),
+                }
+            }),
             ThreadItem::FileChange { id, changes, .. } => inner
                 .emitted_item_starts
                 .insert(id.clone())
@@ -1440,6 +1622,51 @@ async fn handle_item_completed(
                 .send(AppServerEvent::AssistantMessage { text })
                 .await;
         }
+        ThreadItem::Reasoning {
+            id,
+            summary,
+            content,
+        } => {
+            let summary_text = summary
+                .into_iter()
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let raw_text = content
+                .into_iter()
+                .filter(|line| !line.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            if summary_text.trim().is_empty() && raw_text.trim().is_empty() {
+                return;
+            }
+
+            {
+                let mut inner = state.inner.lock().await;
+                match inner.session_id.as_deref() {
+                    Some(session_id) if session_id != params.thread_id => return,
+                    None => {
+                        inner.session_id = Some(params.thread_id.clone());
+                    }
+                    Some(_) => {}
+                }
+
+                if !inner.emitted_item_ids.insert(id.clone()) {
+                    return;
+                }
+            }
+
+            let _ = events_tx
+                .send(AppServerEvent::AssistantReasoning {
+                    turn_id: Some(params.turn_id),
+                    item_id: Some(id),
+                    summary: summary_text,
+                    raw: (!raw_text.trim().is_empty()).then_some(raw_text),
+                    signature: None,
+                })
+                .await;
+        }
         ThreadItem::CommandExecution {
             id,
             status,
@@ -1482,7 +1709,11 @@ async fn handle_item_completed(
                 })
                 .await;
         }
-        ThreadItem::FileChange { id, status, changes } => {
+        ThreadItem::FileChange {
+            id,
+            status,
+            changes,
+        } => {
             {
                 let mut inner = state.inner.lock().await;
                 match inner.session_id.as_deref() {

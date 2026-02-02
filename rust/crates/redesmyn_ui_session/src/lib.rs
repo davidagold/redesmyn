@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
     ListOffset, ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, div, list,
-    px,
+    px, relative,
 };
 
 use gpui::prelude::*;
@@ -382,11 +382,14 @@ pub struct SessionView {
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
+    reasoning_shimmer_phase: u8,
+    reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
+    expanded_reasoning: HashSet<String>,
     expanded_tool_events: HashSet<SessionEventId>,
     expanded_tool_groups: HashSet<SessionEventId>,
     tool_group_transitions: Rc<HashMap<SessionEventId, ToolGroupTransition>>,
@@ -472,11 +475,14 @@ impl SessionView {
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
+            reasoning_shimmer_phase: 0,
+            reasoning_shimmer_task: None,
             show_debug_controls,
             session_id_input,
             composer_input,
             pending_focus_composer: false,
             feed: None,
+            expanded_reasoning: HashSet::new(),
             expanded_tool_events: HashSet::new(),
             expanded_tool_groups: HashSet::new(),
             tool_group_transitions: Rc::new(HashMap::new()),
@@ -513,6 +519,7 @@ impl SessionView {
             self.load_older_task = None;
             self.error = None;
             self.feed = None;
+            self.expanded_reasoning.clear();
             self.expanded_tool_events.clear();
             self.expanded_tool_groups.clear();
             self.tool_group_transitions = Rc::new(HashMap::new());
@@ -525,6 +532,8 @@ impl SessionView {
             self.set_timeline_items(Vec::new());
             self.timeline_list_reset_scheduled = false;
             self.timeline_autoload_scheduled = false;
+            self.reasoning_shimmer_phase = 0;
+            self.reasoning_shimmer_task = None;
             self.pending_focus_composer = false;
             self.composer_input
                 .update(cx, |input, cx| input.set_text("", cx));
@@ -1020,6 +1029,16 @@ impl SessionView {
         cx.notify();
     }
 
+    fn toggle_reasoning(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.expanded_reasoning.contains(key) {
+            self.expanded_reasoning.remove(key);
+        } else {
+            self.expanded_reasoning.insert(key.to_owned());
+        }
+        self.invalidate_reasoning_item(key);
+        cx.notify();
+    }
+
     fn toggle_tool_group(&mut self, group_id: SessionEventId, cx: &mut Context<Self>) {
         let was_expanded = self.expanded_tool_groups.contains(&group_id);
         if was_expanded {
@@ -1282,6 +1301,60 @@ impl SessionView {
         self.set_timeline_items(items);
     }
 
+    fn ensure_reasoning_shimmer_task(&mut self, cx: &mut Context<Self>) {
+        if self.reasoning_shimmer_task.is_some() {
+            return;
+        }
+
+        let interval = ui_test_mode_animation_duration(Duration::from_millis(90));
+        if interval == Duration::from_millis(0) {
+            return;
+        }
+
+        self.reasoning_shimmer_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    loop {
+                        gpui::Timer::after(interval).await;
+                        let Some(view) = weak.upgrade() else {
+                            break;
+                        };
+                        match cx.update(|cx| {
+                            view.update(cx, |this, cx| {
+                                let has_ephemeral_reasoning =
+                                    this.timeline_items.iter().any(|item| {
+                                        matches!(item, SessionTimelineItem::EphemeralReasoning(_))
+                                    });
+
+                                if !has_ephemeral_reasoning {
+                                    this.reasoning_shimmer_phase = 0;
+                                    this.reasoning_shimmer_task = None;
+                                    cx.notify();
+                                    return false;
+                                }
+
+                                this.reasoning_shimmer_phase =
+                                    this.reasoning_shimmer_phase.wrapping_add(1);
+                                cx.notify();
+                                true
+                            })
+                        }) {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }));
+    }
+
+    fn reasoning_shimmer_alpha(&self) -> f32 {
+        let t = (self.reasoning_shimmer_phase as f32) * 0.18;
+        let pulse = (t.sin() * 0.5) + 0.5;
+        (0.35 + 0.65 * pulse).clamp(0.0, 1.0)
+    }
+
     fn invalidate_timeline_item(&mut self, session_event_id: SessionEventId) {
         if let Some(ix) = self.timeline_items.iter().position(|item| {
             matches!(
@@ -1291,6 +1364,27 @@ impl SessionView {
         }) {
             self.timeline_list_state.splice(ix..ix + 1, 1);
         }
+    }
+
+    fn invalidate_reasoning_item(&mut self, key: &str) {
+        let Some(ix) = self.timeline_items.iter().position(|item| match item {
+            SessionTimelineItem::Event(ev) => match &ev.content {
+                SessionEventItemContent::AssistantReasoning(reasoning) => {
+                    if let Some(item_id) = reasoning.item_id.as_deref() {
+                        item_id == key
+                    } else {
+                        ev.session_event_id.to_string() == key
+                    }
+                }
+                _ => false,
+            },
+            SessionTimelineItem::EphemeralReasoning(item) => item.key == key,
+            _ => false,
+        }) else {
+            return;
+        };
+
+        self.timeline_list_state.splice(ix..ix + 1, 1);
     }
 
     fn invalidate_tool_group(&mut self, group_id: SessionEventId) {
@@ -1408,6 +1502,14 @@ impl Render for SessionView {
             self.timeline_viewport_width = Some(viewport_width);
         }
 
+        if self
+            .timeline_items
+            .iter()
+            .any(|item| matches!(item, SessionTimelineItem::EphemeralReasoning(_)))
+        {
+            self.ensure_reasoning_shimmer_task(cx);
+        }
+
         // Note: do not call `ListState` methods from within the scroll handler (it runs while the
         // list state is mutably borrowed). We instead evaluate autoloading here during render.
         self.maybe_autoload_older(cx);
@@ -1467,6 +1569,8 @@ impl Render for SessionView {
         let markdown_cache = Rc::clone(&self.markdown_cache);
         let expanded_tool_events = self.expanded_tool_events.clone();
         let expanded_tool_groups = self.expanded_tool_groups.clone();
+        let expanded_reasoning = self.expanded_reasoning.clone();
+        let reasoning_shimmer_alpha = self.reasoning_shimmer_alpha();
         let exec_command_results = Rc::clone(&self.exec_command_result_by_invocation);
         let grouped_exec_command_result_ids =
             Rc::clone(&self.grouped_exec_command_result_event_ids);
@@ -1532,6 +1636,118 @@ impl Render for SessionView {
                         .opacity(0.75)
                         .child(item.text),
                 ),
+                SessionTimelineItem::EphemeralReasoning(item) => {
+                    let key = item.key.clone();
+                    let show_raw = expanded_reasoning.contains(&key);
+                    let chevron = if show_raw { "▾" } else { "▸" };
+                    let summary_text = (!item.summary.is_empty()).then(|| item.summary.join("\n"));
+                    let raw_text = if show_raw && !item.raw.is_empty() {
+                        Some(item.raw.join("\n"))
+                    } else {
+                        None
+                    };
+
+                    let toggle_view = timeline_view.clone();
+                    let mut container = div()
+                        .id(("session_item_ephemeral_reasoning", ix))
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(theme.spacing.sm)
+                        .px(theme.spacing.sm)
+                        .py(theme.spacing.sm)
+                        .rounded_md()
+                        .bg(theme.colors.surface_elevated.opacity(0.18));
+
+                    container = container.child(
+                        div()
+                            .id(("session_item_ephemeral_reasoning_header", ix))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.sm)
+                            .cursor_pointer()
+                            .focusable()
+                            .on_click(move |event, _window, cx| {
+                                if event.standard_click() {
+                                    toggle_view.update(cx, |this, cx| {
+                                        this.toggle_reasoning(&key, cx);
+                                    });
+                                }
+                            })
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .font(theme.typography.mono.font.clone())
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(chevron),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(
+                                        theme
+                                            .colors
+                                            .foreground_muted
+                                            .opacity(reasoning_shimmer_alpha),
+                                    )
+                                    .child("Thinking"),
+                            ),
+                    );
+
+                    container = container.child(
+                        div()
+                            .id(("session_item_ephemeral_reasoning_summary", ix))
+                            .max_h(px(160.0))
+                            .overflow_y_scroll()
+                            .block_mouse_except_scroll()
+                            .child(if let Some(summary_text) = summary_text {
+                                div()
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground)
+                                    .child(summary_text)
+                                    .into_any_element()
+                            } else {
+                                let bar_color = theme
+                                    .colors
+                                    .foreground_muted
+                                    .opacity((0.12 + 0.12 * reasoning_shimmer_alpha).clamp(0.0, 1.0));
+                                let line_height = px(10.0);
+
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(theme.spacing.xs)
+                                    .child(div().h(line_height).w(relative(0.92)).rounded_sm().bg(bar_color))
+                                    .child(div().h(line_height).w(relative(0.78)).rounded_sm().bg(bar_color))
+                                    .child(div().h(line_height).w(relative(0.64)).rounded_sm().bg(bar_color))
+                                    .into_any_element()
+                            }),
+                    );
+
+                    if let Some(raw_text) = raw_text {
+                        container = container.child(
+                            div()
+                                .h(px(1.0))
+                                .bg(theme.colors.border.opacity(0.2)),
+                        );
+                        container = container.child(
+                            div()
+                                .id(("session_item_ephemeral_reasoning_raw", ix))
+                                .max_h(px(200.0))
+                                .overflow_y_scroll()
+                                .block_mouse_except_scroll()
+                                .font(theme.typography.mono.font.clone())
+                                .text_size(theme.typography.caption.size)
+                                .text_color(theme.colors.foreground)
+                                .child(raw_text),
+                        );
+                    }
+
+                    list.child(container)
+                }
                 SessionTimelineItem::Event(item) => {
                     let session_event_id = item.session_event_id;
                     let event_key = session_event_id_key(item.session_event_id);
@@ -1613,6 +1829,115 @@ impl Render for SessionView {
                     };
 
                     match item.content {
+                        SessionEventItemContent::AssistantReasoning(reasoning) => {
+                            let key = reasoning
+                                .item_id
+                                .clone()
+                                .unwrap_or_else(|| session_event_id.to_string());
+                            let show_raw = expanded_reasoning.contains(&key);
+                            let chevron = if show_raw { "▾" } else { "▸" };
+
+                            let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
+                            let summary_doc = cached.unwrap_or_else(|| {
+                                let doc = Arc::new(parse_markdown(
+                                    reasoning.summary.text.as_str(),
+                                    MarkdownParseOptions::default(),
+                                ));
+                                markdown_cache
+                                    .borrow_mut()
+                                    .insert(session_event_id, doc.clone());
+                                doc
+                            });
+
+                            let show_truncation_notice =
+                                reasoning.summary.full_text_artifact.is_none();
+
+                            let toggle_view = timeline_view.clone();
+                            let mut container = div()
+                                .id(bubble_id.clone())
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(theme.spacing.sm)
+                                .px(theme.spacing.sm)
+                                .py(theme.spacing.sm)
+                                .rounded_md()
+                                .bg(theme.colors.surface_elevated.opacity(0.18));
+
+                            container = container.child(
+                                div()
+                                    .id((bubble_id.clone(), "reasoning_header"))
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(theme.spacing.sm)
+                                    .cursor_pointer()
+                                    .focusable()
+                                    .on_click(move |event, _window, cx| {
+                                        if event.standard_click() {
+                                            toggle_view.update(cx, |this, cx| {
+                                                this.toggle_reasoning(&key, cx);
+                                            });
+                                        }
+                                    })
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .font(theme.typography.mono.font.clone())
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground_muted)
+                                            .child(chevron),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground_muted)
+                                            .child("Thought"),
+                                    ),
+                            );
+
+                            container = container.child(
+                                div()
+                                    .id((bubble_id.clone(), "reasoning_summary_scroll"))
+                                    .max_h(px(180.0))
+                                    .overflow_y_scroll()
+                                    .block_mouse_except_scroll()
+                                    .child(
+                                        MarkdownView::new(
+                                            (bubble_id.clone(), "reasoning_summary"),
+                                            summary_doc,
+                                        )
+                                        .show_truncation_notice(show_truncation_notice)
+                                        .text_size(theme.typography.caption.size)
+                                        .into_any_element(),
+                                    ),
+                            );
+
+                            if show_raw
+                                && let Some(raw) = reasoning.raw
+                            {
+                                container = container.child(
+                                    div()
+                                        .h(px(1.0))
+                                        .bg(theme.colors.border.opacity(0.2)),
+                                );
+
+                                container = container.child(
+                                    div()
+                                        .id((bubble_id.clone(), "reasoning_raw_scroll"))
+                                        .max_h(px(240.0))
+                                        .overflow_y_scroll()
+                                        .block_mouse_except_scroll()
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground)
+                                        .child(raw.text),
+                                );
+                            }
+
+                            list.child(container)
+                        }
                         redesmyn_session_view_model::SessionEventItemContent::UserMessage(msg)
                         | redesmyn_session_view_model::SessionEventItemContent::AssistantMessage(
                             msg,

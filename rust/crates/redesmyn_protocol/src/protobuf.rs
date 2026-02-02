@@ -9,17 +9,20 @@ use crate::artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 use crate::daemon::{
     AgentEvent, CommandDispatch, CommandProgress, CommandState, CommandUpdate,
     ControlPlaneHelloAck, DaemonFrame, DaemonHeartbeat, DaemonMessage, GitEvent, MergeRunEvent,
-    RepoAttach, RepoDetach, ResyncRequest, SessionEventBatch, SessionLiveEventBatch, TelemetryEvent,
-    TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot, UnknownEvent, WorktreeEvent,
+    RepoAttach, RepoDetach, ResyncRequest, SessionEventBatch, SessionLiveEventBatch,
+    TelemetryEvent, TelemetryEventBatch, TelemetryFreshness, TelemetrySnapshot, UnknownEvent,
+    WorktreeEvent,
 };
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
-    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEvent,
-    SessionEventKind, SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
-    TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+    ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
+    ExternalSessionRef, InterfaceMode, SessionEvent, SessionEventKind, SessionScope, StatusUpdate,
+    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
+    UserMessage,
 };
 use crate::session_live::{
-    AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
+    AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
+    AssistantReasoningSummaryPartAdded, SessionLiveEvent, SessionLiveEventKind, ToolOutputDelta,
     UnknownSessionLiveEvent,
 };
 use crate::{
@@ -778,7 +781,11 @@ impl SessionLiveEventBatch {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::SessionLiveEventBatch {
         pbv1::SessionLiveEventBatch {
-            events: self.events.iter().map(SessionLiveEvent::to_protobuf).collect(),
+            events: self
+                .events
+                .iter()
+                .map(SessionLiveEvent::to_protobuf)
+                .collect(),
         }
     }
 
@@ -1245,6 +1252,57 @@ impl AssistantMessage {
     }
 }
 
+impl AssistantReasoningText {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantReasoningText {
+        pbv1::AssistantReasoningText {
+            text: self.text.clone(),
+            preview: self.preview.clone(),
+            full_text_artifact: self
+                .full_text_artifact
+                .as_ref()
+                .map(ArtifactRef::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::AssistantReasoningText) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            text: proto.text,
+            preview: proto.preview,
+            full_text_artifact: proto
+                .full_text_artifact
+                .map(ArtifactRef::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl AssistantReasoning {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantReasoning {
+        pbv1::AssistantReasoning {
+            item_id: normalize_optional_string(self.item_id.clone()),
+            summary: Some(self.summary.to_protobuf()),
+            raw: self.raw.as_ref().map(AssistantReasoningText::to_protobuf),
+            signature: normalize_optional_string(self.signature.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::AssistantReasoning) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            item_id: normalize_optional_string(proto.item_id),
+            summary: AssistantReasoningText::try_from_protobuf(
+                proto.summary.ok_or_else(|| missing_required("summary"))?,
+            )?,
+            raw: proto
+                .raw
+                .map(AssistantReasoningText::try_from_protobuf)
+                .transpose()?,
+            signature: normalize_optional_string(proto.signature),
+        })
+    }
+}
+
 impl ToolInvocation {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ToolInvocation {
@@ -1394,6 +1452,61 @@ impl AssistantMessageDelta {
     }
 }
 
+impl AssistantReasoningSummaryPartAdded {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantReasoningSummaryPartAdded {
+        pbv1::AssistantReasoningSummaryPartAdded {
+            summary_index: self.summary_index,
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::AssistantReasoningSummaryPartAdded,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            summary_index: proto.summary_index,
+        })
+    }
+}
+
+impl AssistantReasoningSummaryDelta {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantReasoningSummaryDelta {
+        pbv1::AssistantReasoningSummaryDelta {
+            summary_index: self.summary_index,
+            delta: self.delta.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::AssistantReasoningSummaryDelta,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            summary_index: proto.summary_index,
+            delta: proto.delta,
+        })
+    }
+}
+
+impl AssistantReasoningRawDelta {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::AssistantReasoningRawDelta {
+        pbv1::AssistantReasoningRawDelta {
+            content_index: self.content_index,
+            delta: self.delta.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::AssistantReasoningRawDelta,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            content_index: proto.content_index,
+            delta: proto.delta,
+        })
+    }
+}
+
 impl ToolOutputDelta {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ToolOutputDelta {
@@ -1423,6 +1536,17 @@ impl SessionLiveEvent {
                 SessionLiveEventKind::AssistantMessageDelta(ev) => {
                     pbv1::session_live_event::Kind::AssistantMessageDelta(ev.to_protobuf())
                 }
+                SessionLiveEventKind::AssistantReasoningSummaryPartAdded(ev) => {
+                    pbv1::session_live_event::Kind::AssistantReasoningSummaryPartAdded(
+                        ev.to_protobuf(),
+                    )
+                }
+                SessionLiveEventKind::AssistantReasoningSummaryDelta(ev) => {
+                    pbv1::session_live_event::Kind::AssistantReasoningSummaryDelta(ev.to_protobuf())
+                }
+                SessionLiveEventKind::AssistantReasoningRawDelta(ev) => {
+                    pbv1::session_live_event::Kind::AssistantReasoningRawDelta(ev.to_protobuf())
+                }
                 SessionLiveEventKind::ToolOutputDelta(ev) => {
                     pbv1::session_live_event::Kind::ToolOutputDelta(ev.to_protobuf())
                 }
@@ -1436,9 +1560,24 @@ impl SessionLiveEvent {
     pub fn try_from_protobuf(proto: pbv1::SessionLiveEvent) -> Result<Self, ErrorEnvelope> {
         let kind = match proto.kind {
             Some(pbv1::session_live_event::Kind::AssistantMessageDelta(ev)) => {
-                SessionLiveEventKind::AssistantMessageDelta(AssistantMessageDelta::try_from_protobuf(
-                    ev,
-                )?)
+                SessionLiveEventKind::AssistantMessageDelta(
+                    AssistantMessageDelta::try_from_protobuf(ev)?,
+                )
+            }
+            Some(pbv1::session_live_event::Kind::AssistantReasoningSummaryPartAdded(ev)) => {
+                SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+                    AssistantReasoningSummaryPartAdded::try_from_protobuf(ev)?,
+                )
+            }
+            Some(pbv1::session_live_event::Kind::AssistantReasoningSummaryDelta(ev)) => {
+                SessionLiveEventKind::AssistantReasoningSummaryDelta(
+                    AssistantReasoningSummaryDelta::try_from_protobuf(ev)?,
+                )
+            }
+            Some(pbv1::session_live_event::Kind::AssistantReasoningRawDelta(ev)) => {
+                SessionLiveEventKind::AssistantReasoningRawDelta(
+                    AssistantReasoningRawDelta::try_from_protobuf(ev)?,
+                )
             }
             Some(pbv1::session_live_event::Kind::ToolOutputDelta(ev)) => {
                 SessionLiveEventKind::ToolOutputDelta(ToolOutputDelta::try_from_protobuf(ev)?)
@@ -1490,6 +1629,9 @@ impl SessionEvent {
                 SessionEventKind::AssistantMessage(ev) => {
                     pbv1::session_event::Kind::AssistantMessage(ev.to_protobuf())
                 }
+                SessionEventKind::AssistantReasoning(ev) => {
+                    pbv1::session_event::Kind::AssistantReasoning(ev.to_protobuf())
+                }
                 SessionEventKind::ToolInvocation(ev) => {
                     pbv1::session_event::Kind::ToolInvocation(ev.to_protobuf())
                 }
@@ -1528,6 +1670,9 @@ impl SessionEvent {
             }
             Some(pbv1::session_event::Kind::AssistantMessage(ev)) => {
                 SessionEventKind::AssistantMessage(AssistantMessage::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::AssistantReasoning(ev)) => {
+                SessionEventKind::AssistantReasoning(AssistantReasoning::try_from_protobuf(ev)?)
             }
             Some(pbv1::session_event::Kind::ToolInvocation(ev)) => {
                 SessionEventKind::ToolInvocation(ToolInvocation::try_from_protobuf(ev)?)
@@ -2340,6 +2485,9 @@ fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter
         crate::client::SessionEventKindFilter::AssistantMessage => {
             pbv1::SessionEventKindFilter::AssistantMessage as i32
         }
+        crate::client::SessionEventKindFilter::AssistantReasoning => {
+            pbv1::SessionEventKindFilter::AssistantReasoning as i32
+        }
         crate::client::SessionEventKindFilter::ToolInvocation => {
             pbv1::SessionEventKindFilter::ToolInvocation as i32
         }
@@ -2377,6 +2525,9 @@ fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKi
         }
         Ok(pbv1::SessionEventKindFilter::AssistantMessage) => {
             crate::client::SessionEventKindFilter::AssistantMessage
+        }
+        Ok(pbv1::SessionEventKindFilter::AssistantReasoning) => {
+            crate::client::SessionEventKindFilter::AssistantReasoning
         }
         Ok(pbv1::SessionEventKindFilter::ToolInvocation) => {
             crate::client::SessionEventKindFilter::ToolInvocation
@@ -3508,7 +3659,10 @@ impl crate::client::SendSessionMessageResponse {
         pbv1::SendSessionMessageResponse {
             event: Some(self.event.to_protobuf()),
             session_id: self.session_id.to_bytes().to_vec(),
-            command: self.command.as_ref().map(crate::client::CommandSummary::to_protobuf),
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
         }
     }
 
@@ -4090,9 +4244,11 @@ impl crate::client::Event {
             pbv1::event::Event::SessionEvent(ev) => {
                 crate::client::SubscriptionEvent::SessionEvent(SessionEvent::try_from_protobuf(ev)?)
             }
-            pbv1::event::Event::SessionLiveEvent(ev) => crate::client::SubscriptionEvent::SessionLiveEvent(
-                SessionLiveEvent::try_from_protobuf(ev)?,
-            ),
+            pbv1::event::Event::SessionLiveEvent(ev) => {
+                crate::client::SubscriptionEvent::SessionLiveEvent(
+                    SessionLiveEvent::try_from_protobuf(ev)?,
+                )
+            }
             pbv1::event::Event::Error(err) => {
                 crate::client::SubscriptionEvent::Error(ErrorEnvelope::from_protobuf(err))
             }

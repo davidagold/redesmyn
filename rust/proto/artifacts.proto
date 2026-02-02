@@ -136,6 +136,7 @@ message SessionEvent {
     ToolResult tool_result = 17;
     StatusUpdate status_update = 18;
     ArtifactEmitted artifact_emitted = 19;
+    AssistantReasoning assistant_reasoning = 20;
     UnknownSessionEvent unknown = 100;
   }
 }
@@ -172,6 +173,26 @@ message AssistantMessage {
   ArtifactRef full_text_artifact = 3;
 }
 
+// Assistant reasoning is bounded; use artifacts for large content.
+message AssistantReasoningText {
+  string text = 1;
+  string preview = 2;
+  ArtifactRef full_text_artifact = 3;
+}
+
+// Structured assistant reasoning (summary + optional raw content).
+message AssistantReasoning {
+  // Provider-scoped item identifier (e.g. Codex app-server item id) used to correlate streaming
+  // deltas with the durable event.
+  optional string item_id = 1;
+  // A short, user-facing summary of reasoning (bounded).
+  AssistantReasoningText summary = 2;
+  // Optional provider raw reasoning content (bounded).
+  AssistantReasoningText raw = 3;
+  // Provider-specific signature/attestation (optional).
+  optional string signature = 4;
+}
+
 // Tool invocation parameters are bounded; use artifacts for large inputs.
 message ToolInvocation {
   string tool_name = 1;
@@ -197,12 +218,29 @@ message SessionLiveEvent {
   oneof kind {
     AssistantMessageDelta assistant_message_delta = 10;
     ToolOutputDelta tool_output_delta = 11;
+    AssistantReasoningSummaryPartAdded assistant_reasoning_summary_part_added = 12;
+    AssistantReasoningSummaryDelta assistant_reasoning_summary_delta = 13;
+    AssistantReasoningRawDelta assistant_reasoning_raw_delta = 14;
     UnknownSessionLiveEvent unknown = 100;
   }
 }
 
 message AssistantMessageDelta {
   string delta = 1;
+}
+
+message AssistantReasoningSummaryPartAdded {
+  int64 summary_index = 1;
+}
+
+message AssistantReasoningSummaryDelta {
+  int64 summary_index = 1;
+  string delta = 2;
+}
+
+message AssistantReasoningRawDelta {
+  int64 content_index = 1;
+  string delta = 2;
 }
 
 message ToolOutputDelta {

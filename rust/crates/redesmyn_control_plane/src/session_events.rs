@@ -708,6 +708,7 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::TurnCompleted => Some("turn_completed"),
             SessionEventKindFilter::UserMessage => Some("user_message"),
             SessionEventKindFilter::AssistantMessage => Some("assistant_message"),
+            SessionEventKindFilter::AssistantReasoning => Some("assistant_reasoning"),
             SessionEventKindFilter::ToolInvocation => Some("tool_invocation"),
             SessionEventKindFilter::ToolResult => Some("tool_result"),
             SessionEventKindFilter::StatusUpdate => Some("status_update"),
@@ -725,6 +726,7 @@ fn kind_db_value_from_kind(kind: &SessionEventKind) -> &'static str {
         SessionEventKind::TurnCompleted(_) => "turn_completed",
         SessionEventKind::UserMessage(_) => "user_message",
         SessionEventKind::AssistantMessage(_) => "assistant_message",
+        SessionEventKind::AssistantReasoning(_) => "assistant_reasoning",
         SessionEventKind::ToolInvocation(_) => "tool_invocation",
         SessionEventKind::ToolResult(_) => "tool_result",
         SessionEventKind::StatusUpdate(_) => "status_update",
@@ -737,6 +739,7 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
     match kind {
         SessionEventKind::UserMessage(ev) => Some(ev.preview.clone()),
         SessionEventKind::AssistantMessage(ev) => Some(ev.preview.clone()),
+        SessionEventKind::AssistantReasoning(ev) => Some(ev.summary.preview.clone()),
         SessionEventKind::ToolInvocation(ev) => Some(ev.input_preview.clone()),
         SessionEventKind::ToolResult(ev) => Some(ev.output_preview.clone()),
         SessionEventKind::StatusUpdate(ev) => ev.message.clone(),
@@ -750,6 +753,16 @@ fn artifact_id_from_kind(kind: &SessionEventKind) -> Option<redesmyn_ids::Artifa
         SessionEventKind::AssistantMessage(ev) => {
             ev.full_text_artifact.as_ref().map(|a| a.artifact_id)
         }
+        SessionEventKind::AssistantReasoning(ev) => ev
+            .raw
+            .as_ref()
+            .and_then(|raw| raw.full_text_artifact.as_ref().map(|a| a.artifact_id))
+            .or_else(|| {
+                ev.summary
+                    .full_text_artifact
+                    .as_ref()
+                    .map(|a| a.artifact_id)
+            }),
         SessionEventKind::ToolInvocation(ev) => ev.input_artifact.as_ref().map(|a| a.artifact_id),
         SessionEventKind::ToolResult(ev) => ev.output_artifact.as_ref().map(|a| a.artifact_id),
         SessionEventKind::ArtifactEmitted(ev) => Some(ev.artifact.artifact_id),

@@ -405,6 +405,7 @@ pub enum SessionEventKindFilter {
     TurnCompleted,
     UserMessage,
     AssistantMessage,
+    AssistantReasoning,
     ToolInvocation,
     ToolResult,
     StatusUpdate,
