@@ -72,6 +72,99 @@ fn should_autoscroll_to_bottom(handle: &ScrollHandle) -> bool {
     offset <= (-max + px(4.0))
 }
 
+struct AutoscrollMarker {
+    enabled: bool,
+}
+
+impl AutoscrollMarker {
+    fn new(enabled: bool) -> Self {
+        Self { enabled }
+    }
+}
+
+impl gpui::IntoElement for AutoscrollMarker {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl gpui::Element for AutoscrollMarker {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        _cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let height = px(1.0);
+        let layout_id =
+            window.request_measured_layout(Default::default(), move |known, avail, _, _| {
+                let width = known.width.or(match avail.width {
+                    gpui::AvailableSpace::Definite(width) => Some(width),
+                    _ => None,
+                });
+                gpui::size(width.unwrap_or(px(0.0)), height)
+            });
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        if self.enabled {
+            window.request_autoscroll(bounds);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&gpui::GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
+}
+
+#[derive(Clone)]
+struct RawThoughtScrollState {
+    handle: ScrollHandle,
+    follow_bottom: bool,
+    last_offset_y: gpui::Pixels,
+}
+
+impl RawThoughtScrollState {
+    fn new() -> Self {
+        Self {
+            handle: ScrollHandle::new(),
+            follow_bottom: true,
+            last_offset_y: px(0.0),
+        }
+    }
+}
+
 const CONFLICT_CODE_KEY: &str = "conflict_code";
 const CONFLICT_CODE_TURN_IN_PROGRESS: &str = "structured_turn_in_progress";
 // NOTE: `conflict_code` values are part of the client-visible contract.
@@ -254,27 +347,49 @@ async fn send_session_message(
     }
 }
 
-fn sync_list_state(
+fn sync_timeline_list_state(
     list_state: &ListState,
     old_items: &[SessionTimelineItem],
     new_items: &[SessionTimelineItem],
 ) {
+    fn item_matches(
+        old_items: &[SessionTimelineItem],
+        new_items: &[SessionTimelineItem],
+        old_ix: usize,
+        new_ix: usize,
+    ) -> bool {
+        match (old_items.get(old_ix), new_items.get(new_ix)) {
+            (Some(old), Some(new)) => old == new,
+            (None, None) => true, // Follow marker.
+            _ => false,
+        }
+    }
+
+    let old_len = old_items.len() + 1;
+    let new_len = new_items.len() + 1;
+
     if old_items == new_items {
+        if list_state.item_count() != new_len {
+            list_state.reset(new_len);
+        }
         return;
     }
 
-    let old_len = old_items.len();
-    let new_len = new_items.len();
-
     let mut prefix = 0;
-    while prefix < old_len && prefix < new_len && old_items[prefix] == new_items[prefix] {
+    while prefix < old_len && prefix < new_len && item_matches(old_items, new_items, prefix, prefix)
+    {
         prefix += 1;
     }
 
     let mut suffix = 0;
     while suffix < old_len.saturating_sub(prefix)
         && suffix < new_len.saturating_sub(prefix)
-        && old_items[old_len - 1 - suffix] == new_items[new_len - 1 - suffix]
+        && item_matches(
+            old_items,
+            new_items,
+            old_len - 1 - suffix,
+            new_len - 1 - suffix,
+        )
     {
         suffix += 1;
     }
@@ -399,15 +514,12 @@ pub struct SessionView {
     focus_handle: FocusHandle,
     timeline_list_state: ListState,
     timeline_items: Rc<Vec<SessionTimelineItem>>,
+    timeline_follow_bottom: Rc<Cell<bool>>,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
-    pending_scroll_to_bottom: bool,
-    scroll_to_bottom_scheduled: bool,
-    follow_bottom_during_tool_group_transition: bool,
-    user_scrolled_at: Rc<Cell<Option<Instant>>>,
-    reasoning_raw_scroll_handles: Rc<RefCell<HashMap<String, ScrollHandle>>>,
+    reasoning_raw_scroll_states: Rc<RefCell<HashMap<String, RawThoughtScrollState>>>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -449,7 +561,7 @@ impl SessionView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let timeline_list_state = ListState::new(0, gpui::ListAlignment::Top, px(400.0));
+        let timeline_list_state = ListState::new(1, gpui::ListAlignment::Top, px(400.0));
         let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
@@ -497,15 +609,12 @@ impl SessionView {
             focus_handle,
             timeline_list_state,
             timeline_items: Rc::new(Vec::new()),
+            timeline_follow_bottom: Rc::new(Cell::new(false)),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
-            pending_scroll_to_bottom: false,
-            scroll_to_bottom_scheduled: false,
-            follow_bottom_during_tool_group_transition: false,
-            user_scrolled_at: Rc::new(Cell::new(None)),
-            reasoning_raw_scroll_handles: Rc::new(RefCell::new(HashMap::new())),
+            reasoning_raw_scroll_states: Rc::new(RefCell::new(HashMap::new())),
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -550,6 +659,7 @@ impl SessionView {
             self.load_older_task = None;
             self.error = None;
             self.feed = None;
+            self.timeline_follow_bottom.set(false);
             self.collapsed_reasoning.clear();
             self.expanded_tool_events.clear();
             self.expanded_tool_groups.clear();
@@ -682,8 +792,9 @@ impl SessionView {
 
         let session_id = feed.session_id;
         feed.start_sending();
-        feed.request_scroll_to_bottom();
-        self.pending_scroll_to_bottom = true;
+        feed.set_at_bottom(true);
+        self.timeline_follow_bottom.set(true);
+        self.refresh_timeline_items();
         cx.notify();
 
         let view = cx.entity();
@@ -737,7 +848,6 @@ impl SessionView {
 
                 feed.apply_live_event(resp.event);
                 self.refresh_timeline_items();
-                self.apply_scroll_intents();
             }
             Err(err) => {
                 if err.category == ErrorCategory::Conflict {
@@ -796,7 +906,7 @@ impl SessionView {
                 feed.set_at_bottom(true);
                 feed.clear_scroll_intents();
                 self.refresh_timeline_items();
-                self.pending_scroll_to_bottom = true;
+                self.timeline_follow_bottom.set(true);
                 self.start_subscription(after, cx);
             }
             Err(err) => {
@@ -881,7 +991,6 @@ impl SessionView {
                 }
                 feed.apply_live_event(ev);
                 self.refresh_timeline_items();
-                self.apply_scroll_intents();
             }
             SubscriptionEvent::SessionLiveEvent(ev) => {
                 if ev.session_id != feed.session_id {
@@ -889,7 +998,6 @@ impl SessionView {
                 }
                 feed.apply_live_session_event(ev);
                 self.refresh_timeline_items();
-                self.apply_scroll_intents();
             }
             SubscriptionEvent::Error(err) => {
                 feed.apply_live_error(err.message);
@@ -1022,7 +1130,7 @@ impl SessionView {
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
                         this.timeline_list_reset_scheduled = false;
-                        this.timeline_list_state.reset(this.timeline_items.len());
+                        this.timeline_list_state.reset(this.timeline_items.len() + 1);
                         this.timeline_list_state.scroll_to(scroll_top);
                         cx.notify();
                     })
@@ -1042,10 +1150,6 @@ impl SessionView {
             return;
         };
 
-        self.user_scrolled_at.set(Some(Instant::now()));
-        self.pending_scroll_to_bottom = false;
-        self.follow_bottom_during_tool_group_transition = false;
-
         let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
         let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
         let threshold = px(4.0);
@@ -1053,6 +1157,7 @@ impl SessionView {
         let was_at_bottom = feed.scroll.at_bottom;
         let at_bottom = scroll_offset + threshold >= max_offset;
         feed.set_at_bottom(at_bottom);
+        self.timeline_follow_bottom.set(at_bottom);
 
         if feed.scroll.at_bottom != was_at_bottom {
             self.refresh_timeline_items();
@@ -1078,9 +1183,6 @@ impl SessionView {
             self.collapsed_reasoning.insert(key.to_owned());
         }
         self.invalidate_reasoning_item(key);
-        if self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
-            self.pending_scroll_to_bottom = true;
-        }
         cx.notify();
     }
 
@@ -1127,10 +1229,6 @@ impl SessionView {
 
         self.tool_group_transitions = Rc::new(transitions);
         self.invalidate_tool_group(group_id);
-        if !was_expanded && self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
-            self.follow_bottom_during_tool_group_transition = true;
-            self.pending_scroll_to_bottom = true;
-        }
         cx.notify();
     }
 
@@ -1146,7 +1244,8 @@ impl SessionView {
 
         feed.set_at_bottom(true);
         feed.clear_scroll_intents();
-        self.scroll_to_bottom();
+        self.timeline_follow_bottom.set(true);
+        self.refresh_timeline_items();
         cx.notify();
     }
 
@@ -1154,7 +1253,7 @@ impl SessionView {
         let old_items = std::mem::replace(&mut self.timeline_items, Rc::new(items));
         self.rebuild_exec_command_groups();
         self.rebuild_tool_event_groups();
-        sync_list_state(
+        sync_timeline_list_state(
             &self.timeline_list_state,
             old_items.as_ref(),
             self.timeline_items.as_ref(),
@@ -1478,96 +1577,8 @@ impl SessionView {
             self.invalidate_tool_group(group_id);
         }
 
-        if self.follow_bottom_during_tool_group_transition && !self.user_scrolled_recently() {
-            self.pending_scroll_to_bottom = true;
-        }
-
-        if self.tool_group_transitions.is_empty() {
-            self.follow_bottom_during_tool_group_transition = false;
-        }
-
         if !self.tool_group_transitions.is_empty() {
             window.request_animation_frame();
-        }
-    }
-
-    fn apply_scroll_intents(&mut self) {
-        let should_scroll = self
-            .feed
-            .as_ref()
-            .is_some_and(|feed| feed.scroll.pending_scroll_to_bottom);
-        if !should_scroll {
-            return;
-        }
-
-        self.pending_scroll_to_bottom = true;
-        if let Some(feed) = self.feed.as_mut() {
-            feed.clear_scroll_intents();
-        }
-    }
-
-    fn scroll_to_bottom(&mut self) {
-        let Some(ix) = self
-            .last_visible_timeline_item_ix()
-            .or_else(|| self.timeline_items.len().checked_sub(1))
-        else {
-            return;
-        };
-        self.timeline_list_state.scroll_to_reveal_item(ix);
-    }
-
-    fn user_scrolled_recently(&self) -> bool {
-        self.user_scrolled_at
-            .get()
-            .is_some_and(|at| at.elapsed() < Duration::from_millis(400))
-    }
-
-    fn last_visible_timeline_item_ix(&self) -> Option<usize> {
-        self.timeline_items
-            .iter()
-            .enumerate()
-            .rev()
-            .find_map(|(ix, item)| (!self.timeline_item_hidden(item)).then_some(ix))
-    }
-
-    fn timeline_item_hidden(&self, item: &SessionTimelineItem) -> bool {
-        match item {
-            SessionTimelineItem::LoadOlder(_)
-            | SessionTimelineItem::NewMessages(_)
-            | SessionTimelineItem::EphemeralText(_)
-            | SessionTimelineItem::EphemeralReasoning(_) => false,
-            SessionTimelineItem::Event(event) => {
-                let session_event_id = event.session_event_id;
-
-                match &event.content {
-                    SessionEventItemContent::ToolResult(_tool)
-                        if self
-                            .grouped_exec_command_result_event_ids
-                            .contains(&session_event_id) =>
-                    {
-                        true
-                    }
-                    SessionEventItemContent::ToolInvocation(_)
-                    | SessionEventItemContent::ToolResult(_) => self
-                        .tool_event_group_membership
-                        .get(&session_event_id)
-                        .is_some_and(|member| {
-                            let group_id = member.group_id;
-                            let is_expanded = self.expanded_tool_groups.contains(&group_id);
-                            let progress = self
-                                .tool_group_transitions
-                                .get(&group_id)
-                                .map(|transition| transition.value())
-                                .unwrap_or_else(|| if is_expanded { 1.0 } else { 0.0 });
-                            !is_expanded && progress <= 1e-3 && !member.is_first
-                        }),
-                    SessionEventItemContent::UserMessage(_)
-                    | SessionEventItemContent::AssistantMessage(_)
-                    | SessionEventItemContent::AssistantReasoning(_)
-                    | SessionEventItemContent::ArtifactEmitted(_) => false,
-                    _ => true,
-                }
-            }
         }
     }
 }
@@ -1577,27 +1588,12 @@ impl Render for SessionView {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
 
-        if self.pending_scroll_to_bottom
-            && !self.scroll_to_bottom_scheduled
-            && !self.user_scrolled_recently()
-        {
-            self.scroll_to_bottom_scheduled = true;
-            cx.on_next_frame(window, |this, _window, cx| {
-                this.scroll_to_bottom_scheduled = false;
-                if this.pending_scroll_to_bottom && !this.user_scrolled_recently() {
-                    this.pending_scroll_to_bottom = false;
-                    this.scroll_to_bottom();
-                    cx.notify();
-                }
-            });
-        }
-
         if !self.timeline_scroll_handler_installed {
             let view = view.clone();
-            let user_scrolled_at = self.user_scrolled_at.clone();
+            let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
             self.timeline_list_state
                 .set_scroll_handler(move |event, _window, cx| {
-                    user_scrolled_at.set(Some(Instant::now()));
+                    follow_bottom.set(false);
                     let visible_end = event.visible_range.end;
                     let count = event.count;
                     let view = view.clone();
@@ -1615,6 +1611,15 @@ impl Render for SessionView {
                     .detach();
                 });
             self.timeline_scroll_handler_installed = true;
+        }
+
+        if self.timeline_follow_bottom.get() {
+            let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
+            let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
+            if scroll_offset + px(4.0) < max_offset {
+                self.timeline_list_state
+                    .scroll_to_reveal_item(self.timeline_items.len());
+            }
         }
 
         if self.pending_focus_composer && self.feed.is_some() {
@@ -1709,13 +1714,20 @@ impl Render for SessionView {
         let tool_event_groups = Rc::clone(&self.tool_event_groups);
         let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
-        let reasoning_raw_scroll_handles = Rc::clone(&self.reasoning_raw_scroll_handles);
+        let reasoning_raw_scroll_states = Rc::clone(&self.reasoning_raw_scroll_states);
+        let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
 
         let feed_list = list(self.timeline_list_state.clone(), move |ix, window, cx| {
             let theme = theme_for_window(window, cx);
             let list = div().w_full().min_w_0();
+
+            if ix == items.len() {
+                return list
+                    .child(AutoscrollMarker::new(follow_bottom.get()))
+                    .into_any_element();
+            }
 
             let Some(item) = items.get(ix).cloned() else {
                 return div().into_any_element();
@@ -1878,15 +1890,28 @@ impl Render for SessionView {
                         );
 
                         if let Some(raw_text) = raw_text {
-                            let raw_scroll_handle = {
-                                let mut handles = reasoning_raw_scroll_handles.borrow_mut();
-                                handles
+                            let (raw_scroll_handle, follow_raw_bottom) = {
+                                let mut states = reasoning_raw_scroll_states.borrow_mut();
+                                let state = states
                                     .entry(key.clone())
-                                    .or_insert_with(ScrollHandle::new)
-                                    .clone()
+                                    .or_insert_with(RawThoughtScrollState::new);
+
+                                let handle = state.handle.clone();
+                                let offset_y = handle.offset().y;
+
+                                if state.follow_bottom {
+                                    if offset_y > state.last_offset_y {
+                                        state.follow_bottom = false;
+                                    }
+                                } else if should_autoscroll_to_bottom(&handle) {
+                                    state.follow_bottom = true;
+                                }
+
+                                state.last_offset_y = offset_y;
+                                (handle, state.follow_bottom)
                             };
 
-                            if should_autoscroll_to_bottom(&raw_scroll_handle) {
+                            if follow_raw_bottom {
                                 raw_scroll_handle.scroll_to_bottom();
                             }
 
