@@ -744,6 +744,7 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::TurnCompleted(_) => "turn_completed",
         redesmyn_protocol::session::SessionEventKind::UserMessage(_) => "user_message",
         redesmyn_protocol::session::SessionEventKind::AssistantMessage(_) => "assistant_message",
+        redesmyn_protocol::session::SessionEventKind::AssistantReasoning(_) => "assistant_reasoning",
         redesmyn_protocol::session::SessionEventKind::ToolInvocation(_) => "tool_invocation",
         redesmyn_protocol::session::SessionEventKind::ToolResult(_) => "tool_result",
         redesmyn_protocol::session::SessionEventKind::StatusUpdate(_) => "status_update",
@@ -759,6 +760,21 @@ fn session_live_event_kind_summary(
     match &event.kind {
         redesmyn_protocol::session_live::SessionLiveEventKind::AssistantMessageDelta(delta) => (
             "assistant_message_delta".to_owned(),
+            None,
+            delta.delta.len(),
+        ),
+        redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+            _,
+        ) => ("assistant_reasoning_summary_part_added".to_owned(), None, 0),
+        redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryDelta(
+            delta,
+        ) => (
+            "assistant_reasoning_summary_delta".to_owned(),
+            None,
+            delta.delta.len(),
+        ),
+        redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningRawDelta(delta) => (
+            "assistant_reasoning_raw_delta".to_owned(),
             None,
             delta.delta.len(),
         ),
