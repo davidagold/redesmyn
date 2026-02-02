@@ -2,8 +2,8 @@
 
 #![forbid(unsafe_code)]
 
-use std::cell::RefCell;
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::str::FromStr as _;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
+    AnyElement, App, AsyncApp, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
     ListOffset, ListState, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity,
     Window, div, list, px, relative,
 };
@@ -29,13 +29,13 @@ use redesmyn_protocol::client::{
 };
 use redesmyn_protocol::session::{SessionEventKind, ToolResult};
 use redesmyn_protocol::ui_driver::UiComposerState;
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, SessionEvent};
+use redesmyn_protocol::{ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, MarkdownView, TextArea, TextButton, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, TextArea, TextButton,
+    TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -557,14 +557,14 @@ struct ToolEventGroupMembership {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ToolGroupTransition {
+struct ExpandCollapseTransition {
     started_at: Instant,
     from: f32,
     to: f32,
     duration: Duration,
 }
 
-impl ToolGroupTransition {
+impl ExpandCollapseTransition {
     fn value(&self) -> f32 {
         if self.duration == Duration::from_millis(0) {
             return self.to;
@@ -580,6 +580,13 @@ impl ToolGroupTransition {
     fn is_done(&self) -> bool {
         self.duration == Duration::from_millis(0) || self.started_at.elapsed() >= self.duration
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FullTextMessageLoadState {
+    Loading,
+    Loaded,
+    Failed,
 }
 
 fn cache_markdown_for_events(
@@ -654,6 +661,7 @@ pub struct SessionView {
     timeline_list_state: ListState,
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_follow_bottom: Rc<Cell<bool>>,
+    timeline_scroll_to_bottom_pending: bool,
     timeline_last_scroll_offset: gpui::Pixels,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
@@ -668,15 +676,20 @@ pub struct SessionView {
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     collapsed_reasoning: HashSet<String>,
+    reasoning_transitions: Rc<HashMap<String, ExpandCollapseTransition>>,
+    reasoning_transition_guards: HashMap<String, UiActivityGuard>,
     expanded_tool_events: HashSet<SessionEventId>,
+    tool_event_transitions: Rc<HashMap<SessionEventId, ExpandCollapseTransition>>,
+    tool_event_transition_guards: HashMap<SessionEventId, UiActivityGuard>,
     expanded_tool_groups: HashSet<SessionEventId>,
-    tool_group_transitions: Rc<HashMap<SessionEventId, ToolGroupTransition>>,
+    tool_group_transitions: Rc<HashMap<SessionEventId, ExpandCollapseTransition>>,
     tool_group_transition_guards: HashMap<SessionEventId, UiActivityGuard>,
     exec_command_result_by_invocation: Rc<HashMap<SessionEventId, (SessionEventId, ToolResult)>>,
     grouped_exec_command_result_event_ids: Rc<HashSet<SessionEventId>>,
     tool_event_groups: Rc<HashMap<SessionEventId, ToolEventGroup>>,
     tool_event_group_membership: Rc<HashMap<SessionEventId, ToolEventGroupMembership>>,
     markdown_cache: Rc<RefCell<HashMap<SessionEventId, Arc<MarkdownDoc>>>>,
+    full_text_message_states: Rc<RefCell<HashMap<SessionEventId, FullTextMessageLoadState>>>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -716,7 +729,12 @@ impl SessionView {
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
         let session_id_input = cx.new(|cx| TextInput::new(cx).placeholder("Session id…"));
-        let composer_input = cx.new(|cx| TextArea::new(cx).placeholder("Message…"));
+        let composer_input = cx.new(|cx| {
+            TextArea::new(cx)
+                .placeholder("Message…")
+                .min_rows(1)
+                .reserved_bottom(px(28.0))
+        });
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe(&session_id_input, |this, _, event, cx| {
@@ -760,6 +778,7 @@ impl SessionView {
             timeline_list_state,
             timeline_items: Rc::new(Vec::new()),
             timeline_follow_bottom: Rc::new(Cell::new(false)),
+            timeline_scroll_to_bottom_pending: false,
             timeline_last_scroll_offset: px(0.0),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
@@ -774,7 +793,11 @@ impl SessionView {
             pending_focus_composer: false,
             feed: None,
             collapsed_reasoning: HashSet::new(),
+            reasoning_transitions: Rc::new(HashMap::new()),
+            reasoning_transition_guards: HashMap::new(),
             expanded_tool_events: HashSet::new(),
+            tool_event_transitions: Rc::new(HashMap::new()),
+            tool_event_transition_guards: HashMap::new(),
             expanded_tool_groups: HashSet::new(),
             tool_group_transitions: Rc::new(HashMap::new()),
             tool_group_transition_guards: HashMap::new(),
@@ -783,6 +806,7 @@ impl SessionView {
             tool_event_groups: Rc::new(HashMap::new()),
             tool_event_group_membership: Rc::new(HashMap::new()),
             markdown_cache: Rc::new(RefCell::new(HashMap::new())),
+            full_text_message_states: Rc::new(RefCell::new(HashMap::new())),
             client,
             _client_task: client_task,
             subscription_task: None,
@@ -819,7 +843,8 @@ impl SessionView {
             .error
             .clone()
             .or_else(|| self.task_binding_action.error.clone());
-        let operation = if self.start_agent_action.in_flight || self.start_agent_action.error.is_some()
+        let operation = if self.start_agent_action.in_flight
+            || self.start_agent_action.error.is_some()
         {
             Some(TaskSessionOperation::StartAgent)
         } else if self.task_binding_action.in_flight || self.task_binding_action.error.is_some() {
@@ -880,7 +905,9 @@ impl SessionView {
         let _guard = span.enter();
 
         self.task_binding_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
         cx.notify();
 
         let view = cx.entity();
@@ -920,7 +947,9 @@ impl SessionView {
         let Some(client) = self.client.clone() else {
             self.task_binding_action
                 .fail("Control plane client is unavailable.");
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
             cx.notify();
             return;
         };
@@ -932,7 +961,9 @@ impl SessionView {
         let _guard = span.enter();
 
         self.task_binding_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
         cx.notify();
 
         let view = cx.entity();
@@ -997,8 +1028,11 @@ impl SessionView {
         }
 
         let Some(client) = self.client.clone() else {
-            self.start_agent_action.fail("Control plane client is unavailable.");
-            cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+            self.start_agent_action
+                .fail("Control plane client is unavailable.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
             cx.notify();
             return;
         };
@@ -1007,7 +1041,9 @@ impl SessionView {
         let generation = self.start_agent_generation;
         self.task_operation = Some(TaskSessionOperation::StartAgent);
         self.start_agent_action.start();
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
         cx.notify();
 
         let view = cx.entity();
@@ -1015,7 +1051,8 @@ impl SessionView {
             let client = client.clone();
             let cx = cx.clone();
             async move {
-                let result = start_task_agent(&client, task_id, AgentMessageConflictAction::Fail).await;
+                let result =
+                    start_task_agent(&client, task_id, AgentMessageConflictAction::Fail).await;
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
                         this.on_start_agent_completed(generation, task_id, result, cx)
@@ -1053,7 +1090,9 @@ impl SessionView {
             }
         }
 
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
         cx.notify();
     }
 
@@ -1109,7 +1148,11 @@ impl SessionView {
             self.timeline_follow_bottom.set(false);
             self.timeline_last_scroll_offset = px(0.0);
             self.collapsed_reasoning.clear();
+            self.reasoning_transitions = Rc::new(HashMap::new());
+            self.reasoning_transition_guards.clear();
             self.expanded_tool_events.clear();
+            self.tool_event_transitions = Rc::new(HashMap::new());
+            self.tool_event_transition_guards.clear();
             self.expanded_tool_groups.clear();
             self.tool_group_transitions = Rc::new(HashMap::new());
             self.tool_group_transition_guards.clear();
@@ -1118,6 +1161,7 @@ impl SessionView {
             self.tool_event_groups = Rc::new(HashMap::new());
             self.tool_event_group_membership = Rc::new(HashMap::new());
             self.markdown_cache.borrow_mut().clear();
+            self.full_text_message_states.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
             self.timeline_list_reset_scheduled = false;
             self.timeline_autoload_scheduled = false;
@@ -1138,7 +1182,9 @@ impl SessionView {
         self.session_id_input
             .update(cx, |input, cx| input.set_text(session_id.to_string(), cx));
         self.load_session_id(&session_id.to_string(), cx);
-        cx.emit(SessionViewEvent::TaskBindingStateChanged(self.task_binding_state()));
+        cx.emit(SessionViewEvent::TaskBindingStateChanged(
+            self.task_binding_state(),
+        ));
     }
 
     pub fn request_focus_composer(&mut self, cx: &mut Context<Self>) {
@@ -1190,7 +1236,11 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.collapsed_reasoning.clear();
+        self.reasoning_transitions = Rc::new(HashMap::new());
+        self.reasoning_transition_guards.clear();
         self.expanded_tool_events.clear();
+        self.tool_event_transitions = Rc::new(HashMap::new());
+        self.tool_event_transition_guards.clear();
         self.expanded_tool_groups.clear();
         self.tool_group_transitions = Rc::new(HashMap::new());
         self.tool_group_transition_guards.clear();
@@ -1199,6 +1249,7 @@ impl SessionView {
         self.tool_event_groups = Rc::new(HashMap::new());
         self.tool_event_group_membership = Rc::new(HashMap::new());
         self.markdown_cache.borrow_mut().clear();
+        self.full_text_message_states.borrow_mut().clear();
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -1246,6 +1297,7 @@ impl SessionView {
         feed.start_sending();
         feed.set_at_bottom(true);
         self.timeline_follow_bottom.set(true);
+        self.timeline_scroll_to_bottom_pending = true;
         self.refresh_timeline_items();
         cx.notify();
 
@@ -1430,6 +1482,15 @@ impl SessionView {
                 if ev.session_id != feed.session_id {
                     return;
                 }
+                let auto_collapse_reasoning_key = match &ev.kind {
+                    SessionEventKind::AssistantReasoning(reasoning) => Some(
+                        reasoning
+                            .item_id
+                            .clone()
+                            .unwrap_or_else(|| ev.session_event_id.to_string()),
+                    ),
+                    _ => None,
+                };
                 let stats = cache_markdown_for_events(
                     &mut *self.markdown_cache.borrow_mut(),
                     std::slice::from_ref(&ev),
@@ -1443,6 +1504,11 @@ impl SessionView {
                 }
                 feed.apply_live_event(ev);
                 self.refresh_timeline_items();
+                if let Some(key) = auto_collapse_reasoning_key
+                    && !self.collapsed_reasoning.contains(&key)
+                {
+                    self.toggle_reasoning(&key, cx);
+                }
             }
             SubscriptionEvent::SessionLiveEvent(ev) => {
                 if ev.session_id != feed.session_id {
@@ -1582,7 +1648,8 @@ impl SessionView {
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
                         this.timeline_list_reset_scheduled = false;
-                        this.timeline_list_state.reset(this.timeline_items.len() + 1);
+                        this.timeline_list_state
+                            .reset(this.timeline_items.len() + 1);
                         this.timeline_list_state.scroll_to(scroll_top);
                         cx.notify();
                     })
@@ -1629,22 +1696,97 @@ impl SessionView {
     }
 
     fn toggle_tool_event(&mut self, session_event_id: SessionEventId, cx: &mut Context<Self>) {
-        if self.expanded_tool_events.contains(&session_event_id) {
+        let was_expanded = self.expanded_tool_events.contains(&session_event_id);
+        if was_expanded {
             self.expanded_tool_events.remove(&session_event_id);
         } else {
             self.expanded_tool_events.insert(session_event_id);
         }
+
+        let target = if was_expanded { 0.0 } else { 1.0 };
+        let current = self
+            .tool_event_transitions
+            .get(&session_event_id)
+            .map(|transition| transition.value())
+            .unwrap_or_else(|| if was_expanded { 1.0 } else { 0.0 });
+
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
+        let mut transitions: HashMap<SessionEventId, ExpandCollapseTransition> =
+            self.tool_event_transitions.as_ref().clone();
+
+        if duration == Duration::from_millis(0) || (current - target).abs() < 1e-3 {
+            transitions.remove(&session_event_id);
+            self.tool_event_transition_guards.remove(&session_event_id);
+        } else {
+            transitions.insert(
+                session_event_id,
+                ExpandCollapseTransition {
+                    started_at: Instant::now(),
+                    from: current,
+                    to: target,
+                    duration,
+                },
+            );
+
+            if !self
+                .tool_event_transition_guards
+                .contains_key(&session_event_id)
+                && let Some(tracker) = ui_idle_tracker(cx)
+            {
+                self.tool_event_transition_guards
+                    .insert(session_event_id, tracker.begin_transition());
+            }
+        }
+
+        self.tool_event_transitions = Rc::new(transitions);
         self.invalidate_timeline_item(session_event_id);
         cx.notify();
     }
 
     fn toggle_reasoning(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.collapsed_reasoning.contains(key) {
-            self.collapsed_reasoning.remove(key);
+        let key = key.to_owned();
+        let was_expanded = !self.collapsed_reasoning.contains(&key);
+        if was_expanded {
+            self.collapsed_reasoning.insert(key.clone());
         } else {
-            self.collapsed_reasoning.insert(key.to_owned());
+            self.collapsed_reasoning.remove(&key);
         }
-        self.invalidate_reasoning_item(key);
+
+        let target = if was_expanded { 0.0 } else { 1.0 };
+        let current = self
+            .reasoning_transitions
+            .get(&key)
+            .map(|transition| transition.value())
+            .unwrap_or_else(|| if was_expanded { 1.0 } else { 0.0 });
+
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
+        let mut transitions: HashMap<String, ExpandCollapseTransition> =
+            self.reasoning_transitions.as_ref().clone();
+
+        if duration == Duration::from_millis(0) || (current - target).abs() < 1e-3 {
+            transitions.remove(&key);
+            self.reasoning_transition_guards.remove(&key);
+        } else {
+            transitions.insert(
+                key.clone(),
+                ExpandCollapseTransition {
+                    started_at: Instant::now(),
+                    from: current,
+                    to: target,
+                    duration,
+                },
+            );
+
+            if !self.reasoning_transition_guards.contains_key(&key)
+                && let Some(tracker) = ui_idle_tracker(cx)
+            {
+                self.reasoning_transition_guards
+                    .insert(key.clone(), tracker.begin_transition());
+            }
+        }
+
+        self.reasoning_transitions = Rc::new(transitions);
+        self.invalidate_reasoning_item(&key);
         cx.notify();
     }
 
@@ -1664,7 +1806,7 @@ impl SessionView {
             .unwrap_or_else(|| if was_expanded { 1.0 } else { 0.0 });
 
         let duration = ui_test_mode_animation_duration(Duration::from_millis(180));
-        let mut transitions: HashMap<SessionEventId, ToolGroupTransition> =
+        let mut transitions: HashMap<SessionEventId, ExpandCollapseTransition> =
             self.tool_group_transitions.as_ref().clone();
 
         if duration == Duration::from_millis(0) || (current - target).abs() < 1e-3 {
@@ -1673,7 +1815,7 @@ impl SessionView {
         } else {
             transitions.insert(
                 group_id,
-                ToolGroupTransition {
+                ExpandCollapseTransition {
                     started_at: Instant::now(),
                     from: current,
                     to: target,
@@ -1911,6 +2053,82 @@ impl SessionView {
         self.set_timeline_items(items);
     }
 
+    fn ensure_full_text_message_loaded(
+        &mut self,
+        session_event_id: SessionEventId,
+        full_text_artifact: ArtifactRef,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(StorageHint::LocalPath { local_path }) = full_text_artifact.storage_hint.as_ref()
+        else {
+            self.full_text_message_states
+                .borrow_mut()
+                .insert(session_event_id, FullTextMessageLoadState::Failed);
+            return;
+        };
+
+        let should_start = {
+            let mut states = self.full_text_message_states.borrow_mut();
+            match states.get(&session_event_id).copied() {
+                Some(FullTextMessageLoadState::Loaded)
+                | Some(FullTextMessageLoadState::Loading)
+                | Some(FullTextMessageLoadState::Failed) => false,
+                None => {
+                    states.insert(session_event_id, FullTextMessageLoadState::Loading);
+                    true
+                }
+            }
+        };
+
+        if !should_start {
+            return;
+        }
+
+        let view = cx.entity();
+        let path = local_path.clone();
+        let path_for_log = path.clone();
+        cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let task = gpui::background_executor().spawn(async move {
+                    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+                    let doc = Arc::new(parse_markdown(&text, MarkdownParseOptions::default()));
+                    Ok::<Arc<MarkdownDoc>, String>(doc)
+                });
+
+                let result = task.await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        match result {
+                            Ok(doc) => {
+                                this.markdown_cache
+                                    .borrow_mut()
+                                    .insert(session_event_id, doc);
+                                this.full_text_message_states
+                                    .borrow_mut()
+                                    .insert(session_event_id, FullTextMessageLoadState::Loaded);
+                            }
+                            Err(err) => {
+                                redesmyn_logging::tracing::warn!(
+                                    session_event_id = %session_event_id,
+                                    path = %path_for_log,
+                                    error = %err,
+                                    "failed to load full-text message artifact"
+                                );
+                                this.full_text_message_states
+                                    .borrow_mut()
+                                    .insert(session_event_id, FullTextMessageLoadState::Failed);
+                            }
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
+    }
+
     fn ensure_reasoning_shimmer_task(&mut self, cx: &mut Context<Self>) {
         if self.reasoning_shimmer_task.is_some() {
             return;
@@ -2019,7 +2237,7 @@ impl SessionView {
         // list re-measures the evolving row heights. Otherwise the list will keep the initial
         // cached heights and the animation will "jump" once at the end.
         let active_group_ids: Vec<SessionEventId> = transitions.keys().copied().collect();
-        let mut next: HashMap<SessionEventId, ToolGroupTransition> = HashMap::new();
+        let mut next: HashMap<SessionEventId, ExpandCollapseTransition> = HashMap::new();
 
         for (group_id, transition) in transitions.iter() {
             if transition.is_done() {
@@ -2040,6 +2258,70 @@ impl SessionView {
         }
 
         if !self.tool_group_transitions.is_empty() {
+            window.request_animation_frame();
+        }
+    }
+
+    fn tick_tool_event_transitions_for_render(&mut self, window: &mut Window) {
+        if self.tool_event_transitions.is_empty() {
+            return;
+        }
+
+        let transitions = Rc::clone(&self.tool_event_transitions);
+        let active_event_ids: Vec<SessionEventId> = transitions.keys().copied().collect();
+        let mut next: HashMap<SessionEventId, ExpandCollapseTransition> = HashMap::new();
+
+        for (session_event_id, transition) in transitions.iter() {
+            if transition.is_done() {
+                self.tool_event_transition_guards.remove(session_event_id);
+            } else {
+                next.insert(*session_event_id, *transition);
+            }
+        }
+
+        if next.len() != self.tool_event_transitions.len() {
+            self.tool_event_transitions = Rc::new(next);
+        } else {
+            // Keep the same Rc when nothing changes so list closures don't churn.
+        }
+
+        for session_event_id in active_event_ids {
+            self.invalidate_timeline_item(session_event_id);
+        }
+
+        if !self.tool_event_transitions.is_empty() {
+            window.request_animation_frame();
+        }
+    }
+
+    fn tick_reasoning_transitions_for_render(&mut self, window: &mut Window) {
+        if self.reasoning_transitions.is_empty() {
+            return;
+        }
+
+        let transitions = Rc::clone(&self.reasoning_transitions);
+        let active_keys: Vec<String> = transitions.keys().cloned().collect();
+        let mut next: HashMap<String, ExpandCollapseTransition> = HashMap::new();
+
+        for (key, transition) in transitions.iter() {
+            if transition.is_done() {
+                self.reasoning_transition_guards.remove(key);
+            } else {
+                next.insert(key.clone(), *transition);
+            }
+        }
+
+        if next.len() != self.reasoning_transitions.len() {
+            self.reasoning_transitions = Rc::new(next);
+        } else {
+            // Keep the same Rc when nothing changes so list closures don't churn.
+        }
+
+        for key in active_keys {
+            self.invalidate_reasoning_item(&key);
+        }
+
+        if !self.reasoning_transitions.is_empty() {
             window.request_animation_frame();
         }
     }
@@ -2092,7 +2374,13 @@ impl Render for SessionView {
             _ => false,
         });
 
-        if assistant_generating && self.timeline_follow_bottom.get() && distance_to_bottom > threshold
+        if self.timeline_scroll_to_bottom_pending {
+            self.timeline_scroll_to_bottom_pending = false;
+            self.timeline_list_state
+                .scroll_to_reveal_item(self.timeline_items.len());
+        } else if assistant_generating
+            && self.timeline_follow_bottom.get()
+            && distance_to_bottom > threshold
         {
             self.timeline_list_state
                 .scroll_to_reveal_item(self.timeline_items.len());
@@ -2127,6 +2415,8 @@ impl Render for SessionView {
         // list state is mutably borrowed). We instead evaluate autoloading here during render.
         self.maybe_autoload_older(cx);
         self.tick_tool_group_transitions_for_render(window);
+        self.tick_tool_event_transitions_for_render(window);
+        self.tick_reasoning_transitions_for_render(window);
 
         let mut content = div()
             .flex()
@@ -2179,16 +2469,30 @@ impl Render for SessionView {
         }
 
         let items = Rc::clone(&self.timeline_items);
+        let first_message_ix = items.iter().position(|item| {
+            matches!(
+                item,
+                SessionTimelineItem::Event(event)
+                    if matches!(
+                        event.content,
+                        SessionEventItemContent::UserMessage(_)
+                            | SessionEventItemContent::AssistantMessage(_)
+                    )
+            )
+        });
         let markdown_cache = Rc::clone(&self.markdown_cache);
+        let full_text_message_states = Rc::clone(&self.full_text_message_states);
         let expanded_tool_events = self.expanded_tool_events.clone();
         let expanded_tool_groups = self.expanded_tool_groups.clone();
         let collapsed_reasoning = self.collapsed_reasoning.clone();
+        let reasoning_transitions = Rc::clone(&self.reasoning_transitions);
         let reasoning_shimmer_alpha = self.reasoning_shimmer_alpha();
         let exec_command_results = Rc::clone(&self.exec_command_result_by_invocation);
         let grouped_exec_command_result_ids =
             Rc::clone(&self.grouped_exec_command_result_event_ids);
         let tool_event_groups = Rc::clone(&self.tool_event_groups);
         let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
+        let tool_event_transitions = Rc::clone(&self.tool_event_transitions);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
         let reasoning_scroll_states = Rc::clone(&self.reasoning_scroll_states);
         let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
@@ -2555,17 +2859,29 @@ impl Render for SessionView {
                                 .clone()
                                 .unwrap_or_else(|| session_event_id.to_string());
                             let is_expanded = !collapsed_reasoning.contains(&key);
+                            let progress = reasoning_transitions
+                                .get(&key)
+                                .map(|transition| transition.value())
+                                .unwrap_or_else(|| if is_expanded { 1.0 } else { 0.0 });
+                            let is_animating = reasoning_transitions.contains_key(&key);
                             let chevron = if is_expanded { "▾" } else { "▸" };
 
                             let toggle_view = timeline_view.clone();
                             let toggle_key = key.clone();
+                            let gap = if is_animating {
+                                theme.spacing.sm * progress
+                            } else if is_expanded {
+                                theme.spacing.sm
+                            } else {
+                                px(0.0)
+                            };
                             let mut container = div()
                                 .id(bubble_id.clone())
                                 .w_full()
                                 .min_w_0()
                                 .flex()
                                 .flex_col()
-                                .gap(theme.spacing.sm)
+                                .gap(gap)
                                 .px(theme.spacing.sm)
                                 .py(theme.spacing.sm)
                                 .rounded_md();
@@ -2602,7 +2918,7 @@ impl Render for SessionView {
                                     ),
                             );
 
-                            if is_expanded {
+                            if is_expanded || is_animating {
                                 let cached = { markdown_cache.borrow().get(&session_event_id).cloned() };
                                 let summary_doc = cached.unwrap_or_else(|| {
                                     let doc = Arc::new(parse_markdown(
@@ -2617,6 +2933,14 @@ impl Render for SessionView {
 
                                 let show_truncation_notice =
                                     reasoning.summary.full_text_artifact.is_none();
+
+                                let mut body = div()
+                                    .id((bubble_id.clone(), "reasoning_body"))
+                                    .w_full()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(theme.spacing.sm);
 
                                 let (summary_scroll_handle, follow_summary_bottom) = {
                                     let mut states = reasoning_scroll_states.borrow_mut();
@@ -2643,7 +2967,7 @@ impl Render for SessionView {
                                     summary_scroll_handle.scroll_to_bottom();
                                 }
 
-                                container = container.child(
+                                body = body.child(
                                     div()
                                         .id((bubble_id.clone(), "reasoning_summary_scroll"))
                                         .max_h(px(180.0))
@@ -2700,13 +3024,13 @@ impl Render for SessionView {
                                         raw_scroll_handle.scroll_to_bottom();
                                     }
 
-                                    container = container.child(
+                                    body = body.child(
                                         div()
                                             .h(px(1.0))
                                             .bg(theme.colors.border.opacity(0.2)),
                                     );
 
-                                    container = container.child(
+                                    body = body.child(
                                         div()
                                             .id((bubble_id.clone(), "reasoning_raw_scroll"))
                                             .max_h(px(240.0))
@@ -2732,6 +3056,13 @@ impl Render for SessionView {
                                             .child(raw.text),
                                     );
                                 }
+
+                                let max_h = px(520.0) * progress;
+                                let mut body = Expandable::new(body).opacity(progress);
+                                if is_animating {
+                                    body = body.max_height(max_h);
+                                }
+                                container = container.child(body);
                             }
 
                             list.child(container)
@@ -2769,19 +3100,14 @@ impl Render for SessionView {
                                 }
                             };
 
-                            let show_truncation_notice = full_text_artifact.is_none();
-                            let cached =
-                                { markdown_cache.borrow().get(&session_event_id).cloned() };
-                            let doc = cached.unwrap_or_else(|| {
-                                let doc = Arc::new(parse_markdown(
-                                    text.as_str(),
-                                    MarkdownParseOptions::default(),
-                                ));
-                                markdown_cache
-                                    .borrow_mut()
-                                    .insert(session_event_id, doc.clone());
-                                doc
-                            });
+                            let needs_full_text = full_text_artifact.is_some();
+                            let full_text_state = {
+                                full_text_message_states
+                                    .borrow()
+                                    .get(&session_event_id)
+                                    .copied()
+                            };
+                            let show_truncation_notice = !needs_full_text;
 
                             let bubble_max_width = if align_right {
                                 viewport_width * 0.85
@@ -2794,7 +3120,94 @@ impl Render for SessionView {
                                 theme.spacing.sm
                             };
 
-                            let mut bubble = div()
+                            let bubble_body: AnyElement = if needs_full_text
+                                && full_text_state != Some(FullTextMessageLoadState::Loaded)
+                            {
+                                if full_text_state.is_none()
+                                    && let Some(artifact) = full_text_artifact.clone()
+                                {
+                                    let load_view = timeline_view.clone();
+                                    load_view.update(cx, |this, cx| {
+                                        this.ensure_full_text_message_loaded(
+                                            session_event_id,
+                                            artifact,
+                                            cx,
+                                        );
+                                    });
+                                }
+
+                                if full_text_state == Some(FullTextMessageLoadState::Failed) {
+                                    let placeholder_color =
+                                        text_color.unwrap_or(theme.colors.foreground_muted);
+                                    let mut placeholder = div()
+                                        .id((bubble_id.clone(), "full_text_failed"))
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(placeholder_color)
+                                        .child("Failed to load full message.");
+
+                                    if let Some(artifact) = full_text_artifact.clone() {
+                                        let retry_view = timeline_view.clone();
+                                        placeholder = placeholder.child(
+                                            TextButton::new(
+                                                (bubble_id.clone(), "retry_full_text"),
+                                                "Retry",
+                                            )
+                                            .kind(ButtonKind::Secondary)
+                                            .on_click(move |_, _, cx| {
+                                                let artifact = artifact.clone();
+                                                retry_view.update(cx, |this, cx| {
+                                                    this.full_text_message_states
+                                                        .borrow_mut()
+                                                        .remove(&session_event_id);
+                                                    this.ensure_full_text_message_loaded(
+                                                        session_event_id,
+                                                        artifact,
+                                                        cx,
+                                                    );
+                                                });
+                                            }),
+                                        );
+                                    }
+
+                                    placeholder.into_any_element()
+                                } else {
+                                    let placeholder_color =
+                                        text_color.unwrap_or(theme.colors.foreground_muted);
+                                    div()
+                                        .id((bubble_id.clone(), "loading_full_text"))
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(placeholder_color)
+                                        .child("Loading full message…")
+                                        .into_any_element()
+                                }
+                            } else {
+                                let cached =
+                                    { markdown_cache.borrow().get(&session_event_id).cloned() };
+                                let doc = cached.unwrap_or_else(|| {
+                                    let doc = Arc::new(parse_markdown(
+                                        text.as_str(),
+                                        MarkdownParseOptions::default(),
+                                    ));
+                                    markdown_cache
+                                        .borrow_mut()
+                                        .insert(session_event_id, doc.clone());
+                                    doc
+                                });
+
+                                let mut view =
+                                    MarkdownView::new((bubble_id.clone(), "markdown"), doc)
+                                        .show_truncation_notice(show_truncation_notice)
+                                        .text_size(theme.typography.caption.size);
+                                if let Some(text_color) = text_color {
+                                    view = view.text_color(text_color);
+                                }
+                                view.into_any_element()
+                            };
+
+                            let bubble = div()
                                 .id(bubble_id.clone())
                                 .flex()
                                 .flex_col()
@@ -2806,61 +3219,7 @@ impl Render for SessionView {
                                 .py(theme.spacing.sm)
                                 .rounded(theme.radius.xl)
                                 .when_some(bg, |this, bg| this.bg(bg))
-                                .child({
-                                    let mut view =
-                                        MarkdownView::new((bubble_id.clone(), "markdown"), doc)
-                                            .show_truncation_notice(show_truncation_notice)
-                                            .text_size(theme.typography.caption.size);
-                                    if let Some(text_color) = text_color {
-                                        view = view.text_color(text_color);
-                                    }
-                                    view.into_any_element()
-                                });
-
-                            if let Some(artifact) = full_text_artifact {
-                                let artifact_id = artifact.artifact_id.to_string();
-                                let artifact_copy = artifact_id.clone();
-
-                                bubble = bubble.child(
-                                    div()
-                                        .id((bubble_id.clone(), "artifact"))
-                                        .flex()
-                                        .flex_row()
-                                        .gap(theme.spacing.sm)
-                                        .items_center()
-                                        .justify_between()
-                                        .px(theme.spacing.md)
-                                        .py(theme.spacing.sm)
-                                        .rounded_sm()
-                                        .bg(theme.colors.surface_elevated.opacity(0.35))
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_xs()
-                                                .text_color(theme.colors.foreground_muted)
-                                                .child(format!(
-                                                    "Full message stored as artifact {artifact_id}."
-                                                )),
-                                        )
-                                        .child(
-                                            TextButton::new(
-                                                (bubble_id.clone(), "copy_artifact"),
-                                                "Copy artifact id",
-                                            )
-                                            .kind(ButtonKind::Ghost)
-                                            .on_click(move |event, _window, cx| {
-                                                if event.standard_click() {
-                                                    cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(
-                                                            artifact_copy.clone(),
-                                                        ),
-                                                    );
-                                                }
-                                            }),
-                                        ),
-                                );
-                            }
+                                .child(bubble_body);
 
                             let mut row = div()
                                 .id((bubble_id.clone(), "row"))
@@ -2877,6 +3236,10 @@ impl Render for SessionView {
 
                             let mut row_pad_top = timeline_item_gap_y;
                             let mut row_pad_bottom = timeline_item_gap_y;
+
+                            if first_message_ix == Some(ix) {
+                                row_pad_top += theme.spacing.sm;
+                            }
 
                             if matches!(
                                 role,
@@ -3024,6 +3387,12 @@ impl Render for SessionView {
                                     } else {
                                         let expanded =
                                             expanded_tool_events.contains(&item.session_event_id);
+                                        let progress = tool_event_transitions
+                                            .get(&item.session_event_id)
+                                            .map(|transition| transition.value())
+                                            .unwrap_or_else(|| if expanded { 1.0 } else { 0.0 });
+                                        let is_animating = tool_event_transitions
+                                            .contains_key(&item.session_event_id);
                                         let chevron = if expanded { "▾" } else { "▸" };
                                         let toggle_view = timeline_view.clone();
                                         let session_event_id = item.session_event_id;
@@ -3110,18 +3479,25 @@ impl Render for SessionView {
                                                 )
                                             });
 
+                                        let gap = if is_animating {
+                                            theme.spacing.xs * progress
+                                        } else if expanded {
+                                            theme.spacing.xs
+                                        } else {
+                                            px(0.0)
+                                        };
                                         let mut block = div()
                                             .id(bubble_id.clone())
                                             .w_full()
                                             .min_w_0()
                                             .flex()
                                             .flex_col()
-                                            .gap(theme.spacing.xs)
+                                            .gap(gap)
                                             .px(theme.spacing.sm)
                                             .py(timeline_item_gap_y)
                                             .child(summary);
 
-                                        if expanded {
+                                        if expanded || is_animating {
                                             let mut details = div()
                                                 .id((bubble_id.clone(), "details"))
                                                 .pl(theme.spacing.lg)
@@ -3193,6 +3569,13 @@ impl Render for SessionView {
                                                 );
                                             }
 
+                                            let mut details =
+                                                Expandable::new(details).opacity(progress);
+                                            if is_animating {
+                                                details = details
+                                                    .max_height(px(640.0) * progress);
+                                            }
+
                                             block = block.child(details);
                                         }
 
@@ -3219,15 +3602,17 @@ impl Render for SessionView {
                                                     group.last_summary.clone(),
                                                 );
 
-                                                let mut member_body = div()
+                                                let member_body_child = div()
                                                     .w_full()
                                                     .min_w_0()
                                                     .pl(theme.spacing.lg)
-                                                    .opacity(opacity);
+                                                    .child(block);
+
+                                                let mut member_body =
+                                                    Expandable::new(member_body_child)
+                                                        .opacity(opacity);
                                                 if is_animating {
-                                                    member_body = member_body
-                                                        .overflow_hidden()
-                                                        .max_h(max_h);
+                                                    member_body = member_body.max_height(max_h);
                                                 }
 
                                                 list.child(
@@ -3239,20 +3624,23 @@ impl Render for SessionView {
                                                         .flex_col()
                                                         .gap(gap)
                                                         .child(group_header)
-                                                        .child(member_body.child(block)),
+                                                        .child(member_body),
                                                 )
                                             } else {
-                                                let mut member_row = div()
+                                                let member_row_child = div()
                                                     .id((bubble_id.clone(), "group_member"))
                                                     .w_full()
                                                     .min_w_0()
                                                     .pl(theme.spacing.lg)
-                                                    .opacity(opacity);
+                                                    .child(block);
+
+                                                let mut member_row =
+                                                    Expandable::new(member_row_child)
+                                                        .opacity(opacity);
                                                 if is_animating {
-                                                    member_row =
-                                                        member_row.overflow_hidden().max_h(max_h);
+                                                    member_row = member_row.max_height(max_h);
                                                 }
-                                                list.child(member_row.child(block))
+                                                list.child(member_row)
                                             }
                                         } else {
                                             list.child(block)
@@ -3309,6 +3697,12 @@ impl Render for SessionView {
                                         } else {
                                             let expanded =
                                                 expanded_tool_events.contains(&item.session_event_id);
+                                            let progress = tool_event_transitions
+                                                .get(&item.session_event_id)
+                                                .map(|transition| transition.value())
+                                                .unwrap_or_else(|| if expanded { 1.0 } else { 0.0 });
+                                            let is_animating = tool_event_transitions
+                                                .contains_key(&item.session_event_id);
                                             let chevron = if expanded { "▾" } else { "▸" };
                                             let toggle_view = timeline_view.clone();
                                             let session_event_id = item.session_event_id;
@@ -3363,18 +3757,25 @@ impl Render for SessionView {
                                                     )
                                                 });
 
+                                            let gap = if is_animating {
+                                                theme.spacing.xs * progress
+                                            } else if expanded {
+                                                theme.spacing.xs
+                                            } else {
+                                                px(0.0)
+                                            };
                                             let mut block = div()
                                                 .id(bubble_id.clone())
                                                 .w_full()
                                                 .min_w_0()
                                                 .flex()
                                                 .flex_col()
-                                                .gap(theme.spacing.xs)
+                                                .gap(gap)
                                                 .px(theme.spacing.sm)
                                                 .py(timeline_item_gap_y)
                                                 .child(summary);
 
-                                            if expanded {
+                                            if expanded || is_animating {
                                                 let mut details = div()
                                                     .id((bubble_id.clone(), "details"))
                                                     .pl(theme.spacing.lg)
@@ -3397,6 +3798,13 @@ impl Render for SessionView {
                                                         .text_color(theme.colors.foreground)
                                                         .child(tool.output_preview.clone()),
                                                 );
+
+                                                let mut details =
+                                                    Expandable::new(details).opacity(progress);
+                                                if is_animating {
+                                                    details = details
+                                                        .max_height(px(640.0) * progress);
+                                                }
 
                                                 block = block.child(details);
                                             }
@@ -3424,15 +3832,17 @@ impl Render for SessionView {
                                                         group.last_summary.clone(),
                                                     );
 
-                                                    let mut member_body = div()
+                                                    let member_body_child = div()
                                                         .w_full()
                                                         .min_w_0()
                                                         .pl(theme.spacing.lg)
-                                                        .opacity(opacity);
+                                                        .child(block);
+
+                                                    let mut member_body =
+                                                        Expandable::new(member_body_child)
+                                                            .opacity(opacity);
                                                     if is_animating {
-                                                        member_body = member_body
-                                                            .overflow_hidden()
-                                                            .max_h(max_h);
+                                                        member_body = member_body.max_height(max_h);
                                                     }
 
                                                     list.child(
@@ -3444,21 +3854,24 @@ impl Render for SessionView {
                                                             .flex_col()
                                                             .gap(gap)
                                                             .child(group_header)
-                                                            .child(member_body.child(block)),
+                                                            .child(member_body),
                                                     )
                                                 } else {
-                                                    let mut member_row = div()
+                                                    let member_row_child = div()
                                                         .id((bubble_id.clone(), "group_member"))
                                                         .w_full()
                                                         .min_w_0()
                                                         .pl(theme.spacing.lg)
-                                                        .opacity(opacity);
+                                                        .child(block);
+
+                                                    let mut member_row =
+                                                        Expandable::new(member_row_child)
+                                                            .opacity(opacity);
                                                     if is_animating {
-                                                        member_row = member_row
-                                                            .overflow_hidden()
-                                                            .max_h(max_h);
+                                                        member_row =
+                                                            member_row.max_height(max_h);
                                                     }
-                                                    list.child(member_row.child(block))
+                                                    list.child(member_row)
                                                 }
                                             } else {
                                                 list.child(block)
