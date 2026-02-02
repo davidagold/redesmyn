@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::str::FromStr as _;
@@ -11,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, AsyncApp, ClickEvent, ClipboardItem, Context, ElementId, Entity, FocusHandle, Focusable,
-    ListOffset, ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, div, list,
-    px, relative,
+    ListOffset, ListState, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity,
+    Window, div, list, px, relative,
 };
 
 use gpui::prelude::*;
@@ -47,8 +48,28 @@ fn session_event_id_key(id: SessionEventId) -> u64 {
     u64::from_be_bytes(bytes[8..16].try_into().expect("slice length"))
 }
 
+fn stable_str_key(input: &str) -> u64 {
+    // Deterministic hashing for element IDs (avoid RandomState).
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 fn ease_out_cubic(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
+}
+
+fn should_autoscroll_to_bottom(handle: &ScrollHandle) -> bool {
+    let max = handle.max_offset().height;
+    if max <= px(0.0) {
+        return true;
+    }
+
+    let offset = handle.offset().y;
+    offset <= (-max + px(4.0))
 }
 
 const CONFLICT_CODE_KEY: &str = "conflict_code";
@@ -385,7 +406,8 @@ pub struct SessionView {
     pending_scroll_to_bottom: bool,
     scroll_to_bottom_scheduled: bool,
     follow_bottom_during_tool_group_transition: bool,
-    last_user_scroll_at: Option<Instant>,
+    user_scrolled_at: Rc<Cell<Option<Instant>>>,
+    reasoning_raw_scroll_handles: Rc<RefCell<HashMap<String, ScrollHandle>>>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -482,7 +504,8 @@ impl SessionView {
             pending_scroll_to_bottom: false,
             scroll_to_bottom_scheduled: false,
             follow_bottom_during_tool_group_transition: false,
-            last_user_scroll_at: None,
+            user_scrolled_at: Rc::new(Cell::new(None)),
+            reasoning_raw_scroll_handles: Rc::new(RefCell::new(HashMap::new())),
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -1019,7 +1042,7 @@ impl SessionView {
             return;
         };
 
-        self.last_user_scroll_at = Some(Instant::now());
+        self.user_scrolled_at.set(Some(Instant::now()));
         self.pending_scroll_to_bottom = false;
         self.follow_bottom_during_tool_group_transition = false;
 
@@ -1494,8 +1517,9 @@ impl SessionView {
     }
 
     fn user_scrolled_recently(&self) -> bool {
-        self.last_user_scroll_at
-            .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
+        self.user_scrolled_at
+            .get()
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(400))
     }
 
     fn last_visible_timeline_item_ix(&self) -> Option<usize> {
@@ -1560,7 +1584,7 @@ impl Render for SessionView {
             self.scroll_to_bottom_scheduled = true;
             cx.on_next_frame(window, |this, _window, cx| {
                 this.scroll_to_bottom_scheduled = false;
-                if this.pending_scroll_to_bottom {
+                if this.pending_scroll_to_bottom && !this.user_scrolled_recently() {
                     this.pending_scroll_to_bottom = false;
                     this.scroll_to_bottom();
                     cx.notify();
@@ -1570,8 +1594,10 @@ impl Render for SessionView {
 
         if !self.timeline_scroll_handler_installed {
             let view = view.clone();
+            let user_scrolled_at = self.user_scrolled_at.clone();
             self.timeline_list_state
                 .set_scroll_handler(move |event, _window, cx| {
+                    user_scrolled_at.set(Some(Instant::now()));
                     let visible_end = event.visible_range.end;
                     let count = event.count;
                     let view = view.clone();
@@ -1683,6 +1709,7 @@ impl Render for SessionView {
         let tool_event_groups = Rc::clone(&self.tool_event_groups);
         let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
+        let reasoning_raw_scroll_handles = Rc::clone(&self.reasoning_raw_scroll_handles);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
 
@@ -1750,6 +1777,7 @@ impl Render for SessionView {
                     let raw_text = (!item.raw.is_empty()).then(|| item.raw.join("\n"));
 
                     let toggle_view = timeline_view.clone();
+                    let toggle_key = key.clone();
                     let mut container = div()
                         .id(("session_item_ephemeral_reasoning", ix))
                         .w_full()
@@ -1773,7 +1801,7 @@ impl Render for SessionView {
                             .on_click(move |event, _window, cx| {
                                 if event.standard_click() {
                                     toggle_view.update(cx, |this, cx| {
-                                        this.toggle_reasoning(&key, cx);
+                                        this.toggle_reasoning(&toggle_key, cx);
                                     });
                                 }
                             })
@@ -1850,6 +1878,18 @@ impl Render for SessionView {
                         );
 
                         if let Some(raw_text) = raw_text {
+                            let raw_scroll_handle = {
+                                let mut handles = reasoning_raw_scroll_handles.borrow_mut();
+                                handles
+                                    .entry(key.clone())
+                                    .or_insert_with(ScrollHandle::new)
+                                    .clone()
+                            };
+
+                            if should_autoscroll_to_bottom(&raw_scroll_handle) {
+                                raw_scroll_handle.scroll_to_bottom();
+                            }
+
                             container = container.child(
                                 div()
                                     .h(px(1.0))
@@ -1857,10 +1897,14 @@ impl Render for SessionView {
                             );
                             container = container.child(
                                 div()
-                                    .id(("session_item_ephemeral_reasoning_raw", ix))
+                                    .id((
+                                        "session_item_ephemeral_reasoning_raw",
+                                        stable_str_key(key.as_str()),
+                                    ))
                                     .max_h(px(200.0))
                                     .overflow_y_scroll()
                                     .block_mouse_except_scroll()
+                                    .track_scroll(&raw_scroll_handle)
                                     .font(theme.typography.mono.font.clone())
                                     .text_size(theme.typography.caption.size)
                                     .text_color(theme.colors.foreground)
