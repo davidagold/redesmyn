@@ -72,29 +72,35 @@ fn should_autoscroll_to_bottom(handle: &ScrollHandle) -> bool {
     offset <= (-max + px(4.0))
 }
 
-fn stop_scroll_wheel_propagation_if_scrollable(
+fn chain_scroll_wheel_to_timeline_list_if_needed(
     event: &gpui::ScrollWheelEvent,
     window: &mut Window,
     cx: &mut App,
     scroll_handle: &ScrollHandle,
+    timeline_view: Entity<SessionView>,
 ) {
-    let max = scroll_handle.max_offset().height;
-    if max <= px(0.0) {
-        return;
-    }
-
     let delta_y = event.delta.pixel_delta(window.line_height()).y;
     if delta_y == px(0.0) {
         return;
     }
 
+    let max = scroll_handle.max_offset().height;
+    if max <= px(0.0) {
+        timeline_view.update(cx, move |this, cx| {
+            this.timeline_follow_bottom.set(false);
+            this.timeline_list_state.scroll_by(-delta_y);
+            this.on_timeline_scrolled(0, 0, cx);
+            cx.notify();
+        });
+        return;
+    }
+
     // `div`'s built-in scroll listener runs earlier in the same bubble phase and updates the
     // tracked `ScrollHandle` by adding `delta_y` to its offset. Use that to reconstruct the
-    // pre-scroll offset so we only allow the parent list to scroll when this scroll view was
-    // already at the boundary.
+    // pre-scroll offset so we only chain to the parent list once this scroll view was already
+    // at the boundary.
     let offset_y_after = scroll_handle.offset().y;
-    let offset_y_before = offset_y_after - delta_y;
-    let offset_y_before = offset_y_before.clamp(-max, px(0.0));
+    let offset_y_before = (offset_y_after - delta_y).clamp(-max, px(0.0));
     let threshold = px(1.0);
 
     let allow_parent_scroll = if delta_y > px(0.0) {
@@ -106,8 +112,21 @@ fn stop_scroll_wheel_propagation_if_scrollable(
     };
 
     if !allow_parent_scroll {
-        cx.stop_propagation();
+        return;
     }
+
+    // Keep the inner scroll view pinned at the boundary so the chained scroll doesn't produce
+    // a visible "rubber band" as the offset snaps back during the next paint.
+    let clamp_y = if delta_y > px(0.0) { px(0.0) } else { -max };
+    let offset = scroll_handle.offset();
+    scroll_handle.set_offset(gpui::point(offset.x, clamp_y));
+
+    timeline_view.update(cx, move |this, cx| {
+        this.timeline_follow_bottom.set(false);
+        this.timeline_list_state.scroll_by(-delta_y);
+        this.on_timeline_scrolled(0, 0, cx);
+        cx.notify();
+    });
 }
 
 struct AutoscrollMarker {
@@ -1686,7 +1705,18 @@ impl Render for SessionView {
         let distance_to_bottom = (max_offset - scroll_offset).max(px(0.0));
         let threshold = px(4.0);
 
-        if self.timeline_follow_bottom.get() && distance_to_bottom > threshold {
+        let assistant_generating = self.timeline_items.iter().any(|item| match item {
+            SessionTimelineItem::EphemeralReasoning(_) => true,
+            SessionTimelineItem::EphemeralText(text) => matches!(
+                text.role,
+                redesmyn_session_view_model::SessionMessageRole::Assistant
+                    | redesmyn_session_view_model::SessionMessageRole::Tool
+            ),
+            _ => false,
+        });
+
+        if assistant_generating && self.timeline_follow_bottom.get() && distance_to_bottom > threshold
+        {
             self.timeline_list_state
                 .scroll_to_reveal_item(self.timeline_items.len());
         }
@@ -1939,15 +1969,17 @@ impl Render for SessionView {
                                 .max_h(px(160.0))
                                 .overflow_y_scroll()
                                 .track_scroll(&summary_scroll_handle)
-                                .block_mouse_except_scroll()
+                                .occlude()
                                 .on_scroll_wheel({
                                     let handle = summary_scroll_handle.clone();
+                                    let timeline_view = timeline_view.clone();
                                     move |event, window, cx| {
-                                        stop_scroll_wheel_propagation_if_scrollable(
+                                        chain_scroll_wheel_to_timeline_list_if_needed(
                                             event,
                                             window,
                                             cx,
                                             &handle,
+                                            timeline_view.clone(),
                                         );
                                     }
                                 })
@@ -2035,15 +2067,17 @@ impl Render for SessionView {
                                     .max_h(px(200.0))
                                     .overflow_y_scroll()
                                     .track_scroll(&raw_scroll_handle)
-                                    .block_mouse_except_scroll()
+                                    .occlude()
                                     .on_scroll_wheel({
                                         let handle = raw_scroll_handle.clone();
+                                        let timeline_view = timeline_view.clone();
                                         move |event, window, cx| {
-                                            stop_scroll_wheel_propagation_if_scrollable(
+                                            chain_scroll_wheel_to_timeline_list_if_needed(
                                                 event,
                                                 window,
                                                 cx,
                                                 &handle,
+                                                timeline_view.clone(),
                                             );
                                         }
                                     })
@@ -2238,15 +2272,17 @@ impl Render for SessionView {
                                         .max_h(px(180.0))
                                         .overflow_y_scroll()
                                         .track_scroll(&summary_scroll_handle)
-                                        .block_mouse_except_scroll()
+                                        .occlude()
                                         .on_scroll_wheel({
                                             let handle = summary_scroll_handle.clone();
+                                            let timeline_view = timeline_view.clone();
                                             move |event, window, cx| {
-                                                stop_scroll_wheel_propagation_if_scrollable(
+                                                chain_scroll_wheel_to_timeline_list_if_needed(
                                                     event,
                                                     window,
                                                     cx,
                                                     &handle,
+                                                    timeline_view.clone(),
                                                 );
                                             }
                                         })
@@ -2299,15 +2335,17 @@ impl Render for SessionView {
                                             .max_h(px(240.0))
                                             .overflow_y_scroll()
                                             .track_scroll(&raw_scroll_handle)
-                                            .block_mouse_except_scroll()
+                                            .occlude()
                                             .on_scroll_wheel({
                                                 let handle = raw_scroll_handle.clone();
+                                                let timeline_view = timeline_view.clone();
                                                 move |event, window, cx| {
-                                                    stop_scroll_wheel_propagation_if_scrollable(
+                                                    chain_scroll_wheel_to_timeline_list_if_needed(
                                                         event,
                                                         window,
                                                         cx,
                                                         &handle,
+                                                        timeline_view.clone(),
                                                     );
                                                 }
                                             })
