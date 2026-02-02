@@ -2342,15 +2342,15 @@ impl Render for GraphView {
                                 .justify_between()
                                 .gap(px(8.0 * zoom))
                                 .h(px(24.0 * zoom))
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .flex_1()
-                                                .text_size(branch_slug_text_size)
-                                                .text_color(theme.colors.foreground_muted)
-                                                .truncate()
-                                                .child(branch_slug),
-                                        )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .text_size(branch_slug_text_size)
+                                        .text_color(theme.colors.foreground_muted)
+                                        .truncate()
+                                        .child(branch_slug),
+                                )
                                 .child(
                                     div()
                                         .flex()

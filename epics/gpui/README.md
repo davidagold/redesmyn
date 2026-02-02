@@ -341,7 +341,7 @@ Tasks:
 - `epics/gpui/tasks/T-50/README.md`: Graph scene + renderer scaffolding (GPUI canvas, camera, hit-testing).
 - `epics/gpui/tasks/T-51/README.md`: Deterministic layout engine v1 (variable node sizes; expand/collapse relayout).
 - `epics/gpui/tasks/T-52/README.md`: Task node view (compact/expanded; measurement; selection affordances).
-- `epics/gpui/tasks/T-77/README.md`: Collapsed task card parity (preview + agent badges).
+- `epics/gpui/tasks/T-77/README.md`: Collapsed task card parity (header/title/preview/status).
 - `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
 - `epics/gpui/tasks/T-69/README.md`: Graph node virtualization + LOD (viewport culling; node render modes).
 - `epics/gpui/tasks/T-78/README.md`: GPU backpressure for pan/zoom (cap frames-in-flight memory spikes).
