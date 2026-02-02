@@ -2279,14 +2279,17 @@ impl Render for GraphView {
                         window,
                     );
 
-                    // Compute title wrapping with conservative rounding so the first line never
-                    // truncates due to sub-pixel layout differences.
+                    // Compute a stable (pixel-snapped) content width for text measurement and
+                    // rendering so we don't flicker between neighboring wrap/truncation states
+                    // while zooming.
                     const TITLE_WRAP_SLACK_PX: f32 = 10.0;
-                    let title_wrap_width = {
-                        let width_px = f32::from(bounds_in_window.size.width).floor();
-                        let padding_px = f32::from(padding_x).ceil();
-                        px((width_px - 2.0 * padding_px - TITLE_WRAP_SLACK_PX).max(0.0))
-                    };
+                    let title_wrap_width = px(
+                        (f32::from(bounds_in_window.size.width)
+                            - 2.0 * f32::from(padding_x)
+                            - TITLE_WRAP_SLACK_PX)
+                            .max(0.0)
+                            .floor(),
+                    );
                     let title_text_size = quantized_zoom_text_size(rem_size, 0.78, zoom);
                     let (title_line1, title_line2) = collapsed_title_lines(
                         &mut self.collapsed_title_cache,
@@ -2385,7 +2388,7 @@ impl Render for GraphView {
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .w_full()
+                                        .w(title_wrap_width)
                                         .font(theme.typography.body.font.clone())
                                         .text_size(title_text_size)
                                         .text_color(theme.colors.foreground)
@@ -2396,7 +2399,7 @@ impl Render for GraphView {
                                     this.child(
                                         div()
                                             .min_w_0()
-                                            .w_full()
+                                            .w(title_wrap_width)
                                             .font(theme.typography.body.font.clone())
                                             .text_size(title_text_size)
                                             .text_color(theme.colors.foreground)
@@ -2411,6 +2414,7 @@ impl Render for GraphView {
                             (node_element_id.clone().into(), "preview").into();
                         collapsed_content = collapsed_content.child(
                             div()
+                                .w(title_wrap_width)
                                 .text_size(preview_text_size)
                                 .text_color(theme.colors.foreground_muted)
                                 .child(
