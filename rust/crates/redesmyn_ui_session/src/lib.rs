@@ -72,6 +72,44 @@ fn should_autoscroll_to_bottom(handle: &ScrollHandle) -> bool {
     offset <= (-max + px(4.0))
 }
 
+fn stop_scroll_wheel_propagation_if_scrollable(
+    event: &gpui::ScrollWheelEvent,
+    window: &mut Window,
+    cx: &mut App,
+    scroll_handle: &ScrollHandle,
+) {
+    let max = scroll_handle.max_offset().height;
+    if max <= px(0.0) {
+        return;
+    }
+
+    let delta_y = event.delta.pixel_delta(window.line_height()).y;
+    if delta_y == px(0.0) {
+        return;
+    }
+
+    // `div`'s built-in scroll listener runs earlier in the same bubble phase and updates the
+    // tracked `ScrollHandle` by adding `delta_y` to its offset. Use that to reconstruct the
+    // pre-scroll offset so we only allow the parent list to scroll when this scroll view was
+    // already at the boundary.
+    let offset_y_after = scroll_handle.offset().y;
+    let offset_y_before = offset_y_after - delta_y;
+    let offset_y_before = offset_y_before.clamp(-max, px(0.0));
+    let threshold = px(1.0);
+
+    let allow_parent_scroll = if delta_y > px(0.0) {
+        // Scroll up: allow the parent list to scroll only if this scroll view is already at top.
+        offset_y_before >= -threshold
+    } else {
+        // Scroll down: allow the parent list to scroll only if this scroll view is already at bottom.
+        offset_y_before <= (-max + threshold)
+    };
+
+    if !allow_parent_scroll {
+        cx.stop_propagation();
+    }
+}
+
 struct AutoscrollMarker {
     enabled: bool,
 }
@@ -161,6 +199,21 @@ impl RawThoughtScrollState {
             handle: ScrollHandle::new(),
             follow_bottom: true,
             last_offset_y: px(0.0),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ReasoningScrollState {
+    summary: RawThoughtScrollState,
+    raw: RawThoughtScrollState,
+}
+
+impl ReasoningScrollState {
+    fn new() -> Self {
+        Self {
+            summary: RawThoughtScrollState::new(),
+            raw: RawThoughtScrollState::new(),
         }
     }
 }
@@ -520,7 +573,7 @@ pub struct SessionView {
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
-    reasoning_raw_scroll_states: Rc<RefCell<HashMap<String, RawThoughtScrollState>>>,
+    reasoning_scroll_states: Rc<RefCell<HashMap<String, ReasoningScrollState>>>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -616,7 +669,7 @@ impl SessionView {
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
-            reasoning_raw_scroll_states: Rc::new(RefCell::new(HashMap::new())),
+            reasoning_scroll_states: Rc::new(RefCell::new(HashMap::new())),
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -1730,7 +1783,7 @@ impl Render for SessionView {
         let tool_event_groups = Rc::clone(&self.tool_event_groups);
         let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
-        let reasoning_raw_scroll_states = Rc::clone(&self.reasoning_raw_scroll_states);
+        let reasoning_scroll_states = Rc::clone(&self.reasoning_scroll_states);
         let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
@@ -1855,12 +1908,49 @@ impl Render for SessionView {
                     );
 
                     if is_expanded {
+                        let (summary_scroll_handle, follow_summary_bottom) = {
+                            let mut states = reasoning_scroll_states.borrow_mut();
+                            let state = states
+                                .entry(key.clone())
+                                .or_insert_with(ReasoningScrollState::new);
+
+                            let handle = state.summary.handle.clone();
+                            let offset_y = handle.offset().y;
+
+                            if state.summary.follow_bottom {
+                                if offset_y > state.summary.last_offset_y {
+                                    state.summary.follow_bottom = false;
+                                }
+                            } else if should_autoscroll_to_bottom(&handle) {
+                                state.summary.follow_bottom = true;
+                            }
+
+                            state.summary.last_offset_y = offset_y;
+                            (handle, state.summary.follow_bottom)
+                        };
+
+                        if follow_summary_bottom {
+                            summary_scroll_handle.scroll_to_bottom();
+                        }
+
                         container = container.child(
                             div()
                                 .id(("session_item_ephemeral_reasoning_summary", ix))
                                 .max_h(px(160.0))
                                 .overflow_y_scroll()
-                                .occlude()
+                                .track_scroll(&summary_scroll_handle)
+                                .block_mouse_except_scroll()
+                                .on_scroll_wheel({
+                                    let handle = summary_scroll_handle.clone();
+                                    move |event, window, cx| {
+                                        stop_scroll_wheel_propagation_if_scrollable(
+                                            event,
+                                            window,
+                                            cx,
+                                            &handle,
+                                        );
+                                    }
+                                })
                                 .child(if let Some(summary_text) = summary_text {
                                     div()
                                         .text_size(theme.typography.caption.size)
@@ -1907,24 +1997,24 @@ impl Render for SessionView {
 
                         if let Some(raw_text) = raw_text {
                             let (raw_scroll_handle, follow_raw_bottom) = {
-                                let mut states = reasoning_raw_scroll_states.borrow_mut();
+                                let mut states = reasoning_scroll_states.borrow_mut();
                                 let state = states
                                     .entry(key.clone())
-                                    .or_insert_with(RawThoughtScrollState::new);
+                                    .or_insert_with(ReasoningScrollState::new);
 
-                                let handle = state.handle.clone();
+                                let handle = state.raw.handle.clone();
                                 let offset_y = handle.offset().y;
 
-                                if state.follow_bottom {
-                                    if offset_y > state.last_offset_y {
-                                        state.follow_bottom = false;
+                                if state.raw.follow_bottom {
+                                    if offset_y > state.raw.last_offset_y {
+                                        state.raw.follow_bottom = false;
                                     }
                                 } else if should_autoscroll_to_bottom(&handle) {
-                                    state.follow_bottom = true;
+                                    state.raw.follow_bottom = true;
                                 }
 
-                                state.last_offset_y = offset_y;
-                                (handle, state.follow_bottom)
+                                state.raw.last_offset_y = offset_y;
+                                (handle, state.raw.follow_bottom)
                             };
 
                             if follow_raw_bottom {
@@ -1944,8 +2034,19 @@ impl Render for SessionView {
                                     ))
                                     .max_h(px(200.0))
                                     .overflow_y_scroll()
-                                    .occlude()
                                     .track_scroll(&raw_scroll_handle)
+                                    .block_mouse_except_scroll()
+                                    .on_scroll_wheel({
+                                        let handle = raw_scroll_handle.clone();
+                                        move |event, window, cx| {
+                                            stop_scroll_wheel_propagation_if_scrollable(
+                                                event,
+                                                window,
+                                                cx,
+                                                &handle,
+                                            );
+                                        }
+                                    })
                                     .font(theme.typography.mono.font.clone())
                                     .text_size(theme.typography.caption.size)
                                     .text_color(theme.colors.foreground)
@@ -2106,12 +2207,49 @@ impl Render for SessionView {
                                 let show_truncation_notice =
                                     reasoning.summary.full_text_artifact.is_none();
 
+                                let (summary_scroll_handle, follow_summary_bottom) = {
+                                    let mut states = reasoning_scroll_states.borrow_mut();
+                                    let state = states
+                                        .entry(key.clone())
+                                        .or_insert_with(ReasoningScrollState::new);
+
+                                    let handle = state.summary.handle.clone();
+                                    let offset_y = handle.offset().y;
+
+                                    if state.summary.follow_bottom {
+                                        if offset_y > state.summary.last_offset_y {
+                                            state.summary.follow_bottom = false;
+                                        }
+                                    } else if should_autoscroll_to_bottom(&handle) {
+                                        state.summary.follow_bottom = true;
+                                    }
+
+                                    state.summary.last_offset_y = offset_y;
+                                    (handle, state.summary.follow_bottom)
+                                };
+
+                                if follow_summary_bottom {
+                                    summary_scroll_handle.scroll_to_bottom();
+                                }
+
                                 container = container.child(
                                     div()
                                         .id((bubble_id.clone(), "reasoning_summary_scroll"))
                                         .max_h(px(180.0))
                                         .overflow_y_scroll()
-                                        .occlude()
+                                        .track_scroll(&summary_scroll_handle)
+                                        .block_mouse_except_scroll()
+                                        .on_scroll_wheel({
+                                            let handle = summary_scroll_handle.clone();
+                                            move |event, window, cx| {
+                                                stop_scroll_wheel_propagation_if_scrollable(
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                    &handle,
+                                                );
+                                            }
+                                        })
                                         .child(
                                             MarkdownView::new(
                                                 (bubble_id.clone(), "reasoning_summary"),
@@ -2125,24 +2263,24 @@ impl Render for SessionView {
 
                                 if let Some(raw) = reasoning.raw {
                                     let (raw_scroll_handle, follow_raw_bottom) = {
-                                        let mut states = reasoning_raw_scroll_states.borrow_mut();
+                                        let mut states = reasoning_scroll_states.borrow_mut();
                                         let state = states
                                             .entry(key.clone())
-                                            .or_insert_with(RawThoughtScrollState::new);
+                                            .or_insert_with(ReasoningScrollState::new);
 
-                                        let handle = state.handle.clone();
+                                        let handle = state.raw.handle.clone();
                                         let offset_y = handle.offset().y;
 
-                                        if state.follow_bottom {
-                                            if offset_y > state.last_offset_y {
-                                                state.follow_bottom = false;
+                                        if state.raw.follow_bottom {
+                                            if offset_y > state.raw.last_offset_y {
+                                                state.raw.follow_bottom = false;
                                             }
                                         } else if should_autoscroll_to_bottom(&handle) {
-                                            state.follow_bottom = true;
+                                            state.raw.follow_bottom = true;
                                         }
 
-                                        state.last_offset_y = offset_y;
-                                        (handle, state.follow_bottom)
+                                        state.raw.last_offset_y = offset_y;
+                                        (handle, state.raw.follow_bottom)
                                     };
 
                                     if follow_raw_bottom {
@@ -2160,8 +2298,19 @@ impl Render for SessionView {
                                             .id((bubble_id.clone(), "reasoning_raw_scroll"))
                                             .max_h(px(240.0))
                                             .overflow_y_scroll()
-                                            .occlude()
                                             .track_scroll(&raw_scroll_handle)
+                                            .block_mouse_except_scroll()
+                                            .on_scroll_wheel({
+                                                let handle = raw_scroll_handle.clone();
+                                                move |event, window, cx| {
+                                                    stop_scroll_wheel_propagation_if_scrollable(
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                        &handle,
+                                                    );
+                                                }
+                                            })
                                             .font(theme.typography.mono.font.clone())
                                             .text_size(theme.typography.caption.size)
                                             .text_color(theme.colors.foreground)
