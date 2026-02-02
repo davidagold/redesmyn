@@ -2279,31 +2279,27 @@ impl Render for GraphView {
                         window,
                     );
 
-                    let title_font_size_unzoomed = rems(0.78).to_pixels(rem_size);
-                    let title_wrap_width_unzoomed = {
-                        // Leave slack in *window* pixels so we don't hit borderline measurements at
-                        // small zooms (which would otherwise cause the first title line to truncate).
-                        const TITLE_WRAP_SLACK_PX: f32 = 8.0;
-                        let width_in_window = (f32::from(bounds_in_window.size.width)
-                            - 2.0 * f32::from(padding_x))
-                            .max(0.0);
-                        let width_unzoomed =
-                            (width_in_window - TITLE_WRAP_SLACK_PX).max(0.0) / zoom.max(1e-3);
-                        px(width_unzoomed)
+                    // Compute title wrapping with conservative rounding so the first line never
+                    // truncates due to sub-pixel layout differences.
+                    const TITLE_WRAP_SLACK_PX: f32 = 10.0;
+                    let title_wrap_width = {
+                        let width_px = f32::from(bounds_in_window.size.width).floor();
+                        let padding_px = f32::from(padding_x).ceil();
+                        px((width_px - 2.0 * padding_px - TITLE_WRAP_SLACK_PX).max(0.0))
                     };
+                    let title_text_size = quantized_zoom_text_size(rem_size, 0.78, zoom);
                     let (title_line1, title_line2) = collapsed_title_lines(
                         &mut self.collapsed_title_cache,
                         task_id,
                         title.clone(),
-                        title_wrap_width_unzoomed,
+                        title_wrap_width,
                         theme.typography.body.font.clone(),
-                        title_font_size_unzoomed,
+                        title_text_size,
                         theme.colors.foreground,
                         window,
                     );
 
                     let branch_slug_text_size = quantized_zoom_text_size(rem_size, 0.60, zoom);
-                    let title_text_size = quantized_zoom_text_size(rem_size, 0.78, zoom);
                     let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
 
                     let preview_content = latest_session.as_ref().and_then(|session| {
@@ -2981,8 +2977,8 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
 }
 
 fn quantized_zoom_text_size(rem_size: gpui::Pixels, base_rems: f32, zoom: f32) -> gpui::Pixels {
-    // Quantize continuous zoom-driven font sizes to keep GPUI's glyph caches bounded.
-    // Keep the step fine enough to be visually smooth while zooming.
+    // Quantize continuous zoom-driven font sizes to keep GPUI's glyph caches bounded, while still
+    // feeling smooth during zoom.
     const STEP_PX: f32 = 0.1;
     let base_px = rems(base_rems).to_pixels(rem_size);
     let scaled = f32::from(base_px) * zoom.max(0.0);
@@ -3222,7 +3218,11 @@ fn wrap_two_lines_wordwise(
         return (text.to_string(), None);
     }
 
-    let line1_end = fit_prefix_end(text, max_width, font, font_size, color, window);
+    // Leave a little headroom so the first line doesn't pick up an ellipsis due to pixel snapping.
+    const LINE1_FUDGE_PX: f32 = 4.0;
+    let max_width_line1 = px((f32::from(max_width) - LINE1_FUDGE_PX).max(0.0));
+
+    let line1_end = fit_prefix_end(text, max_width_line1, font, font_size, color, window);
     let line1 = text[..line1_end].trim_end().to_string();
 
     let remainder = text[line1_end..].trim_start();
