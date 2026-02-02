@@ -1860,7 +1860,7 @@ impl Render for SessionView {
                                 .id(("session_item_ephemeral_reasoning_summary", ix))
                                 .max_h(px(160.0))
                                 .overflow_y_scroll()
-                                .block_mouse_except_scroll()
+                                .occlude()
                                 .child(if let Some(summary_text) = summary_text {
                                     div()
                                         .text_size(theme.typography.caption.size)
@@ -1944,7 +1944,7 @@ impl Render for SessionView {
                                     ))
                                     .max_h(px(200.0))
                                     .overflow_y_scroll()
-                                    .block_mouse_except_scroll()
+                                    .occlude()
                                     .track_scroll(&raw_scroll_handle)
                                     .font(theme.typography.mono.font.clone())
                                     .text_size(theme.typography.caption.size)
@@ -2046,6 +2046,7 @@ impl Render for SessionView {
                             let chevron = if is_expanded { "▾" } else { "▸" };
 
                             let toggle_view = timeline_view.clone();
+                            let toggle_key = key.clone();
                             let mut container = div()
                                 .id(bubble_id.clone())
                                 .w_full()
@@ -2069,7 +2070,7 @@ impl Render for SessionView {
                                     .on_click(move |event, _window, cx| {
                                         if event.standard_click() {
                                             toggle_view.update(cx, |this, cx| {
-                                                this.toggle_reasoning(&key, cx);
+                                                this.toggle_reasoning(&toggle_key, cx);
                                             });
                                         }
                                     })
@@ -2110,7 +2111,7 @@ impl Render for SessionView {
                                         .id((bubble_id.clone(), "reasoning_summary_scroll"))
                                         .max_h(px(180.0))
                                         .overflow_y_scroll()
-                                        .block_mouse_except_scroll()
+                                        .occlude()
                                         .child(
                                             MarkdownView::new(
                                                 (bubble_id.clone(), "reasoning_summary"),
@@ -2123,6 +2124,31 @@ impl Render for SessionView {
                                 );
 
                                 if let Some(raw) = reasoning.raw {
+                                    let (raw_scroll_handle, follow_raw_bottom) = {
+                                        let mut states = reasoning_raw_scroll_states.borrow_mut();
+                                        let state = states
+                                            .entry(key.clone())
+                                            .or_insert_with(RawThoughtScrollState::new);
+
+                                        let handle = state.handle.clone();
+                                        let offset_y = handle.offset().y;
+
+                                        if state.follow_bottom {
+                                            if offset_y > state.last_offset_y {
+                                                state.follow_bottom = false;
+                                            }
+                                        } else if should_autoscroll_to_bottom(&handle) {
+                                            state.follow_bottom = true;
+                                        }
+
+                                        state.last_offset_y = offset_y;
+                                        (handle, state.follow_bottom)
+                                    };
+
+                                    if follow_raw_bottom {
+                                        raw_scroll_handle.scroll_to_bottom();
+                                    }
+
                                     container = container.child(
                                         div()
                                             .h(px(1.0))
@@ -2134,7 +2160,8 @@ impl Render for SessionView {
                                             .id((bubble_id.clone(), "reasoning_raw_scroll"))
                                             .max_h(px(240.0))
                                             .overflow_y_scroll()
-                                            .block_mouse_except_scroll()
+                                            .occlude()
+                                            .track_scroll(&raw_scroll_handle)
                                             .font(theme.typography.mono.font.clone())
                                             .text_size(theme.typography.caption.size)
                                             .text_color(theme.colors.foreground)
