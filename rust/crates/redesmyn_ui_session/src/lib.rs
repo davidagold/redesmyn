@@ -384,6 +384,8 @@ pub struct SessionView {
     timeline_autoload_scheduled: bool,
     pending_scroll_to_bottom: bool,
     scroll_to_bottom_scheduled: bool,
+    follow_bottom_during_tool_group_transition: bool,
+    last_user_scroll_at: Option<Instant>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -479,6 +481,8 @@ impl SessionView {
             timeline_autoload_scheduled: false,
             pending_scroll_to_bottom: false,
             scroll_to_bottom_scheduled: false,
+            follow_bottom_during_tool_group_transition: false,
+            last_user_scroll_at: None,
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -1015,6 +1019,10 @@ impl SessionView {
             return;
         };
 
+        self.last_user_scroll_at = Some(Instant::now());
+        self.pending_scroll_to_bottom = false;
+        self.follow_bottom_during_tool_group_transition = false;
+
         let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
         let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
         let threshold = px(4.0);
@@ -1047,6 +1055,9 @@ impl SessionView {
             self.collapsed_reasoning.insert(key.to_owned());
         }
         self.invalidate_reasoning_item(key);
+        if self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
+            self.pending_scroll_to_bottom = true;
+        }
         cx.notify();
     }
 
@@ -1093,6 +1104,10 @@ impl SessionView {
 
         self.tool_group_transitions = Rc::new(transitions);
         self.invalidate_tool_group(group_id);
+        if !was_expanded && self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
+            self.follow_bottom_during_tool_group_transition = true;
+            self.pending_scroll_to_bottom = true;
+        }
         cx.notify();
     }
 
@@ -1440,6 +1455,14 @@ impl SessionView {
             self.invalidate_tool_group(group_id);
         }
 
+        if self.follow_bottom_during_tool_group_transition && !self.user_scrolled_recently() {
+            self.pending_scroll_to_bottom = true;
+        }
+
+        if self.tool_group_transitions.is_empty() {
+            self.follow_bottom_during_tool_group_transition = false;
+        }
+
         if !self.tool_group_transitions.is_empty() {
             window.request_animation_frame();
         }
@@ -1468,6 +1491,11 @@ impl SessionView {
             return;
         };
         self.timeline_list_state.scroll_to_reveal_item(ix);
+    }
+
+    fn user_scrolled_recently(&self) -> bool {
+        self.last_user_scroll_at
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
     }
 
     fn last_visible_timeline_item_ix(&self) -> Option<usize> {
@@ -1525,7 +1553,10 @@ impl Render for SessionView {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
 
-        if self.pending_scroll_to_bottom && !self.scroll_to_bottom_scheduled {
+        if self.pending_scroll_to_bottom
+            && !self.scroll_to_bottom_scheduled
+            && !self.user_scrolled_recently()
+        {
             self.scroll_to_bottom_scheduled = true;
             cx.on_next_frame(window, |this, _window, cx| {
                 this.scroll_to_bottom_scheduled = false;
