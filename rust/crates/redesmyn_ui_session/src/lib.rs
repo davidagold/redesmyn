@@ -382,6 +382,8 @@ pub struct SessionView {
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
+    pending_scroll_to_bottom: bool,
+    scroll_to_bottom_scheduled: bool,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -475,6 +477,8 @@ impl SessionView {
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
+            pending_scroll_to_bottom: false,
+            scroll_to_bottom_scheduled: false,
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -652,7 +656,7 @@ impl SessionView {
         let session_id = feed.session_id;
         feed.start_sending();
         feed.request_scroll_to_bottom();
-        self.scroll_to_bottom();
+        self.pending_scroll_to_bottom = true;
         cx.notify();
 
         let view = cx.entity();
@@ -765,7 +769,7 @@ impl SessionView {
                 feed.set_at_bottom(true);
                 feed.clear_scroll_intents();
                 self.refresh_timeline_items();
-                self.scroll_to_bottom();
+                self.pending_scroll_to_bottom = true;
                 self.start_subscription(after, cx);
             }
             Err(err) => {
@@ -1003,17 +1007,20 @@ impl SessionView {
 
     fn on_timeline_scrolled(
         &mut self,
-        visible_range_end: usize,
+        _visible_range_end: usize,
         _count: usize,
         cx: &mut Context<Self>,
     ) {
-        let effective_count = self.visible_timeline_item_count();
         let Some(feed) = self.feed.as_mut() else {
             return;
         };
 
+        let max_offset = self.timeline_list_state.max_offset_for_scrollbar().height;
+        let scroll_offset = -self.timeline_list_state.scroll_px_offset_for_scrollbar().y;
+        let threshold = px(4.0);
+
         let was_at_bottom = feed.scroll.at_bottom;
-        let at_bottom = visible_range_end >= effective_count;
+        let at_bottom = scroll_offset + threshold >= max_offset;
         feed.set_at_bottom(at_bottom);
 
         if feed.scroll.at_bottom != was_at_bottom {
@@ -1433,10 +1440,6 @@ impl SessionView {
             self.invalidate_tool_group(group_id);
         }
 
-        if self.feed.as_ref().is_some_and(|feed| feed.scroll.at_bottom) {
-            self.scroll_to_bottom();
-        }
-
         if !self.tool_group_transitions.is_empty() {
             window.request_animation_frame();
         }
@@ -1451,7 +1454,7 @@ impl SessionView {
             return;
         }
 
-        self.scroll_to_bottom();
+        self.pending_scroll_to_bottom = true;
         if let Some(feed) = self.feed.as_mut() {
             feed.clear_scroll_intents();
         }
@@ -1465,11 +1468,6 @@ impl SessionView {
             return;
         };
         self.timeline_list_state.scroll_to_reveal_item(ix);
-    }
-
-    fn visible_timeline_item_count(&self) -> usize {
-        self.last_visible_timeline_item_ix()
-            .map_or(0, |ix| ix.saturating_add(1))
     }
 
     fn last_visible_timeline_item_ix(&self) -> Option<usize> {
@@ -1526,6 +1524,18 @@ impl Render for SessionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let theme = theme_for_window(window, cx);
         let view = cx.entity();
+
+        if self.pending_scroll_to_bottom && !self.scroll_to_bottom_scheduled {
+            self.scroll_to_bottom_scheduled = true;
+            cx.on_next_frame(window, |this, _window, cx| {
+                this.scroll_to_bottom_scheduled = false;
+                if this.pending_scroll_to_bottom {
+                    this.pending_scroll_to_bottom = false;
+                    this.scroll_to_bottom();
+                    cx.notify();
+                }
+            });
+        }
 
         if !self.timeline_scroll_handler_installed {
             let view = view.clone();
@@ -1718,8 +1728,7 @@ impl Render for SessionView {
                         .gap(theme.spacing.sm)
                         .px(theme.spacing.sm)
                         .py(theme.spacing.sm)
-                        .rounded_md()
-                        .bg(theme.colors.surface_elevated.opacity(0.18));
+                        .rounded_md();
 
                     container = container.child(
                         div()
@@ -1930,8 +1939,7 @@ impl Render for SessionView {
                                 .gap(theme.spacing.sm)
                                 .px(theme.spacing.sm)
                                 .py(theme.spacing.sm)
-                                .rounded_md()
-                                .bg(theme.colors.surface_elevated.opacity(0.18));
+                                .rounded_md();
 
                             container = container.child(
                                 div()
