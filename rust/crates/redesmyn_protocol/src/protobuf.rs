@@ -16,11 +16,13 @@ use crate::daemon::{
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
-    CommandExecutionPermissionRequest, ExternalSessionRef, FileChangePermissionRequest,
-    InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
-    PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEvent, SessionEventKind,
-    SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState,
-    UnknownSessionEvent, UserMessage,
+    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexNetworkAccess, CodexSandboxPolicy,
+    CodexSandboxPolicyChanged, CommandExecutionPermissionRequest, ExternalSessionRef,
+    FileChangePermissionRequest, InterfaceMode, PermissionDecided, PermissionDecision,
+    PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
+    PermissionsModeChanged, SessionEvent, SessionEventKind, SessionScope, StatusUpdate,
+    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
+    UserMessage,
 };
 use crate::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -1394,6 +1396,42 @@ fn decode_permissions_mode(value: i32) -> PermissionsMode {
     }
 }
 
+fn encode_codex_approval_policy(value: CodexApprovalPolicy) -> i32 {
+    match value {
+        CodexApprovalPolicy::UnlessTrusted => pbv1::CodexApprovalPolicy::UnlessTrusted as i32,
+        CodexApprovalPolicy::OnFailure => pbv1::CodexApprovalPolicy::OnFailure as i32,
+        CodexApprovalPolicy::OnRequest => pbv1::CodexApprovalPolicy::OnRequest as i32,
+        CodexApprovalPolicy::Never => pbv1::CodexApprovalPolicy::Never as i32,
+        CodexApprovalPolicy::Unknown => pbv1::CodexApprovalPolicy::Unspecified as i32,
+    }
+}
+
+fn decode_codex_approval_policy(value: i32) -> CodexApprovalPolicy {
+    match pbv1::CodexApprovalPolicy::try_from(value) {
+        Ok(pbv1::CodexApprovalPolicy::UnlessTrusted) => CodexApprovalPolicy::UnlessTrusted,
+        Ok(pbv1::CodexApprovalPolicy::OnFailure) => CodexApprovalPolicy::OnFailure,
+        Ok(pbv1::CodexApprovalPolicy::OnRequest) => CodexApprovalPolicy::OnRequest,
+        Ok(pbv1::CodexApprovalPolicy::Never) => CodexApprovalPolicy::Never,
+        Ok(pbv1::CodexApprovalPolicy::Unspecified) | Err(_) => CodexApprovalPolicy::Unknown,
+    }
+}
+
+fn encode_codex_network_access(value: CodexNetworkAccess) -> i32 {
+    match value {
+        CodexNetworkAccess::Restricted => pbv1::CodexNetworkAccess::Restricted as i32,
+        CodexNetworkAccess::Enabled => pbv1::CodexNetworkAccess::Enabled as i32,
+        CodexNetworkAccess::Unknown => pbv1::CodexNetworkAccess::Unspecified as i32,
+    }
+}
+
+fn decode_codex_network_access(value: i32) -> CodexNetworkAccess {
+    match pbv1::CodexNetworkAccess::try_from(value) {
+        Ok(pbv1::CodexNetworkAccess::Restricted) => CodexNetworkAccess::Restricted,
+        Ok(pbv1::CodexNetworkAccess::Enabled) => CodexNetworkAccess::Enabled,
+        Ok(pbv1::CodexNetworkAccess::Unspecified) | Err(_) => CodexNetworkAccess::Unknown,
+    }
+}
+
 fn encode_permission_decision(value: PermissionDecision) -> i32 {
     match value {
         PermissionDecision::Approve => pbv1::PermissionDecision::Approve as i32,
@@ -1441,6 +1479,106 @@ impl PermissionsModeChanged {
     pub fn try_from_protobuf(proto: pbv1::PermissionsModeChanged) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             mode: decode_permissions_mode(proto.mode),
+        })
+    }
+}
+
+impl CodexApprovalPolicyChanged {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CodexApprovalPolicyChanged {
+        pbv1::CodexApprovalPolicyChanged {
+            approval_policy: encode_codex_approval_policy(
+                self.approval_policy.unwrap_or(CodexApprovalPolicy::Unknown),
+            ),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CodexApprovalPolicyChanged,
+    ) -> Result<Self, ErrorEnvelope> {
+        let policy = decode_codex_approval_policy(proto.approval_policy);
+        Ok(Self {
+            approval_policy: match policy {
+                CodexApprovalPolicy::Unknown => None,
+                other => Some(other),
+            },
+        })
+    }
+}
+
+impl CodexSandboxPolicy {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CodexSandboxPolicy {
+        if matches!(self, CodexSandboxPolicy::Unknown) {
+            return pbv1::CodexSandboxPolicy { kind: None };
+        }
+
+        use pbv1::codex_sandbox_policy::Kind;
+        let kind = match self {
+            CodexSandboxPolicy::DangerFullAccess => Kind::DangerFullAccess(pbv1::Empty {}),
+            CodexSandboxPolicy::ReadOnly => Kind::ReadOnly(pbv1::Empty {}),
+            CodexSandboxPolicy::ExternalSandbox { network_access } => {
+                Kind::ExternalSandbox(pbv1::CodexSandboxExternalSandbox {
+                    network_access: encode_codex_network_access(*network_access),
+                })
+            }
+            CodexSandboxPolicy::WorkspaceWrite {
+                writable_roots,
+                network_access,
+                exclude_tmpdir_env_var,
+                exclude_slash_tmp,
+            } => Kind::WorkspaceWrite(pbv1::CodexSandboxWorkspaceWrite {
+                writable_roots: writable_roots.clone(),
+                network_access: *network_access,
+                exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
+                exclude_slash_tmp: *exclude_slash_tmp,
+            }),
+            CodexSandboxPolicy::Unknown => unreachable!("handled above"),
+        };
+
+        pbv1::CodexSandboxPolicy { kind: Some(kind) }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::CodexSandboxPolicy) -> Result<Self, ErrorEnvelope> {
+        Ok(match proto.kind {
+            Some(pbv1::codex_sandbox_policy::Kind::DangerFullAccess(_)) => {
+                CodexSandboxPolicy::DangerFullAccess
+            }
+            Some(pbv1::codex_sandbox_policy::Kind::ReadOnly(_)) => CodexSandboxPolicy::ReadOnly,
+            Some(pbv1::codex_sandbox_policy::Kind::ExternalSandbox(ev)) => {
+                CodexSandboxPolicy::ExternalSandbox {
+                    network_access: decode_codex_network_access(ev.network_access),
+                }
+            }
+            Some(pbv1::codex_sandbox_policy::Kind::WorkspaceWrite(ev)) => {
+                CodexSandboxPolicy::WorkspaceWrite {
+                    writable_roots: ev.writable_roots,
+                    network_access: ev.network_access,
+                    exclude_tmpdir_env_var: ev.exclude_tmpdir_env_var,
+                    exclude_slash_tmp: ev.exclude_slash_tmp,
+                }
+            }
+            None => CodexSandboxPolicy::Unknown,
+        })
+    }
+}
+
+impl CodexSandboxPolicyChanged {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CodexSandboxPolicyChanged {
+        pbv1::CodexSandboxPolicyChanged {
+            sandbox_policy: self.sandbox_policy.as_ref().map(CodexSandboxPolicy::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CodexSandboxPolicyChanged,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            sandbox_policy: match proto.sandbox_policy {
+                Some(policy) => Some(CodexSandboxPolicy::try_from_protobuf(policy)?),
+                None => None,
+            },
         })
     }
 }
@@ -1841,6 +1979,12 @@ impl SessionEvent {
                 SessionEventKind::PermissionsModeChanged(ev) => {
                     pbv1::session_event::Kind::PermissionsModeChanged(ev.to_protobuf())
                 }
+                SessionEventKind::CodexApprovalPolicyChanged(ev) => {
+                    pbv1::session_event::Kind::CodexApprovalPolicyChanged(ev.to_protobuf())
+                }
+                SessionEventKind::CodexSandboxPolicyChanged(ev) => {
+                    pbv1::session_event::Kind::CodexSandboxPolicyChanged(ev.to_protobuf())
+                }
                 SessionEventKind::PermissionRequested(ev) => {
                     pbv1::session_event::Kind::PermissionRequested(ev.to_protobuf())
                 }
@@ -1893,6 +2037,16 @@ impl SessionEvent {
                 SessionEventKind::PermissionsModeChanged(PermissionsModeChanged::try_from_protobuf(
                     ev,
                 )?)
+            }
+            Some(pbv1::session_event::Kind::CodexApprovalPolicyChanged(ev)) => {
+                SessionEventKind::CodexApprovalPolicyChanged(
+                    CodexApprovalPolicyChanged::try_from_protobuf(ev)?,
+                )
+            }
+            Some(pbv1::session_event::Kind::CodexSandboxPolicyChanged(ev)) => {
+                SessionEventKind::CodexSandboxPolicyChanged(
+                    CodexSandboxPolicyChanged::try_from_protobuf(ev)?,
+                )
             }
             Some(pbv1::session_event::Kind::PermissionRequested(ev)) => {
                 SessionEventKind::PermissionRequested(PermissionRequested::try_from_protobuf(ev)?)
@@ -1967,6 +2121,12 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::SetSessionPermissionsMode => {
             pbv1::ClientMethod::SetSessionPermissionsMode as i32
         }
+        crate::client::ClientMethod::SetSessionCodexApprovalPolicy => {
+            pbv1::ClientMethod::SetSessionCodexApprovalPolicy as i32
+        }
+        crate::client::ClientMethod::SetSessionCodexSandboxPolicy => {
+            pbv1::ClientMethod::SetSessionCodexSandboxPolicy as i32
+        }
         crate::client::ClientMethod::RespondPermissionRequest => {
             pbv1::ClientMethod::RespondPermissionRequest as i32
         }
@@ -2025,6 +2185,12 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         }
         Ok(pbv1::ClientMethod::SetSessionPermissionsMode) => {
             Ok(crate::client::ClientMethod::SetSessionPermissionsMode)
+        }
+        Ok(pbv1::ClientMethod::SetSessionCodexApprovalPolicy) => {
+            Ok(crate::client::ClientMethod::SetSessionCodexApprovalPolicy)
+        }
+        Ok(pbv1::ClientMethod::SetSessionCodexSandboxPolicy) => {
+            Ok(crate::client::ClientMethod::SetSessionCodexSandboxPolicy)
         }
         Ok(pbv1::ClientMethod::RespondPermissionRequest) => {
             Ok(crate::client::ClientMethod::RespondPermissionRequest)
@@ -2445,6 +2611,12 @@ impl crate::client::Request {
                 crate::client::RequestPayload::SetSessionPermissionsMode(req) => {
                     pbv1::request::Payload::SetSessionPermissionsMode(req.to_protobuf())
                 }
+                crate::client::RequestPayload::SetSessionCodexApprovalPolicy(req) => {
+                    pbv1::request::Payload::SetSessionCodexApprovalPolicy(req.to_protobuf())
+                }
+                crate::client::RequestPayload::SetSessionCodexSandboxPolicy(req) => {
+                    pbv1::request::Payload::SetSessionCodexSandboxPolicy(req.to_protobuf())
+                }
                 crate::client::RequestPayload::RespondPermissionRequest(req) => {
                     pbv1::request::Payload::RespondPermissionRequest(req.to_protobuf())
                 }
@@ -2542,6 +2714,16 @@ impl crate::client::Request {
             pbv1::request::Payload::SetSessionPermissionsMode(req) => {
                 crate::client::RequestPayload::SetSessionPermissionsMode(
                     crate::client::SetSessionPermissionsModeRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::SetSessionCodexApprovalPolicy(req) => {
+                crate::client::RequestPayload::SetSessionCodexApprovalPolicy(
+                    crate::client::SetSessionCodexApprovalPolicyRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::SetSessionCodexSandboxPolicy(req) => {
+                crate::client::RequestPayload::SetSessionCodexSandboxPolicy(
+                    crate::client::SetSessionCodexSandboxPolicyRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::RespondPermissionRequest(req) => {
@@ -2754,6 +2936,12 @@ fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter
         crate::client::SessionEventKindFilter::PermissionDecided => {
             pbv1::SessionEventKindFilter::PermissionDecided as i32
         }
+        crate::client::SessionEventKindFilter::CodexApprovalPolicyChanged => {
+            pbv1::SessionEventKindFilter::CodexApprovalPolicyChanged as i32
+        }
+        crate::client::SessionEventKindFilter::CodexSandboxPolicyChanged => {
+            pbv1::SessionEventKindFilter::CodexSandboxPolicyChanged as i32
+        }
         crate::client::SessionEventKindFilter::Unknown => {
             pbv1::SessionEventKindFilter::Unspecified as i32
         }
@@ -2803,6 +2991,12 @@ fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKi
         }
         Ok(pbv1::SessionEventKindFilter::PermissionDecided) => {
             crate::client::SessionEventKindFilter::PermissionDecided
+        }
+        Ok(pbv1::SessionEventKindFilter::CodexApprovalPolicyChanged) => {
+            crate::client::SessionEventKindFilter::CodexApprovalPolicyChanged
+        }
+        Ok(pbv1::SessionEventKindFilter::CodexSandboxPolicyChanged) => {
+            crate::client::SessionEventKindFilter::CodexSandboxPolicyChanged
         }
         Ok(pbv1::SessionEventKindFilter::Unspecified) | Err(_) => {
             crate::client::SessionEventKindFilter::Unknown
@@ -3044,6 +3238,53 @@ impl crate::client::SetSessionPermissionsModeRequest {
         Ok(Self {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
             mode: decode_permissions_mode(proto.mode),
+        })
+    }
+}
+
+impl crate::client::SetSessionCodexApprovalPolicyRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionCodexApprovalPolicyRequest {
+        pbv1::SetSessionCodexApprovalPolicyRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            approval_policy: encode_codex_approval_policy(
+                self.approval_policy.unwrap_or(CodexApprovalPolicy::Unknown),
+            ),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionCodexApprovalPolicyRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        let policy = decode_codex_approval_policy(proto.approval_policy);
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            approval_policy: match policy {
+                CodexApprovalPolicy::Unknown => None,
+                other => Some(other),
+            },
+        })
+    }
+}
+
+impl crate::client::SetSessionCodexSandboxPolicyRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionCodexSandboxPolicyRequest {
+        pbv1::SetSessionCodexSandboxPolicyRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            sandbox_policy: self.sandbox_policy.as_ref().map(CodexSandboxPolicy::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionCodexSandboxPolicyRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            sandbox_policy: match proto.sandbox_policy {
+                Some(policy) => Some(CodexSandboxPolicy::try_from_protobuf(policy)?),
+                None => None,
+            },
         })
     }
 }
@@ -3300,6 +3541,12 @@ impl crate::client::Response {
                 crate::client::ResponseResult::SetSessionPermissionsMode(resp) => {
                     pbv1::response::Result::SetSessionPermissionsMode(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::SetSessionCodexApprovalPolicy(resp) => {
+                    pbv1::response::Result::SetSessionCodexApprovalPolicy(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::SetSessionCodexSandboxPolicy(resp) => {
+                    pbv1::response::Result::SetSessionCodexSandboxPolicy(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::RespondPermissionRequest(resp) => {
                     pbv1::response::Result::RespondPermissionRequest(resp.to_protobuf())
                 }
@@ -3400,6 +3647,16 @@ impl crate::client::Response {
             pbv1::response::Result::SetSessionPermissionsMode(resp) => {
                 crate::client::ResponseResult::SetSessionPermissionsMode(
                     crate::client::SetSessionPermissionsModeResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::SetSessionCodexApprovalPolicy(resp) => {
+                crate::client::ResponseResult::SetSessionCodexApprovalPolicy(
+                    crate::client::SetSessionCodexApprovalPolicyResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::SetSessionCodexSandboxPolicy(resp) => {
+                crate::client::ResponseResult::SetSessionCodexSandboxPolicy(
+                    crate::client::SetSessionCodexSandboxPolicyResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::RespondPermissionRequest(resp) => {
@@ -4014,6 +4271,52 @@ impl crate::client::SetSessionPermissionsModeResponse {
 
     pub fn try_from_protobuf(
         proto: pbv1::SetSessionPermissionsModeResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::SetSessionCodexApprovalPolicyResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionCodexApprovalPolicyResponse {
+        pbv1::SetSessionCodexApprovalPolicyResponse {
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionCodexApprovalPolicyResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::SetSessionCodexSandboxPolicyResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionCodexSandboxPolicyResponse {
+        pbv1::SetSessionCodexSandboxPolicyResponse {
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionCodexSandboxPolicyResponse,
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             command: proto

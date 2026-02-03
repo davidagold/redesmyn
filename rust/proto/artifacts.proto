@@ -10,6 +10,8 @@ import "google/protobuf/timestamp.proto";
 // Key rule: do NOT embed large blobs in durable events. Durable session events
 // must be compact and link to out-of-band content via `ArtifactRef`.
 
+message Empty {}
+
 // Small, stable artifact kind enum. Additive changes are allowed.
 enum ArtifactKind {
   ARTIFACT_KIND_UNSPECIFIED = 0;
@@ -136,12 +138,14 @@ message SessionEvent {
     ToolResult tool_result = 17;
     StatusUpdate status_update = 18;
     ArtifactEmitted artifact_emitted = 19;
-    AssistantReasoning assistant_reasoning = 20;
-    PermissionsModeChanged permissions_mode_changed = 21;
-    PermissionRequested permission_requested = 22;
-    PermissionDecided permission_decided = 23;
-    UnknownSessionEvent unknown = 100;
-  }
+  AssistantReasoning assistant_reasoning = 20;
+  PermissionsModeChanged permissions_mode_changed = 21;
+  PermissionRequested permission_requested = 22;
+  PermissionDecided permission_decided = 23;
+  CodexApprovalPolicyChanged codex_approval_policy_changed = 24;
+  CodexSandboxPolicyChanged codex_sandbox_policy_changed = 25;
+  UnknownSessionEvent unknown = 100;
+}
 }
 
 message SessionStarted {}
@@ -292,6 +296,55 @@ enum PermissionsMode {
 // A change in the session's effective permissions mode.
 message PermissionsModeChanged {
   PermissionsMode mode = 1;
+}
+
+// Codex app-server approval policy (provider-native).
+enum CodexApprovalPolicy {
+  CODEX_APPROVAL_POLICY_UNSPECIFIED = 0;
+  CODEX_APPROVAL_POLICY_UNLESS_TRUSTED = 1; // "untrusted"
+  CODEX_APPROVAL_POLICY_ON_FAILURE = 2;
+  CODEX_APPROVAL_POLICY_ON_REQUEST = 3;
+  CODEX_APPROVAL_POLICY_NEVER = 4;
+}
+
+// A change in the session's effective Codex approval policy override.
+message CodexApprovalPolicyChanged {
+  // Unset/unspecified means "use the provider default".
+  CodexApprovalPolicy approval_policy = 1;
+}
+
+enum CodexNetworkAccess {
+  CODEX_NETWORK_ACCESS_UNSPECIFIED = 0;
+  CODEX_NETWORK_ACCESS_RESTRICTED = 1;
+  CODEX_NETWORK_ACCESS_ENABLED = 2;
+}
+
+message CodexSandboxExternalSandbox {
+  CodexNetworkAccess network_access = 1;
+}
+
+message CodexSandboxWorkspaceWrite {
+  repeated string writable_roots = 1;
+  bool network_access = 2;
+  bool exclude_tmpdir_env_var = 3;
+  bool exclude_slash_tmp = 4;
+}
+
+message CodexSandboxPolicy {
+  oneof kind {
+    // Mirrors the Codex sandbox policy union; we currently only expose
+    // the presets in UI, but keep the full shape available for future work.
+    Empty danger_full_access = 1;
+    Empty read_only = 2;
+    CodexSandboxExternalSandbox external_sandbox = 3;
+    CodexSandboxWorkspaceWrite workspace_write = 4;
+  }
+}
+
+// A change in the session's effective Codex sandbox policy override.
+message CodexSandboxPolicyChanged {
+  // Unset means "use the provider default".
+  CodexSandboxPolicy sandbox_policy = 1;
 }
 
 message CommandExecutionPermissionRequest {

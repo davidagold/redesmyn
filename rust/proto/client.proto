@@ -59,6 +59,8 @@ enum ClientMethod {
   CLIENT_METHOD_ATTACH_AGENT_SESSION = 24;
   CLIENT_METHOD_SET_SESSION_PERMISSIONS_MODE = 25;
   CLIENT_METHOD_RESPOND_PERMISSION_REQUEST = 26;
+  CLIENT_METHOD_SET_SESSION_CODEX_APPROVAL_POLICY = 27;
+  CLIENT_METHOD_SET_SESSION_CODEX_SANDBOX_POLICY = 28;
 }
 
 // Request for a control-plane method.
@@ -94,6 +96,8 @@ message Request {
     SendSessionMessageRequest send_session_message = 36;
     SetSessionPermissionsModeRequest set_session_permissions_mode = 37;
     RespondPermissionRequestRequest respond_permission_request = 38;
+    SetSessionCodexApprovalPolicyRequest set_session_codex_approval_policy = 39;
+    SetSessionCodexSandboxPolicyRequest set_session_codex_sandbox_policy = 40;
   }
 }
 
@@ -136,6 +140,8 @@ message Response {
     SendSessionMessageResponse send_session_message = 36;
     SetSessionPermissionsModeResponse set_session_permissions_mode = 37;
     RespondPermissionRequestResponse respond_permission_request = 38;
+    SetSessionCodexApprovalPolicyResponse set_session_codex_approval_policy = 39;
+    SetSessionCodexSandboxPolicyResponse set_session_codex_sandbox_policy = 40;
     ErrorEnvelope error = 100;
   }
 }
@@ -170,6 +176,30 @@ message SetSessionPermissionsModeRequest {
 }
 
 message SetSessionPermissionsModeResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message SetSessionCodexApprovalPolicyRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Unspecified means "use the provider default".
+  CodexApprovalPolicy approval_policy = 2;
+}
+
+message SetSessionCodexApprovalPolicyResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message SetSessionCodexSandboxPolicyRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Unset means "use the provider default".
+  CodexSandboxPolicy sandbox_policy = 2;
+}
+
+message SetSessionCodexSandboxPolicyResponse {
   // Optional command lifecycle for this update.
   CommandSummary command = 1;
 }
@@ -360,6 +390,8 @@ enum SessionEventKindFilter {
   SESSION_EVENT_KIND_FILTER_PERMISSIONS_MODE_CHANGED = 12;
   SESSION_EVENT_KIND_FILTER_PERMISSION_REQUESTED = 13;
   SESSION_EVENT_KIND_FILTER_PERMISSION_DECIDED = 14;
+  SESSION_EVENT_KIND_FILTER_CODEX_APPROVAL_POLICY_CHANGED = 15;
+  SESSION_EVENT_KIND_FILTER_CODEX_SANDBOX_POLICY_CHANGED = 16;
 }
 
 message GetSessionEventsRequest {

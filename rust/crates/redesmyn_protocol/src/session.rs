@@ -189,6 +189,84 @@ pub struct StatusUpdate {
     pub message: Option<String>,
 }
 
+/// Codex app-server approval policy (provider-native).
+///
+/// Mirrors the Codex `AskForApproval` enum (`"untrusted"`, `"on-request"`, ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CodexApprovalPolicy {
+    #[serde(rename = "untrusted")]
+    UnlessTrusted,
+    OnFailure,
+    OnRequest,
+    Never,
+    /// A policy not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+/// A change in the session's effective Codex approval policy override.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CodexApprovalPolicyChanged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<CodexApprovalPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CodexNetworkAccess {
+    #[default]
+    Restricted,
+    Enabled,
+    /// A value not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+fn is_default_network_access(value: &CodexNetworkAccess) -> bool {
+    *value == CodexNetworkAccess::Restricted
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Codex app-server sandbox policy (provider-native).
+///
+/// Mirrors the Codex `SandboxPolicy` union from the app-server protocol.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum CodexSandboxPolicy {
+    DangerFullAccess,
+    ReadOnly,
+    #[serde(rename_all = "camelCase")]
+    ExternalSandbox {
+        #[serde(default, skip_serializing_if = "is_default_network_access")]
+        network_access: CodexNetworkAccess,
+    },
+    #[serde(rename_all = "camelCase")]
+    WorkspaceWrite {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        writable_roots: Vec<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        network_access: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        exclude_tmpdir_env_var: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        exclude_slash_tmp: bool,
+    },
+    /// A policy not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+/// A change in the session's effective Codex sandbox policy override.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CodexSandboxPolicyChanged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
 /// How the session handles permission/approval requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -302,6 +380,8 @@ pub enum SessionEventKind {
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
     PermissionsModeChanged(PermissionsModeChanged),
+    CodexApprovalPolicyChanged(CodexApprovalPolicyChanged),
+    CodexSandboxPolicyChanged(CodexSandboxPolicyChanged),
     PermissionRequested(PermissionRequested),
     PermissionDecided(PermissionDecided),
     ArtifactEmitted(ArtifactEmitted),

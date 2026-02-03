@@ -10,8 +10,8 @@ use redesmyn_ids::{
 };
 
 use crate::{
-    ErrorEnvelope, PermissionDecision, PermissionsMode, ProtocolEnvelope, ProtocolVersion, Scope,
-    SessionEvent, SessionLiveEvent, Timestamp,
+    CodexApprovalPolicy, CodexSandboxPolicy, ErrorEnvelope, PermissionDecision, PermissionsMode,
+    ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, SessionLiveEvent, Timestamp,
 };
 
 /// A single client ↔ control plane protocol frame.
@@ -41,6 +41,8 @@ pub enum ClientMethod {
     GetEpicPinnedChatSession,
     SendSessionMessage,
     SetSessionPermissionsMode,
+    SetSessionCodexApprovalPolicy,
+    SetSessionCodexSandboxPolicy,
     RespondPermissionRequest,
     StartAgent,
     StopAgent,
@@ -86,6 +88,8 @@ pub enum RequestPayload {
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
     SendSessionMessage(SendSessionMessageRequest),
     SetSessionPermissionsMode(SetSessionPermissionsModeRequest),
+    SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyRequest),
+    SetSessionCodexSandboxPolicy(SetSessionCodexSandboxPolicyRequest),
     RespondPermissionRequest(RespondPermissionRequestRequest),
     StartAgent(StartAgentRequest),
     StopAgent(StopAgentRequest),
@@ -118,6 +122,8 @@ impl RequestPayload {
             Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
             Self::SendSessionMessage(_) => ClientMethod::SendSessionMessage,
             Self::SetSessionPermissionsMode(_) => ClientMethod::SetSessionPermissionsMode,
+            Self::SetSessionCodexApprovalPolicy(_) => ClientMethod::SetSessionCodexApprovalPolicy,
+            Self::SetSessionCodexSandboxPolicy(_) => ClientMethod::SetSessionCodexSandboxPolicy,
             Self::RespondPermissionRequest(_) => ClientMethod::RespondPermissionRequest,
             Self::StartAgent(_) => ClientMethod::StartAgent,
             Self::StopAgent(_) => ClientMethod::StopAgent,
@@ -175,6 +181,8 @@ pub enum ResponseResult {
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
     SendSessionMessage(SendSessionMessageResponse),
     SetSessionPermissionsMode(SetSessionPermissionsModeResponse),
+    SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyResponse),
+    SetSessionCodexSandboxPolicy(SetSessionCodexSandboxPolicyResponse),
     RespondPermissionRequest(RespondPermissionRequestResponse),
     StartAgent(StartAgentResponse),
     StopAgent(StopAgentResponse),
@@ -425,6 +433,8 @@ pub enum SessionEventKindFilter {
     PermissionsModeChanged,
     PermissionRequested,
     PermissionDecided,
+    CodexApprovalPolicyChanged,
+    CodexSandboxPolicyChanged,
     /// A kind not understood by this binary (forward compatible).
     #[serde(other)]
     Unknown,
@@ -508,6 +518,32 @@ pub struct SetSessionPermissionsModeRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetSessionPermissionsModeResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexApprovalPolicyRequest {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<CodexApprovalPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexApprovalPolicyResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexSandboxPolicyRequest {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexSandboxPolicyResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandSummary>,
 }
