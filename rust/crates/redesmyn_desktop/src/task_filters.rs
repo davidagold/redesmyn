@@ -5,10 +5,13 @@ actions!(
     [
         OpenTaskFilters,
         CloseTaskFilters,
+        TaskFiltersActivate,
+        TaskFiltersClearFocusedChip,
         TaskFiltersMoveUp,
         TaskFiltersMoveDown,
         TaskFiltersMoveLeft,
         TaskFiltersMoveRight,
+        TaskFiltersToggleChipFocus,
     ]
 );
 
@@ -17,6 +20,18 @@ pub fn bind_task_filter_keys(cx: &mut App) {
         KeyBinding::new("f", OpenTaskFilters, Some("Workspace")),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters")),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters > TextInput")),
+        KeyBinding::new("tab", TaskFiltersToggleChipFocus, Some("TaskFilters")),
+        KeyBinding::new(
+            "tab",
+            TaskFiltersToggleChipFocus,
+            Some("TaskFilters > TextInput"),
+        ),
+        KeyBinding::new("shift-tab", TaskFiltersToggleChipFocus, Some("TaskFilters")),
+        KeyBinding::new(
+            "shift-tab",
+            TaskFiltersToggleChipFocus,
+            Some("TaskFilters > TextInput"),
+        ),
         KeyBinding::new("up", TaskFiltersMoveUp, Some("TaskFilters")),
         KeyBinding::new("up", TaskFiltersMoveUp, Some("TaskFilters > TextInput")),
         KeyBinding::new("down", TaskFiltersMoveDown, Some("TaskFilters")),
@@ -29,5 +44,12 @@ pub fn bind_task_filter_keys(cx: &mut App) {
             TaskFiltersMoveRight,
             Some("TaskFilters > TextInput"),
         ),
+        KeyBinding::new("enter", TaskFiltersActivate, Some("TaskFilters")),
+        KeyBinding::new(
+            "backspace",
+            TaskFiltersClearFocusedChip,
+            Some("TaskFilters"),
+        ),
+        KeyBinding::new("delete", TaskFiltersClearFocusedChip, Some("TaskFilters")),
     ]);
 }

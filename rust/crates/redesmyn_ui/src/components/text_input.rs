@@ -1156,7 +1156,7 @@ impl Render for TextInput {
             ),
         };
 
-        div()
+        let container = div()
             .flex()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
@@ -1194,17 +1194,25 @@ impl Render for TextInput {
             .border_1()
             .border_color(border_color)
             .overflow_hidden()
-            .rounded(radius)
-            .line_height(window.line_height())
-            .text_size(window.text_style().font_size)
-            .child(
-                div()
-                    .h(height)
-                    .w_full()
-                    .px(padding_x)
-                    .py(padding_y)
-                    .child(TextInputElement { input: cx.entity() }),
-            )
+            .rounded(radius);
+
+        let container = match self.size {
+            TextInputSize::Regular => container
+                .line_height(window.line_height())
+                .text_size(window.text_style().font_size),
+            TextInputSize::Small => container.text_size(theme.typography.caption.size),
+        };
+
+        container.child(
+            div()
+                .when(matches!(self.size, TextInputSize::Regular), |this| {
+                    this.h(height)
+                })
+                .w_full()
+                .px(padding_x)
+                .py(padding_y)
+                .child(TextInputElement { input: cx.entity() }),
+        )
     }
 }
 

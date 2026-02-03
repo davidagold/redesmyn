@@ -43,8 +43,9 @@ use crate::command_palette::{
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::task_filters::{
-    CloseTaskFilters, OpenTaskFilters, TaskFiltersMoveDown, TaskFiltersMoveLeft,
-    TaskFiltersMoveRight, TaskFiltersMoveUp,
+    CloseTaskFilters, OpenTaskFilters, TaskFiltersActivate, TaskFiltersClearFocusedChip,
+    TaskFiltersMoveDown, TaskFiltersMoveLeft, TaskFiltersMoveRight, TaskFiltersMoveUp,
+    TaskFiltersToggleChipFocus,
 };
 
 use self::command_palette_overlay::CommandPaletteOverlay;
@@ -3350,6 +3351,7 @@ impl Render for EpicSessionPaneHost {
 
 struct WorkspacePaneHost {
     focus_handle: FocusHandle,
+    task_filters_focus_handle: FocusHandle,
     ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
     task_session_view: Entity<SessionView>,
@@ -3359,9 +3361,12 @@ struct WorkspacePaneHost {
     task_filters_active_category: TaskFilterCategory,
     task_filters_hovered_category: Option<TaskFilterCategory>,
     task_filters_focus: TaskFiltersFocus,
+    task_filters_active_chip_index: usize,
     task_filters_active_value_index: usize,
     task_filters_search: SharedString,
     task_filters_search_input: Entity<TextInput>,
+    task_filters_value_search: SharedString,
+    task_filters_value_search_input: Entity<TextInput>,
     task_filters_category_scroll: ScrollHandle,
     task_filters_value_scroll: ScrollHandle,
     task_filters_menu_opacity: TransitionMap<&'static str>,
@@ -3382,6 +3387,7 @@ struct WorkspacePaneHost {
 enum TaskFiltersFocus {
     Categories,
     Values,
+    Chips,
 }
 
 impl Focusable for WorkspacePaneHost {
@@ -3399,12 +3405,15 @@ impl WorkspacePaneHost {
     ) -> Self {
         let task_filters_search_input =
             cx.new(|cx| TextInput::new(cx).placeholder("Add filter…").small());
+        let task_filters_value_search_input =
+            cx.new(|cx| TextInput::new(cx).placeholder("Filter…").small());
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe(
             &task_filters_search_input,
             |this, _, event, cx| match event {
                 TextInputEvent::Changed(text) => {
                     this.task_filters_search = text.clone();
+                    this.ui_updates.bump();
                     cx.notify();
                 }
                 TextInputEvent::Submitted(_) => {
@@ -3413,7 +3422,7 @@ impl WorkspacePaneHost {
                     }
 
                     match this.task_filters_focus {
-                        TaskFiltersFocus::Categories => {
+                        TaskFiltersFocus::Categories | TaskFiltersFocus::Chips => {
                             this.task_filters_focus = TaskFiltersFocus::Values;
                             this.task_filters_hovered_category =
                                 Some(this.task_filters_active_category);
@@ -3428,6 +3437,50 @@ impl WorkspacePaneHost {
                 }
             },
         ));
+        subscriptions.push(
+            cx.subscribe(
+                &task_filters_value_search_input,
+                |this, _, event, cx| match event {
+                    TextInputEvent::Changed(text) => {
+                        this.task_filters_value_search = text.clone();
+                        let visible_count = this
+                            .visible_task_filter_value_indices(this.task_filters_active_category)
+                            .len();
+                        if visible_count == 0 {
+                            this.task_filters_active_value_index = 0;
+                        } else if this.task_filters_active_value_index >= visible_count {
+                            this.task_filters_active_value_index = 0;
+                        }
+                        if this.task_filters_open {
+                            this.task_filters_focus = TaskFiltersFocus::Values;
+                            this.task_filters_hovered_category =
+                                Some(this.task_filters_active_category);
+                        }
+                        this.ui_updates.bump();
+                        cx.notify();
+                    }
+                    TextInputEvent::Submitted(_) => {
+                        if !this.task_filters_open {
+                            return;
+                        }
+
+                        match this.task_filters_focus {
+                            TaskFiltersFocus::Categories | TaskFiltersFocus::Chips => {
+                                this.task_filters_focus = TaskFiltersFocus::Values;
+                                this.task_filters_hovered_category =
+                                    Some(this.task_filters_active_category);
+                                this.task_filters_active_value_index = 0;
+                                this.ui_updates.bump();
+                                cx.notify();
+                            }
+                            TaskFiltersFocus::Values => {
+                                this.toggle_active_filter_value(cx);
+                            }
+                        }
+                    }
+                },
+            ),
+        );
 
         let task_session_client =
             model.update(cx, |model, _cx| model.take_task_control_plane_client());
@@ -3435,6 +3488,7 @@ impl WorkspacePaneHost {
         let graph_session_view = task_session_view.clone();
         Self {
             focus_handle: cx.focus_handle(),
+            task_filters_focus_handle: cx.focus_handle(),
             ui_updates,
             model,
             task_session_view,
@@ -3444,9 +3498,12 @@ impl WorkspacePaneHost {
             task_filters_active_category: TaskFilterCategory::TaskState,
             task_filters_hovered_category: None,
             task_filters_focus: TaskFiltersFocus::Categories,
+            task_filters_active_chip_index: 0,
             task_filters_active_value_index: 0,
             task_filters_search: "".into(),
             task_filters_search_input,
+            task_filters_value_search: "".into(),
+            task_filters_value_search_input,
             task_filters_category_scroll: ScrollHandle::new(),
             task_filters_value_scroll: ScrollHandle::new(),
             task_filters_menu_opacity: TransitionMap::new(),
@@ -3525,9 +3582,13 @@ impl WorkspacePaneHost {
         self.task_filters_open = true;
         self.task_filters_hovered_category = None;
         self.task_filters_focus = TaskFiltersFocus::Categories;
+        self.task_filters_active_chip_index = 0;
         self.task_filters_active_value_index = 0;
         self.task_filters_search = "".into();
         self.task_filters_search_input
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.task_filters_value_search = "".into();
+        self.task_filters_value_search_input
             .update(cx, |input, cx| input.set_text("", cx));
         window.focus(&self.task_filters_search_input.focus_handle(cx));
         self.ui_updates.bump();
@@ -3550,11 +3611,121 @@ impl WorkspacePaneHost {
         self.task_filters_open = false;
         self.task_filters_hovered_category = None;
         self.task_filters_focus = TaskFiltersFocus::Categories;
+        self.task_filters_active_chip_index = 0;
         self.task_filters_active_value_index = 0;
         self.task_filters_search = "".into();
         self.task_filters_search_input
             .update(cx, |input, cx| input.set_text("", cx));
+        self.task_filters_value_search = "".into();
+        self.task_filters_value_search_input
+            .update(cx, |input, cx| input.set_text("", cx));
         window.focus(&self.focus_handle);
+        self.ui_updates.bump();
+        cx.notify();
+    }
+
+    fn task_filters_toggle_chip_focus(
+        &mut self,
+        _: &TaskFiltersToggleChipFocus,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.task_filters_open {
+            return;
+        }
+
+        let active_chips = self.active_task_filter_chip_categories();
+        if active_chips.is_empty() {
+            return;
+        }
+
+        match self.task_filters_focus {
+            TaskFiltersFocus::Chips => {
+                self.task_filters_focus = TaskFiltersFocus::Categories;
+                window.focus(&self.task_filters_search_input.focus_handle(cx));
+            }
+            TaskFiltersFocus::Categories | TaskFiltersFocus::Values => {
+                self.task_filters_focus = TaskFiltersFocus::Chips;
+                self.task_filters_hovered_category = None;
+                self.task_filters_active_chip_index = self
+                    .task_filters_active_chip_index
+                    .min(active_chips.len().saturating_sub(1));
+                window.focus(&self.task_filters_focus_handle);
+            }
+        }
+
+        self.ui_updates.bump();
+        cx.notify();
+    }
+
+    fn task_filters_activate(
+        &mut self,
+        _: &TaskFiltersActivate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.task_filters_open {
+            return;
+        }
+
+        match self.task_filters_focus {
+            TaskFiltersFocus::Categories => {
+                self.task_filters_focus = TaskFiltersFocus::Values;
+                self.task_filters_hovered_category = Some(self.task_filters_active_category);
+                self.task_filters_value_search = "".into();
+                self.task_filters_value_search_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                self.task_filters_active_value_index = 0;
+                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
+            }
+            TaskFiltersFocus::Values => {
+                self.toggle_active_filter_value(cx);
+            }
+            TaskFiltersFocus::Chips => {
+                let Some(category) = self.active_task_filter_chip_category() else {
+                    return;
+                };
+                self.task_filters_active_category = category;
+                self.task_filters_hovered_category = Some(category);
+                self.task_filters_focus = TaskFiltersFocus::Values;
+                self.task_filters_active_value_index = 0;
+                self.task_filters_value_search = "".into();
+                self.task_filters_value_search_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
+            }
+        }
+
+        self.ui_updates.bump();
+        cx.notify();
+    }
+
+    fn task_filters_clear_focused_chip(
+        &mut self,
+        _: &TaskFiltersClearFocusedChip,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.task_filters_open || self.task_filters_focus != TaskFiltersFocus::Chips {
+            return;
+        }
+
+        let Some(category) = self.active_task_filter_chip_category() else {
+            return;
+        };
+
+        self.clear_filter_category(category, cx);
+        self.task_filters_hovered_category = None;
+
+        let active_chips = self.active_task_filter_chip_categories();
+        if active_chips.is_empty() {
+            self.task_filters_focus = TaskFiltersFocus::Categories;
+            self.task_filters_active_chip_index = 0;
+            window.focus(&self.task_filters_search_input.focus_handle(cx));
+        } else if self.task_filters_active_chip_index >= active_chips.len() {
+            self.task_filters_active_chip_index = active_chips.len().saturating_sub(1);
+        }
+
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3569,47 +3740,104 @@ impl WorkspacePaneHost {
             .collect()
     }
 
-    fn task_filter_value_count(category: TaskFilterCategory) -> usize {
+    fn visible_task_filter_value_indices(&self, category: TaskFilterCategory) -> Vec<usize> {
+        let query = self.task_filters_value_search.trim().to_ascii_lowercase();
         match category {
-            TaskFilterCategory::TaskState => TASK_STATE_OPTIONS.len(),
-            TaskFilterCategory::MergeReadiness => MERGE_READINESS_OPTIONS.len(),
-            TaskFilterCategory::AgentStatus => TaskAgentStatus::ALL.len(),
+            TaskFilterCategory::TaskState => TASK_STATE_OPTIONS
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    let label = task_state_title(value);
+                    if query.is_empty() || label.to_ascii_lowercase().contains(&query) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            TaskFilterCategory::MergeReadiness => MERGE_READINESS_OPTIONS
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    let label = merge_readiness_title(value);
+                    if query.is_empty() || label.to_ascii_lowercase().contains(&query) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            TaskFilterCategory::AgentStatus => TaskAgentStatus::ALL
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    let label = value.title();
+                    if query.is_empty() || label.to_ascii_lowercase().contains(&query) {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
         }
     }
 
+    fn active_task_filter_chip_categories(&self) -> Vec<TaskFilterCategory> {
+        TaskFilterCategory::ALL
+            .into_iter()
+            .filter(|category| self.task_filters.selected_count(*category) > 0)
+            .collect()
+    }
+
+    fn active_task_filter_chip_category(&self) -> Option<TaskFilterCategory> {
+        let active = self.active_task_filter_chip_categories();
+        active.get(self.task_filters_active_chip_index).copied()
+    }
+
+    fn move_task_filter_chip(&mut self, delta: isize) {
+        let active = self.active_task_filter_chip_categories();
+        if active.is_empty() {
+            self.task_filters_active_chip_index = 0;
+            return;
+        }
+
+        let next_index = (self.task_filters_active_chip_index as isize + delta)
+            .rem_euclid(active.len() as isize) as usize;
+        self.task_filters_active_chip_index = next_index;
+    }
+
     fn toggle_active_filter_value(&mut self, cx: &mut Context<Self>) {
+        let visible = self.visible_task_filter_value_indices(self.task_filters_active_category);
+        let Some(source_index) = visible.get(self.task_filters_active_value_index).copied() else {
+            return;
+        };
+
         match self.task_filters_active_category {
             TaskFilterCategory::TaskState => {
-                let Some(value) = TASK_STATE_OPTIONS
-                    .get(self.task_filters_active_value_index)
-                    .copied()
-                else {
+                let Some(value) = TASK_STATE_OPTIONS.get(source_index).copied() else {
                     return;
                 };
                 self.toggle_task_state_filter(value, cx);
             }
             TaskFilterCategory::MergeReadiness => {
-                let Some(value) = MERGE_READINESS_OPTIONS
-                    .get(self.task_filters_active_value_index)
-                    .copied()
-                else {
+                let Some(value) = MERGE_READINESS_OPTIONS.get(source_index).copied() else {
                     return;
                 };
                 self.toggle_merge_readiness_filter(value, cx);
             }
             TaskFilterCategory::AgentStatus => {
-                let Some(value) = TaskAgentStatus::ALL
-                    .get(self.task_filters_active_value_index)
-                    .copied()
-                else {
+                let Some(value) = TaskAgentStatus::ALL.get(source_index).copied() else {
                     return;
                 };
                 self.toggle_agent_status_filter(value, cx);
             }
-        }
+        };
     }
 
-    fn move_task_filter_category(&mut self, delta: isize) {
+    fn move_task_filter_category(&mut self, delta: isize, cx: &mut Context<Self>) {
         let visible = self.visible_task_filter_categories();
         if visible.is_empty() {
             return;
@@ -3624,6 +3852,12 @@ impl WorkspacePaneHost {
             (current_index as isize + delta).rem_euclid(visible.len() as isize) as usize;
         let next_category = visible[next_index];
 
+        if self.task_filters_active_category != next_category {
+            self.task_filters_value_search = "".into();
+            self.task_filters_value_search_input
+                .update(cx, |input, cx| input.set_text("", cx));
+        }
+
         self.task_filters_active_category = next_category;
         self.task_filters_active_value_index = 0;
         if self.task_filters_hovered_category.is_some() {
@@ -3632,7 +3866,9 @@ impl WorkspacePaneHost {
     }
 
     fn move_task_filter_value(&mut self, delta: isize) {
-        let value_count = Self::task_filter_value_count(self.task_filters_active_category);
+        let value_count = self
+            .visible_task_filter_value_indices(self.task_filters_active_category)
+            .len();
         if value_count == 0 {
             return;
         }
@@ -3653,8 +3889,9 @@ impl WorkspacePaneHost {
         }
 
         match self.task_filters_focus {
-            TaskFiltersFocus::Categories => self.move_task_filter_category(-1),
+            TaskFiltersFocus::Categories => self.move_task_filter_category(-1, cx),
             TaskFiltersFocus::Values => self.move_task_filter_value(-1),
+            TaskFiltersFocus::Chips => {}
         }
 
         self.ui_updates.bump();
@@ -3672,8 +3909,9 @@ impl WorkspacePaneHost {
         }
 
         match self.task_filters_focus {
-            TaskFiltersFocus::Categories => self.move_task_filter_category(1),
+            TaskFiltersFocus::Categories => self.move_task_filter_category(1, cx),
             TaskFiltersFocus::Values => self.move_task_filter_value(1),
+            TaskFiltersFocus::Chips => {}
         }
 
         self.ui_updates.bump();
@@ -3683,7 +3921,7 @@ impl WorkspacePaneHost {
     fn task_filters_move_left(
         &mut self,
         _: &TaskFiltersMoveLeft,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.task_filters_open {
@@ -3697,6 +3935,13 @@ impl WorkspacePaneHost {
             TaskFiltersFocus::Values => {
                 self.task_filters_focus = TaskFiltersFocus::Categories;
                 self.task_filters_hovered_category = None;
+                self.task_filters_value_search = "".into();
+                self.task_filters_value_search_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                window.focus(&self.task_filters_search_input.focus_handle(cx));
+            }
+            TaskFiltersFocus::Chips => {
+                self.move_task_filter_chip(-1);
             }
         }
 
@@ -3707,7 +3952,7 @@ impl WorkspacePaneHost {
     fn task_filters_move_right(
         &mut self,
         _: &TaskFiltersMoveRight,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.task_filters_open {
@@ -3718,12 +3963,20 @@ impl WorkspacePaneHost {
             TaskFiltersFocus::Categories => {
                 self.task_filters_focus = TaskFiltersFocus::Values;
                 self.task_filters_hovered_category = Some(self.task_filters_active_category);
+                self.task_filters_value_search = "".into();
+                self.task_filters_value_search_input
+                    .update(cx, |input, cx| input.set_text("", cx));
                 self.task_filters_active_value_index = self.task_filters_active_value_index.min(
-                    Self::task_filter_value_count(self.task_filters_active_category)
+                    self.visible_task_filter_value_indices(self.task_filters_active_category)
+                        .len()
                         .saturating_sub(1),
                 );
+                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
             }
             TaskFiltersFocus::Values => {}
+            TaskFiltersFocus::Chips => {
+                self.move_task_filter_chip(1);
+            }
         }
 
         self.ui_updates.bump();
@@ -3957,12 +4210,17 @@ impl Render for WorkspacePaneHost {
             .gap(px(2.0))
             .min_w_0();
         let mut has_chips = false;
+        let mut next_chip_index = 0_usize;
 
         for category in TaskFilterCategory::ALL {
             let Some(label) = self.task_filters.chip_label(category) else {
                 continue;
             };
             has_chips = true;
+            let chip_index = next_chip_index;
+            next_chip_index = next_chip_index.saturating_add(1);
+            let highlighted = self.task_filters_focus == TaskFiltersFocus::Chips
+                && self.task_filters_active_chip_index == chip_index;
 
             let open_label = div()
                 .min_w_0()
@@ -3982,6 +4240,9 @@ impl Render for WorkspacePaneHost {
                             this.task_filters_active_value_index = 0;
                             this.task_filters_search = "".into();
                             this.task_filters_search_input
+                                .update(cx, |input, cx| input.set_text("", cx));
+                            this.task_filters_value_search = "".into();
+                            this.task_filters_value_search_input
                                 .update(cx, |input, cx| input.set_text("", cx));
                             Some(this.task_filters_search_input.focus_handle(cx))
                         });
@@ -4011,6 +4272,10 @@ impl Render for WorkspacePaneHost {
                 .items_center()
                 .gap(theme.spacing.xs)
                 .px(theme.spacing.sm)
+                .when(highlighted, |this| {
+                    this.bg(theme.colors.surface.opacity(0.85))
+                        .border_color(theme.colors.ring.opacity(0.7))
+                })
                 .child(open_label)
                 .child(clear_button);
 
@@ -4259,6 +4524,9 @@ impl Render for WorkspacePaneHost {
                                     this.task_filters_active_category = category;
                                     this.task_filters_focus = TaskFiltersFocus::Categories;
                                     this.task_filters_active_value_index = 0;
+                                    this.task_filters_value_search = "".into();
+                                    this.task_filters_value_search_input
+                                        .update(cx, |input, cx| input.set_text("", cx));
                                     cx.notify();
                                 }))
                                 .on_mouse_down(gpui::MouseButton::Left, {
@@ -4269,6 +4537,9 @@ impl Render for WorkspacePaneHost {
                                             this.task_filters_active_category = category;
                                             this.task_filters_focus = TaskFiltersFocus::Categories;
                                             this.task_filters_active_value_index = 0;
+                                            this.task_filters_value_search = "".into();
+                                            this.task_filters_value_search_input
+                                                .update(cx, |input, cx| input.set_text("", cx));
                                             cx.notify();
                                         });
                                     }
@@ -4343,226 +4614,295 @@ impl Render for WorkspacePaneHost {
                             .child(actions_row);
 
                     let submenu = self.task_filters_hovered_category.map(|category| {
+                        let visible_values = self.visible_task_filter_value_indices(category);
                         let mut value_list = div().flex().flex_col().gap(theme.spacing.xs);
-                        match category {
-                            TaskFilterCategory::TaskState => {
-                                for (index, value) in TASK_STATE_OPTIONS.iter().copied().enumerate()
-                                {
-                                    let selected = self.task_filters.task_states.contains(&value);
-                                    let label = task_state_title(value);
-                                    let highlighted = self.task_filters_focus
-                                        == TaskFiltersFocus::Values
-                                        && self.task_filters_active_value_index == index;
 
-                                    let row_id = (
-                                        gpui::ElementId::from(("task_filters_value", entity_id)),
-                                        format!("task_state:{label}"),
-                                    );
+                        if visible_values.is_empty() {
+                            value_list = value_list.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child("No matching values."),
+                            );
+                        } else {
+                            match category {
+                                TaskFilterCategory::TaskState => {
+                                    for (display_index, source_index) in
+                                        visible_values.into_iter().enumerate()
+                                    {
+                                        let Some(value) =
+                                            TASK_STATE_OPTIONS.get(source_index).copied()
+                                        else {
+                                            continue;
+                                        };
+                                        let selected =
+                                            self.task_filters.task_states.contains(&value);
+                                        let label = task_state_title(value);
+                                        let highlighted = self.task_filters_focus
+                                            == TaskFiltersFocus::Values
+                                            && self.task_filters_active_value_index
+                                                == display_index;
 
-                                    let row = div()
-                                        .id(row_id)
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(theme.spacing.xs)
-                                        .px(theme.spacing.sm)
-                                        .py(theme.spacing.xs)
-                                        .rounded(theme.radius.sm)
-                                        .when(highlighted, |this| this.bg(theme.colors.accent))
-                                        .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
-                                        .cursor_pointer()
-                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                            let mut did_change = false;
-                                            if this.task_filters_active_value_index != index {
-                                                this.task_filters_active_value_index = index;
-                                                did_change = true;
-                                            }
-                                            if this.task_filters_focus != TaskFiltersFocus::Values {
-                                                this.task_filters_focus = TaskFiltersFocus::Values;
-                                                did_change = true;
-                                            }
-                                            if did_change {
-                                                cx.notify();
-                                            }
-                                        }))
-                                        .on_mouse_down(gpui::MouseButton::Left, {
-                                            let workspace = workspace.clone();
-                                            move |_, _, cx| {
-                                                workspace.update(cx, |this, cx| {
+                                        let row_id = (
+                                            gpui::ElementId::from((
+                                                "task_filters_value",
+                                                entity_id,
+                                            )),
+                                            format!("task_state:{label}"),
+                                        );
+
+                                        let row = div()
+                                            .id(row_id)
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.xs)
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.xs)
+                                            .rounded(theme.radius.sm)
+                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .hover(|this| {
+                                                this.bg(theme.colors.accent.opacity(0.75))
+                                            })
+                                            .cursor_pointer()
+                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                                let mut did_change = false;
+                                                if this.task_filters_active_value_index
+                                                    != display_index
+                                                {
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    did_change = true;
+                                                }
+                                                if this.task_filters_focus
+                                                    != TaskFiltersFocus::Values
+                                                {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    this.task_filters_active_value_index = index;
-                                                    this.toggle_task_state_filter(value, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_xs()
-                                                .text_color(theme.colors.foreground)
-                                                .truncate()
-                                                .child(label),
-                                        )
-                                        .when(selected, |this| {
-                                            this.child(
+                                                    did_change = true;
+                                                }
+                                                if did_change {
+                                                    cx.notify();
+                                                }
+                                            }))
+                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                                let workspace = workspace.clone();
+                                                move |_, _, cx| {
+                                                    workspace.update(cx, |this, cx| {
+                                                        this.task_filters_focus =
+                                                            TaskFiltersFocus::Values;
+                                                        this.task_filters_active_value_index =
+                                                            display_index;
+                                                        this.toggle_task_state_filter(value, cx);
+                                                    });
+                                                }
+                                            })
+                                            .child(
                                                 div()
+                                                    .flex_1()
+                                                    .min_w_0()
                                                     .text_xs()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child("✓"),
+                                                    .text_color(theme.colors.foreground)
+                                                    .truncate()
+                                                    .child(label),
                                             )
-                                        });
+                                            .when(selected, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child("✓"),
+                                                )
+                                            });
 
-                                    value_list = value_list.child(row);
+                                        value_list = value_list.child(row);
+                                    }
                                 }
-                            }
-                            TaskFilterCategory::MergeReadiness => {
-                                for (index, value) in
-                                    MERGE_READINESS_OPTIONS.iter().copied().enumerate()
-                                {
-                                    let selected =
-                                        self.task_filters.merge_readiness.contains(&value);
-                                    let label = merge_readiness_title(value);
-                                    let highlighted = self.task_filters_focus
-                                        == TaskFiltersFocus::Values
-                                        && self.task_filters_active_value_index == index;
+                                TaskFilterCategory::MergeReadiness => {
+                                    for (display_index, source_index) in
+                                        visible_values.into_iter().enumerate()
+                                    {
+                                        let Some(value) =
+                                            MERGE_READINESS_OPTIONS.get(source_index).copied()
+                                        else {
+                                            continue;
+                                        };
+                                        let selected =
+                                            self.task_filters.merge_readiness.contains(&value);
+                                        let label = merge_readiness_title(value);
+                                        let highlighted = self.task_filters_focus
+                                            == TaskFiltersFocus::Values
+                                            && self.task_filters_active_value_index
+                                                == display_index;
 
-                                    let row_id = (
-                                        gpui::ElementId::from(("task_filters_value", entity_id)),
-                                        format!("merge_readiness:{label}"),
-                                    );
+                                        let row_id = (
+                                            gpui::ElementId::from((
+                                                "task_filters_value",
+                                                entity_id,
+                                            )),
+                                            format!("merge_readiness:{label}"),
+                                        );
 
-                                    let row = div()
-                                        .id(row_id)
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(theme.spacing.xs)
-                                        .px(theme.spacing.sm)
-                                        .py(theme.spacing.xs)
-                                        .rounded(theme.radius.sm)
-                                        .when(highlighted, |this| this.bg(theme.colors.accent))
-                                        .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
-                                        .cursor_pointer()
-                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                            let mut did_change = false;
-                                            if this.task_filters_active_value_index != index {
-                                                this.task_filters_active_value_index = index;
-                                                did_change = true;
-                                            }
-                                            if this.task_filters_focus != TaskFiltersFocus::Values {
-                                                this.task_filters_focus = TaskFiltersFocus::Values;
-                                                did_change = true;
-                                            }
-                                            if did_change {
-                                                cx.notify();
-                                            }
-                                        }))
-                                        .on_mouse_down(gpui::MouseButton::Left, {
-                                            let workspace = workspace.clone();
-                                            move |_, _, cx| {
-                                                workspace.update(cx, |this, cx| {
+                                        let row = div()
+                                            .id(row_id)
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.xs)
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.xs)
+                                            .rounded(theme.radius.sm)
+                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .hover(|this| {
+                                                this.bg(theme.colors.accent.opacity(0.75))
+                                            })
+                                            .cursor_pointer()
+                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                                let mut did_change = false;
+                                                if this.task_filters_active_value_index
+                                                    != display_index
+                                                {
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    did_change = true;
+                                                }
+                                                if this.task_filters_focus
+                                                    != TaskFiltersFocus::Values
+                                                {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    this.task_filters_active_value_index = index;
-                                                    this.toggle_merge_readiness_filter(value, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_xs()
-                                                .text_color(theme.colors.foreground)
-                                                .truncate()
-                                                .child(label),
-                                        )
-                                        .when(selected, |this| {
-                                            this.child(
+                                                    did_change = true;
+                                                }
+                                                if did_change {
+                                                    cx.notify();
+                                                }
+                                            }))
+                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                                let workspace = workspace.clone();
+                                                move |_, _, cx| {
+                                                    workspace.update(cx, |this, cx| {
+                                                        this.task_filters_focus =
+                                                            TaskFiltersFocus::Values;
+                                                        this.task_filters_active_value_index =
+                                                            display_index;
+                                                        this.toggle_merge_readiness_filter(
+                                                            value, cx,
+                                                        );
+                                                    });
+                                                }
+                                            })
+                                            .child(
                                                 div()
+                                                    .flex_1()
+                                                    .min_w_0()
                                                     .text_xs()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child("✓"),
+                                                    .text_color(theme.colors.foreground)
+                                                    .truncate()
+                                                    .child(label),
                                             )
-                                        });
+                                            .when(selected, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child("✓"),
+                                                )
+                                            });
 
-                                    value_list = value_list.child(row);
+                                        value_list = value_list.child(row);
+                                    }
                                 }
-                            }
-                            TaskFilterCategory::AgentStatus => {
-                                for (index, value) in
-                                    TaskAgentStatus::ALL.iter().copied().enumerate()
-                                {
-                                    let selected =
-                                        self.task_filters.agent_statuses.contains(&value);
-                                    let label = value.title();
-                                    let highlighted = self.task_filters_focus
-                                        == TaskFiltersFocus::Values
-                                        && self.task_filters_active_value_index == index;
+                                TaskFilterCategory::AgentStatus => {
+                                    for (display_index, source_index) in
+                                        visible_values.into_iter().enumerate()
+                                    {
+                                        let Some(value) =
+                                            TaskAgentStatus::ALL.get(source_index).copied()
+                                        else {
+                                            continue;
+                                        };
+                                        let selected =
+                                            self.task_filters.agent_statuses.contains(&value);
+                                        let label = value.title();
+                                        let highlighted = self.task_filters_focus
+                                            == TaskFiltersFocus::Values
+                                            && self.task_filters_active_value_index
+                                                == display_index;
 
-                                    let row_id = (
-                                        gpui::ElementId::from(("task_filters_value", entity_id)),
-                                        format!("agent_status:{label}"),
-                                    );
+                                        let row_id = (
+                                            gpui::ElementId::from((
+                                                "task_filters_value",
+                                                entity_id,
+                                            )),
+                                            format!("agent_status:{label}"),
+                                        );
 
-                                    let row = div()
-                                        .id(row_id)
-                                        .flex()
-                                        .flex_row()
-                                        .items_center()
-                                        .gap(theme.spacing.xs)
-                                        .px(theme.spacing.sm)
-                                        .py(theme.spacing.xs)
-                                        .rounded(theme.radius.sm)
-                                        .when(highlighted, |this| this.bg(theme.colors.accent))
-                                        .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
-                                        .cursor_pointer()
-                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                            let mut did_change = false;
-                                            if this.task_filters_active_value_index != index {
-                                                this.task_filters_active_value_index = index;
-                                                did_change = true;
-                                            }
-                                            if this.task_filters_focus != TaskFiltersFocus::Values {
-                                                this.task_filters_focus = TaskFiltersFocus::Values;
-                                                did_change = true;
-                                            }
-                                            if did_change {
-                                                cx.notify();
-                                            }
-                                        }))
-                                        .on_mouse_down(gpui::MouseButton::Left, {
-                                            let workspace = workspace.clone();
-                                            move |_, _, cx| {
-                                                workspace.update(cx, |this, cx| {
+                                        let row = div()
+                                            .id(row_id)
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.xs)
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.xs)
+                                            .rounded(theme.radius.sm)
+                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .hover(|this| {
+                                                this.bg(theme.colors.accent.opacity(0.75))
+                                            })
+                                            .cursor_pointer()
+                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                                let mut did_change = false;
+                                                if this.task_filters_active_value_index
+                                                    != display_index
+                                                {
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    did_change = true;
+                                                }
+                                                if this.task_filters_focus
+                                                    != TaskFiltersFocus::Values
+                                                {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    this.task_filters_active_value_index = index;
-                                                    this.toggle_agent_status_filter(value, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_xs()
-                                                .text_color(theme.colors.foreground)
-                                                .truncate()
-                                                .child(label),
-                                        )
-                                        .when(selected, |this| {
-                                            this.child(
+                                                    did_change = true;
+                                                }
+                                                if did_change {
+                                                    cx.notify();
+                                                }
+                                            }))
+                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                                let workspace = workspace.clone();
+                                                move |_, _, cx| {
+                                                    workspace.update(cx, |this, cx| {
+                                                        this.task_filters_focus =
+                                                            TaskFiltersFocus::Values;
+                                                        this.task_filters_active_value_index =
+                                                            display_index;
+                                                        this.toggle_agent_status_filter(value, cx);
+                                                    });
+                                                }
+                                            })
+                                            .child(
                                                 div()
+                                                    .flex_1()
+                                                    .min_w_0()
                                                     .text_xs()
-                                                    .text_color(theme.colors.foreground_muted)
-                                                    .child("✓"),
+                                                    .text_color(theme.colors.foreground)
+                                                    .truncate()
+                                                    .child(label),
                                             )
-                                        });
+                                            .when(selected, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .child("✓"),
+                                                )
+                                            });
 
-                                    value_list = value_list.child(row);
+                                        value_list = value_list.child(row);
+                                    }
                                 }
                             }
                         }
@@ -4575,6 +4915,18 @@ impl Render for WorkspacePaneHost {
                         .scrollbar_width(px(8.0))
                         .child(value_list);
 
+                        let values_body = div()
+                            .flex()
+                            .flex_col()
+                            .gap(theme.spacing.sm)
+                            .h(px(260.0))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .child(self.task_filters_value_search_input.clone()),
+                            )
+                            .child(div().flex_1().min_h(px(0.0)).child(values));
+
                         overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
                             .w(px(240.0))
                             .pt(theme.spacing.sm)
@@ -4582,11 +4934,12 @@ impl Render for WorkspacePaneHost {
                             .px(theme.spacing.md)
                             .shadow_md()
                             .occlude()
-                            .child(div().h(px(260.0)).child(values))
+                            .child(values_body)
                     });
 
                     let menu_container = div()
                         .key_context("TaskFilters")
+                        .track_focus(&self.task_filters_focus_handle)
                         .flex()
                         .flex_row()
                         .items_start()
@@ -4637,10 +4990,13 @@ impl Render for WorkspacePaneHost {
             .key_context("Workspace")
             .on_action(cx.listener(Self::open_task_filters))
             .on_action(cx.listener(Self::close_task_filters))
+            .on_action(cx.listener(Self::task_filters_toggle_chip_focus))
             .on_action(cx.listener(Self::task_filters_move_up))
             .on_action(cx.listener(Self::task_filters_move_down))
             .on_action(cx.listener(Self::task_filters_move_left))
             .on_action(cx.listener(Self::task_filters_move_right))
+            .on_action(cx.listener(Self::task_filters_activate))
+            .on_action(cx.listener(Self::task_filters_clear_focused_chip))
             .child(body.child(graph_host))
             .track_focus(&self.focus_handle(cx))
     }
