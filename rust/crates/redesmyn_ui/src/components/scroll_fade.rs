@@ -6,6 +6,45 @@ use gpui::{
 
 use crate::utils::theme_for_window;
 
+fn smoothstep(t: f32) -> f32 {
+    // 3t^2 - 2t^3
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn clamp_scroll_y(offset_y: Pixels, max_offset_y: Pixels) -> Pixels {
+    // `ScrollHandle::offset().y` is negative when scrolled down (i.e., the content is translated
+    // upwards). Map to a positive "scroll position" in [0, max_offset].
+    (-offset_y).max(px(0.0)).min(max_offset_y)
+}
+
+fn fade_stop(distance: Pixels, max_offset_y: Pixels, edge_threshold: Pixels) -> f32 {
+    if distance <= edge_threshold || max_offset_y <= edge_threshold {
+        return 0.0;
+    }
+
+    // Increase fade thickness as you move away from an edge. We bias early so the fade becomes
+    // noticeable quickly, while still varying smoothly over large scroll ranges.
+    let progress = (distance / max_offset_y).clamp(0.0, 1.0);
+    smoothstep(progress.sqrt())
+}
+
+fn fade_stops(offset_y: Pixels, max_offset_y: Pixels, edge_threshold: Pixels) -> (f32, f32) {
+    let scroll_y = clamp_scroll_y(offset_y, max_offset_y);
+    let distance_to_top = scroll_y;
+    let distance_to_bottom = (max_offset_y - scroll_y).max(px(0.0));
+    (
+        fade_stop(distance_to_top, max_offset_y, edge_threshold),
+        fade_stop(distance_to_bottom, max_offset_y, edge_threshold),
+    )
+}
+
+/// Paints top/bottom fades over a scrollable element.
+///
+/// This wrapper is *paint-only*: it does not add overlay elements, so pointer/wheel hit-testing is
+/// unaffected.
+///
+/// Implementation detail: we vary the gradient stop (rather than alpha) so that the content-edge
+/// "seam" is always covered by an opaque background, while the fade thickness ramps smoothly.
 pub struct ScrollFade {
     scroll_handle: ScrollHandle,
     child: AnyElement,
@@ -95,11 +134,6 @@ impl Element for ScrollFade {
     ) {
         self.child.paint(window, cx);
 
-        fn smoothstep(t: f32) -> f32 {
-            // 3t^2 - 2t^3
-            t * t * (3.0 - 2.0 * t)
-        }
-
         let fade_height = self.fade_height;
         if fade_height <= px(0.0) {
             return;
@@ -116,29 +150,9 @@ impl Element for ScrollFade {
             return;
         }
 
-        // `ScrollHandle::offset().y` is negative when scrolled down (i.e., the content is
-        // translated upwards). Map to a positive "scroll position" in [0, max_offset].
-        let scroll_y = (-self.scroll_handle.offset().y)
-            .max(px(0.0))
-            .min(max_offset_y);
-
-        let distance_to_top = scroll_y;
-        let distance_to_bottom = (max_offset_y - scroll_y).max(px(0.0));
-
         let edge_threshold = px(1.0);
-        let stop_for_distance = |distance: Pixels| -> f32 {
-            if distance <= edge_threshold || max_offset_y <= edge_threshold {
-                return 0.0;
-            }
-
-            // Increase fade thickness as you move away from an edge. We bias early so the fade
-            // becomes noticeable quickly, while still varying smoothly over large scroll ranges.
-            let progress = (distance / max_offset_y).clamp(0.0, 1.0);
-            smoothstep(progress.sqrt())
-        };
-
-        let top_stop = stop_for_distance(distance_to_top);
-        let bottom_stop = stop_for_distance(distance_to_bottom);
+        let (top_stop, bottom_stop) =
+            fade_stops(self.scroll_handle.offset().y, max_offset_y, edge_threshold);
 
         let theme = theme_for_window(window, cx);
         let bg = self.background_color.unwrap_or(theme.colors.surface);
@@ -185,5 +199,48 @@ impl Element for ScrollFade {
             .color_space(gpui::ColorSpace::Oklab);
             window.paint_quad(fill(bottom_bounds, gradient).corner_radii(bottom_corners));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fade_stops_are_zero_at_scroll_limits() {
+        let max = px(100.0);
+        let edge = px(1.0);
+
+        // Top edge: no top fade, bottom fade present.
+        let (top, bottom) = fade_stops(px(0.0), max, edge);
+        assert_eq!(top, 0.0);
+        assert!(bottom > 0.9);
+
+        // Bottom edge: no bottom fade, top fade present.
+        let (top, bottom) = fade_stops(-max, max, edge);
+        assert_eq!(bottom, 0.0);
+        assert!(top > 0.9);
+    }
+
+    #[test]
+    fn fade_stops_vary_smoothly_between_edges() {
+        let max = px(200.0);
+        let edge = px(1.0);
+
+        let (top, bottom) = fade_stops(-px(100.0), max, edge);
+        assert!(top > 0.0 && top < 1.0);
+        assert!(bottom > 0.0 && bottom < 1.0);
+        assert!((top - bottom).abs() < 1e-3);
+    }
+
+    #[test]
+    fn fade_stops_clamp_scroll_sign() {
+        let max = px(100.0);
+        let edge = px(1.0);
+
+        // Positive offsets should clamp to the top edge.
+        let (top, bottom) = fade_stops(px(12.0), max, edge);
+        assert_eq!(top, 0.0);
+        assert!(bottom > 0.9);
     }
 }
