@@ -1148,6 +1148,14 @@ impl Render for TextInput {
         };
         let height = window.line_height() + padding_y + padding_y;
 
+        let (background, border_color) = match self.size {
+            TextInputSize::Regular => (theme.colors.surface_elevated, theme.colors.border),
+            TextInputSize::Small => (
+                theme.colors.surface_elevated.opacity(0.65),
+                theme.colors.border.opacity(0.5),
+            ),
+        };
+
         div()
             .flex()
             .key_context("TextInput")
@@ -1182,9 +1190,9 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .bg(theme.colors.surface_elevated)
+            .bg(background)
             .border_1()
-            .border_color(theme.colors.border)
+            .border_color(border_color)
             .overflow_hidden()
             .rounded(radius)
             .line_height(window.line_height())
