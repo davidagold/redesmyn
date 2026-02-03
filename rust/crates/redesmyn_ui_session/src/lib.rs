@@ -668,6 +668,7 @@ pub struct SessionView {
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
     reasoning_scroll_states: Rc<RefCell<HashMap<String, ReasoningScrollState>>>,
+    tool_event_scroll_handles: Rc<RefCell<HashMap<SessionEventId, ScrollHandle>>>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -786,6 +787,7 @@ impl SessionView {
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
             reasoning_scroll_states: Rc::new(RefCell::new(HashMap::new())),
+            tool_event_scroll_handles: Rc::new(RefCell::new(HashMap::new())),
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -1159,6 +1161,7 @@ impl SessionView {
             self.expanded_tool_groups.clear();
             self.tool_group_transitions = Rc::new(HashMap::new());
             self.tool_group_transition_guards.clear();
+            self.tool_event_scroll_handles.borrow_mut().clear();
             self.exec_command_result_by_invocation = Rc::new(HashMap::new());
             self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
             self.tool_event_groups = Rc::new(HashMap::new());
@@ -1248,6 +1251,7 @@ impl SessionView {
         self.expanded_tool_groups.clear();
         self.tool_group_transitions = Rc::new(HashMap::new());
         self.tool_group_transition_guards.clear();
+        self.tool_event_scroll_handles.borrow_mut().clear();
         self.exec_command_result_by_invocation = Rc::new(HashMap::new());
         self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
         self.tool_event_groups = Rc::new(HashMap::new());
@@ -2552,6 +2556,7 @@ impl Render for SessionView {
         let tool_event_transitions = Rc::clone(&self.tool_event_transitions);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
         let reasoning_scroll_states = Rc::clone(&self.reasoning_scroll_states);
+        let tool_event_scroll_handles = Rc::clone(&self.tool_event_scroll_handles);
         let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
@@ -3573,8 +3578,7 @@ impl Render for SessionView {
                                             .child(summary);
 
                                         if expanded || is_animating {
-                                            let mut details = div()
-                                                .id((bubble_id.clone(), "details"))
+                                            let mut details_content = div()
                                                 .pl(theme.spacing.lg)
                                                 .flex()
                                                 .flex_col()
@@ -3584,14 +3588,14 @@ impl Render for SessionView {
 
                                             if is_exec_command {
                                                 if let Some(cwd) = exec_cwd.as_deref() {
-                                                    details = details.child(
+                                                    details_content = details_content.child(
                                                         div()
                                                             .text_color(theme.colors.foreground_muted)
                                                             .child(format!("cwd: {cwd}")),
                                                     );
                                                 }
 
-                                                details = details.child(
+                                                details_content = details_content.child(
                                                     div()
                                                         .text_color(theme.colors.foreground)
                                                         .child(
@@ -3613,7 +3617,7 @@ impl Render for SessionView {
                                                         } else {
                                                             theme.colors.danger
                                                         };
-                                                        details = details.child(
+                                                        details_content = details_content.child(
                                                             div()
                                                                 .text_color(color)
                                                                 .child(format!("exit {exit_code}")),
@@ -3621,7 +3625,7 @@ impl Render for SessionView {
                                                     }
 
                                                     if let Some(error) = result.error.as_ref() {
-                                                        details = details.child(
+                                                        details_content = details_content.child(
                                                             div()
                                                                 .text_color(theme.colors.danger)
                                                                 .child(error.message.clone()),
@@ -3629,7 +3633,7 @@ impl Render for SessionView {
                                                     }
 
                                                     if !remainder.is_empty() {
-                                                        details = details.child(
+                                                        details_content = details_content.child(
                                                             div()
                                                                 .text_color(theme.colors.foreground)
                                                                 .child(remainder.to_string()),
@@ -3637,12 +3641,48 @@ impl Render for SessionView {
                                                     }
                                                 }
                                             } else {
-                                                details = details.child(
+                                                details_content = details_content.child(
                                                     div()
                                                         .text_color(theme.colors.foreground)
                                                         .child(tool.input_preview.clone()),
                                                 );
                                             }
+
+                                            let details_scroll_handle = {
+                                                let mut handles = tool_event_scroll_handles.borrow_mut();
+                                                handles
+                                                    .entry(session_event_id)
+                                                    .or_insert_with(ScrollHandle::new)
+                                                    .clone()
+                                            };
+
+                                            let details = ScrollFade::new(
+                                                details_scroll_handle.clone(),
+                                                div()
+                                                    .id((bubble_id.clone(), "details"))
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .max_h(px(640.0))
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&details_scroll_handle)
+                                                    .occlude()
+                                                    .on_scroll_wheel({
+                                                        let handle = details_scroll_handle.clone();
+                                                        let timeline_view = timeline_view.clone();
+                                                        move |event, window, cx| {
+                                                            chain_scroll_wheel_to_timeline_list_if_needed(
+                                                                event,
+                                                                window,
+                                                                cx,
+                                                                &handle,
+                                                                timeline_view.clone(),
+                                                            );
+                                                        }
+                                                    })
+                                                    .child(details_content),
+                                            )
+                                            .fade_height(theme.spacing.lg)
+                                            .bg(theme.colors.surface);
 
                                             let mut details =
                                                 Expandable::new(details).opacity(progress);
@@ -3851,8 +3891,7 @@ impl Render for SessionView {
                                                 .child(summary);
 
                                             if expanded || is_animating {
-                                                let mut details = div()
-                                                    .id((bubble_id.clone(), "details"))
+                                                let mut details_content = div()
                                                     .pl(theme.spacing.lg)
                                                     .flex()
                                                     .flex_col()
@@ -3861,18 +3900,54 @@ impl Render for SessionView {
                                                     .text_size(theme.typography.caption.size);
 
                                                 if let Some(error) = tool.error.as_ref() {
-                                                    details = details.child(
+                                                    details_content = details_content.child(
                                                         div()
                                                             .text_color(theme.colors.danger)
                                                             .child(error.message.clone()),
                                                     );
                                                 }
 
-                                                details = details.child(
+                                                details_content = details_content.child(
                                                     div()
                                                         .text_color(theme.colors.foreground)
                                                         .child(tool.output_preview.clone()),
                                                 );
+
+                                                let details_scroll_handle = {
+                                                    let mut handles = tool_event_scroll_handles.borrow_mut();
+                                                    handles
+                                                        .entry(session_event_id)
+                                                        .or_insert_with(ScrollHandle::new)
+                                                        .clone()
+                                                };
+
+                                                let details = ScrollFade::new(
+                                                    details_scroll_handle.clone(),
+                                                    div()
+                                                        .id((bubble_id.clone(), "details"))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .max_h(px(640.0))
+                                                        .overflow_y_scroll()
+                                                        .track_scroll(&details_scroll_handle)
+                                                        .occlude()
+                                                        .on_scroll_wheel({
+                                                            let handle = details_scroll_handle.clone();
+                                                            let timeline_view = timeline_view.clone();
+                                                            move |event, window, cx| {
+                                                                chain_scroll_wheel_to_timeline_list_if_needed(
+                                                                    event,
+                                                                    window,
+                                                                    cx,
+                                                                    &handle,
+                                                                    timeline_view.clone(),
+                                                                );
+                                                            }
+                                                        })
+                                                        .child(details_content),
+                                                )
+                                                .fade_height(theme.spacing.lg)
+                                                .bg(theme.colors.surface);
 
                                                 let mut details =
                                                     Expandable::new(details).opacity(progress);
