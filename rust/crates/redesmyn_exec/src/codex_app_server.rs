@@ -377,7 +377,11 @@ impl CodexAppServerState {
     }
 
     async fn clear_permission_request(&self, request_id: &str) {
-        self.inner.lock().await.pending_permission_requests.remove(request_id);
+        self.inner
+            .lock()
+            .await
+            .pending_permission_requests
+            .remove(request_id);
     }
 
     async fn respond_permission_request(
@@ -996,6 +1000,32 @@ async fn handle_incoming_frame(
     Ok(())
 }
 
+fn truncate_single_line_for_summary(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut chars = 0usize;
+    let mut truncated = false;
+
+    for ch in value.chars() {
+        if ch == '\n' || ch == '\r' {
+            truncated = true;
+            break;
+        }
+        if chars >= max_chars {
+            truncated = true;
+            break;
+        }
+        out.push(ch);
+        chars = chars.saturating_add(1);
+    }
+
+    if truncated {
+        out = out.trim_end().to_owned();
+        out.push('…');
+    }
+
+    out
+}
+
 async fn handle_server_request(
     conn: &Arc<JsonRpcConnection>,
     state: &Arc<CodexAppServerState>,
@@ -1041,7 +1071,12 @@ async fn handle_server_request(
                 .command
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
-                .map(|cmd| format!("Run command: {cmd}"))
+                .map(|cmd| {
+                    format!(
+                        "Run command: {}",
+                        truncate_single_line_for_summary(cmd.trim(), 160)
+                    )
+                })
                 .unwrap_or_else(|| "Run a command".to_owned());
 
             let _ = events_tx
@@ -1075,15 +1110,19 @@ async fn handle_server_request(
                 let (decision, decided_by) = match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await
                 {
                     Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
-                    Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                    Ok(Err(_)) | Err(_) => {
+                        (PermissionDecision::Deny, PermissionDecisionBy::Timeout)
+                    }
                 };
 
                 if decided_by == PermissionDecisionBy::Timeout {
                     state.clear_permission_request(&request_id).await;
                 }
 
+                // Codex expects a v2::CommandExecutionApprovalDecision value
+                // (serde-serialized in camelCase).
                 let decision_for_wire = match decision {
-                    PermissionDecision::Approve => "approve",
+                    PermissionDecision::Approve => "accept",
                     PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
                 };
                 conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
@@ -1091,7 +1130,9 @@ async fn handle_server_request(
 
                 let decision_for_event = match decision {
                     PermissionDecision::Approve => PermissionDecision::Approve,
-                    PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                    PermissionDecision::Deny | PermissionDecision::Unknown => {
+                        PermissionDecision::Deny
+                    }
                 };
                 let _ = events_tx
                     .send(AppServerEvent::PermissionDecided {
@@ -1124,7 +1165,12 @@ async fn handle_server_request(
                 .grant_root
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
-                .map(|root| format!("Allow file changes under: {root}"))
+                .map(|root| {
+                    format!(
+                        "Allow file changes under: {}",
+                        truncate_single_line_for_summary(root.trim(), 160)
+                    )
+                })
                 .unwrap_or_else(|| "Allow a file change".to_owned());
 
             let _ = events_tx
@@ -1158,15 +1204,19 @@ async fn handle_server_request(
                 let (decision, decided_by) = match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await
                 {
                     Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
-                    Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                    Ok(Err(_)) | Err(_) => {
+                        (PermissionDecision::Deny, PermissionDecisionBy::Timeout)
+                    }
                 };
 
                 if decided_by == PermissionDecisionBy::Timeout {
                     state.clear_permission_request(&request_id).await;
                 }
 
+                // Codex expects a v2::FileChangeApprovalDecision value
+                // (serde-serialized in camelCase).
                 let decision_for_wire = match decision {
-                    PermissionDecision::Approve => "approve",
+                    PermissionDecision::Approve => "accept",
                     PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
                 };
                 conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
@@ -1174,7 +1224,9 @@ async fn handle_server_request(
 
                 let decision_for_event = match decision {
                     PermissionDecision::Approve => PermissionDecision::Approve,
-                    PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                    PermissionDecision::Deny | PermissionDecision::Unknown => {
+                        PermissionDecision::Deny
+                    }
                 };
                 let _ = events_tx
                     .send(AppServerEvent::PermissionDecided {
