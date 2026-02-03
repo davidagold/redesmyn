@@ -25,13 +25,14 @@ use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ScrollArea, SplitPane,
     SplitPaneAxis, SplitPaneEvent, SplitPaneState, TextButton, TextInput, TextInputEvent,
+    OverlaySurfaceKind, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
     MERGE_READINESS_OPTIONS, TASK_STATE_OPTIONS, TaskAgentStatus, TaskFilterCategory, TaskFilters,
     merge_readiness_title, task_state_title,
 };
-use redesmyn_ui::utils::{UserActionState, theme_for_window};
+use redesmyn_ui::utils::{TransitionMap, UserActionState, theme_for_window, ui_test_mode_animation_duration};
 use redesmyn_ui_graph::GraphView;
 
 use crate::app::SessionViewerFixtureEmitter;
@@ -3351,10 +3352,12 @@ struct WorkspacePaneHost {
     task_filters: TaskFilters,
     task_filters_open: bool,
     task_filters_active_category: TaskFilterCategory,
+    task_filters_hovered_category: Option<TaskFilterCategory>,
     task_filters_search: SharedString,
     task_filters_search_input: Entity<TextInput>,
     task_filters_category_scroll: ScrollHandle,
     task_filters_value_scroll: ScrollHandle,
+    task_filters_menu_opacity: TransitionMap<&'static str>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
     selected_epic_slug: Option<String>,
@@ -3407,10 +3410,12 @@ impl WorkspacePaneHost {
             task_filters: TaskFilters::default(),
             task_filters_open: false,
             task_filters_active_category: TaskFilterCategory::TaskState,
+            task_filters_hovered_category: None,
             task_filters_search: "".into(),
             task_filters_search_input,
             task_filters_category_scroll: ScrollHandle::new(),
             task_filters_value_scroll: ScrollHandle::new(),
+            task_filters_menu_opacity: TransitionMap::new(),
             sessions_collapsed,
             ui_settings_error: None,
             selected_epic_slug: None,
@@ -3484,6 +3489,7 @@ impl WorkspacePaneHost {
         let _guard = span.enter();
 
         self.task_filters_open = true;
+        self.task_filters_hovered_category = None;
         self.task_filters_search = "".into();
         self.task_filters_search_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -3506,6 +3512,7 @@ impl WorkspacePaneHost {
         let _guard = span.enter();
 
         self.task_filters_open = false;
+        self.task_filters_hovered_category = None;
         self.task_filters_search = "".into();
         self.task_filters_search_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -3682,17 +3689,20 @@ impl Render for WorkspacePaneHost {
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
 
-        let filter_bar_height = px(40.0);
-        let filter_keycap = div()
-            .px(theme.spacing.xs)
-            .py(px(1.0))
-            .rounded(theme.radius.sm)
-            .bg(theme.colors.surface_elevated)
-            .border_1()
-            .border_color(theme.colors.border.opacity(0.5))
-            .text_xs()
-            .text_color(theme.colors.foreground_muted)
-            .child("F");
+        let filter_tab_height = px(34.0);
+        let keycap = |label: &'static str| {
+            div()
+                .px(theme.spacing.xs)
+                .py(px(1.0))
+                .rounded(theme.radius.sm)
+                .bg(theme.colors.surface_elevated.opacity(0.75))
+                .border_1()
+                .border_color(theme.colors.border.opacity(0.5))
+                .text_xs()
+                .text_color(theme.colors.foreground_muted)
+                .child(label)
+        };
+        let filter_keycap = keycap("F");
 
         let filter_button_kind = if self.task_filters_open {
             ButtonKind::Secondary
@@ -3717,6 +3727,7 @@ impl Render for WorkspacePaneHost {
                 move |_, window, cx| {
                     let focus = workspace.update(cx, |this, cx| {
                         this.task_filters_open = !this.task_filters_open;
+                        this.task_filters_hovered_category = None;
                         this.task_filters_search = "".into();
                         this.task_filters_search_input
                             .update(cx, |input, cx| input.set_text("", cx));
@@ -3759,6 +3770,7 @@ impl Render for WorkspacePaneHost {
                         let focus = workspace.update(cx, |this, cx| {
                             this.task_filters_open = true;
                             this.task_filters_active_category = category;
+                            this.task_filters_hovered_category = Some(category);
                             this.task_filters_search = "".into();
                             this.task_filters_search_input
                                 .update(cx, |input, cx| input.set_text("", cx));
@@ -3798,25 +3810,7 @@ impl Render for WorkspacePaneHost {
             );
         }
 
-        let filters_bar = div()
-            .h(filter_bar_height)
-            .px(theme.spacing.md)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(theme.spacing.sm)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.sm)
-                    .min_w_0()
-                    .child(filter_button)
-                    .child(chips_row),
-            );
-
-        let mut body = div().flex().flex_col().size_full().child(filters_bar);
+        let mut body = div().flex().flex_col().size_full();
 
         if let Some(error) = self.ui_settings_error.clone() {
             body = body.child(
@@ -3939,280 +3933,343 @@ impl Render for WorkspacePaneHost {
                 | redesmyn_protocol::ui_driver::UiGraphLoadState::Unknown => host,
             };
 
-            host
-        };
+            let show_filter_ui = matches!(
+                self.graph_state,
+                redesmyn_protocol::ui_driver::UiGraphLoadState::Loaded
+                    | redesmyn_protocol::ui_driver::UiGraphLoadState::Unknown
+            );
 
-        let filters_overlay = if self.task_filters_open {
-            let query = self.task_filters_search.trim().to_ascii_lowercase();
-            let visible_categories: Vec<TaskFilterCategory> = TaskFilterCategory::ALL
-                .into_iter()
-                .filter(|category| {
-                    query.is_empty() || category.title().to_ascii_lowercase().contains(&query)
-                })
-                .collect();
+            if show_filter_ui {
+                let tab_top = theme.spacing.md;
+                let tab_left = theme.spacing.md;
 
-            let mut category_list = div().flex().flex_col().gap(theme.spacing.xs);
-            if visible_categories.is_empty() {
-                category_list = category_list.child(
+                let filter_tab = overlay_surface(&theme, OverlaySurfaceKind::Chrome, px(999.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.sm)
+                    .px(theme.spacing.sm)
+                    .py(theme.spacing.xs)
+                    .shadow_md()
+                    .child(filter_button)
+                    .child(chips_row);
+
+                host = host.child(
                     div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("No matching filters."),
+                        .absolute()
+                        .top(tab_top)
+                        .left(tab_left)
+                        .child(filter_tab),
                 );
-            } else {
-                for category in visible_categories {
-                    let selected = category == self.task_filters_active_category;
-                    let count = self.task_filters.selected_count(category);
-                    let kind = if selected {
-                        ButtonKind::Secondary
-                    } else {
-                        ButtonKind::Ghost
-                    };
 
-                    let trailing = if count > 0 {
-                        Some(
+                let menu_opacity = self.task_filters_menu_opacity.opacity_for_render(
+                    "task_filters_menu",
+                    self.task_filters_open,
+                    ui_test_mode_animation_duration(
+                        theme.animation
+                            .fast
+                            .saturating_sub(Duration::from_millis(40)),
+                    ),
+                    window,
+                );
+
+                if menu_opacity > 1e-3 {
+                    let query = self.task_filters_search.trim().to_ascii_lowercase();
+                    let visible_categories: Vec<TaskFilterCategory> = TaskFilterCategory::ALL
+                        .into_iter()
+                        .filter(|category| {
+                            query.is_empty()
+                                || category.title().to_ascii_lowercase().contains(&query)
+                        })
+                        .collect();
+
+                    let mut category_list = div().flex().flex_col().gap(theme.spacing.xs);
+                    if visible_categories.is_empty() {
+                        category_list = category_list.child(
                             div()
+                                .text_sm()
+                                .text_color(theme.colors.foreground_muted)
+                                .child("No matching filters."),
+                        );
+                    } else {
+                        for category in visible_categories {
+                            let count = self.task_filters.selected_count(category);
+                            let hovered = self.task_filters_hovered_category == Some(category);
+
+                            let badge = if count > 0 {
+                                Some(
+                                    div()
+                                        .px(theme.spacing.xs)
+                                        .py(px(1.0))
+                                        .rounded(theme.radius.sm)
+                                        .bg(theme.colors.surface_elevated.opacity(0.85))
+                                        .text_xs()
+                                        .text_color(theme.colors.foreground_muted)
+                                        .child(format!("{count}")),
+                                )
+                            } else {
+                                None
+                            };
+
+                            let arrow = div()
+                                .text_sm()
+                                .text_color(theme.colors.foreground_muted)
+                                .child("›");
+
+                            let row = div()
+                                .id((
+                                    gpui::ElementId::from(("task_filters_category", entity_id)),
+                                    category.title(),
+                                ))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(theme.spacing.sm)
+                                .px(theme.spacing.sm)
+                                .py(theme.spacing.xs)
+                                .rounded(theme.radius.md)
+                                .when(hovered, |this| this.bg(theme.colors.accent))
+                                .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
+                                .cursor_pointer()
+                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                    if this.task_filters_hovered_category == Some(category) {
+                                        return;
+                                    }
+                                    this.task_filters_hovered_category = Some(category);
+                                    this.task_filters_active_category = category;
+                                    cx.notify();
+                                }))
+                                .on_mouse_down(gpui::MouseButton::Left, {
+                                    let workspace = workspace.clone();
+                                    move |_, _, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.task_filters_hovered_category = Some(category);
+                                            this.task_filters_active_category = category;
+                                            cx.notify();
+                                        });
+                                    }
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_sm()
+                                        .text_color(theme.colors.foreground)
+                                        .truncate()
+                                        .child(category.title()),
+                                )
+                                .when_some(badge, |this, badge| this.child(badge))
+                                .child(arrow);
+
+                            category_list = category_list.child(row);
+                        }
+                    }
+
+                    let categories_scroll = self.task_filters_category_scroll.clone();
+                    let categories = ScrollArea::new(
+                        ("task_filters_category_scroll", entity_id),
+                        categories_scroll,
+                    )
+                    .scrollbar_width(px(8.0))
+                    .child(category_list);
+
+                    let actions_row = div()
+                        .pt(theme.spacing.xs)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            TextButton::new(("task_filters_clear_all", entity_id), "Clear all")
+                                .kind(ButtonKind::Ghost)
+                                .small()
+                                .disabled(!self.task_filters.is_active())
+                                .on_click({
+                                    let workspace = workspace.clone();
+                                    move |_, _, cx| {
+                                        workspace
+                                            .update(cx, |this, cx| this.clear_all_filters(cx));
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(theme.spacing.xs)
                                 .text_xs()
                                 .text_color(theme.colors.foreground_muted)
-                                .child(format!("{count}")),
-                        )
-                    } else {
-                        None
-                    };
+                                .child(keycap("Esc"))
+                                .child("Close"),
+                        );
 
-                    let mut button = TextButton::new(
-                        (
-                            gpui::ElementId::from(("task_filters_category", entity_id)),
-                            category.title(),
-                        ),
-                        category.title(),
-                    )
-                    .menu_item()
-                    .kind(kind);
+                    let primary_menu = overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                        .w(px(260.0))
+                        .p(theme.spacing.sm)
+                        .shadow_md()
+                        .occlude()
+                        .child(div().w_full().child(self.task_filters_search_input.clone()))
+                        .child(div().pt(theme.spacing.sm).h(px(260.0)).child(categories))
+                        .child(actions_row);
 
-                    if let Some(trailing) = trailing {
-                        button = button.trailing(trailing);
-                    }
+                    let submenu = self.task_filters_hovered_category.map(|category| {
+                        let mut value_list = div().flex().flex_col().gap(theme.spacing.xs);
+                        match category {
+                            TaskFilterCategory::TaskState => {
+                                for value in TASK_STATE_OPTIONS {
+                                    let selected = self.task_filters.task_states.contains(&value);
+                                    let label = task_state_title(value);
+                                    let mut button = TextButton::new(
+                                        (
+                                            gpui::ElementId::from(("task_filters_value", entity_id)),
+                                            format!("task_state:{label}"),
+                                        ),
+                                        label,
+                                    )
+                                    .menu_item()
+                                    .kind(ButtonKind::Ghost);
 
-                    category_list = category_list.child(button.on_click({
-                        let workspace = workspace.clone();
-                        move |_, _, cx| {
-                            workspace.update(cx, |this, cx| {
-                                this.task_filters_active_category = category;
-                                this.ui_updates.bump();
-                                cx.notify();
-                            });
-                        }
-                    }));
-                }
-            }
+                                    if selected {
+                                        button = button.trailing(div().child("✓"));
+                                    }
 
-            let mut value_list = div().flex().flex_col().gap(theme.spacing.xs);
-            match self.task_filters_active_category {
-                TaskFilterCategory::TaskState => {
-                    for value in TASK_STATE_OPTIONS {
-                        let selected = self.task_filters.task_states.contains(&value);
-                        let label = task_state_title(value);
-                        let mut button = TextButton::new(
-                            (
-                                gpui::ElementId::from(("task_filters_value", entity_id)),
-                                format!("task_state:{label}"),
-                            ),
-                            label,
-                        )
-                        .menu_item()
-                        .kind(ButtonKind::Ghost);
-
-                        if selected {
-                            button = button.trailing(div().child("✓"));
-                        }
-
-                        value_list = value_list.child(button.on_click({
-                            let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| {
-                                    this.toggle_task_state_filter(value, cx);
-                                });
-                            }
-                        }));
-                    }
-                }
-                TaskFilterCategory::MergeReadiness => {
-                    for value in MERGE_READINESS_OPTIONS {
-                        let selected = self.task_filters.merge_readiness.contains(&value);
-                        let label = merge_readiness_title(value);
-                        let mut button = TextButton::new(
-                            (
-                                gpui::ElementId::from(("task_filters_value", entity_id)),
-                                format!("merge_readiness:{label}"),
-                            ),
-                            label,
-                        )
-                        .menu_item()
-                        .kind(ButtonKind::Ghost);
-
-                        if selected {
-                            button = button.trailing(div().child("✓"));
-                        }
-
-                        value_list = value_list.child(button.on_click({
-                            let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| {
-                                    this.toggle_merge_readiness_filter(value, cx);
-                                });
-                            }
-                        }));
-                    }
-                }
-                TaskFilterCategory::AgentStatus => {
-                    for value in TaskAgentStatus::ALL {
-                        let selected = self.task_filters.agent_statuses.contains(&value);
-                        let label = value.title();
-                        let mut button = TextButton::new(
-                            (
-                                gpui::ElementId::from(("task_filters_value", entity_id)),
-                                format!("agent_status:{label}"),
-                            ),
-                            label,
-                        )
-                        .menu_item()
-                        .kind(ButtonKind::Ghost);
-
-                        if selected {
-                            button = button.trailing(div().child("✓"));
-                        }
-
-                        value_list = value_list.child(button.on_click({
-                            let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| {
-                                    this.toggle_agent_status_filter(value, cx);
-                                });
-                            }
-                        }));
-                    }
-                }
-            }
-
-            let categories_scroll = self.task_filters_category_scroll.clone();
-            let values_scroll = self.task_filters_value_scroll.clone();
-
-            let categories = ScrollArea::new(
-                ("task_filters_category_scroll", entity_id),
-                categories_scroll,
-            )
-            .scrollbar_width(px(8.0))
-            .child(category_list);
-            let values = ScrollArea::new(("task_filters_value_scroll", entity_id), values_scroll)
-                .scrollbar_width(px(8.0))
-                .child(value_list);
-
-            let list_height = px(340.0);
-            let lists_row = div()
-                .flex()
-                .flex_row()
-                .gap(theme.spacing.sm)
-                .h(list_height)
-                .child(
-                    div()
-                        .w(px(220.0))
-                        .h_full()
-                        .overflow_hidden()
-                        .child(categories),
-                )
-                .child(div().w(px(240.0)).h_full().overflow_hidden().child(values));
-
-            let actions_row = div()
-                .pt(theme.spacing.sm)
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    TextButton::new(("task_filters_clear_all", entity_id), "Clear all")
-                        .kind(ButtonKind::Ghost)
-                        .small()
-                        .disabled(!self.task_filters.is_active())
-                        .on_click({
-                            let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| this.clear_all_filters(cx));
-                            }
-                        }),
-                )
-                .child(
-                    TextButton::new(("task_filters_close", entity_id), "Close")
-                        .kind(ButtonKind::Ghost)
-                        .small()
-                        .on_click({
-                            let workspace = workspace.clone();
-                            move |_, window, cx| {
-                                let focus = workspace.update(cx, |this, _cx| {
-                                    this.task_filters_open = false;
-                                    Some(this.focus_handle.clone())
-                                });
-                                if let Some(focus) = focus {
-                                    window.focus(&focus);
+                                    value_list = value_list.child(button.on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, _, cx| {
+                                            workspace.update(cx, |this, cx| {
+                                                this.toggle_task_state_filter(value, cx);
+                                            });
+                                        }
+                                    }));
                                 }
                             }
-                        }),
-                );
+                            TaskFilterCategory::MergeReadiness => {
+                                for value in MERGE_READINESS_OPTIONS {
+                                    let selected =
+                                        self.task_filters.merge_readiness.contains(&value);
+                                    let label = merge_readiness_title(value);
+                                    let mut button = TextButton::new(
+                                        (
+                                            gpui::ElementId::from(("task_filters_value", entity_id)),
+                                            format!("merge_readiness:{label}"),
+                                        ),
+                                        label,
+                                    )
+                                    .menu_item()
+                                    .kind(ButtonKind::Ghost);
 
-            let popover_body = div()
-                .flex()
-                .flex_col()
-                .gap(theme.spacing.sm)
-                .child(lists_row)
-                .child(actions_row);
+                                    if selected {
+                                        button = button.trailing(div().child("✓"));
+                                    }
 
-            Some(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .child(div().absolute().inset_0().occlude().on_mouse_down(
-                        gpui::MouseButton::Left,
-                        {
-                            let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| {
-                                    this.task_filters_open = false;
-                                    this.ui_updates.bump();
-                                    cx.notify();
-                                });
-                                cx.stop_propagation();
+                                    value_list = value_list.child(button.on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, _, cx| {
+                                            workspace.update(cx, |this, cx| {
+                                                this.toggle_merge_readiness_filter(value, cx);
+                                            });
+                                        }
+                                    }));
+                                }
                             }
-                        },
-                    ))
-                    .child(
-                        div()
-                            .absolute()
-                            .top(filter_bar_height + theme.spacing.xs)
-                            .left(theme.spacing.md)
+                            TaskFilterCategory::AgentStatus => {
+                                for value in TaskAgentStatus::ALL {
+                                    let selected =
+                                        self.task_filters.agent_statuses.contains(&value);
+                                    let label = value.title();
+                                    let mut button = TextButton::new(
+                                        (
+                                            gpui::ElementId::from(("task_filters_value", entity_id)),
+                                            format!("agent_status:{label}"),
+                                        ),
+                                        label,
+                                    )
+                                    .menu_item()
+                                    .kind(ButtonKind::Ghost);
+
+                                    if selected {
+                                        button = button.trailing(div().child("✓"));
+                                    }
+
+                                    value_list = value_list.child(button.on_click({
+                                        let workspace = workspace.clone();
+                                        move |_, _, cx| {
+                                            workspace.update(cx, |this, cx| {
+                                                this.toggle_agent_status_filter(value, cx);
+                                            });
+                                        }
+                                    }));
+                                }
+                            }
+                        }
+
+                        let values_scroll = self.task_filters_value_scroll.clone();
+                        let values = ScrollArea::new(
+                            ("task_filters_value_scroll", entity_id),
+                            values_scroll,
+                        )
+                        .scrollbar_width(px(8.0))
+                        .child(value_list);
+
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                            .w(px(240.0))
+                            .p(theme.spacing.sm)
+                            .shadow_md()
+                            .occlude()
                             .child(
                                 div()
-                                    .key_context("TaskFilters")
-                                    .w(px(520.0))
-                                    .p(theme.spacing.md)
-                                    .rounded(theme.radius.md)
-                                    .shadow_md()
-                                    .bg(theme.colors.surface)
-                                    .border_1()
-                                    .border_color(theme.colors.border.opacity(0.5))
-                                    .occlude()
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(theme.spacing.sm)
-                                            .child(self.task_filters_search_input.clone())
-                                            .child(popover_body),
-                                    ),
-                            ),
-                    ),
-            )
-        } else {
-            None
+                                    .pb(theme.spacing.xs)
+                                    .text_sm()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(category.title()),
+                            )
+                            .child(div().h(px(320.0)).child(values))
+                    });
+
+                    let menu_container = div()
+                        .key_context("TaskFilters")
+                        .flex()
+                        .flex_row()
+                        .gap(theme.spacing.sm)
+                        .child(primary_menu)
+                        .when_some(submenu, |this, submenu| this.child(submenu));
+
+                    let overlay = div()
+                        .absolute()
+                        .inset_0()
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .occlude()
+                                .on_mouse_down(gpui::MouseButton::Left, {
+                                    let workspace = workspace.clone();
+                                    move |_, _, cx| {
+                                        workspace.update(cx, |this, cx| {
+                                            this.task_filters_open = false;
+                                            this.task_filters_hovered_category = None;
+                                            this.ui_updates.bump();
+                                            cx.notify();
+                                        });
+                                        cx.stop_propagation();
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top(tab_top + filter_tab_height + theme.spacing.xs)
+                                .left(tab_left)
+                                .opacity(menu_opacity)
+                                .child(menu_container),
+                        );
+
+                    host = host.child(overlay);
+                }
+            }
+
+            host
         };
 
         div()
@@ -4225,7 +4282,6 @@ impl Render for WorkspacePaneHost {
             .on_action(cx.listener(Self::open_task_filters))
             .on_action(cx.listener(Self::close_task_filters))
             .child(body.child(graph_host))
-            .when_some(filters_overlay, |this, overlay| this.child(overlay))
             .track_focus(&self.focus_handle(cx))
     }
 }
