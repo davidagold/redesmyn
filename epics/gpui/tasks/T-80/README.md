@@ -45,6 +45,17 @@ T-79 shipped a functional, Linear-inspired task filter system, but the UI still 
    - UI implementation stays at the workspace layer (not graph-owned chrome), so future list views
      can reuse the same constructs.
 
+5. **Keyboard-first affordances**
+   - Arrow keys navigate within the menu:
+     - Up/Down moves within the active menu (categories or values).
+     - Right opens the values submenu for the active category.
+     - Left returns to categories and closes the submenu.
+   - Keybindings must work while the “Add filter…” text input is focused (similar to Linear).
+
+6. **Animated filter application**
+   - When filters change, animate the graph layout transition so remaining cards/edges slide into
+     their new positions (pruned nodes can disappear immediately).
+
 ## Acceptance criteria
 
 - Graph no longer gets “pushed down” by a full-width filter bar.
@@ -53,3 +64,5 @@ T-79 shipped a functional, Linear-inspired task filter system, but the UI still 
 - Filter popover fades in/out (opacity transition) and remains keyboard-accessible:
   - `f` opens and focuses “Add filter…”
   - `esc` closes.
+- While filters are open, arrow keys navigate between categories/values as described above.
+- Changing filters animates the graph layout transition.
