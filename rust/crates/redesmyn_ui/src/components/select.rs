@@ -207,7 +207,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Select<T> {
         let menu_offset = self.menu_offset;
         let value = self.value.clone();
 
-        let menu = div()
+        let mut menu = div()
             .absolute()
             .left(px(0.0))
             .bottom(menu_offset)
@@ -271,6 +271,14 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Select<T> {
                         item
                     })),
             );
+
+        if open {
+            if let Some(on_open_change) = on_open_change.clone() {
+                menu = menu.on_mouse_down_out(move |_, window, cx| {
+                    on_open_change(false, window, cx);
+                });
+            }
+        }
 
         let mut container = div().relative().child(trigger).when(open, |this| this.child(menu));
 
