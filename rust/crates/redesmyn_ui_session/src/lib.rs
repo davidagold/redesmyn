@@ -34,8 +34,8 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, TextArea, TextButton,
-    TextInput, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade, TextArea,
+    TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -676,6 +676,7 @@ pub struct SessionView {
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     collapsed_reasoning: HashSet<String>,
+    seen_reasoning_keys: HashSet<String>,
     reasoning_transitions: Rc<HashMap<String, ExpandCollapseTransition>>,
     reasoning_transition_guards: HashMap<String, UiActivityGuard>,
     expanded_tool_events: HashSet<SessionEventId>,
@@ -793,6 +794,7 @@ impl SessionView {
             pending_focus_composer: false,
             feed: None,
             collapsed_reasoning: HashSet::new(),
+            seen_reasoning_keys: HashSet::new(),
             reasoning_transitions: Rc::new(HashMap::new()),
             reasoning_transition_guards: HashMap::new(),
             expanded_tool_events: HashSet::new(),
@@ -1148,6 +1150,7 @@ impl SessionView {
             self.timeline_follow_bottom.set(false);
             self.timeline_last_scroll_offset = px(0.0);
             self.collapsed_reasoning.clear();
+            self.seen_reasoning_keys.clear();
             self.reasoning_transitions = Rc::new(HashMap::new());
             self.reasoning_transition_guards.clear();
             self.expanded_tool_events.clear();
@@ -1236,6 +1239,7 @@ impl SessionView {
         self.load_older_task = None;
         self.send_task = None;
         self.collapsed_reasoning.clear();
+        self.seen_reasoning_keys.clear();
         self.reasoning_transitions = Rc::new(HashMap::new());
         self.reasoning_transition_guards.clear();
         self.expanded_tool_events.clear();
@@ -1410,6 +1414,7 @@ impl SessionView {
                 feed.set_at_bottom(true);
                 feed.clear_scroll_intents();
                 self.refresh_timeline_items();
+                self.collapse_unseen_reasoning_in_timeline();
                 self.timeline_follow_bottom.set(true);
                 self.start_subscription(after, cx);
             }
@@ -1482,7 +1487,7 @@ impl SessionView {
                 if ev.session_id != feed.session_id {
                     return;
                 }
-                let auto_collapse_reasoning_key = match &ev.kind {
+                let reasoning_key = match &ev.kind {
                     SessionEventKind::AssistantReasoning(reasoning) => Some(
                         reasoning
                             .item_id
@@ -1504,18 +1509,44 @@ impl SessionView {
                 }
                 feed.apply_live_event(ev);
                 self.refresh_timeline_items();
-                if let Some(key) = auto_collapse_reasoning_key
-                    && !self.collapsed_reasoning.contains(&key)
-                {
-                    self.toggle_reasoning(&key, cx);
+                if let Some(key) = reasoning_key {
+                    if self.seen_reasoning_keys.insert(key.clone()) {
+                        // Default thinking blocks to collapsed when first observed.
+                        self.collapsed_reasoning.insert(key);
+                    } else if !self.collapsed_reasoning.contains(&key) {
+                        // If the user expanded the in-progress reasoning, auto-collapse it once the
+                        // completed (durable) reasoning arrives.
+                        self.toggle_reasoning(&key, cx);
+                    }
                 }
             }
             SubscriptionEvent::SessionLiveEvent(ev) => {
                 if ev.session_id != feed.session_id {
                     return;
                 }
+                let reasoning_key = match &ev.kind {
+                    redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryPartAdded(
+                        _,
+                    )
+                    | redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningSummaryDelta(
+                        _,
+                    )
+                    | redesmyn_protocol::session_live::SessionLiveEventKind::AssistantReasoningRawDelta(
+                        _,
+                    ) => Some(
+                        ev.item_id
+                            .clone()
+                            .unwrap_or_else(|| "assistant_reasoning".to_owned()),
+                    ),
+                    _ => None,
+                };
                 feed.apply_live_session_event(ev);
                 self.refresh_timeline_items();
+                if let Some(key) = reasoning_key
+                    && self.seen_reasoning_keys.insert(key.clone())
+                {
+                    self.collapsed_reasoning.insert(key);
+                }
             }
             SubscriptionEvent::Error(err) => {
                 feed.apply_live_error(err.message);
@@ -1524,6 +1555,30 @@ impl SessionView {
         }
 
         cx.notify();
+    }
+
+    fn collapse_unseen_reasoning_in_timeline(&mut self) {
+        for item in self.timeline_items.iter() {
+            let key = match item {
+                SessionTimelineItem::EphemeralReasoning(ephemeral) => Some(ephemeral.key.clone()),
+                SessionTimelineItem::Event(event) => match &event.content {
+                    SessionEventItemContent::AssistantReasoning(reasoning) => Some(
+                        reasoning
+                            .item_id
+                            .clone()
+                            .unwrap_or_else(|| event.session_event_id.to_string()),
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            if let Some(key) = key
+                && self.seen_reasoning_keys.insert(key.clone())
+            {
+                self.collapsed_reasoning.insert(key);
+            }
+        }
     }
 
     fn maybe_autoload_older(&mut self, cx: &mut Context<Self>) {
@@ -1626,6 +1681,7 @@ impl SessionView {
 
                 feed.apply_history_page(resp.events, resp.next_cursor);
                 self.refresh_timeline_items();
+                self.collapse_unseen_reasoning_in_timeline();
             }
             Err(err) => {
                 feed.apply_history_error(err.message);
@@ -1745,6 +1801,7 @@ impl SessionView {
 
     fn toggle_reasoning(&mut self, key: &str, cx: &mut Context<Self>) {
         let key = key.to_owned();
+        self.seen_reasoning_keys.insert(key.clone());
         let was_expanded = !self.collapsed_reasoning.contains(&key);
         if was_expanded {
             self.collapsed_reasoning.insert(key.clone());
@@ -2645,67 +2702,70 @@ impl Render for SessionView {
                         }
 
                         container = container.child(
-                            div()
-                                .id(("session_item_ephemeral_reasoning_summary", ix))
-                                .max_h(px(160.0))
-                                .overflow_y_scroll()
-                                .track_scroll(&summary_scroll_handle)
-                                .occlude()
-                                .on_scroll_wheel({
-                                    let handle = summary_scroll_handle.clone();
-                                    let timeline_view = timeline_view.clone();
-                                    move |event, window, cx| {
-                                        chain_scroll_wheel_to_timeline_list_if_needed(
-                                            event,
-                                            window,
-                                            cx,
-                                            &handle,
-                                            timeline_view.clone(),
+                            ScrollFade::new(
+                                summary_scroll_handle.clone(),
+                                div()
+                                    .id(("session_item_ephemeral_reasoning_summary", ix))
+                                    .max_h(px(160.0))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&summary_scroll_handle)
+                                    .occlude()
+                                    .on_scroll_wheel({
+                                        let handle = summary_scroll_handle.clone();
+                                        let timeline_view = timeline_view.clone();
+                                        move |event, window, cx| {
+                                            chain_scroll_wheel_to_timeline_list_if_needed(
+                                                event,
+                                                window,
+                                                cx,
+                                                &handle,
+                                                timeline_view.clone(),
+                                            );
+                                        }
+                                    })
+                                    .child(if let Some(summary_text) = summary_text {
+                                        div()
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground)
+                                            .child(summary_text)
+                                            .into_any_element()
+                                    } else {
+                                        let bar_color = theme.colors.foreground_muted.opacity(
+                                            (0.12 + 0.12 * reasoning_shimmer_alpha)
+                                                .clamp(0.0, 1.0),
                                         );
-                                    }
-                                })
-                                .child(if let Some(summary_text) = summary_text {
-                                    div()
-                                        .text_size(theme.typography.caption.size)
-                                        .text_color(theme.colors.foreground)
-                                        .child(summary_text)
-                                        .into_any_element()
-                                } else {
-                                    let bar_color = theme
-                                        .colors
-                                        .foreground_muted
-                                        .opacity(
-                                            (0.12 + 0.12 * reasoning_shimmer_alpha).clamp(0.0, 1.0),
-                                        );
-                                    let line_height = px(10.0);
+                                        let line_height = px(10.0);
 
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap(theme.spacing.xs)
-                                        .child(
-                                            div()
-                                                .h(line_height)
-                                                .w(relative(0.92))
-                                                .rounded_sm()
-                                                .bg(bar_color),
-                                        )
-                                        .child(
-                                            div()
-                                                .h(line_height)
-                                                .w(relative(0.78))
-                                                .rounded_sm()
-                                                .bg(bar_color),
-                                        )
-                                        .child(
-                                            div()
-                                                .h(line_height)
-                                                .w(relative(0.64))
-                                                .rounded_sm()
-                                                .bg(bar_color),
-                                        )
-                                        .into_any_element()
-                                }),
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs)
+                                            .child(
+                                                div()
+                                                    .h(line_height)
+                                                    .w(relative(0.92))
+                                                    .rounded_sm()
+                                                    .bg(bar_color),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h(line_height)
+                                                    .w(relative(0.78))
+                                                    .rounded_sm()
+                                                    .bg(bar_color),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h(line_height)
+                                                    .w(relative(0.64))
+                                                    .rounded_sm()
+                                                    .bg(bar_color),
+                                            )
+                                            .into_any_element()
+                                    }),
+                            )
+                            .fade_height(theme.spacing.lg)
+                            .bg(theme.colors.surface),
                         );
 
                         if let Some(raw_text) = raw_text {
@@ -2740,32 +2800,37 @@ impl Render for SessionView {
                                     .bg(theme.colors.border.opacity(0.2)),
                             );
                             container = container.child(
-                                div()
-                                    .id((
-                                        "session_item_ephemeral_reasoning_raw",
-                                        stable_str_key(key.as_str()),
-                                    ))
-                                    .max_h(px(200.0))
-                                    .overflow_y_scroll()
-                                    .track_scroll(&raw_scroll_handle)
-                                    .occlude()
-                                    .on_scroll_wheel({
-                                        let handle = raw_scroll_handle.clone();
-                                        let timeline_view = timeline_view.clone();
-                                        move |event, window, cx| {
-                                            chain_scroll_wheel_to_timeline_list_if_needed(
-                                                event,
-                                                window,
-                                                cx,
-                                                &handle,
-                                                timeline_view.clone(),
-                                            );
-                                        }
-                                    })
-                                    .font(theme.typography.mono.font.clone())
-                                    .text_size(theme.typography.caption.size)
-                                    .text_color(theme.colors.foreground)
-                                    .child(raw_text),
+                                ScrollFade::new(
+                                    raw_scroll_handle.clone(),
+                                    div()
+                                        .id((
+                                            "session_item_ephemeral_reasoning_raw",
+                                            stable_str_key(key.as_str()),
+                                        ))
+                                        .max_h(px(200.0))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&raw_scroll_handle)
+                                        .occlude()
+                                        .on_scroll_wheel({
+                                            let handle = raw_scroll_handle.clone();
+                                            let timeline_view = timeline_view.clone();
+                                            move |event, window, cx| {
+                                                chain_scroll_wheel_to_timeline_list_if_needed(
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                    &handle,
+                                                    timeline_view.clone(),
+                                                );
+                                            }
+                                        })
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground)
+                                        .child(raw_text),
+                                )
+                                .fade_height(theme.spacing.lg)
+                                .bg(theme.colors.surface),
                             );
                         }
                     }
@@ -2968,34 +3033,39 @@ impl Render for SessionView {
                                 }
 
                                 body = body.child(
-                                    div()
-                                        .id((bubble_id.clone(), "reasoning_summary_scroll"))
-                                        .max_h(px(180.0))
-                                        .overflow_y_scroll()
-                                        .track_scroll(&summary_scroll_handle)
-                                        .occlude()
-                                        .on_scroll_wheel({
-                                            let handle = summary_scroll_handle.clone();
-                                            let timeline_view = timeline_view.clone();
-                                            move |event, window, cx| {
-                                                chain_scroll_wheel_to_timeline_list_if_needed(
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                    &handle,
-                                                    timeline_view.clone(),
-                                                );
-                                            }
-                                        })
-                                        .child(
-                                            MarkdownView::new(
-                                                (bubble_id.clone(), "reasoning_summary"),
-                                                summary_doc,
-                                            )
-                                            .show_truncation_notice(show_truncation_notice)
-                                            .text_size(theme.typography.caption.size)
-                                            .into_any_element(),
-                                        ),
+                                    ScrollFade::new(
+                                        summary_scroll_handle.clone(),
+                                        div()
+                                            .id((bubble_id.clone(), "reasoning_summary_scroll"))
+                                            .max_h(px(180.0))
+                                            .overflow_y_scroll()
+                                            .track_scroll(&summary_scroll_handle)
+                                            .occlude()
+                                            .on_scroll_wheel({
+                                                let handle = summary_scroll_handle.clone();
+                                                let timeline_view = timeline_view.clone();
+                                                move |event, window, cx| {
+                                                    chain_scroll_wheel_to_timeline_list_if_needed(
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                        &handle,
+                                                        timeline_view.clone(),
+                                                    );
+                                                }
+                                            })
+                                            .child(
+                                                MarkdownView::new(
+                                                    (bubble_id.clone(), "reasoning_summary"),
+                                                    summary_doc,
+                                                )
+                                                .show_truncation_notice(show_truncation_notice)
+                                                .text_size(theme.typography.caption.size)
+                                                .into_any_element(),
+                                            ),
+                                    )
+                                    .fade_height(theme.spacing.lg)
+                                    .bg(theme.colors.surface),
                                 );
 
                                 if let Some(raw) = reasoning.raw {
@@ -3031,29 +3101,34 @@ impl Render for SessionView {
                                     );
 
                                     body = body.child(
-                                        div()
-                                            .id((bubble_id.clone(), "reasoning_raw_scroll"))
-                                            .max_h(px(240.0))
-                                            .overflow_y_scroll()
-                                            .track_scroll(&raw_scroll_handle)
-                                            .occlude()
-                                            .on_scroll_wheel({
-                                                let handle = raw_scroll_handle.clone();
-                                                let timeline_view = timeline_view.clone();
-                                                move |event, window, cx| {
-                                                    chain_scroll_wheel_to_timeline_list_if_needed(
-                                                        event,
-                                                        window,
-                                                        cx,
-                                                        &handle,
-                                                        timeline_view.clone(),
-                                                    );
-                                                }
-                                            })
-                                            .font(theme.typography.mono.font.clone())
-                                            .text_size(theme.typography.caption.size)
-                                            .text_color(theme.colors.foreground)
-                                            .child(raw.text),
+                                        ScrollFade::new(
+                                            raw_scroll_handle.clone(),
+                                            div()
+                                                .id((bubble_id.clone(), "reasoning_raw_scroll"))
+                                                .max_h(px(240.0))
+                                                .overflow_y_scroll()
+                                                .track_scroll(&raw_scroll_handle)
+                                                .occlude()
+                                                .on_scroll_wheel({
+                                                    let handle = raw_scroll_handle.clone();
+                                                    let timeline_view = timeline_view.clone();
+                                                    move |event, window, cx| {
+                                                        chain_scroll_wheel_to_timeline_list_if_needed(
+                                                            event,
+                                                            window,
+                                                            cx,
+                                                            &handle,
+                                                            timeline_view.clone(),
+                                                        );
+                                                    }
+                                                })
+                                                .font(theme.typography.mono.font.clone())
+                                                .text_size(theme.typography.caption.size)
+                                                .text_color(theme.colors.foreground)
+                                                .child(raw.text),
+                                        )
+                                        .fade_height(theme.spacing.lg)
+                                        .bg(theme.colors.surface),
                                     );
                                 }
 
