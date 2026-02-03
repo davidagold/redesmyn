@@ -351,11 +351,12 @@ impl GraphView {
             return;
         }
 
+        let previous_selection = self.scene.selection().clone();
+        let from_layout = self.snapshot_displayed_layout();
+
         let was_active = self.task_filters.is_active();
         self.task_filters = filters;
         let is_active = self.task_filters.is_active();
-
-        let previous_selected = self.scene.selection().selected_node;
 
         match (was_active, is_active) {
             (false, false) => {}
@@ -386,11 +387,25 @@ impl GraphView {
         self.edge_label_cache.borrow_mut().clear();
 
         let next_selected = self.scene.selection().selected_node;
-        if previous_selected != next_selected {
+        if previous_selection.selected_node != next_selected {
             self.reset_expanded_card_state();
             self.sync_task_session_view(next_selected, cx);
         }
 
+        let did_start_layout_animation = self.start_layout_animation(
+            from_layout,
+            self.snapshot_scene_layout(),
+            previous_selection.selected_node,
+            next_selected,
+        );
+        if did_start_layout_animation {
+            self.layout_animation_guard =
+                ui_idle_tracker(cx).map(|tracker| tracker.begin_transition());
+        } else {
+            self.layout_animation_guard = None;
+        }
+
+        self.update_selection_bar_target(cx);
         cx.notify();
     }
 
