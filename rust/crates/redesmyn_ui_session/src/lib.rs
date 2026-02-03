@@ -1532,7 +1532,7 @@ impl SessionView {
             Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let cx = cx.clone();
                 async move {
-                    tokio::time::sleep(Duration::from_secs(8)).await;
+                    cx.background_executor().timer(Duration::from_secs(8)).await;
                     let _ = cx.update(|cx| {
                         timeout_view.update(cx, |this, cx| {
                             this.on_codex_approval_policy_timeout(expected_policy, cx);
@@ -1653,7 +1653,7 @@ impl SessionView {
             Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let cx = cx.clone();
                 async move {
-                    tokio::time::sleep(Duration::from_secs(8)).await;
+                    cx.background_executor().timer(Duration::from_secs(8)).await;
                     let _ = cx.update(|cx| {
                         timeout_view.update(cx, |this, cx| {
                             this.on_codex_sandbox_policy_timeout(expected_policy.clone(), cx);
