@@ -10,8 +10,7 @@ use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, CodexApprovalPolicy, CodexApprovalPolicyChanged,
     CodexSandboxPolicy, CodexSandboxPolicyChanged, PermissionDecided, PermissionRequested,
     PermissionsMode, PermissionsModeChanged, SessionEventKind, StatusUpdate, ToolInvocation,
-    ToolResult,
-    TurnCompleted, TurnStarted, UserMessage,
+    ToolResult, TurnCompleted, TurnStarted, UserMessage,
 };
 use redesmyn_protocol::session_live::{SessionLiveEvent, SessionLiveEventKind};
 use redesmyn_protocol::{ArtifactRef, SessionEvent, Timestamp};
@@ -538,6 +537,62 @@ impl SessionFeedState {
         self.recompute_summary();
     }
 
+    fn normalize_reasoning_ephemeral_keys_for_turn(&mut self, key: &str, turn_id: Option<&str>) {
+        let Some(turn_id) = turn_id else {
+            return;
+        };
+
+        if key != "assistant_reasoning"
+            && let Some(EphemeralItem::Reasoning(mut placeholder)) =
+                self.ephemeral.remove("assistant_reasoning")
+        {
+            if placeholder.turn_id.as_deref() == Some(turn_id) {
+                placeholder.key = key.to_owned();
+
+                if let Some(EphemeralItem::Reasoning(existing)) = self.ephemeral.get_mut(key) {
+                    if existing.turn_id.is_none() {
+                        existing.turn_id = Some(turn_id.to_owned());
+                    }
+
+                    if existing.summary.len() < placeholder.summary.len() {
+                        existing
+                            .summary
+                            .resize(placeholder.summary.len(), String::new());
+                    }
+                    for (ix, chunk) in placeholder.summary.into_iter().enumerate() {
+                        existing.summary[ix].push_str(&chunk);
+                    }
+
+                    if existing.raw.len() < placeholder.raw.len() {
+                        existing.raw.resize(placeholder.raw.len(), String::new());
+                    }
+                    for (ix, chunk) in placeholder.raw.into_iter().enumerate() {
+                        existing.raw[ix].push_str(&chunk);
+                    }
+
+                    if existing.signature.is_none() {
+                        existing.signature = placeholder.signature;
+                    }
+                } else {
+                    self.ephemeral
+                        .insert(key.to_owned(), EphemeralItem::Reasoning(placeholder));
+                }
+            } else {
+                self.ephemeral.insert(
+                    "assistant_reasoning".to_owned(),
+                    EphemeralItem::Reasoning(placeholder),
+                );
+            }
+        }
+
+        self.ephemeral.retain(|item_key, item| match item {
+            EphemeralItem::Reasoning(entry) => {
+                entry.turn_id.as_deref() != Some(turn_id) || item_key.as_str() == key
+            }
+            EphemeralItem::Text(_) => true,
+        });
+    }
+
     pub fn apply_live_session_event(&mut self, event: SessionLiveEvent) {
         if event.session_id != self.session_id {
             return;
@@ -586,7 +641,9 @@ impl SessionFeedState {
 
                 let key = event
                     .item_id
+                    .clone()
                     .unwrap_or_else(|| "assistant_reasoning".to_owned());
+                self.normalize_reasoning_ephemeral_keys_for_turn(&key, event.turn_id.as_deref());
 
                 let needs_insert = !self
                     .ephemeral
@@ -628,7 +685,9 @@ impl SessionFeedState {
 
                 let key = event
                     .item_id
+                    .clone()
                     .unwrap_or_else(|| "assistant_reasoning".to_owned());
+                self.normalize_reasoning_ephemeral_keys_for_turn(&key, event.turn_id.as_deref());
 
                 let needs_insert = !self
                     .ephemeral
@@ -671,7 +730,9 @@ impl SessionFeedState {
 
                 let key = event
                     .item_id
+                    .clone()
                     .unwrap_or_else(|| "assistant_reasoning".to_owned());
+                self.normalize_reasoning_ephemeral_keys_for_turn(&key, event.turn_id.as_deref());
 
                 let needs_insert = !self
                     .ephemeral
@@ -1032,13 +1093,15 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             Some(output_preview.clone())
         }
         SessionEventKind::StatusUpdate(StatusUpdate { message, .. }) => message.clone(),
-        SessionEventKind::PermissionsModeChanged(ev) => Some(match ev.mode {
-            redesmyn_protocol::session::PermissionsMode::Ask => "ask",
-            redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
-            redesmyn_protocol::session::PermissionsMode::Deny => "deny",
-            redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
-        }
-        .to_owned()),
+        SessionEventKind::PermissionsModeChanged(ev) => Some(
+            match ev.mode {
+                redesmyn_protocol::session::PermissionsMode::Ask => "ask",
+                redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
+                redesmyn_protocol::session::PermissionsMode::Deny => "deny",
+                redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
+            }
+            .to_owned(),
+        ),
         SessionEventKind::CodexApprovalPolicyChanged(ev) => Some(
             match ev.approval_policy {
                 None => "default",
@@ -1057,9 +1120,9 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
                     "danger_full_access"
                 }
                 Some(redesmyn_protocol::session::CodexSandboxPolicy::ReadOnly) => "read_only",
-                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox { .. }) => {
-                    "external_sandbox"
-                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox {
+                    ..
+                }) => "external_sandbox",
                 Some(redesmyn_protocol::session::CodexSandboxPolicy::WorkspaceWrite { .. }) => {
                     "workspace_write"
                 }
@@ -1068,12 +1131,14 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             .to_owned(),
         ),
         SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
-        SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
-            redesmyn_protocol::session::PermissionDecision::Approve => "approve",
-            redesmyn_protocol::session::PermissionDecision::Deny => "deny",
-            redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
-        }
-        .to_owned()),
+        SessionEventKind::PermissionDecided(ev) => Some(
+            match ev.decision {
+                redesmyn_protocol::session::PermissionDecision::Approve => "approve",
+                redesmyn_protocol::session::PermissionDecision::Deny => "deny",
+                redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
+            }
+            .to_owned(),
+        ),
         SessionEventKind::ArtifactEmitted(ArtifactEmitted { label, .. }) => label.clone(),
         SessionEventKind::TurnStarted(TurnStarted {
             idempotency_key, ..
