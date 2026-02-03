@@ -713,6 +713,8 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::ToolResult => Some("tool_result"),
             SessionEventKindFilter::StatusUpdate => Some("status_update"),
             SessionEventKindFilter::PermissionsModeChanged => Some("permissions_mode_changed"),
+            SessionEventKindFilter::CodexApprovalPolicyChanged => Some("codex_approval_policy_changed"),
+            SessionEventKindFilter::CodexSandboxPolicyChanged => Some("codex_sandbox_policy_changed"),
             SessionEventKindFilter::PermissionRequested => Some("permission_requested"),
             SessionEventKindFilter::PermissionDecided => Some("permission_decided"),
             SessionEventKindFilter::ArtifactEmitted => Some("artifact_emitted"),
@@ -734,6 +736,8 @@ fn kind_db_value_from_kind(kind: &SessionEventKind) -> &'static str {
         SessionEventKind::ToolResult(_) => "tool_result",
         SessionEventKind::StatusUpdate(_) => "status_update",
         SessionEventKind::PermissionsModeChanged(_) => "permissions_mode_changed",
+        SessionEventKind::CodexApprovalPolicyChanged(_) => "codex_approval_policy_changed",
+        SessionEventKind::CodexSandboxPolicyChanged(_) => "codex_sandbox_policy_changed",
         SessionEventKind::PermissionRequested(_) => "permission_requested",
         SessionEventKind::PermissionDecided(_) => "permission_decided",
         SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
@@ -756,6 +760,34 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
             redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
         }
         .to_owned()),
+        SessionEventKind::CodexApprovalPolicyChanged(ev) => Some(
+            match ev.approval_policy {
+                None => "default",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::UnlessTrusted) => "untrusted",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::OnFailure) => "on_failure",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::OnRequest) => "on_request",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::Never) => "never",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::Unknown) => "unknown",
+            }
+            .to_owned(),
+        ),
+        SessionEventKind::CodexSandboxPolicyChanged(ev) => Some(
+            match ev.sandbox_policy.as_ref() {
+                None => "default",
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::DangerFullAccess) => {
+                    "danger_full_access"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ReadOnly) => "read_only",
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox { .. }) => {
+                    "external_sandbox"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::WorkspaceWrite { .. }) => {
+                    "workspace_write"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::Unknown) => "unknown",
+            }
+            .to_owned(),
+        ),
         SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
         SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
             redesmyn_protocol::session::PermissionDecision::Approve => "approve",

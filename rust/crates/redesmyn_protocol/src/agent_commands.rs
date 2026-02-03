@@ -8,7 +8,9 @@
 use redesmyn_ids::{SessionId, TaskId};
 
 use crate::client::{AgentInterfaceMode, AgentKind};
-use crate::session::{ExternalSessionRef, PermissionDecision, PermissionsMode};
+use crate::session::{
+    CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision, PermissionsMode,
+};
 
 pub const SESSION_AGENT_START: &str = "session.agent.start";
 pub const SESSION_AGENT_STOP: &str = "session.agent.stop";
@@ -18,6 +20,8 @@ pub const SESSION_AGENT_RESUME_BY_ID_TURN: &str = "session.agent.resume_by_id_tu
 pub const SESSION_AGENT_ATTACH_SESSION: &str = "session.agent.attach_session";
 pub const SESSION_AGENT_SET_PERMISSIONS_MODE: &str = "session.agent.set_permissions_mode";
 pub const SESSION_AGENT_RESPOND_PERMISSION_REQUEST: &str = "session.agent.respond_permission_request";
+pub const SESSION_AGENT_SET_CODEX_APPROVAL_POLICY: &str = "session.agent.set_codex_approval_policy";
+pub const SESSION_AGENT_SET_CODEX_SANDBOX_POLICY: &str = "session.agent.set_codex_sandbox_policy";
 
 pub const TASK_AGENT_START: &str = "task.agent.start";
 pub const TASK_AGENT_STOP: &str = "task.agent.stop";
@@ -95,6 +99,20 @@ pub struct AttachTaskAgentSessionCommand {
 pub struct SetSessionPermissionsModeCommand {
     pub session_id: SessionId,
     pub mode: PermissionsMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexApprovalPolicyCommand {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<CodexApprovalPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionCodexSandboxPolicyCommand {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_policy: Option<CodexSandboxPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

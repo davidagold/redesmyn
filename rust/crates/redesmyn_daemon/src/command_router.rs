@@ -9,9 +9,11 @@ use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProce
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
     InterruptTaskAgentTurnCommand, RespondPermissionRequestCommand, ResumeByIdTaskAgentTurnCommand,
+    SetSessionCodexApprovalPolicyCommand, SetSessionCodexSandboxPolicyCommand,
     SetSessionPermissionsModeCommand, StartAgentSessionCommand, StartTaskAgentSessionCommand,
     SESSION_AGENT_INTERRUPT_TURN, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
     SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_PERMISSIONS_MODE,
+    SESSION_AGENT_SET_CODEX_APPROVAL_POLICY, SESSION_AGENT_SET_CODEX_SANDBOX_POLICY,
     SESSION_AGENT_START, TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
@@ -112,6 +114,12 @@ async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFr
         }
         SESSION_AGENT_SET_PERMISSIONS_MODE => {
             handle_session_agent_set_permissions_mode(router, &frames_tx, dispatch).await
+        }
+        SESSION_AGENT_SET_CODEX_APPROVAL_POLICY => {
+            handle_session_agent_set_codex_approval_policy(router, &frames_tx, dispatch).await
+        }
+        SESSION_AGENT_SET_CODEX_SANDBOX_POLICY => {
+            handle_session_agent_set_codex_sandbox_policy(router, &frames_tx, dispatch).await
         }
         SESSION_AGENT_RESPOND_PERMISSION_REQUEST => {
             handle_session_agent_respond_permission_request(router, &frames_tx, dispatch).await
@@ -432,6 +440,116 @@ async fn handle_session_agent_set_permissions_mode(
     match router
         .app_server
         .set_permissions_mode(cmd.session_id, cmd.mode)
+        .await
+    {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("updated".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_session_agent_set_codex_approval_policy(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: SetSessionCodexApprovalPolicyCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    match router
+        .app_server
+        .set_codex_approval_policy(cmd.session_id, cmd.approval_policy)
+        .await
+    {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("updated".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_session_agent_set_codex_sandbox_policy(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: SetSessionCodexSandboxPolicyCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    match router
+        .app_server
+        .set_codex_sandbox_policy(cmd.session_id, cmd.sandbox_policy)
         .await
     {
         Ok(()) => {
