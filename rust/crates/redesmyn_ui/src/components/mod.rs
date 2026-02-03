@@ -8,6 +8,7 @@ mod markdown;
 mod progress;
 mod rounded_styled_text;
 mod scroll_area;
+mod scroll_fade;
 mod split_pane;
 mod text_input;
 mod tooltip;
@@ -20,6 +21,7 @@ pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView
 pub use progress::{ProgressPill, ProgressPillKind};
 pub use rounded_styled_text::{RoundedBackgroundStyle, RoundedStyledText};
 pub use scroll_area::ScrollArea;
+pub use scroll_fade::ScrollFade;
 pub use split_pane::{SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState};
 pub use text_input::{TextArea, TextInput, TextInputEvent, bind_text_input_keys};
 pub use tooltip::Tooltip;
