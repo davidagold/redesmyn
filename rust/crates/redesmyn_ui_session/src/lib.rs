@@ -39,7 +39,7 @@ use redesmyn_ui::components::{
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
-    UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
+    BoundedCache, UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
     ui_test_mode_animation_duration,
 };
 
@@ -466,6 +466,9 @@ async fn start_task_agent(
     }
 }
 
+const REASONING_SCROLL_STATE_CACHE_CAPACITY: usize = 128;
+const TOOL_EVENT_SCROLL_HANDLE_CACHE_CAPACITY: usize = 256;
+
 fn sync_timeline_list_state(
     list_state: &ListState,
     old_items: &[SessionTimelineItem],
@@ -667,8 +670,8 @@ pub struct SessionView {
     timeline_viewport_width: Option<gpui::Pixels>,
     timeline_list_reset_scheduled: bool,
     timeline_autoload_scheduled: bool,
-    reasoning_scroll_states: Rc<RefCell<HashMap<String, ReasoningScrollState>>>,
-    tool_event_scroll_handles: Rc<RefCell<HashMap<SessionEventId, ScrollHandle>>>,
+    reasoning_scroll_states: Rc<RefCell<BoundedCache<String, ReasoningScrollState>>>,
+    tool_event_scroll_handles: Rc<RefCell<BoundedCache<SessionEventId, ScrollHandle>>>,
     reasoning_shimmer_phase: u8,
     reasoning_shimmer_task: Option<Task<()>>,
     show_debug_controls: bool,
@@ -786,8 +789,12 @@ impl SessionView {
             timeline_viewport_width: None,
             timeline_list_reset_scheduled: false,
             timeline_autoload_scheduled: false,
-            reasoning_scroll_states: Rc::new(RefCell::new(HashMap::new())),
-            tool_event_scroll_handles: Rc::new(RefCell::new(HashMap::new())),
+            reasoning_scroll_states: Rc::new(RefCell::new(BoundedCache::new(
+                REASONING_SCROLL_STATE_CACHE_CAPACITY,
+            ))),
+            tool_event_scroll_handles: Rc::new(RefCell::new(BoundedCache::new(
+                TOOL_EVENT_SCROLL_HANDLE_CACHE_CAPACITY,
+            ))),
             reasoning_shimmer_phase: 0,
             reasoning_shimmer_task: None,
             show_debug_controls,
@@ -1161,6 +1168,7 @@ impl SessionView {
             self.expanded_tool_groups.clear();
             self.tool_group_transitions = Rc::new(HashMap::new());
             self.tool_group_transition_guards.clear();
+            self.reasoning_scroll_states.borrow_mut().clear();
             self.tool_event_scroll_handles.borrow_mut().clear();
             self.exec_command_result_by_invocation = Rc::new(HashMap::new());
             self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
@@ -1251,6 +1259,7 @@ impl SessionView {
         self.expanded_tool_groups.clear();
         self.tool_group_transitions = Rc::new(HashMap::new());
         self.tool_group_transition_guards.clear();
+        self.reasoning_scroll_states.borrow_mut().clear();
         self.tool_event_scroll_handles.borrow_mut().clear();
         self.exec_command_result_by_invocation = Rc::new(HashMap::new());
         self.grouped_exec_command_result_event_ids = Rc::new(HashSet::new());
@@ -2680,15 +2689,17 @@ impl Render for SessionView {
                             ),
                     );
 
-                    if is_expanded {
-                        let (summary_scroll_handle, follow_summary_bottom) = {
-                            let mut states = reasoning_scroll_states.borrow_mut();
-                            let state = states
-                                .entry(key.clone())
-                                .or_insert_with(ReasoningScrollState::new);
+	                    if is_expanded {
+	                        let (summary_scroll_handle, follow_summary_bottom) = {
+	                            let mut states = reasoning_scroll_states.borrow_mut();
+	                            if !states.contains_key(&key) {
+	                                states.insert(key.clone(), ReasoningScrollState::new());
+	                            }
+	                            let state =
+	                                states.get_mut(&key).expect("cached reasoning state");
 
-                            let handle = state.summary.handle.clone();
-                            let offset_y = handle.offset().y;
+	                            let handle = state.summary.handle.clone();
+	                            let offset_y = handle.offset().y;
 
                             if state.summary.follow_bottom {
                                 if offset_y > state.summary.last_offset_y {
@@ -2773,15 +2784,17 @@ impl Render for SessionView {
                             .bg(theme.colors.surface),
                         );
 
-                        if let Some(raw_text) = raw_text {
-                            let (raw_scroll_handle, follow_raw_bottom) = {
-                                let mut states = reasoning_scroll_states.borrow_mut();
-                                let state = states
-                                    .entry(key.clone())
-                                    .or_insert_with(ReasoningScrollState::new);
+	                        if let Some(raw_text) = raw_text {
+	                            let (raw_scroll_handle, follow_raw_bottom) = {
+	                                let mut states = reasoning_scroll_states.borrow_mut();
+	                                if !states.contains_key(&key) {
+	                                    states.insert(key.clone(), ReasoningScrollState::new());
+	                                }
+	                                let state =
+	                                    states.get_mut(&key).expect("cached reasoning state");
 
-                                let handle = state.raw.handle.clone();
-                                let offset_y = handle.offset().y;
+	                                let handle = state.raw.handle.clone();
+	                                let offset_y = handle.offset().y;
 
                                 if state.raw.follow_bottom {
                                     if offset_y > state.raw.last_offset_y {
@@ -3012,14 +3025,16 @@ impl Render for SessionView {
                                     .flex_col()
                                     .gap(theme.spacing.sm);
 
-                                let (summary_scroll_handle, follow_summary_bottom) = {
-                                    let mut states = reasoning_scroll_states.borrow_mut();
-                                    let state = states
-                                        .entry(key.clone())
-                                        .or_insert_with(ReasoningScrollState::new);
+	                                let (summary_scroll_handle, follow_summary_bottom) = {
+	                                    let mut states = reasoning_scroll_states.borrow_mut();
+	                                    if !states.contains_key(&key) {
+	                                        states.insert(key.clone(), ReasoningScrollState::new());
+	                                    }
+	                                    let state =
+	                                        states.get_mut(&key).expect("cached reasoning state");
 
-                                    let handle = state.summary.handle.clone();
-                                    let offset_y = handle.offset().y;
+	                                    let handle = state.summary.handle.clone();
+	                                    let offset_y = handle.offset().y;
 
                                     if state.summary.follow_bottom {
                                         if offset_y > state.summary.last_offset_y {
@@ -3073,15 +3088,21 @@ impl Render for SessionView {
                                     .bg(theme.colors.surface),
                                 );
 
-                                if let Some(raw) = reasoning.raw {
-                                    let (raw_scroll_handle, follow_raw_bottom) = {
-                                        let mut states = reasoning_scroll_states.borrow_mut();
-                                        let state = states
-                                            .entry(key.clone())
-                                            .or_insert_with(ReasoningScrollState::new);
+	                                if let Some(raw) = reasoning.raw {
+	                                    let (raw_scroll_handle, follow_raw_bottom) = {
+	                                        let mut states = reasoning_scroll_states.borrow_mut();
+	                                        if !states.contains_key(&key) {
+	                                            states.insert(
+	                                                key.clone(),
+	                                                ReasoningScrollState::new(),
+	                                            );
+	                                        }
+	                                        let state = states
+	                                            .get_mut(&key)
+	                                            .expect("cached reasoning state");
 
-                                        let handle = state.raw.handle.clone();
-                                        let offset_y = handle.offset().y;
+	                                        let handle = state.raw.handle.clone();
+	                                        let offset_y = handle.offset().y;
 
                                         if state.raw.follow_bottom {
                                             if offset_y > state.raw.last_offset_y {
@@ -3648,13 +3669,21 @@ impl Render for SessionView {
                                                 );
                                             }
 
-                                            let details_scroll_handle = {
-                                                let mut handles = tool_event_scroll_handles.borrow_mut();
-                                                handles
-                                                    .entry(session_event_id)
-                                                    .or_insert_with(ScrollHandle::new)
-                                                    .clone()
-                                            };
+	                                            let details_scroll_handle = {
+	                                                let mut handles =
+	                                                    tool_event_scroll_handles.borrow_mut();
+	                                                handles
+	                                                    .get(&session_event_id)
+	                                                    .cloned()
+	                                                    .unwrap_or_else(|| {
+	                                                        let handle = ScrollHandle::new();
+	                                                        handles.insert(
+	                                                            session_event_id,
+	                                                            handle.clone(),
+	                                                        );
+	                                                        handle
+	                                                    })
+	                                            };
 
                                             let details = ScrollFade::new(
                                                 details_scroll_handle.clone(),
@@ -3913,13 +3942,21 @@ impl Render for SessionView {
                                                         .child(tool.output_preview.clone()),
                                                 );
 
-                                                let details_scroll_handle = {
-                                                    let mut handles = tool_event_scroll_handles.borrow_mut();
-                                                    handles
-                                                        .entry(session_event_id)
-                                                        .or_insert_with(ScrollHandle::new)
-                                                        .clone()
-                                                };
+	                                                let details_scroll_handle = {
+	                                                    let mut handles =
+	                                                        tool_event_scroll_handles.borrow_mut();
+	                                                    handles
+	                                                        .get(&session_event_id)
+	                                                        .cloned()
+	                                                        .unwrap_or_else(|| {
+	                                                            let handle = ScrollHandle::new();
+	                                                            handles.insert(
+	                                                                session_event_id,
+	                                                                handle.clone(),
+	                                                            );
+	                                                            handle
+	                                                        })
+	                                                };
 
                                                 let details = ScrollFade::new(
                                                     details_scroll_handle.clone(),

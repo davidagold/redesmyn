@@ -44,6 +44,13 @@ where
         self.entries.get(key)
     }
 
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        if self.entries.contains_key(key) {
+            self.touch(key);
+        }
+        self.entries.get_mut(key)
+    }
+
     pub fn insert(&mut self, key: K, value: V) {
         if self.entries.contains_key(&key) {
             self.entries.insert(key.clone(), value);
@@ -101,6 +108,22 @@ mod tests {
         cache.insert("c", 3);
 
         assert_eq!(cache.get(&"a"), Some(&1));
+        assert_eq!(cache.get(&"b"), None);
+        assert_eq!(cache.get(&"c"), Some(&3));
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn bounded_cache_get_mut_touches_lru() {
+        let mut cache = BoundedCache::new(2);
+        cache.insert("a", 1);
+        cache.insert("b", 2);
+
+        // Touch "a" so it becomes MRU; inserting "c" should prune "b".
+        *cache.get_mut(&"a").expect("present") = 10;
+        cache.insert("c", 3);
+
+        assert_eq!(cache.get(&"a"), Some(&10));
         assert_eq!(cache.get(&"b"), None);
         assert_eq!(cache.get(&"c"), Some(&3));
         assert_eq!(cache.len(), 2);
