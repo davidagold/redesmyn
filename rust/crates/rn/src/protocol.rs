@@ -751,6 +751,12 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::PermissionsModeChanged(_) => {
             "permissions_mode_changed"
         }
+        redesmyn_protocol::session::SessionEventKind::CodexApprovalPolicyChanged(_) => {
+            "codex_approval_policy_changed"
+        }
+        redesmyn_protocol::session::SessionEventKind::CodexSandboxPolicyChanged(_) => {
+            "codex_sandbox_policy_changed"
+        }
         redesmyn_protocol::session::SessionEventKind::PermissionRequested(_) => "permission_requested",
         redesmyn_protocol::session::SessionEventKind::PermissionDecided(_) => "permission_decided",
         redesmyn_protocol::session::SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
