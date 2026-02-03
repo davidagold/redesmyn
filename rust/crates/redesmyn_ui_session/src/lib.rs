@@ -24,10 +24,14 @@ use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
     GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload, ResponseResult,
-    SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor, StartAgentRequest,
-    StartAgentResponse, SubscriptionEvent,
+    RespondPermissionRequestRequest, RespondPermissionRequestResponse, SendSessionMessageRequest,
+    SendSessionMessageResponse, SessionEventCursor, SetSessionPermissionsModeRequest,
+    SetSessionPermissionsModeResponse, StartAgentRequest, StartAgentResponse, SubscriptionEvent,
 };
-use redesmyn_protocol::session::{SessionEventKind, ToolResult};
+use redesmyn_protocol::session::{
+    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionsMode, SessionEventKind,
+    ToolResult,
+};
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -441,6 +445,53 @@ async fn send_session_message(
     }
 }
 
+async fn set_session_permissions_mode(
+    client: &Client,
+    session_id: SessionId,
+    mode: PermissionsMode,
+) -> Result<SetSessionPermissionsModeResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::SetSessionPermissionsMode(
+            SetSessionPermissionsModeRequest { session_id, mode },
+        ))
+        .await?;
+
+    match response {
+        ResponseResult::SetSessionPermissionsMode(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
+async fn respond_permission_request(
+    client: &Client,
+    session_id: SessionId,
+    request_id: String,
+    decision: PermissionDecision,
+) -> Result<RespondPermissionRequestResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::RespondPermissionRequest(
+            RespondPermissionRequestRequest {
+                session_id,
+                request_id,
+                decision,
+            },
+        ))
+        .await?;
+
+    match response {
+        ResponseResult::RespondPermissionRequest(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
 async fn start_task_agent(
     client: &Client,
     task_id: TaskId,
@@ -654,6 +705,12 @@ pub struct TaskSessionBindingState {
     pub operation: Option<TaskSessionOperation>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PermissionDecisionState {
+    decision: PermissionDecision,
+    decided_by: PermissionDecisionBy,
+}
+
 #[derive(Debug, Clone)]
 pub enum SessionViewEvent {
     TaskBindingStateChanged(TaskSessionBindingState),
@@ -702,6 +759,13 @@ pub struct SessionView {
     load_task: Option<Task<()>>,
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
+    pending_permissions_mode: Option<PermissionsMode>,
+    permissions_mode_action: UserActionState,
+    set_permissions_mode_task: Option<Task<()>>,
+    permission_request_ids: Rc<HashSet<String>>,
+    permission_decisions_by_request_id: Rc<HashMap<String, PermissionDecisionState>>,
+    permission_request_actions: HashMap<String, UserActionState>,
+    respond_permission_request_tasks: HashMap<String, Task<()>>,
     task_binding_task_id: Option<TaskId>,
     task_binding_action: UserActionState,
     task_binding_generation: u64,
@@ -738,7 +802,7 @@ impl SessionView {
             TextArea::new(cx)
                 .placeholder("Message…")
                 .min_rows(1)
-                .reserved_bottom(px(28.0))
+                .reserved_bottom(px(36.0))
         });
 
         let mut subscriptions = Vec::new();
@@ -825,6 +889,13 @@ impl SessionView {
             load_task: None,
             load_older_task: None,
             send_task: None,
+            pending_permissions_mode: None,
+            permissions_mode_action: UserActionState::default(),
+            set_permissions_mode_task: None,
+            permission_request_ids: Rc::new(HashSet::new()),
+            permission_decisions_by_request_id: Rc::new(HashMap::new()),
+            permission_request_actions: HashMap::new(),
+            respond_permission_request_tasks: HashMap::new(),
             task_binding_task_id: None,
             task_binding_action: UserActionState::default(),
             task_binding_generation: 0,
@@ -1156,6 +1227,13 @@ impl SessionView {
             self.load_older_task = None;
             self.error = None;
             self.feed = None;
+            self.pending_permissions_mode = None;
+            self.permissions_mode_action = UserActionState::default();
+            self.set_permissions_mode_task = None;
+            self.permission_request_ids = Rc::new(HashSet::new());
+            self.permission_decisions_by_request_id = Rc::new(HashMap::new());
+            self.permission_request_actions = HashMap::new();
+            self.respond_permission_request_tasks = HashMap::new();
             self.timeline_follow_bottom.set(false);
             self.timeline_last_scroll_offset = px(0.0);
             self.collapsed_reasoning.clear();
@@ -1249,6 +1327,13 @@ impl SessionView {
         self.load_task = None;
         self.load_older_task = None;
         self.send_task = None;
+        self.pending_permissions_mode = None;
+        self.permissions_mode_action = UserActionState::default();
+        self.set_permissions_mode_task = None;
+        self.permission_request_ids = Rc::new(HashSet::new());
+        self.permission_decisions_by_request_id = Rc::new(HashMap::new());
+        self.permission_request_actions = HashMap::new();
+        self.respond_permission_request_tasks = HashMap::new();
         self.collapsed_reasoning.clear();
         self.seen_reasoning_keys.clear();
         self.reasoning_transitions = Rc::new(HashMap::new());
@@ -1327,6 +1412,149 @@ impl SessionView {
                     cx.update(|cx| view.update(cx, |this, cx| this.on_send_completed(result, cx)));
             }
         }));
+    }
+
+    fn set_permissions_mode(&mut self, mode: PermissionsMode, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            self.permissions_mode_action
+                .fail("Control plane client is unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        if self.permissions_mode_action.in_flight {
+            return;
+        }
+
+        let displayed_mode = self
+            .pending_permissions_mode
+            .unwrap_or(feed.permissions_mode);
+        if displayed_mode == mode {
+            return;
+        }
+
+        self.permissions_mode_action.start();
+        self.pending_permissions_mode = Some(mode);
+        cx.notify();
+
+        let session_id = feed.session_id;
+        let view = cx.entity();
+        self.set_permissions_mode_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let result = set_session_permissions_mode(&client, session_id, mode).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| this.on_set_permissions_mode_completed(mode, result, cx))
+                });
+            }
+        }));
+    }
+
+    fn on_set_permissions_mode_completed(
+        &mut self,
+        mode: PermissionsMode,
+        result: Result<SetSessionPermissionsModeResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_permissions_mode_task = None;
+
+        match result {
+            Ok(_resp) => {
+                self.permissions_mode_action.succeed();
+                self.permissions_mode_action.clear_error();
+                self.pending_permissions_mode = None;
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.permissions_mode = mode;
+                }
+            }
+            Err(err) => {
+                self.permissions_mode_action.fail(err.message);
+                self.pending_permissions_mode = None;
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn respond_permission_request(
+        &mut self,
+        request_id: &str,
+        decision: PermissionDecision,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            self.permission_request_actions
+                .entry(request_id.to_owned())
+                .or_default()
+                .fail("Control plane client is unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        let action = self
+            .permission_request_actions
+            .entry(request_id.to_owned())
+            .or_default();
+        if action.in_flight {
+            return;
+        }
+
+        action.start();
+        cx.notify();
+
+        let session_id = feed.session_id;
+        let request_id = request_id.to_owned();
+        let request_id_for_map = request_id.clone();
+        let view = cx.entity();
+        let task = cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            let request_id_for_request = request_id.clone();
+            async move {
+                let result =
+                    respond_permission_request(&client, session_id, request_id_for_request, decision)
+                        .await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_respond_permission_request_completed(request_id, result, cx)
+                    })
+                });
+            }
+        });
+        self.respond_permission_request_tasks
+            .insert(request_id_for_map, task);
+    }
+
+    fn on_respond_permission_request_completed(
+        &mut self,
+        request_id: String,
+        result: Result<RespondPermissionRequestResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.respond_permission_request_tasks.remove(&request_id);
+
+        let Some(action) = self.permission_request_actions.get_mut(&request_id) else {
+            return;
+        };
+
+        match result {
+            Ok(_resp) => {
+                action.succeed();
+                action.clear_error();
+            }
+            Err(err) => {
+                action.fail(err.message);
+            }
+        }
+
+        cx.notify();
     }
 
     fn on_send_completed(
@@ -1934,6 +2162,7 @@ impl SessionView {
         let old_items = std::mem::replace(&mut self.timeline_items, Rc::new(items));
         self.rebuild_exec_command_groups();
         self.rebuild_tool_event_groups();
+        self.rebuild_permission_approval_state();
         sync_timeline_list_state(
             &self.timeline_list_state,
             old_items.as_ref(),
@@ -1978,6 +2207,36 @@ impl SessionView {
 
         self.exec_command_result_by_invocation = Rc::new(result_by_invocation);
         self.grouped_exec_command_result_event_ids = Rc::new(grouped_result_ids);
+    }
+
+    fn rebuild_permission_approval_state(&mut self) {
+        let mut request_ids = HashSet::new();
+        let mut decisions: HashMap<String, PermissionDecisionState> = HashMap::new();
+
+        for item in self.timeline_items.iter() {
+            let SessionTimelineItem::Event(event) = item else {
+                continue;
+            };
+
+            match &event.content {
+                SessionEventItemContent::PermissionRequested(requested) => {
+                    request_ids.insert(requested.request_id.clone());
+                }
+                SessionEventItemContent::PermissionDecided(decided) => {
+                    decisions.insert(
+                        decided.request_id.clone(),
+                        PermissionDecisionState {
+                            decision: decided.decision,
+                            decided_by: decided.decided_by,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        self.permission_request_ids = Rc::new(request_ids);
+        self.permission_decisions_by_request_id = Rc::new(decisions);
     }
 
     fn rebuild_tool_event_groups(&mut self) {
@@ -2571,6 +2830,8 @@ impl Render for SessionView {
         let tool_event_group_membership = Rc::clone(&self.tool_event_group_membership);
         let tool_event_transitions = Rc::clone(&self.tool_event_transitions);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
+        let permission_request_ids = Rc::clone(&self.permission_request_ids);
+        let permission_decisions_by_request_id = Rc::clone(&self.permission_decisions_by_request_id);
         let reasoning_scroll_states = Rc::clone(&self.reasoning_scroll_states);
         let tool_event_scroll_handles = Rc::clone(&self.tool_event_scroll_handles);
         let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
@@ -3482,6 +3743,232 @@ impl Render for SessionView {
 
                             list.child(row.child(bubble))
                         }
+                        SessionEventItemContent::PermissionsModeChanged(_ev) => div(),
+                        SessionEventItemContent::PermissionRequested(requested) => {
+                            let request_id = requested.request_id.clone();
+                            let request_id_key = stable_str_key(request_id.as_str());
+                            let decision_state =
+                                permission_decisions_by_request_id.get(&request_id).copied();
+
+                            let action_state = timeline_view
+                                .read(cx)
+                                .permission_request_actions
+                                .get(&request_id)
+                                .cloned()
+                                .unwrap_or_default();
+
+                            let details = match &requested.request {
+                                PermissionRequest::CommandExecution(req) => {
+                                    let mut body = div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground);
+
+                                    if let Some(command) = req.command.as_ref() {
+                                        body = body.child(format!("command: {command}"));
+                                    } else {
+                                        body = body.child("command: <unknown>");
+                                    }
+                                    if let Some(cwd) = req.cwd.as_ref() {
+                                        body = body.child(format!("cwd: {cwd}"));
+                                    }
+                                    if let Some(reason) = req.reason.as_ref() {
+                                        body = body.child(format!("reason: {reason}"));
+                                    }
+
+                                    body.into_any_element()
+                                }
+                                PermissionRequest::FileChange(req) => {
+                                    let mut body = div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground);
+
+                                    if let Some(root) = req.grant_root.as_ref() {
+                                        body = body.child(format!("root: {root}"));
+                                    } else {
+                                        body = body.child("root: <unknown>");
+                                    }
+                                    if let Some(reason) = req.reason.as_ref() {
+                                        body = body.child(format!("reason: {reason}"));
+                                    }
+
+                                    body.into_any_element()
+                                }
+                                PermissionRequest::Unknown { unknown_kind, .. } => div()
+                                    .font(theme.typography.mono.font.clone())
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(format!("provider request: {unknown_kind}"))
+                                    .into_any_element(),
+                            };
+
+                            let (callout_kind, title) = match decision_state {
+                                Some(PermissionDecisionState {
+                                    decision: PermissionDecision::Deny,
+                                    ..
+                                }) => (CalloutKind::Danger, "Permission denied"),
+                                Some(_) => (CalloutKind::Info, "Permission decided"),
+                                None => (CalloutKind::Warning, "Permission required"),
+                            };
+
+                            let mut action = div()
+                                .flex()
+                                .flex_col()
+                                .gap(theme.spacing.sm)
+                                .child(details);
+
+                            if let Some(err) = action_state.error.clone() {
+                                action = action.child(
+                                    div()
+                                        .text_color(theme.colors.danger)
+                                        .text_size(theme.typography.caption.size)
+                                        .child(err),
+                                );
+                            }
+
+                            if let Some(state) = decision_state {
+                                let decision_label = match state.decision {
+                                    PermissionDecision::Approve => "Approved",
+                                    PermissionDecision::Deny => "Denied",
+                                    PermissionDecision::Unknown => "Decided",
+                                };
+                                let decided_by_label = match state.decided_by {
+                                    PermissionDecisionBy::User => "user",
+                                    PermissionDecisionBy::ModeAutoApprove => "auto_approve",
+                                    PermissionDecisionBy::ModeAutoDeny => "auto_deny",
+                                    PermissionDecisionBy::Timeout => "timeout",
+                                    PermissionDecisionBy::Unknown => "unknown",
+                                };
+                                let color = match state.decision {
+                                    PermissionDecision::Approve => theme.colors.foreground_muted,
+                                    PermissionDecision::Deny => theme.colors.danger,
+                                    PermissionDecision::Unknown => theme.colors.foreground_muted,
+                                };
+                                action = action.child(
+                                    div()
+                                        .text_color(color)
+                                        .text_size(theme.typography.caption.size)
+                                        .child(format!("{decision_label} ({decided_by_label})")),
+                                );
+                            } else {
+                                let disabled = action_state.in_flight;
+                                let disabled_reason = if action_state.in_flight {
+                                    "Responding…"
+                                } else {
+                                    ""
+                                };
+
+                                let approve_view = timeline_view.clone();
+                                let deny_view = timeline_view.clone();
+                                let request_id_for_buttons = request_id.clone();
+
+                                let buttons = div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(theme.spacing.sm)
+                                    .child(
+                                        TextButton::new(
+                                            ("permission_request_approve", request_id_key),
+                                            "Approve",
+                                        )
+                                        .kind(ButtonKind::Primary)
+                                        .disabled(disabled)
+                                        .disabled_reason(disabled_reason)
+                                        .on_click(move |event, _window, cx| {
+                                            if event.standard_click() {
+                                                let request_id = request_id_for_buttons.clone();
+                                                approve_view.update(cx, |this, cx| {
+                                                    this.respond_permission_request(
+                                                        request_id.as_str(),
+                                                        PermissionDecision::Approve,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                    )
+                                    .child(
+                                        TextButton::new(
+                                            ("permission_request_deny", request_id_key),
+                                            "Deny",
+                                        )
+                                        .kind(ButtonKind::Danger)
+                                        .disabled(disabled)
+                                        .disabled_reason(disabled_reason)
+                                        .on_click(move |event, _window, cx| {
+                                            if event.standard_click() {
+                                                deny_view.update(cx, |this, cx| {
+                                                    this.respond_permission_request(
+                                                        request_id.as_str(),
+                                                        PermissionDecision::Deny,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                    );
+
+                                action = action.child(buttons);
+
+                                if action_state.in_flight {
+                                    action = action.child(
+                                        div()
+                                            .text_color(theme.colors.foreground_muted)
+                                            .text_size(theme.typography.caption.size)
+                                            .child("Responding…"),
+                                    );
+                                }
+                            }
+
+                            let callout = Callout::new(requested.summary)
+                                .kind(callout_kind)
+                                .title(title)
+                                .action(action);
+
+                            list.child(
+                                div()
+                                    .px(theme.spacing.sm)
+                                    .py(timeline_item_gap_y)
+                                    .child(callout),
+                            )
+                        }
+                        SessionEventItemContent::PermissionDecided(decided) => {
+                            if permission_request_ids.contains(&decided.request_id) {
+                                div()
+                            } else {
+                                let (kind, message) = match decided.decision {
+                                    PermissionDecision::Approve => (CalloutKind::Info, "Approved"),
+                                    PermissionDecision::Deny => (CalloutKind::Danger, "Denied"),
+                                    PermissionDecision::Unknown => (CalloutKind::Info, "Decided"),
+                                };
+
+                                let by = match decided.decided_by {
+                                    PermissionDecisionBy::User => "user",
+                                    PermissionDecisionBy::ModeAutoApprove => "auto_approve",
+                                    PermissionDecisionBy::ModeAutoDeny => "auto_deny",
+                                    PermissionDecisionBy::Timeout => "timeout",
+                                    PermissionDecisionBy::Unknown => "unknown",
+                                };
+
+                                list.child(
+                                    div()
+                                        .px(theme.spacing.sm)
+                                        .py(timeline_item_gap_y)
+                                        .child(
+                                            Callout::new(format!("{message} ({by})"))
+                                                .kind(kind)
+                                                .title("Permission decision"),
+                                        ),
+                                )
+                            }
+                        }
                         other => {
                             // Hide session lifecycle and status noise in the primary timeline.
                             // (These remain available via the semantic snapshot/debug surfaces.)
@@ -4330,6 +4817,115 @@ impl Render for SessionView {
                     }
                 });
 
+        let composer_permissions_mode = self
+            .feed
+            .as_ref()
+            .map(|feed| feed.permissions_mode)
+            .unwrap_or(PermissionsMode::Ask);
+        let displayed_permissions_mode = self
+            .pending_permissions_mode
+            .unwrap_or(composer_permissions_mode);
+        let (permissions_disabled, permissions_disabled_reason) =
+            if self.permissions_mode_action.in_flight {
+                (true, "Updating…")
+            } else if self.client.is_none() || self.feed.is_none() {
+                (true, "Chat is unavailable")
+            } else {
+                (false, "")
+            };
+
+        let permissions_status = if let Some(error) = self.permissions_mode_action.error.clone() {
+            Some(
+                div()
+                    .min_w_0()
+                    .text_color(theme.colors.danger)
+                    .text_size(theme.typography.caption.size)
+                    .truncate()
+                    .child(error),
+            )
+        } else if self.permissions_mode_action.in_flight {
+            Some(
+                div()
+                    .text_color(theme.colors.foreground_muted)
+                    .text_size(theme.typography.caption.size)
+                    .child("Updating…"),
+            )
+        } else {
+            None
+        };
+
+        let permissions_mode_buttons = {
+            let view = view.clone();
+            let make_button = move |id: &'static str,
+                                    icon: &'static str,
+                                    mode: PermissionsMode,
+                                    tooltip: &'static str| {
+                let view = view.clone();
+                IconButton::new(
+                    (id, entity_id),
+                    div().child(icon),
+                )
+                .active(displayed_permissions_mode == mode)
+                .disabled(permissions_disabled)
+                .disabled_reason(permissions_disabled_reason)
+                .tooltip(tooltip)
+                .on_click(move |event, _window, cx| {
+                    if event.standard_click() {
+                        view.update(cx, |this, cx| this.set_permissions_mode(mode, cx));
+                    }
+                })
+            };
+
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.xs)
+                .child(make_button(
+                    "session_permissions_mode_ask",
+                    "?",
+                    PermissionsMode::Ask,
+                    "Permissions: ask before running commands or editing files",
+                ))
+                .child(make_button(
+                    "session_permissions_mode_auto_approve",
+                    "✓",
+                    PermissionsMode::AutoApprove,
+                    "Permissions: automatically approve requests",
+                ))
+                .child(make_button(
+                    "session_permissions_mode_deny",
+                    "×",
+                    PermissionsMode::Deny,
+                    "Permissions: automatically deny requests",
+                ))
+        };
+
+        let composer_action_bar = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(theme.spacing.sm)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.sm)
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_color(theme.colors.foreground_muted)
+                            .text_size(theme.typography.caption.size)
+                            .child("Permissions"),
+                    )
+                    .child(permissions_mode_buttons)
+                    .when_some(permissions_status, |this, status| this.child(status)),
+            )
+            .child(send_button);
+
         let composer = div()
             .relative()
             .w_full()
@@ -4337,9 +4933,10 @@ impl Render for SessionView {
             .child(
                 div()
                     .absolute()
+                    .left(theme.spacing.sm)
                     .right(theme.spacing.sm)
                     .bottom(theme.spacing.sm)
-                    .child(send_button),
+                    .child(composer_action_bar),
             );
 
         let mut timeline = div()
