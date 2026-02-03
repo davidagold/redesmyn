@@ -534,7 +534,7 @@ This is the stable surface for both humans and agents.
 - **Epic overview (graph-first)**
   - Branch graph with agent status and PR/issue links.
   - “Needs cascade rebase” indicators for subtrees.
-  - Stack focus mode (select a leaf → highlight the upstream path).
+  - Stack path highlight (select a leaf → highlight the upstream path).
 
 - **Node detail**
   - Work range commit list/graph.

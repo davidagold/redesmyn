@@ -42,7 +42,6 @@ pub enum UiDriverMethod {
     WaitForIdle,
     GraphSelectNode,
     GraphClearSelection,
-    GraphToggleFocusMode,
     GraphToggleExpandedTaskCard,
     GraphMultiSelectAddNode,
     GraphMultiSelectRemoveNode,
@@ -82,7 +81,6 @@ pub enum UiDriverRequestPayload {
     WaitForIdle(WaitForUiIdleRequest),
     GraphSelectNode(SelectGraphNodeRequest),
     GraphClearSelection(ClearGraphSelectionRequest),
-    GraphToggleFocusMode(ToggleGraphFocusModeRequest),
     GraphToggleExpandedTaskCard(ToggleExpandedTaskCardRequest),
     GraphMultiSelectAddNode(MultiSelectAddNodeRequest),
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeRequest),
@@ -109,7 +107,6 @@ impl UiDriverRequestPayload {
             Self::WaitForIdle(_) => UiDriverMethod::WaitForIdle,
             Self::GraphSelectNode(_) => UiDriverMethod::GraphSelectNode,
             Self::GraphClearSelection(_) => UiDriverMethod::GraphClearSelection,
-            Self::GraphToggleFocusMode(_) => UiDriverMethod::GraphToggleFocusMode,
             Self::GraphToggleExpandedTaskCard(_) => UiDriverMethod::GraphToggleExpandedTaskCard,
             Self::GraphMultiSelectAddNode(_) => UiDriverMethod::GraphMultiSelectAddNode,
             Self::GraphMultiSelectRemoveNode(_) => UiDriverMethod::GraphMultiSelectRemoveNode,
@@ -161,7 +158,6 @@ pub enum UiDriverResponseResult {
     WaitForIdle(WaitForUiIdleResponse),
     GraphSelectNode(SelectGraphNodeResponse),
     GraphClearSelection(ClearGraphSelectionResponse),
-    GraphToggleFocusMode(ToggleGraphFocusModeResponse),
     GraphToggleExpandedTaskCard(ToggleExpandedTaskCardResponse),
     GraphMultiSelectAddNode(MultiSelectAddNodeResponse),
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeResponse),
@@ -288,8 +284,6 @@ pub struct UiSnapshotPredicate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub graph_focus_mode: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_layout_settled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_selection_settled: Option<bool>,
@@ -322,12 +316,6 @@ pub struct ClearGraphSelectionRequest {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClearGraphSelectionResponse {}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ToggleGraphFocusModeRequest {}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ToggleGraphFocusModeResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ToggleExpandedTaskCardRequest {
@@ -472,7 +460,6 @@ pub struct UiGraphState {
     pub selected_edge: Option<UiGraphEdgeId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub multi_selected_nodes: Vec<UiGraphNodeId>,
-    pub focus_mode: bool,
     pub expanded_task_card_open: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expanded_task_id: Option<TaskId>,

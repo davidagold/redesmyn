@@ -345,7 +345,7 @@ Tasks:
 - `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
 - `epics/gpui/tasks/T-69/README.md`: Graph node virtualization + LOD (viewport culling; node render modes).
 - `epics/gpui/tasks/T-78/README.md`: GPU backpressure for pan/zoom (cap frames-in-flight memory spikes).
-- `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection, focus mode path).
+- `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection).
 - `epics/gpui/tasks/T-55/README.md`: Expanded task card: details + selection integration (no sidebar drawer).
 - `epics/gpui/tasks/T-56/README.md`: Bulk selection + action bar (multi-select UX).
 - `epics/gpui/tasks/T-57/README.md`: Trunk timeline column (commit marks; base alignment; optional but planned).

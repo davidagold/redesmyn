@@ -25,7 +25,7 @@ Simplify graph interactions by removing:
 - all on-select zoom/pan/viewport animation behavior, and
 - diagonalization (node repositioning) behavior.
 
-Keep selection itself (single-select, multi-select, focus mode) working, but without automatic viewport movement.
+Keep selection itself (single-select, multi-select) working, but without automatic viewport movement.
 
 ## Requirements
 
@@ -37,6 +37,6 @@ Keep selection itself (single-select, multi-select, focus mode) working, but wit
 ## Acceptance Criteria
 
 - Selecting nodes/edges never triggers an automatic viewport change.
-- Focus mode does not introduce diagonal repositioning of nodes.
+- Selection does not introduce diagonal repositioning of nodes.
 - Graph remains usable for typical dogfooding flows (select, multi-select, inspect details).
 - `just check` remains green.

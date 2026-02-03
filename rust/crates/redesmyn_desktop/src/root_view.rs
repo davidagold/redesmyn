@@ -12,11 +12,10 @@ use tokio::sync::{mpsc, watch};
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
-    ToggleExpandedTaskCardResponse, ToggleGraphFocusModeResponse, TriggerRefreshResponse,
-    UiComposerState, UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult,
-    UiErrorCallout, UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
-    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
-    WaitForUiSnapshotResponse,
+    ToggleExpandedTaskCardResponse, TriggerRefreshResponse, UiComposerState, UiDriverRequestPayload,
+    UiDriverResponse, UiDriverResponseResult, UiErrorCallout, UiInFlightAction, UiLeftPaneState,
+    UiPrimaryView, UiSelectionState, UiSnapshot, UiSnapshotPredicate, WaitForUiIdleRequest,
+    WaitForUiIdleResponse, WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -744,12 +743,6 @@ fn snapshot_matches_predicate(snapshot: &UiSnapshot, predicate: &UiSnapshotPredi
         }
     }
 
-    if let Some(expected_focus_mode) = predicate.graph_focus_mode {
-        if snapshot.graph.focus_mode != expected_focus_mode {
-            return false;
-        }
-    }
-
     if let Some(expected_layout_settled) = predicate.graph_layout_settled {
         if snapshot.graph.layout_settled != expected_layout_settled {
             return false;
@@ -1251,42 +1244,6 @@ async fn handle_ui_driver_request(
 
             match result {
                 Ok(()) => UiDriverResponseResult::GraphClearSelection(ClearGraphSelectionResponse {}),
-                Err(err) => UiDriverResponseResult::Error(err),
-            }
-        }
-        UiDriverRequestPayload::GraphToggleFocusMode(_req) => {
-            let span = redesmyn_logging::redesmyn_info_span!("ui_driver.graph_toggle_focus_mode");
-            let _guard = span.enter();
-
-            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
-                let Some(root) = root.upgrade() else {
-                    return Err(ErrorEnvelope::new(
-                        ErrorCategory::Unavailable,
-                        "UI is unavailable.",
-                    ));
-                };
-
-                let graph_view = {
-                    let root_ref = root.read(cx);
-                    root_ref.workspace_pane.read(cx).graph_view.clone()
-                };
-
-                graph_view.update(cx, |this, cx| this.driver_toggle_focus_mode(cx));
-                root.update(cx, |this, cx| this.notify_ui_updated(cx));
-
-                Ok(())
-            }) {
-                Ok(result) => result,
-                Err(_) => {
-                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
-                        ErrorCategory::Unavailable,
-                        "UI is unavailable.",
-                    ));
-                }
-            };
-
-            match result {
-                Ok(()) => UiDriverResponseResult::GraphToggleFocusMode(ToggleGraphFocusModeResponse {}),
                 Err(err) => UiDriverResponseResult::Error(err),
             }
         }

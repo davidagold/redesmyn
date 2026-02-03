@@ -37,7 +37,6 @@ Add driver actions:
 
 - select node by id
 - clear selection
-- toggle focus mode
 - toggle expanded task card (if separate from selection; v0 can equate selection with expansion)
 - multi-select add/remove node
 - (optional) zoom/pan to deterministic positions
@@ -48,7 +47,6 @@ Add snapshot fields sufficient to assert graph state:
 
 - selected node id / edge id
 - multi-selected node ids (sorted)
-- focus mode enabled
 - expanded task card open + which task it reflects
 - camera: zoom + pan (coarse values acceptable; do not require exact floats)
 
@@ -67,7 +65,7 @@ Avoid sleeps.
   1) open an epic,
   2) select a node by id,
   3) assert selection + expanded-task state via semantic snapshot,
-  4) toggle focus mode and assert the snapshot changes.
+  4) clear selection and assert the snapshot changes.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 

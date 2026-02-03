@@ -14,9 +14,9 @@ use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
     CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest,
-    ToggleGraphFocusModeRequest, UiDriverFrame, UiDriverMessage, UiDriverRequest,
-    UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow,
-    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest,
+    UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverRequestPayload,
+    UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow, UiSnapshotPredicate,
+    WaitForUiIdleRequest, WaitForUiSnapshotRequest,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope};
 use serde::Serialize;
@@ -34,7 +34,7 @@ pub(crate) enum UiDriverCommands {
     /// open epic → create chat → wait for idle → capture artifacts.
     Smoke(UiDriverSmokeArgs),
     /// Runs a deterministic graph smoke flow:
-    /// open epic → select node → toggle focus mode → capture artifacts.
+    /// open epic → select node → capture artifacts.
     ///
     /// Prefer `--launch` (sets `REDESMYN_UI_TEST_MODE=1`) unless you are connecting to an
     /// already-running test instance.
@@ -282,7 +282,6 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
             epic_slug: args.epic.clone(),
             in_flight_empty: None,
             selected_task_id: None,
-            graph_focus_mode: None,
             graph_layout_settled: None,
             graph_selection_settled: None,
         };
@@ -545,7 +544,6 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             epic_slug: args.epic.clone(),
             in_flight_empty: None,
             selected_task_id: None,
-            graph_focus_mode: None,
             graph_layout_settled: Some(true),
             graph_selection_settled: None,
         };
@@ -581,7 +579,6 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             epic_slug: String::new(),
             in_flight_empty: None,
             selected_task_id: Some(task_id),
-            graph_focus_mode: None,
             graph_layout_settled: None,
             graph_selection_settled: Some(true),
         };
@@ -622,43 +619,6 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
                     snapshot.graph.expanded_task_card_open, snapshot.graph.expanded_task_id
                 ),
             ));
-        }
-
-        let focus_mode_before = snapshot.graph.focus_mode;
-        if let Err(err) = require_ok_response(
-            send_ui_driver_request(
-                &mut conn,
-                UiDriverRequestPayload::GraphToggleFocusMode(ToggleGraphFocusModeRequest {}),
-                wait_timeout,
-            ),
-            "graph_toggle_focus_mode",
-        ) {
-            shutdown_desktop(&mut desktop_child, args.keep_open);
-            return CommandOutcome::Failure(err);
-        }
-
-        let wait_focus_predicate = UiSnapshotPredicate {
-            primary_view: None,
-            epic_slug: String::new(),
-            in_flight_empty: None,
-            selected_task_id: None,
-            graph_focus_mode: Some(!focus_mode_before),
-            graph_layout_settled: None,
-            graph_selection_settled: None,
-        };
-        if let Err(err) = require_ok_response(
-            send_ui_driver_request(
-                &mut conn,
-                UiDriverRequestPayload::WaitForSnapshot(WaitForUiSnapshotRequest {
-                    timeout_ms: args.timeout_ms,
-                    predicate: wait_focus_predicate,
-                }),
-                wait_timeout,
-            ),
-            "wait_for_snapshot",
-        ) {
-            shutdown_desktop(&mut desktop_child, args.keep_open);
-            return CommandOutcome::Failure(err);
         }
 
         if let Err(err) = require_ok_response(
@@ -886,7 +846,6 @@ fn require_ok_response(
         | UiDriverResponseResult::WaitForIdle(_)
         | UiDriverResponseResult::GraphSelectNode(_)
         | UiDriverResponseResult::GraphClearSelection(_)
-        | UiDriverResponseResult::GraphToggleFocusMode(_)
         | UiDriverResponseResult::GraphToggleExpandedTaskCard(_)
         | UiDriverResponseResult::GraphMultiSelectAddNode(_)
         | UiDriverResponseResult::GraphMultiSelectRemoveNode(_) => Ok(()),

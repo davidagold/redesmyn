@@ -4302,9 +4302,6 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::GraphClearSelection => {
             pbv1::UiDriverMethod::GraphClearSelection as i32
         }
-        crate::ui_driver::UiDriverMethod::GraphToggleFocusMode => {
-            pbv1::UiDriverMethod::GraphToggleFocusMode as i32
-        }
         crate::ui_driver::UiDriverMethod::GraphToggleExpandedTaskCard => {
             pbv1::UiDriverMethod::GraphToggleExpandedTaskCard as i32
         }
@@ -4361,9 +4358,6 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         }
         Ok(pbv1::UiDriverMethod::GraphClearSelection) => {
             Ok(crate::ui_driver::UiDriverMethod::GraphClearSelection)
-        }
-        Ok(pbv1::UiDriverMethod::GraphToggleFocusMode) => {
-            Ok(crate::ui_driver::UiDriverMethod::GraphToggleFocusMode)
         }
         Ok(pbv1::UiDriverMethod::GraphToggleExpandedTaskCard) => {
             Ok(crate::ui_driver::UiDriverMethod::GraphToggleExpandedTaskCard)
@@ -4552,9 +4546,6 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::GraphClearSelection(req) => {
                     pbv1::ui_driver_request::Payload::ClearGraphSelection(req.to_protobuf())
                 }
-                crate::ui_driver::UiDriverRequestPayload::GraphToggleFocusMode(req) => {
-                    pbv1::ui_driver_request::Payload::ToggleGraphFocusMode(req.to_protobuf())
-                }
                 crate::ui_driver::UiDriverRequestPayload::GraphToggleExpandedTaskCard(req) => {
                     pbv1::ui_driver_request::Payload::ToggleExpandedTaskCard(req.to_protobuf())
                 }
@@ -4658,11 +4649,6 @@ impl crate::ui_driver::UiDriverRequest {
                     crate::ui_driver::ClearGraphSelectionRequest::from_protobuf(req),
                 )
             }
-            pbv1::ui_driver_request::Payload::ToggleGraphFocusMode(req) => {
-                crate::ui_driver::UiDriverRequestPayload::GraphToggleFocusMode(
-                    crate::ui_driver::ToggleGraphFocusModeRequest::from_protobuf(req),
-                )
-            }
             pbv1::ui_driver_request::Payload::ToggleExpandedTaskCard(req) => {
                 crate::ui_driver::UiDriverRequestPayload::GraphToggleExpandedTaskCard(
                     crate::ui_driver::ToggleExpandedTaskCardRequest::try_from_protobuf(req)?,
@@ -4752,9 +4738,6 @@ impl crate::ui_driver::UiDriverResponse {
                 }
                 crate::ui_driver::UiDriverResponseResult::GraphClearSelection(resp) => {
                     pbv1::ui_driver_response::Result::ClearGraphSelection(resp.to_protobuf())
-                }
-                crate::ui_driver::UiDriverResponseResult::GraphToggleFocusMode(resp) => {
-                    pbv1::ui_driver_response::Result::ToggleGraphFocusMode(resp.to_protobuf())
                 }
                 crate::ui_driver::UiDriverResponseResult::GraphToggleExpandedTaskCard(resp) => {
                     pbv1::ui_driver_response::Result::ToggleExpandedTaskCard(resp.to_protobuf())
@@ -4860,11 +4843,6 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::ClearGraphSelection(resp) => {
                 crate::ui_driver::UiDriverResponseResult::GraphClearSelection(
                     crate::ui_driver::ClearGraphSelectionResponse::from_protobuf(resp),
-                )
-            }
-            pbv1::ui_driver_response::Result::ToggleGraphFocusMode(resp) => {
-                crate::ui_driver::UiDriverResponseResult::GraphToggleFocusMode(
-                    crate::ui_driver::ToggleGraphFocusModeResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::ToggleExpandedTaskCard(resp) => {
@@ -5263,7 +5241,6 @@ impl crate::ui_driver::UiSnapshotPredicate {
                 .selected_task_id
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
-            graph_focus_mode: self.graph_focus_mode,
             graph_layout_settled: self.graph_layout_settled,
             graph_selection_settled: self.graph_selection_settled,
         }
@@ -5285,7 +5262,6 @@ impl crate::ui_driver::UiSnapshotPredicate {
             epic_slug: proto.epic_slug,
             in_flight_empty: proto.in_flight_empty,
             selected_task_id: decode_optional_ulid("selected_task_id", &proto.selected_task_id)?,
-            graph_focus_mode: proto.graph_focus_mode,
             graph_layout_settled: proto.graph_layout_settled,
             graph_selection_settled: proto.graph_selection_settled,
         })
@@ -5409,30 +5385,6 @@ impl crate::ui_driver::ClearGraphSelectionResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::ClearGraphSelectionResponse) -> Self {
-        Self {}
-    }
-}
-
-impl crate::ui_driver::ToggleGraphFocusModeRequest {
-    #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::ToggleGraphFocusModeRequest {
-        pbv1::ToggleGraphFocusModeRequest {}
-    }
-
-    #[must_use]
-    pub fn from_protobuf(_proto: pbv1::ToggleGraphFocusModeRequest) -> Self {
-        Self {}
-    }
-}
-
-impl crate::ui_driver::ToggleGraphFocusModeResponse {
-    #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::ToggleGraphFocusModeResponse {
-        pbv1::ToggleGraphFocusModeResponse {}
-    }
-
-    #[must_use]
-    pub fn from_protobuf(_proto: pbv1::ToggleGraphFocusModeResponse) -> Self {
         Self {}
     }
 }
@@ -5757,7 +5709,6 @@ impl crate::ui_driver::UiGraphState {
                 .copied()
                 .map(|id| id.to_protobuf())
                 .collect(),
-            focus_mode: self.focus_mode,
             expanded_task_card_open: self.expanded_task_card_open,
             expanded_task_id: self
                 .expanded_task_id
@@ -5788,7 +5739,6 @@ impl crate::ui_driver::UiGraphState {
                 .into_iter()
                 .map(crate::ui_driver::UiGraphNodeId::try_from_protobuf)
                 .collect::<Result<Vec<_>, _>>()?,
-            focus_mode: proto.focus_mode,
             expanded_task_card_open: proto.expanded_task_card_open,
             expanded_task_id: decode_optional_ulid("expanded_task_id", &proto.expanded_task_id)?,
             selection_bar_visible: proto.selection_bar_visible,

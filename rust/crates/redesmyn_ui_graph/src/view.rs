@@ -242,7 +242,6 @@ pub struct GraphView {
     scene: GraphScene,
     full_scene: Option<GraphScene>,
     task_filters: TaskFilters,
-    focus_mode: bool,
     camera: GraphCamera,
     fps_overlay: FpsOverlay,
     camera_animation: Option<CameraAnimation>,
@@ -312,7 +311,6 @@ impl GraphView {
             scene,
             full_scene: None,
             task_filters: TaskFilters::default(),
-            focus_mode: false,
             camera: GraphCamera::new(GraphCameraLimits::default()),
             fps_overlay: FpsOverlay::new(fps_overlay_enabled),
             camera_animation: None,
@@ -567,11 +565,6 @@ impl GraphView {
         self.clear_selection(cx);
     }
 
-    pub fn driver_toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
-        self.focus_mode = !self.focus_mode;
-        cx.notify();
-    }
-
     pub fn driver_toggle_expanded_task_card(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         let node_id = GraphNodeId::Task(task_id);
         if self.scene.selection().selected_node == Some(node_id) {
@@ -648,7 +641,6 @@ impl GraphView {
             selected_node,
             selected_edge,
             multi_selected_nodes,
-            focus_mode: self.focus_mode,
             expanded_task_card_open: expanded_task_id.is_some(),
             expanded_task_id,
             selection_bar_visible: self.selection_bar_progress.clamp(0.0, 1.0) > 0.001,

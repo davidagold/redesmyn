@@ -39,5 +39,5 @@ rn:
 ## Notes / Contracts
 
 - ELK should be treated as a pure layout step: input nodes/edges → positioned nodes/edges.
-- Avoid tight coupling between layout and rendering (so we can later support alternate layouts or focus modes like “stack view”).
+- Avoid tight coupling between layout and rendering (so we can later support alternate layouts or filtered views like “stack view”).
 - If ELK fights the commit-count-scaled x-axis, use ELK for y-ordering and apply a second deterministic pass to set x positions based on commit-lengths.
