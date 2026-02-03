@@ -34,6 +34,8 @@ impl Default for TextButtonLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextButtonSize {
     Regular,
+    /// Compact padding but regular text size.
+    Compact,
     Small,
 }
 
@@ -108,6 +110,12 @@ impl TextButton {
 
     pub fn menu_item(mut self) -> Self {
         self.layout = TextButtonLayout::MenuItem;
+        self.size = TextButtonSize::Small;
+        self
+    }
+
+    pub fn compact(mut self) -> Self {
+        self.size = TextButtonSize::Compact;
         self
     }
 
@@ -147,7 +155,7 @@ impl RenderOnce for TextButton {
                 theme.radius.md,
                 theme.spacing.sm,
             ),
-            TextButtonSize::Small => (
+            TextButtonSize::Compact | TextButtonSize::Small => (
                 theme.spacing.sm,
                 theme.spacing.xs,
                 theme.radius.sm,
@@ -187,7 +195,7 @@ impl RenderOnce for TextButton {
         }
 
         button = match self.size {
-            TextButtonSize::Regular => button.text_sm(),
+            TextButtonSize::Regular | TextButtonSize::Compact => button.text_sm(),
             TextButtonSize::Small => button.text_xs(),
         };
 

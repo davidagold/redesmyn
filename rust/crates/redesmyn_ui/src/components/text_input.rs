@@ -295,6 +295,18 @@ impl EditHistory {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextInputSize {
+    Regular,
+    Small,
+}
+
+impl Default for TextInputSize {
+    fn default() -> Self {
+        Self::Regular
+    }
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -306,6 +318,7 @@ pub struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
     history: EditHistory,
+    size: TextInputSize,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -323,11 +336,17 @@ impl TextInput {
             last_bounds: None,
             is_selecting: false,
             history: EditHistory::default(),
+            size: TextInputSize::default(),
         }
     }
 
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    pub fn small(mut self) -> Self {
+        self.size = TextInputSize::Small;
         self
     }
 
@@ -1123,6 +1142,12 @@ impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = theme_for_window(window, cx);
 
+        let (padding_x, padding_y, radius) = match self.size {
+            TextInputSize::Regular => (theme.spacing.sm, theme.spacing.sm, theme.radius.md),
+            TextInputSize::Small => (theme.spacing.sm, theme.spacing.xs, theme.radius.sm),
+        };
+        let height = window.line_height() + padding_y + padding_y;
+
         div()
             .flex()
             .key_context("TextInput")
@@ -1161,15 +1186,15 @@ impl Render for TextInput {
             .border_1()
             .border_color(theme.colors.border)
             .overflow_hidden()
-            .rounded(theme.radius.md)
+            .rounded(radius)
             .line_height(window.line_height())
             .text_size(window.text_style().font_size)
             .child(
                 div()
-                    .h(window.line_height() + theme.spacing.sm + theme.spacing.sm)
+                    .h(height)
                     .w_full()
-                    .px(theme.spacing.sm)
-                    .py(theme.spacing.sm)
+                    .px(padding_x)
+                    .py(padding_y)
                     .child(TextInputElement { input: cx.entity() }),
             )
     }
