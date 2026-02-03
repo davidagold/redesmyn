@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use redesmyn_ids::{SessionEventId, SessionId};
 use redesmyn_protocol::client::SessionEventCursor;
 use redesmyn_protocol::session::{
-    ArtifactEmitted, AssistantMessage, PermissionDecided, PermissionRequested,
+    ArtifactEmitted, AssistantMessage, CodexApprovalPolicy, CodexApprovalPolicyChanged,
+    CodexSandboxPolicy, CodexSandboxPolicyChanged, PermissionDecided, PermissionRequested,
     PermissionsMode, PermissionsModeChanged, SessionEventKind, StatusUpdate, ToolInvocation,
     ToolResult,
     TurnCompleted, TurnStarted, UserMessage,
@@ -41,6 +42,8 @@ pub enum SessionEventKindTag {
     ToolResult,
     StatusUpdate,
     PermissionsModeChanged,
+    CodexApprovalPolicyChanged,
+    CodexSandboxPolicyChanged,
     PermissionRequested,
     PermissionDecided,
     ArtifactEmitted,
@@ -62,6 +65,8 @@ impl SessionEventKindTag {
             SessionEventKind::ToolResult(_) => Self::ToolResult,
             SessionEventKind::StatusUpdate(_) => Self::StatusUpdate,
             SessionEventKind::PermissionsModeChanged(_) => Self::PermissionsModeChanged,
+            SessionEventKind::CodexApprovalPolicyChanged(_) => Self::CodexApprovalPolicyChanged,
+            SessionEventKind::CodexSandboxPolicyChanged(_) => Self::CodexSandboxPolicyChanged,
             SessionEventKind::PermissionRequested(_) => Self::PermissionRequested,
             SessionEventKind::PermissionDecided(_) => Self::PermissionDecided,
             SessionEventKind::ArtifactEmitted(_) => Self::ArtifactEmitted,
@@ -140,6 +145,8 @@ pub enum SessionEventItemContent {
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
     PermissionsModeChanged(PermissionsModeChanged),
+    CodexApprovalPolicyChanged(CodexApprovalPolicyChanged),
+    CodexSandboxPolicyChanged(CodexSandboxPolicyChanged),
     PermissionRequested(PermissionRequested),
     PermissionDecided(PermissionDecided),
     ArtifactEmitted(ArtifactEmittedItem),
@@ -263,6 +270,10 @@ pub struct SessionFeedState {
     pub session_id: SessionId,
     #[serde(default = "default_permissions_mode")]
     pub permissions_mode: PermissionsMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_approval_policy: Option<CodexApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_sandbox_policy: Option<CodexSandboxPolicy>,
     events: Vec<SessionEventRow>,
     event_ids: BTreeSet<SessionEventId>,
     ephemeral: BTreeMap<String, EphemeralItem>,
@@ -279,6 +290,8 @@ impl SessionFeedState {
         Self {
             session_id,
             permissions_mode: PermissionsMode::Ask,
+            codex_approval_policy: None,
+            codex_sandbox_policy: None,
             events: Vec::new(),
             event_ids: BTreeSet::new(),
             ephemeral: BTreeMap::new(),
@@ -410,6 +423,7 @@ impl SessionFeedState {
         }
 
         self.recompute_permissions_mode();
+        self.recompute_codex_policies();
         self.recompute_summary();
         self.history.loading_older = false;
         self.history.next_cursor = next_cursor;
@@ -432,8 +446,17 @@ impl SessionFeedState {
     }
 
     pub fn apply_live_event(&mut self, event: SessionEvent) {
-        if let SessionEventKind::PermissionsModeChanged(ev) = &event.kind {
-            self.permissions_mode = ev.mode;
+        match &event.kind {
+            SessionEventKind::PermissionsModeChanged(ev) => {
+                self.permissions_mode = ev.mode;
+            }
+            SessionEventKind::CodexApprovalPolicyChanged(ev) => {
+                self.codex_approval_policy = ev.approval_policy;
+            }
+            SessionEventKind::CodexSandboxPolicyChanged(ev) => {
+                self.codex_sandbox_policy = ev.sandbox_policy.clone();
+            }
+            _ => {}
         }
 
         let clear_assistant_ephemeral =
@@ -820,6 +843,34 @@ impl SessionFeedState {
 
         self.permissions_mode = PermissionsMode::Ask;
     }
+
+    fn recompute_codex_policies(&mut self) {
+        let mut found_approval = false;
+        let mut found_sandbox = false;
+        let mut approval = None;
+        let mut sandbox = None;
+
+        for row in self.events.iter().rev() {
+            match &row.event.kind {
+                SessionEventKind::CodexApprovalPolicyChanged(ev) if !found_approval => {
+                    approval = ev.approval_policy;
+                    found_approval = true;
+                }
+                SessionEventKind::CodexSandboxPolicyChanged(ev) if !found_sandbox => {
+                    sandbox = ev.sandbox_policy.clone();
+                    found_sandbox = true;
+                }
+                _ => {}
+            }
+
+            if found_approval && found_sandbox {
+                break;
+            }
+        }
+
+        self.codex_approval_policy = approval;
+        self.codex_sandbox_policy = sandbox;
+    }
 }
 
 fn default_permissions_mode() -> PermissionsMode {
@@ -878,6 +929,12 @@ impl SessionEventItem {
             SessionEventKind::StatusUpdate(ev) => SessionEventItemContent::StatusUpdate(ev.clone()),
             SessionEventKind::PermissionsModeChanged(ev) => {
                 SessionEventItemContent::PermissionsModeChanged(ev.clone())
+            }
+            SessionEventKind::CodexApprovalPolicyChanged(ev) => {
+                SessionEventItemContent::CodexApprovalPolicyChanged(ev.clone())
+            }
+            SessionEventKind::CodexSandboxPolicyChanged(ev) => {
+                SessionEventItemContent::CodexSandboxPolicyChanged(ev.clone())
             }
             SessionEventKind::PermissionRequested(ev) => {
                 SessionEventItemContent::PermissionRequested(ev.clone())
@@ -982,6 +1039,34 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
         }
         .to_owned()),
+        SessionEventKind::CodexApprovalPolicyChanged(ev) => Some(
+            match ev.approval_policy {
+                None => "default",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::UnlessTrusted) => "untrusted",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::OnFailure) => "on_failure",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::OnRequest) => "on_request",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::Never) => "never",
+                Some(redesmyn_protocol::session::CodexApprovalPolicy::Unknown) => "unknown",
+            }
+            .to_owned(),
+        ),
+        SessionEventKind::CodexSandboxPolicyChanged(ev) => Some(
+            match ev.sandbox_policy.as_ref() {
+                None => "default",
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::DangerFullAccess) => {
+                    "danger_full_access"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ReadOnly) => "read_only",
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox { .. }) => {
+                    "external_sandbox"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::WorkspaceWrite { .. }) => {
+                    "workspace_write"
+                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::Unknown) => "unknown",
+            }
+            .to_owned(),
+        ),
         SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
         SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
             redesmyn_protocol::session::PermissionDecision::Approve => "approve",
