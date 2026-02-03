@@ -19,6 +19,7 @@ use redesmyn_ui::components::{
     MarkdownInlineSingleLineContent, ProgressPill, ProgressPillKind, ScrollArea, TextButton,
     Tooltip,
 };
+use redesmyn_ui::task_filters::TaskFilters;
 use redesmyn_ui::utils::{
     BoundedCache, TransitionMap, UiActivityGuard, UserActionState, theme_for_window,
     ui_idle_tracker, ui_test_mode_animation_duration,
@@ -221,6 +222,8 @@ struct CollapsedTitleCacheEntry {
 pub struct GraphView {
     focus_handle: FocusHandle,
     scene: GraphScene,
+    full_scene: Option<GraphScene>,
+    task_filters: TaskFilters,
     camera: GraphCamera,
     fps_overlay: FpsOverlay,
     camera_animation: Option<CameraAnimation>,
@@ -288,6 +291,8 @@ impl GraphView {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             scene,
+            full_scene: None,
+            task_filters: TaskFilters::default(),
             camera: GraphCamera::new(GraphCameraLimits::default()),
             fps_overlay: FpsOverlay::new(fps_overlay_enabled),
             camera_animation: None,
@@ -323,6 +328,54 @@ impl GraphView {
         this
     }
 
+    pub fn set_task_filters(&mut self, filters: TaskFilters, cx: &mut Context<Self>) {
+        if self.task_filters == filters {
+            return;
+        }
+
+        let was_active = self.task_filters.is_active();
+        self.task_filters = filters;
+        let is_active = self.task_filters.is_active();
+
+        let previous_selected = self.scene.selection().selected_node;
+
+        match (was_active, is_active) {
+            (false, false) => {}
+            (_, true) => {
+                if self.full_scene.is_none() {
+                    self.full_scene =
+                        Some(std::mem::replace(&mut self.scene, GraphScene::empty_demo()));
+                }
+                if let Some(full) = self.full_scene.as_ref() {
+                    self.scene = full.filtered_pruned(&self.task_filters);
+                }
+
+                if !was_active {
+                    // Fit-to-view once on entering filter mode so large graphs become inspectable
+                    // without manual pan/zoom.
+                    self.did_initial_fit = false;
+                    self.fit_suppressed = false;
+                }
+            }
+            (true, false) => {
+                if let Some(full) = self.full_scene.take() {
+                    self.scene = full;
+                }
+            }
+        }
+
+        self.pan_drag = None;
+        self.edge_label_cache.borrow_mut().clear();
+
+        let next_selected = self.scene.selection().selected_node;
+        if previous_selected != next_selected {
+            self.reset_expanded_card_state();
+            self.sync_task_session_view(next_selected, cx);
+        }
+
+        cx.notify();
+    }
+
     pub fn replace_from_epic_graph(
         &mut self,
         graph: &redesmyn_protocol::client::EpicGraph,
@@ -331,14 +384,20 @@ impl GraphView {
         let previous_selection = self.scene.selection().clone();
         let from_layout = self.snapshot_displayed_layout();
 
-        self.scene.replace_from_epic_graph(graph);
+        if let Some(full) = self.full_scene.as_mut() {
+            full.replace_from_epic_graph(graph);
+            self.scene = full.filtered_pruned(&self.task_filters);
+        } else {
+            self.scene.replace_from_epic_graph(graph);
+        }
 
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
+        let canonical = self.full_scene.as_ref().unwrap_or(&self.scene);
         self.quick_action_opacity
-            .retain(|task_id| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+            .retain(|task_id| canonical.node(GraphNodeId::Task(*task_id)).is_some());
         self.collapsed_title_cache
-            .retain(|task_id, _| self.scene.node(GraphNodeId::Task(*task_id)).is_some());
+            .retain(|task_id, _| canonical.node(GraphNodeId::Task(*task_id)).is_some());
         let referenced_session_events: HashSet<redesmyn_ids::SessionEventId> = self
             .scene
             .nodes()
@@ -393,28 +452,16 @@ impl GraphView {
         }
     }
 
-    fn selection_label(&self) -> String {
-        if let Some(edge) = self.scene.selection().selected_edge {
-            return format!("Selected edge: {edge}");
-        }
-        let count = self.scene.selection().selected_nodes.len();
-        if count > 1 {
-            return format!("Selected nodes: {count}");
-        }
-        if let Some(node) = self
-            .visual_selected_node()
-            .or_else(|| self.scene.selection().selected_nodes.iter().next().copied())
-        {
-            return format!("Selected node: {node}");
-        }
-        "Selected: <none>".to_string()
-    }
-
     fn update_selection(&mut self, mutate: impl FnOnce(&mut GraphScene), cx: &mut Context<Self>) {
         let previous_selection = self.scene.selection().clone();
         let from_layout = self.snapshot_displayed_layout();
 
-        mutate(&mut self.scene);
+        if let Some(full) = self.full_scene.as_mut() {
+            mutate(full);
+            self.scene = full.filtered_pruned(&self.task_filters);
+        } else {
+            mutate(&mut self.scene);
+        }
 
         let next_selection = self.scene.selection().clone();
         if previous_selection.selected_node != next_selection.selected_node {
@@ -2100,45 +2147,11 @@ impl Render for GraphView {
 
         let theme = theme_for_window(window, cx);
         let rem_size = window.rem_size();
-        let label = self.selection_label();
         let zoom = self.camera.zoom();
-        let controls_hint = if cfg!(target_os = "macos") {
-            "Pan: two-finger scroll/drag · Zoom: ⌘ + scroll"
-        } else {
-            "Pan: scroll/drag · Zoom: Ctrl + scroll"
-        };
 
         let graph = cx.entity();
         let graph_for_prepaint = graph.clone();
         let graph_for_paint = graph.clone();
-
-        let debug_bar = div()
-            .h(px(30.0))
-            .px(theme.spacing.md)
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .bg(theme.colors.surface_elevated)
-            .border_b_1()
-            .border_color(theme.colors.border.opacity(0.6))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.md)
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(controls_hint)
-                    .child(format!("Zoom: {:.2}", zoom)),
-            );
 
         let canvas = canvas(
             move |bounds, _window, cx| {
@@ -3065,7 +3078,6 @@ impl Render for GraphView {
                     }
                 }
             })
-            .child(debug_bar)
             .child(
                 div()
                     .id(("graph_canvas", cx.entity_id()))

@@ -5,6 +5,7 @@ use gpui::SharedString;
 use redesmyn_graph_layout::{ForestLayoutEngine, LayoutConfig, LayoutNode, LayoutOptions};
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
+use redesmyn_ui::task_filters::{TaskAgentStatus, TaskFilterTarget, TaskFilters};
 
 pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
     redesmyn_graph_layout::Size {
@@ -85,6 +86,32 @@ pub enum AgentStatus {
     Blocked,
     Stopped,
     Error,
+}
+
+impl From<AgentStatus> for TaskAgentStatus {
+    fn from(value: AgentStatus) -> Self {
+        match value {
+            AgentStatus::Unknown => TaskAgentStatus::Unknown,
+            AgentStatus::Running => TaskAgentStatus::Running,
+            AgentStatus::Blocked => TaskAgentStatus::Blocked,
+            AgentStatus::Stopped => TaskAgentStatus::Stopped,
+            AgentStatus::Error => TaskAgentStatus::Error,
+        }
+    }
+}
+
+impl TaskFilterTarget for GraphSceneNode {
+    fn task_state(&self) -> TaskState {
+        self.state
+    }
+
+    fn merge_readiness(&self) -> MergeReadiness {
+        self.merge_readiness
+    }
+
+    fn agent_status(&self) -> TaskAgentStatus {
+        self.agent_status.into()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,6 +317,146 @@ impl GraphScene {
 
     pub fn edges(&self) -> impl Iterator<Item = &GraphSceneEdge> {
         self.edges.values()
+    }
+
+    #[must_use]
+    pub fn filtered_pruned(&self, filters: &TaskFilters) -> Self {
+        if !filters.is_active() {
+            return self.clone();
+        }
+
+        let mut matches = BTreeSet::new();
+        for node in self.nodes.values() {
+            if node.id == GraphNodeId::Trunk {
+                continue;
+            }
+            if filters.matches(node) {
+                matches.insert(node.id);
+            }
+        }
+
+        let mut included = matches.clone();
+
+        // Include one level of children for context.
+        for node in self.nodes.values() {
+            if node.id == GraphNodeId::Trunk {
+                continue;
+            }
+            let Some(parent_id) = node.parent_id else {
+                continue;
+            };
+            if matches.contains(&parent_id) {
+                included.insert(node.id);
+            }
+        }
+
+        // Always include the root ancestor for each visible node (but collapse intermediate
+        // ancestors by reparenting below).
+        let included_snapshot: Vec<GraphNodeId> = included.iter().copied().collect();
+        for node_id in included_snapshot {
+            let mut cursor = node_id;
+            while let Some(node) = self.nodes.get(&cursor)
+                && let Some(parent_id) = node.parent_id
+            {
+                cursor = parent_id;
+            }
+            included.insert(cursor);
+        }
+
+        let mut new_parents: BTreeMap<GraphNodeId, Option<GraphNodeId>> = BTreeMap::new();
+        for node_id in included.iter().copied() {
+            let Some(node) = self.nodes.get(&node_id) else {
+                continue;
+            };
+
+            let mut parent = node.parent_id;
+            while let Some(parent_id) = parent {
+                if included.contains(&parent_id) {
+                    break;
+                }
+                parent = self.nodes.get(&parent_id).and_then(|node| node.parent_id);
+            }
+            new_parents.insert(node_id, parent);
+        }
+
+        let mut next = Self::empty_demo();
+        next.trunk_timeline = self.trunk_timeline.clone();
+
+        for node_id in included.iter().copied() {
+            let Some(node) = self.nodes.get(&node_id) else {
+                continue;
+            };
+            if node_id == GraphNodeId::Trunk {
+                continue;
+            }
+
+            let mut cloned = node.clone();
+            cloned.parent_id = new_parents.get(&node_id).copied().unwrap_or(None);
+            next.nodes.insert(node_id, cloned);
+            next.node_sizes.insert(
+                node_id,
+                self.node_sizes
+                    .get(&node_id)
+                    .copied()
+                    .unwrap_or_else(default_node_size),
+            );
+        }
+
+        // Selection should remain stable when possible, but it cannot reference hidden nodes.
+        next.selection = self.selection.clone();
+        next.selection
+            .selected_nodes
+            .retain(|node_id| included.contains(node_id));
+        next.selection.selected_node = next
+            .selection
+            .selected_node
+            .filter(|node_id| included.contains(node_id));
+        next.selection.hovered_node = next
+            .selection
+            .hovered_node
+            .filter(|node_id| included.contains(node_id));
+        next.selection.selected_edge = None;
+        next.selection.hovered_edge = None;
+
+        let original_parents: BTreeMap<GraphNodeId, Option<GraphNodeId>> = self
+            .nodes
+            .iter()
+            .map(|(id, node)| (*id, node.parent_id))
+            .collect();
+
+        let commit_counts: BTreeMap<GraphEdgeId, Option<u32>> = self
+            .edges
+            .iter()
+            .filter(|(edge_id, _)| edge_id.from != GraphNodeId::Trunk)
+            .map(|(edge_id, edge)| (*edge_id, edge.commit_count))
+            .collect();
+
+        let visible_nodes: Vec<GraphNodeId> = next.nodes.keys().copied().collect();
+        for node_id in visible_nodes {
+            let Some(node) = next.nodes.get(&node_id) else {
+                continue;
+            };
+            let Some(parent_id) = node.parent_id else {
+                continue;
+            };
+
+            let edge_id = GraphEdgeId {
+                from: parent_id,
+                to: node_id,
+            };
+
+            let commit_count = if original_parents.get(&node_id) == Some(&Some(parent_id)) {
+                commit_counts.get(&edge_id).copied().unwrap_or(None)
+            } else {
+                None
+            };
+
+            next.insert_edge(edge_id, commit_count);
+        }
+
+        next.sync_trunk_overlay();
+        next.relayout();
+        next
     }
 
     #[must_use]

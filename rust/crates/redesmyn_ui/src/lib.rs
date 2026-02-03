@@ -8,6 +8,7 @@
 pub mod components;
 pub mod settings;
 pub mod styles;
+pub mod task_filters;
 pub mod traits;
 pub mod utils;
 

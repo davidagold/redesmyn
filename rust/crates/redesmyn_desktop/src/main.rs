@@ -4,6 +4,7 @@ mod control_plane_client;
 mod foundations_demo;
 mod root_view;
 mod screenshot;
+mod task_filters;
 mod test_artifacts;
 mod ui_driver;
 mod vsync;
@@ -89,6 +90,7 @@ fn main() {
         }
         redesmyn_ui::components::bind_text_input_keys(cx);
         crate::command_palette::bind_command_palette_keys(cx);
+        crate::task_filters::bind_task_filter_keys(cx);
 
         let window_size = gpui::Size::new(
             gpui::px(ui_config.desktop.window.width as f32),
