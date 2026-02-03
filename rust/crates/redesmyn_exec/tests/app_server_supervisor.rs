@@ -65,7 +65,15 @@ impl AppServerClient for FakeAppServerClient {
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => Ok(AppServerResponse::Interrupted),
-                AppServerRequest::SetPermissionsMode { .. } => Ok(AppServerResponse::PermissionsModeSet),
+                AppServerRequest::SetPermissionsMode { .. } => {
+                    Ok(AppServerResponse::PermissionsModeSet)
+                }
+                AppServerRequest::SetCodexApprovalPolicy { .. } => {
+                    Ok(AppServerResponse::CodexApprovalPolicySet)
+                }
+                AppServerRequest::SetCodexSandboxPolicy { .. } => {
+                    Ok(AppServerResponse::CodexSandboxPolicySet)
+                }
                 AppServerRequest::RespondPermissionRequest { .. } => {
                     Ok(AppServerResponse::PermissionRequestResponded)
                 }
@@ -133,7 +141,15 @@ impl AppServerClient for DeltaAppServerClient {
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => Ok(AppServerResponse::Interrupted),
-                AppServerRequest::SetPermissionsMode { .. } => Ok(AppServerResponse::PermissionsModeSet),
+                AppServerRequest::SetPermissionsMode { .. } => {
+                    Ok(AppServerResponse::PermissionsModeSet)
+                }
+                AppServerRequest::SetCodexApprovalPolicy { .. } => {
+                    Ok(AppServerResponse::CodexApprovalPolicySet)
+                }
+                AppServerRequest::SetCodexSandboxPolicy { .. } => {
+                    Ok(AppServerResponse::CodexSandboxPolicySet)
+                }
                 AppServerRequest::RespondPermissionRequest { .. } => {
                     Ok(AppServerResponse::PermissionRequestResponded)
                 }

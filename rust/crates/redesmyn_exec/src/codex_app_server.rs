@@ -5,8 +5,9 @@ use std::sync::Arc;
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::session::{
-    CommandExecutionPermissionRequest, ExternalSessionRef, FileChangePermissionRequest,
-    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionsMode,
+    CodexApprovalPolicy, CodexSandboxPolicy, CommandExecutionPermissionRequest, ExternalSessionRef,
+    FileChangePermissionRequest, PermissionDecision, PermissionDecisionBy, PermissionRequest,
+    PermissionsMode,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,10 @@ struct TurnStartParams {
     #[serde(rename = "threadId")]
     thread_id: String,
     input: Vec<UserInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval_policy: Option<CodexApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sandbox_policy: Option<CodexSandboxPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -272,6 +277,8 @@ struct CodexAppServerStateInner {
     emitted_item_starts: HashSet<String>,
     emitted_item_ids: HashSet<String>,
     permissions_mode: PermissionsMode,
+    approval_policy: Option<CodexApprovalPolicy>,
+    sandbox_policy: Option<CodexSandboxPolicy>,
     pending_permission_requests: HashMap<String, oneshot::Sender<PermissionDecision>>,
 }
 
@@ -285,6 +292,8 @@ impl Default for CodexAppServerStateInner {
             emitted_item_starts: HashSet::new(),
             emitted_item_ids: HashSet::new(),
             permissions_mode: PermissionsMode::Ask,
+            approval_policy: None,
+            sandbox_policy: None,
             pending_permission_requests: HashMap::new(),
         }
     }
@@ -336,6 +345,22 @@ impl CodexAppServerState {
 
     async fn set_permissions_mode(&self, mode: PermissionsMode) {
         self.inner.lock().await.permissions_mode = mode;
+    }
+
+    async fn approval_policy(&self) -> Option<CodexApprovalPolicy> {
+        self.inner.lock().await.approval_policy
+    }
+
+    async fn set_approval_policy(&self, approval_policy: Option<CodexApprovalPolicy>) {
+        self.inner.lock().await.approval_policy = approval_policy;
+    }
+
+    async fn sandbox_policy(&self) -> Option<CodexSandboxPolicy> {
+        self.inner.lock().await.sandbox_policy.clone()
+    }
+
+    async fn set_sandbox_policy(&self, sandbox_policy: Option<CodexSandboxPolicy>) {
+        self.inner.lock().await.sandbox_policy = sandbox_policy;
     }
 
     async fn register_permission_request(
@@ -519,11 +544,16 @@ impl CodexAppServerClient {
                     reason: "missing active codex thread id".to_owned(),
                 })?;
 
+        let approval_policy = self.state.approval_policy().await;
+        let sandbox_policy = self.state.sandbox_policy().await;
+
         let params = TurnStartParams {
             thread_id,
             input: vec![UserInput::Text {
                 text: prompt.to_owned(),
             }],
+            approval_policy,
+            sandbox_policy,
         };
         let params = serde_json::to_value(params).map_err(|err| AppServerRequestError::Failed {
             reason: format!("turn/start params serialization failed: {err}"),
@@ -633,6 +663,14 @@ impl AppServerClient for CodexAppServerClient {
                 AppServerRequest::SetPermissionsMode { mode } => {
                     self.state.set_permissions_mode(mode).await;
                     Ok(AppServerResponse::PermissionsModeSet)
+                }
+                AppServerRequest::SetCodexApprovalPolicy { approval_policy } => {
+                    self.state.set_approval_policy(approval_policy).await;
+                    Ok(AppServerResponse::CodexApprovalPolicySet)
+                }
+                AppServerRequest::SetCodexSandboxPolicy { sandbox_policy } => {
+                    self.state.set_sandbox_policy(sandbox_policy).await;
+                    Ok(AppServerResponse::CodexSandboxPolicySet)
                 }
                 AppServerRequest::RespondPermissionRequest {
                     request_id,
@@ -1014,83 +1052,55 @@ async fn handle_server_request(
                 })
                 .await;
 
-            let mode = state.permissions_mode().await;
-            match mode {
-                PermissionsMode::AutoApprove => {
-                    conn.respond_ok(id, serde_json::json!({ "decision": "approve" }))
-                        .await;
-                    let _ = events_tx
-                        .send(AppServerEvent::PermissionDecided {
-                            request_id,
-                            decision: PermissionDecision::Approve,
-                            decided_by: PermissionDecisionBy::ModeAutoApprove,
-                        })
-                        .await;
+            let Some(rx) = state.register_permission_request(request_id.clone()).await else {
+                conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                    .await;
+                let _ = events_tx
+                    .send(AppServerEvent::PermissionDecided {
+                        request_id,
+                        decision: PermissionDecision::Deny,
+                        decided_by: PermissionDecisionBy::Timeout,
+                    })
+                    .await;
+                return;
+            };
+
+            let conn = Arc::clone(conn);
+            let state = Arc::clone(state);
+            let events_tx = events_tx.clone();
+
+            tokio::spawn(async move {
+                const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+                let (decision, decided_by) = match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await
+                {
+                    Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
+                    Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                };
+
+                if decided_by == PermissionDecisionBy::Timeout {
+                    state.clear_permission_request(&request_id).await;
                 }
-                PermissionsMode::Deny => {
-                    conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                        .await;
-                    let _ = events_tx
-                        .send(AppServerEvent::PermissionDecided {
-                            request_id,
-                            decision: PermissionDecision::Deny,
-                            decided_by: PermissionDecisionBy::ModeAutoDeny,
-                        })
-                        .await;
-                }
-                _ => {
-                    let Some(rx) = state.register_permission_request(request_id.clone()).await
-                    else {
-                        conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                            .await;
-                        let _ = events_tx
-                            .send(AppServerEvent::PermissionDecided {
-                                request_id,
-                                decision: PermissionDecision::Deny,
-                                decided_by: PermissionDecisionBy::Timeout,
-                            })
-                            .await;
-                        return;
-                    };
 
-                    let conn = Arc::clone(conn);
-                    let state = Arc::clone(state);
-                    let events_tx = events_tx.clone();
+                let decision_for_wire = match decision {
+                    PermissionDecision::Approve => "approve",
+                    PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
+                };
+                conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
+                    .await;
 
-                    tokio::spawn(async move {
-                        const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
-
-                        let (decision, decided_by) =
-                            match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
-                                Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
-                                Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
-                            };
-
-                        if decided_by == PermissionDecisionBy::Timeout {
-                            state.clear_permission_request(&request_id).await;
-                        }
-
-                        let decision_for_wire = match decision {
-                            PermissionDecision::Approve => "approve",
-                            PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
-                        };
-                        conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
-                            .await;
-
-                        let decision_for_event = match decision {
-                            PermissionDecision::Approve => PermissionDecision::Approve,
-                            PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
-                        };
-                        let _ = events_tx
-                            .send(AppServerEvent::PermissionDecided {
-                                request_id,
-                                decision: decision_for_event,
-                                decided_by,
-                            })
-                            .await;
-                    });
-                }
-            }
+                let decision_for_event = match decision {
+                    PermissionDecision::Approve => PermissionDecision::Approve,
+                    PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                };
+                let _ = events_tx
+                    .send(AppServerEvent::PermissionDecided {
+                        request_id,
+                        decision: decision_for_event,
+                        decided_by,
+                    })
+                    .await;
+            });
         }
         "item/fileChange/requestApproval" => {
             let params: FileChangeRequestApprovalParams = match serde_json::from_value(
@@ -1125,83 +1135,55 @@ async fn handle_server_request(
                 })
                 .await;
 
-            let mode = state.permissions_mode().await;
-            match mode {
-                PermissionsMode::AutoApprove => {
-                    conn.respond_ok(id, serde_json::json!({ "decision": "approve" }))
-                        .await;
-                    let _ = events_tx
-                        .send(AppServerEvent::PermissionDecided {
-                            request_id,
-                            decision: PermissionDecision::Approve,
-                            decided_by: PermissionDecisionBy::ModeAutoApprove,
-                        })
-                        .await;
+            let Some(rx) = state.register_permission_request(request_id.clone()).await else {
+                conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                    .await;
+                let _ = events_tx
+                    .send(AppServerEvent::PermissionDecided {
+                        request_id,
+                        decision: PermissionDecision::Deny,
+                        decided_by: PermissionDecisionBy::Timeout,
+                    })
+                    .await;
+                return;
+            };
+
+            let conn = Arc::clone(conn);
+            let state = Arc::clone(state);
+            let events_tx = events_tx.clone();
+
+            tokio::spawn(async move {
+                const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+                let (decision, decided_by) = match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await
+                {
+                    Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
+                    Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                };
+
+                if decided_by == PermissionDecisionBy::Timeout {
+                    state.clear_permission_request(&request_id).await;
                 }
-                PermissionsMode::Deny => {
-                    conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                        .await;
-                    let _ = events_tx
-                        .send(AppServerEvent::PermissionDecided {
-                            request_id,
-                            decision: PermissionDecision::Deny,
-                            decided_by: PermissionDecisionBy::ModeAutoDeny,
-                        })
-                        .await;
-                }
-                _ => {
-                    let Some(rx) = state.register_permission_request(request_id.clone()).await
-                    else {
-                        conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                            .await;
-                        let _ = events_tx
-                            .send(AppServerEvent::PermissionDecided {
-                                request_id,
-                                decision: PermissionDecision::Deny,
-                                decided_by: PermissionDecisionBy::Timeout,
-                            })
-                            .await;
-                        return;
-                    };
 
-                    let conn = Arc::clone(conn);
-                    let state = Arc::clone(state);
-                    let events_tx = events_tx.clone();
+                let decision_for_wire = match decision {
+                    PermissionDecision::Approve => "approve",
+                    PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
+                };
+                conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
+                    .await;
 
-                    tokio::spawn(async move {
-                        const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
-
-                        let (decision, decided_by) =
-                            match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
-                                Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
-                                Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
-                            };
-
-                        if decided_by == PermissionDecisionBy::Timeout {
-                            state.clear_permission_request(&request_id).await;
-                        }
-
-                        let decision_for_wire = match decision {
-                            PermissionDecision::Approve => "approve",
-                            PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
-                        };
-                        conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
-                            .await;
-
-                        let decision_for_event = match decision {
-                            PermissionDecision::Approve => PermissionDecision::Approve,
-                            PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
-                        };
-                        let _ = events_tx
-                            .send(AppServerEvent::PermissionDecided {
-                                request_id,
-                                decision: decision_for_event,
-                                decided_by,
-                            })
-                            .await;
-                    });
-                }
-            }
+                let decision_for_event = match decision {
+                    PermissionDecision::Approve => PermissionDecision::Approve,
+                    PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                };
+                let _ = events_tx
+                    .send(AppServerEvent::PermissionDecided {
+                        request_id,
+                        decision: decision_for_event,
+                        decided_by,
+                    })
+                    .await;
+            });
         }
         "item/tool/requestUserInput" => {
             // Safe-by-default: without a control-plane surface for this, fail fast so the

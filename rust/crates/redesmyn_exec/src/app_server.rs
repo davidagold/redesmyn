@@ -12,10 +12,12 @@ use redesmyn_protocol::daemon::{
 };
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
-    ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent, SessionEventKind, SessionScope,
-    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
-    TurnState, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
-    PermissionRequested, PermissionsMode, PermissionsModeChanged,
+    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy,
+    CodexSandboxPolicyChanged, ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent,
+    SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation, ToolResult,
+    TurnCompleted, TurnStarted, TurnState, PermissionDecided, PermissionDecision,
+    PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
+    PermissionsModeChanged,
 };
 use redesmyn_protocol::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -71,6 +73,12 @@ pub enum AppServerRequest {
     SendMessage { intent: AppServerTurnIntent },
     Interrupt,
     SetPermissionsMode { mode: PermissionsMode },
+    SetCodexApprovalPolicy {
+        approval_policy: Option<CodexApprovalPolicy>,
+    },
+    SetCodexSandboxPolicy {
+        sandbox_policy: Option<CodexSandboxPolicy>,
+    },
     RespondPermissionRequest {
         request_id: String,
         decision: PermissionDecision,
@@ -82,6 +90,8 @@ pub enum AppServerResponse {
     MessageAccepted,
     Interrupted,
     PermissionsModeSet,
+    CodexApprovalPolicySet,
+    CodexSandboxPolicySet,
     PermissionRequestResponded,
 }
 
@@ -276,6 +286,14 @@ enum SessionCommand {
         mode: PermissionsMode,
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
+    SetCodexApprovalPolicy {
+        approval_policy: Option<CodexApprovalPolicy>,
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
+    SetCodexSandboxPolicy {
+        sandbox_policy: Option<CodexSandboxPolicy>,
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
     RespondPermissionRequest {
         request_id: String,
         decision: PermissionDecision,
@@ -453,6 +471,46 @@ impl AppServerSupervisor {
         let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
         self.send_command(session_id, SessionCommand::SetPermissionsMode { mode, reply })
             .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
+    }
+
+    pub async fn set_codex_approval_policy(
+        &self,
+        session_id: SessionId,
+        approval_policy: Option<CodexApprovalPolicy>,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(
+            session_id,
+            SessionCommand::SetCodexApprovalPolicy {
+                approval_policy,
+                reply,
+            },
+        )
+        .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
+    }
+
+    pub async fn set_codex_sandbox_policy(
+        &self,
+        session_id: SessionId,
+        sandbox_policy: Option<CodexSandboxPolicy>,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(
+            session_id,
+            SessionCommand::SetCodexSandboxPolicy {
+                sandbox_policy,
+                reply,
+            },
+        )
+        .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)?;
@@ -686,6 +744,63 @@ async fn run_session(
                         session_id,
                         scope,
                         format!("set_permissions_mode_failed: {err}"),
+                    );
+                }
+
+                let _ = reply.send(response);
+            }
+            SessionCommand::SetCodexApprovalPolicy {
+                approval_policy,
+                reply,
+            } => {
+                let response = client
+                    .request(AppServerRequest::SetCodexApprovalPolicy { approval_policy })
+                    .await;
+
+                if response.is_ok() {
+                    emit_event(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        None,
+                        SessionEventKind::CodexApprovalPolicyChanged(CodexApprovalPolicyChanged {
+                            approval_policy,
+                        }),
+                    )
+                    .await?;
+                } else if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("set_codex_approval_policy_failed: {err}"),
+                    );
+                }
+
+                let _ = reply.send(response);
+            }
+            SessionCommand::SetCodexSandboxPolicy { sandbox_policy, reply } => {
+                let response = client
+                    .request(AppServerRequest::SetCodexSandboxPolicy { sandbox_policy: sandbox_policy.clone() })
+                    .await;
+
+                if response.is_ok() {
+                    emit_event(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        None,
+                        SessionEventKind::CodexSandboxPolicyChanged(CodexSandboxPolicyChanged {
+                            sandbox_policy,
+                        }),
+                    )
+                    .await?;
+                } else if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("set_codex_sandbox_policy_failed: {err}"),
                     );
                 }
 
