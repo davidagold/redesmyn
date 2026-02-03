@@ -95,6 +95,11 @@ impl Element for ScrollFade {
     ) {
         self.child.paint(window, cx);
 
+        fn smoothstep(t: f32) -> f32 {
+            // 3t^2 - 2t^3
+            t * t * (3.0 - 2.0 * t)
+        }
+
         let fade_height = self.fade_height;
         if fade_height <= px(0.0) {
             return;
@@ -111,9 +116,29 @@ impl Element for ScrollFade {
             return;
         }
 
-        let offset_y = self.scroll_handle.offset().y.max(px(0.0)).min(max_offset_y);
-        let top_alpha = (offset_y / fade_height).clamp(0.0, 1.0);
-        let bottom_alpha = ((max_offset_y - offset_y) / fade_height).clamp(0.0, 1.0);
+        // `ScrollHandle::offset().y` is negative when scrolled down (i.e., the content is
+        // translated upwards). Map to a positive "scroll position" in [0, max_offset].
+        let scroll_y = (-self.scroll_handle.offset().y)
+            .max(px(0.0))
+            .min(max_offset_y);
+
+        let distance_to_top = scroll_y;
+        let distance_to_bottom = (max_offset_y - scroll_y).max(px(0.0));
+
+        let edge_threshold = px(1.0);
+        let stop_for_distance = |distance: Pixels| -> f32 {
+            if distance <= edge_threshold || max_offset_y <= edge_threshold {
+                return 0.0;
+            }
+
+            // Increase fade thickness as you move away from an edge. We bias early so the fade
+            // becomes noticeable quickly, while still varying smoothly over large scroll ranges.
+            let progress = (distance / max_offset_y).clamp(0.0, 1.0);
+            smoothstep(progress.sqrt())
+        };
+
+        let top_stop = stop_for_distance(distance_to_top);
+        let bottom_stop = stop_for_distance(distance_to_bottom);
 
         let theme = theme_for_window(window, cx);
         let bg = self.background_color.unwrap_or(theme.colors.surface);
@@ -141,21 +166,21 @@ impl Element for ScrollFade {
             bottom_right: radius,
         };
 
-        if top_alpha > 1e-3 {
+        if top_stop > 1e-3 {
             let gradient = linear_gradient(
                 180.0,
-                linear_color_stop(bg.opacity(top_alpha), 0.0),
-                linear_color_stop(bg.opacity(0.0), 1.0),
+                linear_color_stop(bg, 0.0),
+                linear_color_stop(bg.opacity(0.0), top_stop),
             )
             .color_space(gpui::ColorSpace::Oklab);
             window.paint_quad(fill(top_bounds, gradient).corner_radii(top_corners));
         }
 
-        if bottom_alpha > 1e-3 {
+        if bottom_stop > 1e-3 {
             let gradient = linear_gradient(
                 0.0,
-                linear_color_stop(bg.opacity(bottom_alpha), 0.0),
-                linear_color_stop(bg.opacity(0.0), 1.0),
+                linear_color_stop(bg, 0.0),
+                linear_color_stop(bg.opacity(0.0), bottom_stop),
             )
             .color_space(gpui::ColorSpace::Oklab);
             window.paint_quad(fill(bottom_bounds, gradient).corner_radii(bottom_corners));
