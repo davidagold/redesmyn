@@ -762,6 +762,7 @@ pub struct SessionView {
     pending_permissions_mode: Option<PermissionsMode>,
     permissions_mode_action: UserActionState,
     set_permissions_mode_task: Option<Task<()>>,
+    permissions_mode_menu_open: bool,
     permission_request_ids: Rc<HashSet<String>>,
     permission_decisions_by_request_id: Rc<HashMap<String, PermissionDecisionState>>,
     permission_request_actions: HashMap<String, UserActionState>,
@@ -892,6 +893,7 @@ impl SessionView {
             pending_permissions_mode: None,
             permissions_mode_action: UserActionState::default(),
             set_permissions_mode_task: None,
+            permissions_mode_menu_open: false,
             permission_request_ids: Rc::new(HashSet::new()),
             permission_decisions_by_request_id: Rc::new(HashMap::new()),
             permission_request_actions: HashMap::new(),
@@ -1230,6 +1232,7 @@ impl SessionView {
             self.pending_permissions_mode = None;
             self.permissions_mode_action = UserActionState::default();
             self.set_permissions_mode_task = None;
+            self.permissions_mode_menu_open = false;
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
             self.permission_request_actions = HashMap::new();
@@ -1330,6 +1333,7 @@ impl SessionView {
         self.pending_permissions_mode = None;
         self.permissions_mode_action = UserActionState::default();
         self.set_permissions_mode_task = None;
+        self.permissions_mode_menu_open = false;
         self.permission_request_ids = Rc::new(HashSet::new());
         self.permission_decisions_by_request_id = Rc::new(HashMap::new());
         self.permission_request_actions = HashMap::new();
@@ -1439,6 +1443,7 @@ impl SessionView {
 
         self.permissions_mode_action.start();
         self.pending_permissions_mode = Some(mode);
+        self.permissions_mode_menu_open = false;
         cx.notify();
 
         let session_id = feed.session_id;
@@ -1467,6 +1472,7 @@ impl SessionView {
                 self.permissions_mode_action.succeed();
                 self.permissions_mode_action.clear_error();
                 self.pending_permissions_mode = None;
+                self.permissions_mode_menu_open = false;
                 if let Some(feed) = self.feed.as_mut() {
                     feed.permissions_mode = mode;
                 }
@@ -1474,6 +1480,7 @@ impl SessionView {
             Err(err) => {
                 self.permissions_mode_action.fail(err.message);
                 self.pending_permissions_mode = None;
+                self.permissions_mode_menu_open = false;
             }
         }
 
@@ -4854,51 +4861,128 @@ impl Render for SessionView {
             None
         };
 
-        let permissions_mode_buttons = {
-            let view = view.clone();
-            let make_button = move |id: &'static str,
-                                    icon: &'static str,
-                                    mode: PermissionsMode,
-                                    tooltip: &'static str| {
-                let view = view.clone();
-                IconButton::new(
-                    (id, entity_id),
-                    div().child(icon),
-                )
-                .active(displayed_permissions_mode == mode)
-                .disabled(permissions_disabled)
-                .disabled_reason(permissions_disabled_reason)
-                .tooltip(tooltip)
-                .on_click(move |event, _window, cx| {
-                    if event.standard_click() {
-                        view.update(cx, |this, cx| this.set_permissions_mode(mode, cx));
-                    }
-                })
-            };
+        let permissions_menu_open = self.permissions_mode_menu_open && !permissions_disabled;
+        let permissions_mode_label = match displayed_permissions_mode {
+            PermissionsMode::Ask => "Ask",
+            PermissionsMode::AutoApprove => "Auto-approve",
+            PermissionsMode::Deny => "Deny",
+            PermissionsMode::Unknown => "Unknown",
+        };
+        let permissions_menu_chevron = if permissions_menu_open { "▴" } else { "▾" };
 
-            div()
+        let permissions_mode_dropdown = {
+            let toggle_view = view.clone();
+            let mut select_button = div()
+                .id(("session_permissions_mode_dropdown", entity_id))
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(theme.spacing.xs)
-                .child(make_button(
-                    "session_permissions_mode_ask",
-                    "?",
-                    PermissionsMode::Ask,
-                    "Permissions: ask before running commands or editing files",
-                ))
-                .child(make_button(
-                    "session_permissions_mode_auto_approve",
-                    "✓",
-                    PermissionsMode::AutoApprove,
-                    "Permissions: automatically approve requests",
-                ))
-                .child(make_button(
-                    "session_permissions_mode_deny",
-                    "×",
-                    PermissionsMode::Deny,
-                    "Permissions: automatically deny requests",
-                ))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.xs)
+                .rounded(theme.radius.md)
+                .bg(theme.colors.accent)
+                .text_size(theme.typography.caption.size)
+                .text_color(theme.colors.foreground)
+                .cursor_pointer()
+                .focusable()
+                .child(permissions_mode_label)
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(permissions_menu_chevron),
+                );
+
+            if permissions_disabled {
+                select_button = select_button.opacity(0.55).cursor_not_allowed();
+            } else {
+                select_button = select_button.on_click(move |event, _window, cx| {
+                    if event.standard_click() {
+                        toggle_view.update(cx, |this, cx| {
+                            this.permissions_mode_menu_open = !this.permissions_mode_menu_open;
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+
+            let menu = {
+                let view = view.clone();
+                let make_item = move |id: &'static str,
+                                      label: &'static str,
+                                      mode: PermissionsMode,
+                                      tooltip: &'static str| {
+                    let view = view.clone();
+                    let selected = displayed_permissions_mode == mode;
+                    let kind = if selected {
+                        ButtonKind::Secondary
+                    } else {
+                        ButtonKind::Ghost
+                    };
+
+                    TextButton::new((id, entity_id), label)
+                        .menu_item()
+                        .kind(kind)
+                        .disabled(permissions_disabled)
+                        .disabled_reason(permissions_disabled_reason)
+                        .tooltip(tooltip)
+                        .on_click(move |event, _window, cx| {
+                            if event.standard_click() {
+                                view.update(cx, |this, cx| {
+                                    this.permissions_mode_menu_open = false;
+                                    this.set_permissions_mode(mode, cx);
+                                });
+                            }
+                        })
+                };
+
+                div()
+                    .id(("session_permissions_mode_dropdown_menu", entity_id))
+                    .absolute()
+                    .left(px(0.0))
+                    .bottom(px(34.0))
+                    .w(px(220.0))
+                    .rounded(theme.radius.md)
+                    .shadow_md()
+                    .occlude()
+                    .child(
+                        div()
+                            .w_full()
+                            .p(theme.spacing.xs)
+                            .rounded(theme.radius.md)
+                            .bg(theme.colors.surface)
+                            .border_1()
+                            .border_color(theme.colors.border.opacity(0.5))
+                            .overflow_hidden()
+                            .flex()
+                            .flex_col()
+                            .gap(theme.spacing.xs)
+                            .child(make_item(
+                                "session_permissions_mode_ask",
+                                "Ask",
+                                PermissionsMode::Ask,
+                                "Ask before running commands or editing files",
+                            ))
+                            .child(make_item(
+                                "session_permissions_mode_auto_approve",
+                                "Auto-approve",
+                                PermissionsMode::AutoApprove,
+                                "Automatically approve requests",
+                            ))
+                            .child(make_item(
+                                "session_permissions_mode_deny",
+                                "Deny",
+                                PermissionsMode::Deny,
+                                "Automatically deny requests",
+                            )),
+                    )
+            };
+
+            div()
+                .relative()
+                .child(select_button)
+                .when(permissions_menu_open, |this| this.child(menu))
         };
 
         let composer_action_bar = div()
@@ -4921,7 +5005,7 @@ impl Render for SessionView {
                             .text_size(theme.typography.caption.size)
                             .child("Permissions"),
                     )
-                    .child(permissions_mode_buttons)
+                    .child(permissions_mode_dropdown)
                     .when_some(permissions_status, |this, status| this.child(status)),
             )
             .child(send_button);
