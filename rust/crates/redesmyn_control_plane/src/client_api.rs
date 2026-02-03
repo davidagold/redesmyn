@@ -14,7 +14,9 @@ use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
     ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand, StartAgentSessionCommand,
-    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_START,
+    RespondPermissionRequestCommand, SetSessionPermissionsModeCommand,
+    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
+    SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
 };
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, AgentSessionScopeKind,
@@ -25,13 +27,15 @@ use redesmyn_protocol::client::{
     GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse,
     ListChatSessionsResponse, ListEpicsResponse, ListTaskSessionsResponse, MergeReadiness,
     PinChatSessionToEpicResponse, Response, ResponseResult, SendSessionMessageResponse,
-    SessionSummary, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
+    RespondPermissionRequestResponse, SessionSummary, SetSessionPermissionsModeResponse,
+    StatusResponse, Subscribed, SubscriptionEvent, TaskState,
     UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
     WaitForIdleResponse,
 };
 use redesmyn_protocol::{
     ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef, ProtocolEnvelope,
-    ProtocolVersion, Scope, SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
+    PermissionDecision, PermissionsMode, ProtocolVersion, Scope, SessionEvent, SessionEventKind,
+    SessionScope, Timestamp, UserMessage,
 };
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
@@ -1060,6 +1064,199 @@ async fn handle_request_result(
                 SendSessionMessageResponse {
                     event,
                     session_id,
+                    command: Some(command),
+                },
+            ))
+        }
+        redesmyn_protocol::client::RequestPayload::SetSessionPermissionsMode(req) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.set_session_permissions_mode",
+                session_id = %req.session_id,
+                mode = ?req.mode,
+            );
+            let _guard = span.enter();
+
+            if matches!(req.mode, PermissionsMode::Unknown) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Unknown permissions mode.",
+                )));
+            }
+
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), req.session_id)
+                    .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            match envelope.scope {
+                Some(Scope::Repo { repo }) => {
+                    if session.scope_workspace_id != repo.workspace_id
+                        || session.scope_repo_id != repo.repo_id
+                    {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::NotFound,
+                            "Session not found in repo scope.",
+                        )));
+                    }
+                }
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {}
+            }
+
+            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
+            if !matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Permissions mode is only supported for structured sessions.",
+                )));
+            }
+
+            let json_payload = match encode_agent_command_payload(&SetSessionPermissionsModeCommand {
+                session_id: req.session_id,
+                mode: req.mode,
+            }) {
+                Ok(payload) => payload,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id: session.scope_workspace_id,
+                        repo_id: session.scope_repo_id,
+                    },
+                    SESSION_AGENT_SET_PERMISSIONS_MODE.to_string(),
+                    session.task_id,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
+            Ok(ResponseResult::SetSessionPermissionsMode(
+                SetSessionPermissionsModeResponse {
+                    command: Some(command),
+                },
+            ))
+        }
+        redesmyn_protocol::client::RequestPayload::RespondPermissionRequest(req) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.respond_permission_request",
+                session_id = %req.session_id,
+                request_id = %req.request_id,
+                decision = ?req.decision,
+            );
+            let _guard = span.enter();
+
+            if req.request_id.trim().is_empty() {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "request_id is required.",
+                )));
+            }
+
+            if matches!(req.decision, PermissionDecision::Unknown) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Unknown permission decision.",
+                )));
+            }
+
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), req.session_id)
+                    .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            match envelope.scope {
+                Some(Scope::Repo { repo }) => {
+                    if session.scope_workspace_id != repo.workspace_id
+                        || session.scope_repo_id != repo.repo_id
+                    {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::NotFound,
+                            "Session not found in repo scope.",
+                        )));
+                    }
+                }
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {}
+            }
+
+            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
+            if !matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Permission requests are only supported for structured sessions.",
+                )));
+            }
+
+            let json_payload = match encode_agent_command_payload(&RespondPermissionRequestCommand {
+                session_id: req.session_id,
+                request_id: req.request_id.clone(),
+                decision: req.decision,
+            }) {
+                Ok(payload) => payload,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id: session.scope_workspace_id,
+                        repo_id: session.scope_repo_id,
+                    },
+                    SESSION_AGENT_RESPOND_PERMISSION_REQUEST.to_string(),
+                    session.task_id,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
+            Ok(ResponseResult::RespondPermissionRequest(
+                RespondPermissionRequestResponse {
                     command: Some(command),
                 },
             ))

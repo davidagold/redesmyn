@@ -748,6 +748,11 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::ToolInvocation(_) => "tool_invocation",
         redesmyn_protocol::session::SessionEventKind::ToolResult(_) => "tool_result",
         redesmyn_protocol::session::SessionEventKind::StatusUpdate(_) => "status_update",
+        redesmyn_protocol::session::SessionEventKind::PermissionsModeChanged(_) => {
+            "permissions_mode_changed"
+        }
+        redesmyn_protocol::session::SessionEventKind::PermissionRequested(_) => "permission_requested",
+        redesmyn_protocol::session::SessionEventKind::PermissionDecided(_) => "permission_decided",
         redesmyn_protocol::session::SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
         redesmyn_protocol::session::SessionEventKind::Unknown(unknown) => &unknown.event_type,
     }

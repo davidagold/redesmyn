@@ -65,6 +65,10 @@ impl AppServerClient for FakeAppServerClient {
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => Ok(AppServerResponse::Interrupted),
+                AppServerRequest::SetPermissionsMode { .. } => Ok(AppServerResponse::PermissionsModeSet),
+                AppServerRequest::RespondPermissionRequest { .. } => {
+                    Ok(AppServerResponse::PermissionRequestResponded)
+                }
             }
         })
     }
@@ -129,6 +133,10 @@ impl AppServerClient for DeltaAppServerClient {
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => Ok(AppServerResponse::Interrupted),
+                AppServerRequest::SetPermissionsMode { .. } => Ok(AppServerResponse::PermissionsModeSet),
+                AppServerRequest::RespondPermissionRequest { .. } => {
+                    Ok(AppServerResponse::PermissionRequestResponded)
+                }
             }
         })
     }

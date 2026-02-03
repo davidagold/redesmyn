@@ -4,12 +4,16 @@ use std::sync::Arc;
 
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
 use redesmyn_logging::tracing;
-use redesmyn_protocol::session::ExternalSessionRef;
+use redesmyn_protocol::session::{
+    CommandExecutionPermissionRequest, ExternalSessionRef, FileChangePermissionRequest,
+    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionsMode,
+};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::time::Duration;
 
 use crate::app_server::{
     AppServerClient, AppServerConnection, AppServerEvent, AppServerProcess, AppServerProcessError,
@@ -259,7 +263,7 @@ impl SessionAccumulator {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct CodexAppServerStateInner {
     session_id: Option<String>,
     active_turn_id: Option<String>,
@@ -267,6 +271,23 @@ struct CodexAppServerStateInner {
     emitted_turn_completions: HashSet<String>,
     emitted_item_starts: HashSet<String>,
     emitted_item_ids: HashSet<String>,
+    permissions_mode: PermissionsMode,
+    pending_permission_requests: HashMap<String, oneshot::Sender<PermissionDecision>>,
+}
+
+impl Default for CodexAppServerStateInner {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            active_turn_id: None,
+            emitted_turn_starts: HashSet::new(),
+            emitted_turn_completions: HashSet::new(),
+            emitted_item_starts: HashSet::new(),
+            emitted_item_ids: HashSet::new(),
+            permissions_mode: PermissionsMode::Ask,
+            pending_permission_requests: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -292,6 +313,7 @@ impl CodexAppServerState {
             inner.emitted_turn_completions.clear();
             inner.emitted_item_starts.clear();
             inner.emitted_item_ids.clear();
+            inner.pending_permission_requests.clear();
         }
         self.accumulator.lock().await.reset();
     }
@@ -306,6 +328,52 @@ impl CodexAppServerState {
 
     async fn active_turn_id(&self) -> Option<String> {
         self.inner.lock().await.active_turn_id.clone()
+    }
+
+    async fn permissions_mode(&self) -> PermissionsMode {
+        self.inner.lock().await.permissions_mode
+    }
+
+    async fn set_permissions_mode(&self, mode: PermissionsMode) {
+        self.inner.lock().await.permissions_mode = mode;
+    }
+
+    async fn register_permission_request(
+        &self,
+        request_id: String,
+    ) -> Option<oneshot::Receiver<PermissionDecision>> {
+        let (tx, rx) = oneshot::channel();
+        let mut inner = self.inner.lock().await;
+        if inner.pending_permission_requests.contains_key(&request_id) {
+            return None;
+        }
+        inner.pending_permission_requests.insert(request_id, tx);
+        Some(rx)
+    }
+
+    async fn clear_permission_request(&self, request_id: &str) {
+        self.inner.lock().await.pending_permission_requests.remove(request_id);
+    }
+
+    async fn respond_permission_request(
+        &self,
+        request_id: &str,
+        decision: PermissionDecision,
+    ) -> Result<(), AppServerRequestError> {
+        let tx = self
+            .inner
+            .lock()
+            .await
+            .pending_permission_requests
+            .remove(request_id);
+        let Some(tx) = tx else {
+            return Err(AppServerRequestError::Failed {
+                reason: format!("unknown permission request: {request_id}"),
+            });
+        };
+
+        let _ = tx.send(decision);
+        Ok(())
     }
 }
 
@@ -561,6 +629,19 @@ impl AppServerClient for CodexAppServerClient {
                 AppServerRequest::Interrupt => {
                     self.cancel_active_turn().await?;
                     Ok(AppServerResponse::Interrupted)
+                }
+                AppServerRequest::SetPermissionsMode { mode } => {
+                    self.state.set_permissions_mode(mode).await;
+                    Ok(AppServerResponse::PermissionsModeSet)
+                }
+                AppServerRequest::RespondPermissionRequest {
+                    request_id,
+                    decision,
+                } => {
+                    self.state
+                        .respond_permission_request(&request_id, decision)
+                        .await?;
+                    Ok(AppServerResponse::PermissionRequestResponded)
                 }
             }
         })
@@ -911,25 +992,105 @@ async fn handle_server_request(
                 }
             };
 
-            let tool_call_id = params.item_id.clone();
+            let request_id = params.item_id.clone();
+            let request = PermissionRequest::CommandExecution(CommandExecutionPermissionRequest {
+                command: params.command.clone(),
+                cwd: params.cwd.clone(),
+                reason: params.reason.clone(),
+            });
+
+            let summary = params
+                .command
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|cmd| format!("Run command: {cmd}"))
+                .unwrap_or_else(|| "Run a command".to_owned());
+
             let _ = events_tx
-                .send(AppServerEvent::ToolInvocation {
-                    tool_name: "command_execution_request_approval".to_owned(),
-                    tool_call_id: Some(tool_call_id),
-                    input: serde_json::json!({
-                        "thread_id": params.thread_id,
-                        "turn_id": params.turn_id,
-                        "command": params.command,
-                        "cwd": params.cwd,
-                        "reason": params.reason,
-                    })
-                    .to_string(),
+                .send(AppServerEvent::PermissionRequested {
+                    request_id: request_id.clone(),
+                    summary: summary.clone(),
+                    request,
                 })
                 .await;
 
-            // Safe-by-default: deny until a control-plane approval path exists.
-            conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                .await;
+            let mode = state.permissions_mode().await;
+            match mode {
+                PermissionsMode::AutoApprove => {
+                    conn.respond_ok(id, serde_json::json!({ "decision": "approve" }))
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::PermissionDecided {
+                            request_id,
+                            decision: PermissionDecision::Approve,
+                            decided_by: PermissionDecisionBy::ModeAutoApprove,
+                        })
+                        .await;
+                }
+                PermissionsMode::Deny => {
+                    conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::PermissionDecided {
+                            request_id,
+                            decision: PermissionDecision::Deny,
+                            decided_by: PermissionDecisionBy::ModeAutoDeny,
+                        })
+                        .await;
+                }
+                _ => {
+                    let Some(rx) = state.register_permission_request(request_id.clone()).await
+                    else {
+                        conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                            .await;
+                        let _ = events_tx
+                            .send(AppServerEvent::PermissionDecided {
+                                request_id,
+                                decision: PermissionDecision::Deny,
+                                decided_by: PermissionDecisionBy::Timeout,
+                            })
+                            .await;
+                        return;
+                    };
+
+                    let conn = Arc::clone(conn);
+                    let state = Arc::clone(state);
+                    let events_tx = events_tx.clone();
+
+                    tokio::spawn(async move {
+                        const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+                        let (decision, decided_by) =
+                            match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
+                                Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
+                                Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                            };
+
+                        if decided_by == PermissionDecisionBy::Timeout {
+                            state.clear_permission_request(&request_id).await;
+                        }
+
+                        let decision_for_wire = match decision {
+                            PermissionDecision::Approve => "approve",
+                            PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
+                        };
+                        conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
+                            .await;
+
+                        let decision_for_event = match decision {
+                            PermissionDecision::Approve => PermissionDecision::Approve,
+                            PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                        };
+                        let _ = events_tx
+                            .send(AppServerEvent::PermissionDecided {
+                                request_id,
+                                decision: decision_for_event,
+                                decided_by,
+                            })
+                            .await;
+                    });
+                }
+            }
         }
         "item/fileChange/requestApproval" => {
             let params: FileChangeRequestApprovalParams = match serde_json::from_value(
@@ -943,24 +1104,104 @@ async fn handle_server_request(
                 }
             };
 
-            let tool_call_id = params.item_id.clone();
+            let request_id = params.item_id.clone();
+            let request = PermissionRequest::FileChange(FileChangePermissionRequest {
+                grant_root: params.grant_root.clone(),
+                reason: params.reason.clone(),
+            });
+
+            let summary = params
+                .grant_root
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|root| format!("Allow file changes under: {root}"))
+                .unwrap_or_else(|| "Allow a file change".to_owned());
+
             let _ = events_tx
-                .send(AppServerEvent::ToolInvocation {
-                    tool_name: "file_change_request_approval".to_owned(),
-                    tool_call_id: Some(tool_call_id),
-                    input: serde_json::json!({
-                        "thread_id": params.thread_id,
-                        "turn_id": params.turn_id,
-                        "grant_root": params.grant_root,
-                        "reason": params.reason,
-                    })
-                    .to_string(),
+                .send(AppServerEvent::PermissionRequested {
+                    request_id: request_id.clone(),
+                    summary: summary.clone(),
+                    request,
                 })
                 .await;
 
-            // Safe-by-default: deny until a control-plane approval path exists.
-            conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
-                .await;
+            let mode = state.permissions_mode().await;
+            match mode {
+                PermissionsMode::AutoApprove => {
+                    conn.respond_ok(id, serde_json::json!({ "decision": "approve" }))
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::PermissionDecided {
+                            request_id,
+                            decision: PermissionDecision::Approve,
+                            decided_by: PermissionDecisionBy::ModeAutoApprove,
+                        })
+                        .await;
+                }
+                PermissionsMode::Deny => {
+                    conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                        .await;
+                    let _ = events_tx
+                        .send(AppServerEvent::PermissionDecided {
+                            request_id,
+                            decision: PermissionDecision::Deny,
+                            decided_by: PermissionDecisionBy::ModeAutoDeny,
+                        })
+                        .await;
+                }
+                _ => {
+                    let Some(rx) = state.register_permission_request(request_id.clone()).await
+                    else {
+                        conn.respond_ok(id, serde_json::json!({ "decision": "decline" }))
+                            .await;
+                        let _ = events_tx
+                            .send(AppServerEvent::PermissionDecided {
+                                request_id,
+                                decision: PermissionDecision::Deny,
+                                decided_by: PermissionDecisionBy::Timeout,
+                            })
+                            .await;
+                        return;
+                    };
+
+                    let conn = Arc::clone(conn);
+                    let state = Arc::clone(state);
+                    let events_tx = events_tx.clone();
+
+                    tokio::spawn(async move {
+                        const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
+
+                        let (decision, decided_by) =
+                            match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
+                                Ok(Ok(decision)) => (decision, PermissionDecisionBy::User),
+                                Ok(Err(_)) | Err(_) => (PermissionDecision::Deny, PermissionDecisionBy::Timeout),
+                            };
+
+                        if decided_by == PermissionDecisionBy::Timeout {
+                            state.clear_permission_request(&request_id).await;
+                        }
+
+                        let decision_for_wire = match decision {
+                            PermissionDecision::Approve => "approve",
+                            PermissionDecision::Deny | PermissionDecision::Unknown => "decline",
+                        };
+                        conn.respond_ok(id, serde_json::json!({ "decision": decision_for_wire }))
+                            .await;
+
+                        let decision_for_event = match decision {
+                            PermissionDecision::Approve => PermissionDecision::Approve,
+                            PermissionDecision::Deny | PermissionDecision::Unknown => PermissionDecision::Deny,
+                        };
+                        let _ = events_tx
+                            .send(AppServerEvent::PermissionDecided {
+                                request_id,
+                                decision: decision_for_event,
+                                decided_by,
+                            })
+                            .await;
+                    });
+                }
+            }
         }
         "item/tool/requestUserInput" => {
             // Safe-by-default: without a control-plane surface for this, fail fast so the

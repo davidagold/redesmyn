@@ -712,6 +712,9 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::ToolInvocation => Some("tool_invocation"),
             SessionEventKindFilter::ToolResult => Some("tool_result"),
             SessionEventKindFilter::StatusUpdate => Some("status_update"),
+            SessionEventKindFilter::PermissionsModeChanged => Some("permissions_mode_changed"),
+            SessionEventKindFilter::PermissionRequested => Some("permission_requested"),
+            SessionEventKindFilter::PermissionDecided => Some("permission_decided"),
             SessionEventKindFilter::ArtifactEmitted => Some("artifact_emitted"),
             SessionEventKindFilter::Unknown => None,
         })
@@ -730,6 +733,9 @@ fn kind_db_value_from_kind(kind: &SessionEventKind) -> &'static str {
         SessionEventKind::ToolInvocation(_) => "tool_invocation",
         SessionEventKind::ToolResult(_) => "tool_result",
         SessionEventKind::StatusUpdate(_) => "status_update",
+        SessionEventKind::PermissionsModeChanged(_) => "permissions_mode_changed",
+        SessionEventKind::PermissionRequested(_) => "permission_requested",
+        SessionEventKind::PermissionDecided(_) => "permission_decided",
         SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
         SessionEventKind::Unknown(_) => "unknown",
     }
@@ -743,6 +749,20 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
         SessionEventKind::ToolInvocation(ev) => Some(ev.input_preview.clone()),
         SessionEventKind::ToolResult(ev) => Some(ev.output_preview.clone()),
         SessionEventKind::StatusUpdate(ev) => ev.message.clone(),
+        SessionEventKind::PermissionsModeChanged(ev) => Some(match ev.mode {
+            redesmyn_protocol::session::PermissionsMode::Ask => "ask",
+            redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
+            redesmyn_protocol::session::PermissionsMode::Deny => "deny",
+            redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
+        }
+        .to_owned()),
+        SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
+        SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
+            redesmyn_protocol::session::PermissionDecision::Approve => "approve",
+            redesmyn_protocol::session::PermissionDecision::Deny => "deny",
+            redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
+        }
+        .to_owned()),
         _ => None,
     }
 }

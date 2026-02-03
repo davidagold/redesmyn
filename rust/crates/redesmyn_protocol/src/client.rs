@@ -10,8 +10,8 @@ use redesmyn_ids::{
 };
 
 use crate::{
-    ErrorEnvelope, ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, SessionLiveEvent,
-    Timestamp,
+    ErrorEnvelope, PermissionDecision, PermissionsMode, ProtocolEnvelope, ProtocolVersion, Scope,
+    SessionEvent, SessionLiveEvent, Timestamp,
 };
 
 /// A single client ↔ control plane protocol frame.
@@ -40,6 +40,8 @@ pub enum ClientMethod {
     GetLatestTaskSession,
     GetEpicPinnedChatSession,
     SendSessionMessage,
+    SetSessionPermissionsMode,
+    RespondPermissionRequest,
     StartAgent,
     StopAgent,
     RestartAgent,
@@ -83,6 +85,8 @@ pub enum RequestPayload {
     GetLatestTaskSession(GetLatestTaskSessionRequest),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest),
     SendSessionMessage(SendSessionMessageRequest),
+    SetSessionPermissionsMode(SetSessionPermissionsModeRequest),
+    RespondPermissionRequest(RespondPermissionRequestRequest),
     StartAgent(StartAgentRequest),
     StopAgent(StopAgentRequest),
     RestartAgent(RestartAgentRequest),
@@ -113,6 +117,8 @@ impl RequestPayload {
             Self::GetLatestTaskSession(_) => ClientMethod::GetLatestTaskSession,
             Self::GetEpicPinnedChatSession(_) => ClientMethod::GetEpicPinnedChatSession,
             Self::SendSessionMessage(_) => ClientMethod::SendSessionMessage,
+            Self::SetSessionPermissionsMode(_) => ClientMethod::SetSessionPermissionsMode,
+            Self::RespondPermissionRequest(_) => ClientMethod::RespondPermissionRequest,
             Self::StartAgent(_) => ClientMethod::StartAgent,
             Self::StopAgent(_) => ClientMethod::StopAgent,
             Self::RestartAgent(_) => ClientMethod::RestartAgent,
@@ -168,6 +174,8 @@ pub enum ResponseResult {
     GetLatestTaskSession(GetLatestTaskSessionResponse),
     GetEpicPinnedChatSession(GetEpicPinnedChatSessionResponse),
     SendSessionMessage(SendSessionMessageResponse),
+    SetSessionPermissionsMode(SetSessionPermissionsModeResponse),
+    RespondPermissionRequest(RespondPermissionRequestResponse),
     StartAgent(StartAgentResponse),
     StopAgent(StopAgentResponse),
     RestartAgent(RestartAgentResponse),
@@ -414,6 +422,9 @@ pub enum SessionEventKindFilter {
     ToolResult,
     StatusUpdate,
     ArtifactEmitted,
+    PermissionsModeChanged,
+    PermissionRequested,
+    PermissionDecided,
     /// A kind not understood by this binary (forward compatible).
     #[serde(other)]
     Unknown,
@@ -485,6 +496,31 @@ pub struct SendSessionMessageRequest {
 pub struct SendSessionMessageResponse {
     pub event: SessionEvent,
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionPermissionsModeRequest {
+    pub session_id: SessionId,
+    pub mode: PermissionsMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionPermissionsModeResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RespondPermissionRequestRequest {
+    pub session_id: SessionId,
+    pub request_id: String,
+    pub decision: PermissionDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RespondPermissionRequestResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandSummary>,
 }

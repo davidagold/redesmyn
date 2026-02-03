@@ -14,7 +14,8 @@ use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
     ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent, SessionEventKind, SessionScope,
     SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
-    TurnState,
+    TurnState, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
+    PermissionRequested, PermissionsMode, PermissionsModeChanged,
 };
 use redesmyn_protocol::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -69,12 +70,19 @@ impl std::fmt::Debug for AppServerSessionSpec {
 pub enum AppServerRequest {
     SendMessage { intent: AppServerTurnIntent },
     Interrupt,
+    SetPermissionsMode { mode: PermissionsMode },
+    RespondPermissionRequest {
+        request_id: String,
+        decision: PermissionDecision,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppServerResponse {
     MessageAccepted,
     Interrupted,
+    PermissionsModeSet,
+    PermissionRequestResponded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +147,16 @@ pub enum AppServerEvent {
         tool_call_id: Option<String>,
         output: String,
         error: Option<ErrorEnvelope>,
+    },
+    PermissionRequested {
+        request_id: String,
+        summary: String,
+        request: PermissionRequest,
+    },
+    PermissionDecided {
+        request_id: String,
+        decision: PermissionDecision,
+        decided_by: PermissionDecisionBy,
     },
     ArtifactBytes {
         kind: ArtifactKind,
@@ -252,6 +270,15 @@ enum SessionCommand {
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
     Interrupt {
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
+    SetPermissionsMode {
+        mode: PermissionsMode,
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
+    RespondPermissionRequest {
+        request_id: String,
+        decision: PermissionDecision,
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
     Reconnect {
@@ -416,6 +443,42 @@ impl AppServerSupervisor {
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)
+    }
+
+    pub async fn set_permissions_mode(
+        &self,
+        session_id: SessionId,
+        mode: PermissionsMode,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(session_id, SessionCommand::SetPermissionsMode { mode, reply })
+            .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
+    }
+
+    pub async fn respond_permission_request(
+        &self,
+        session_id: SessionId,
+        request_id: String,
+        decision: PermissionDecision,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(
+            session_id,
+            SessionCommand::RespondPermissionRequest {
+                request_id,
+                decision,
+                reply,
+            },
+        )
+        .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
     }
 
     pub async fn reconnect_session(&self, session_id: SessionId) -> Result<(), AppServerCallError> {
@@ -601,6 +664,49 @@ async fn run_session(
                     "interrupt_requested".to_owned(),
                 );
                 let response = client.request(AppServerRequest::Interrupt).await;
+                let _ = reply.send(response);
+            }
+            SessionCommand::SetPermissionsMode { mode, reply } => {
+                let response = client
+                    .request(AppServerRequest::SetPermissionsMode { mode })
+                    .await;
+
+                if response.is_ok() {
+                    emit_event(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        None,
+                        SessionEventKind::PermissionsModeChanged(PermissionsModeChanged { mode }),
+                    )
+                    .await?;
+                } else if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("set_permissions_mode_failed: {err}"),
+                    );
+                }
+
+                let _ = reply.send(response);
+            }
+            SessionCommand::RespondPermissionRequest {
+                request_id,
+                decision,
+                reply,
+            } => {
+                let response = client
+                    .request(AppServerRequest::RespondPermissionRequest { request_id, decision })
+                    .await;
+                if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("respond_permission_request_failed: {err}"),
+                    );
+                }
                 let _ = reply.send(response);
             }
             SessionCommand::Reconnect { reply } => match process.connect().await {
@@ -1044,6 +1150,30 @@ async fn emit_app_server_event(
                 }),
             )
         }
+        AppServerEvent::PermissionRequested {
+            request_id,
+            summary,
+            request,
+        } => (
+            None,
+            SessionEventKind::PermissionRequested(PermissionRequested {
+                request_id,
+                summary,
+                request,
+            }),
+        ),
+        AppServerEvent::PermissionDecided {
+            request_id,
+            decision,
+            decided_by,
+        } => (
+            None,
+            SessionEventKind::PermissionDecided(PermissionDecided {
+                request_id,
+                decision,
+                decided_by,
+            }),
+        ),
         AppServerEvent::ArtifactBytes {
             kind,
             mime,

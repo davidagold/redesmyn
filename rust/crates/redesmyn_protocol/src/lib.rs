@@ -29,9 +29,12 @@ pub mod ui_driver;
 
 pub use artifacts::{ArtifactKind, ArtifactRef, Hash, StorageHint};
 pub use session::{
-    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEnded,
-    SessionEvent, SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
-    ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+    ArtifactEmitted, AssistantMessage, ExternalSessionRef, InterfaceMode,
+    CommandExecutionPermissionRequest, FileChangePermissionRequest, PermissionDecided,
+    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionRequested,
+    PermissionsMode, PermissionsModeChanged, SessionEnded, SessionEvent, SessionEventKind,
+    SessionScope, SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted,
+    TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
 };
 pub use session_live::{
     AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,

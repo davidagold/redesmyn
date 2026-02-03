@@ -8,7 +8,7 @@
 use redesmyn_ids::{SessionId, TaskId};
 
 use crate::client::{AgentInterfaceMode, AgentKind};
-use crate::session::ExternalSessionRef;
+use crate::session::{ExternalSessionRef, PermissionDecision, PermissionsMode};
 
 pub const SESSION_AGENT_START: &str = "session.agent.start";
 pub const SESSION_AGENT_STOP: &str = "session.agent.stop";
@@ -16,6 +16,8 @@ pub const SESSION_AGENT_INTERRUPT_TURN: &str = "session.agent.interrupt_turn";
 pub const SESSION_AGENT_SEND_MESSAGE: &str = "session.agent.send_message";
 pub const SESSION_AGENT_RESUME_BY_ID_TURN: &str = "session.agent.resume_by_id_turn";
 pub const SESSION_AGENT_ATTACH_SESSION: &str = "session.agent.attach_session";
+pub const SESSION_AGENT_SET_PERMISSIONS_MODE: &str = "session.agent.set_permissions_mode";
+pub const SESSION_AGENT_RESPOND_PERMISSION_REQUEST: &str = "session.agent.respond_permission_request";
 
 pub const TASK_AGENT_START: &str = "task.agent.start";
 pub const TASK_AGENT_STOP: &str = "task.agent.stop";
@@ -87,4 +89,17 @@ pub struct ResumeByIdTaskAgentTurnCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttachTaskAgentSessionCommand {
     pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionPermissionsModeCommand {
+    pub session_id: SessionId,
+    pub mode: PermissionsMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RespondPermissionRequestCommand {
+    pub session_id: SessionId,
+    pub request_id: String,
+    pub decision: PermissionDecision,
 }

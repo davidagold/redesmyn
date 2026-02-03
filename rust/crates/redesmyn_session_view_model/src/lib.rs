@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use redesmyn_ids::{SessionEventId, SessionId};
 use redesmyn_protocol::client::SessionEventCursor;
 use redesmyn_protocol::session::{
-    ArtifactEmitted, AssistantMessage, SessionEventKind, StatusUpdate, ToolInvocation, ToolResult,
+    ArtifactEmitted, AssistantMessage, PermissionDecided, PermissionRequested,
+    PermissionsMode, PermissionsModeChanged, SessionEventKind, StatusUpdate, ToolInvocation,
+    ToolResult,
     TurnCompleted, TurnStarted, UserMessage,
 };
 use redesmyn_protocol::session_live::{SessionLiveEvent, SessionLiveEventKind};
@@ -38,6 +40,9 @@ pub enum SessionEventKindTag {
     ToolInvocation,
     ToolResult,
     StatusUpdate,
+    PermissionsModeChanged,
+    PermissionRequested,
+    PermissionDecided,
     ArtifactEmitted,
     Unknown,
 }
@@ -56,6 +61,9 @@ impl SessionEventKindTag {
             SessionEventKind::ToolInvocation(_) => Self::ToolInvocation,
             SessionEventKind::ToolResult(_) => Self::ToolResult,
             SessionEventKind::StatusUpdate(_) => Self::StatusUpdate,
+            SessionEventKind::PermissionsModeChanged(_) => Self::PermissionsModeChanged,
+            SessionEventKind::PermissionRequested(_) => Self::PermissionRequested,
+            SessionEventKind::PermissionDecided(_) => Self::PermissionDecided,
             SessionEventKind::ArtifactEmitted(_) => Self::ArtifactEmitted,
             SessionEventKind::Unknown(_) => Self::Unknown,
         }
@@ -131,6 +139,9 @@ pub enum SessionEventItemContent {
     ToolInvocation(ToolInvocation),
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
+    PermissionsModeChanged(PermissionsModeChanged),
+    PermissionRequested(PermissionRequested),
+    PermissionDecided(PermissionDecided),
     ArtifactEmitted(ArtifactEmittedItem),
     Unknown,
 }
@@ -250,6 +261,8 @@ pub struct SessionComposerState {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionFeedState {
     pub session_id: SessionId,
+    #[serde(default = "default_permissions_mode")]
+    pub permissions_mode: PermissionsMode,
     events: Vec<SessionEventRow>,
     event_ids: BTreeSet<SessionEventId>,
     ephemeral: BTreeMap<String, EphemeralItem>,
@@ -265,6 +278,7 @@ impl SessionFeedState {
     pub fn new(session_id: SessionId) -> Self {
         Self {
             session_id,
+            permissions_mode: PermissionsMode::Ask,
             events: Vec::new(),
             event_ids: BTreeSet::new(),
             ephemeral: BTreeMap::new(),
@@ -395,6 +409,7 @@ impl SessionFeedState {
             self.insert_event(SessionEventRow::from_event(event));
         }
 
+        self.recompute_permissions_mode();
         self.recompute_summary();
         self.history.loading_older = false;
         self.history.next_cursor = next_cursor;
@@ -417,6 +432,10 @@ impl SessionFeedState {
     }
 
     pub fn apply_live_event(&mut self, event: SessionEvent) {
+        if let SessionEventKind::PermissionsModeChanged(ev) = &event.kind {
+            self.permissions_mode = ev.mode;
+        }
+
         let clear_assistant_ephemeral =
             matches!(&event.kind, SessionEventKind::AssistantMessage(_));
         let clear_reasoning_ephemeral = match &event.kind {
@@ -790,6 +809,21 @@ impl SessionFeedState {
         self.summary.message_count = message_count;
         self.summary.last_message_preview = last_preview;
     }
+
+    fn recompute_permissions_mode(&mut self) {
+        for row in self.events.iter().rev() {
+            if let SessionEventKind::PermissionsModeChanged(ev) = &row.event.kind {
+                self.permissions_mode = ev.mode;
+                return;
+            }
+        }
+
+        self.permissions_mode = PermissionsMode::Ask;
+    }
+}
+
+fn default_permissions_mode() -> PermissionsMode {
+    PermissionsMode::Ask
 }
 
 impl SessionEventItem {
@@ -842,6 +876,15 @@ impl SessionEventItem {
             }
             SessionEventKind::ToolResult(ev) => SessionEventItemContent::ToolResult(ev.clone()),
             SessionEventKind::StatusUpdate(ev) => SessionEventItemContent::StatusUpdate(ev.clone()),
+            SessionEventKind::PermissionsModeChanged(ev) => {
+                SessionEventItemContent::PermissionsModeChanged(ev.clone())
+            }
+            SessionEventKind::PermissionRequested(ev) => {
+                SessionEventItemContent::PermissionRequested(ev.clone())
+            }
+            SessionEventKind::PermissionDecided(ev) => {
+                SessionEventItemContent::PermissionDecided(ev.clone())
+            }
             SessionEventKind::ArtifactEmitted(ev) => {
                 SessionEventItemContent::ArtifactEmitted(ArtifactEmittedItem {
                     artifact: ev.artifact.clone(),
@@ -932,6 +975,20 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             Some(output_preview.clone())
         }
         SessionEventKind::StatusUpdate(StatusUpdate { message, .. }) => message.clone(),
+        SessionEventKind::PermissionsModeChanged(ev) => Some(match ev.mode {
+            redesmyn_protocol::session::PermissionsMode::Ask => "ask",
+            redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
+            redesmyn_protocol::session::PermissionsMode::Deny => "deny",
+            redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
+        }
+        .to_owned()),
+        SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
+        SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
+            redesmyn_protocol::session::PermissionDecision::Approve => "approve",
+            redesmyn_protocol::session::PermissionDecision::Deny => "deny",
+            redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
+        }
+        .to_owned()),
         SessionEventKind::ArtifactEmitted(ArtifactEmitted { label, .. }) => label.clone(),
         SessionEventKind::TurnStarted(TurnStarted {
             idempotency_key, ..

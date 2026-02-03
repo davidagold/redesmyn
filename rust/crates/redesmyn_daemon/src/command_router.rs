@@ -8,9 +8,11 @@ use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
-    InterruptTaskAgentTurnCommand, ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand,
-    StartTaskAgentSessionCommand, TASK_AGENT_START, SESSION_AGENT_INTERRUPT_TURN,
-    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_START,
+    InterruptTaskAgentTurnCommand, RespondPermissionRequestCommand, ResumeByIdTaskAgentTurnCommand,
+    SetSessionPermissionsModeCommand, StartAgentSessionCommand, StartTaskAgentSessionCommand,
+    SESSION_AGENT_INTERRUPT_TURN, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
+    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_PERMISSIONS_MODE,
+    SESSION_AGENT_START, TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
 use redesmyn_protocol::daemon::{
@@ -107,6 +109,12 @@ async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFr
         }
         SESSION_AGENT_INTERRUPT_TURN => {
             handle_session_agent_interrupt_turn(router, &frames_tx, dispatch).await
+        }
+        SESSION_AGENT_SET_PERMISSIONS_MODE => {
+            handle_session_agent_set_permissions_mode(router, &frames_tx, dispatch).await
+        }
+        SESSION_AGENT_RESPOND_PERMISSION_REQUEST => {
+            handle_session_agent_respond_permission_request(router, &frames_tx, dispatch).await
         }
         SESSION_AGENT_SEND_MESSAGE => reject_command(
             &frames_tx,
@@ -390,6 +398,116 @@ async fn handle_session_agent_interrupt_turn(
         }
         Err(err) => {
             fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
+        }
+    }
+}
+
+async fn handle_session_agent_set_permissions_mode(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: SetSessionPermissionsModeCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    match router
+        .app_server
+        .set_permissions_mode(cmd.session_id, cmd.mode)
+        .await
+    {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("updated".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_session_agent_respond_permission_request(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: RespondPermissionRequestCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    match router
+        .app_server
+        .respond_permission_request(cmd.session_id, cmd.request_id, cmd.decision)
+        .await
+    {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("responded".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
         }
     }
 }

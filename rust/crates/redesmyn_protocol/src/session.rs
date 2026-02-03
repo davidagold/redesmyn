@@ -189,6 +189,96 @@ pub struct StatusUpdate {
     pub message: Option<String>,
 }
 
+/// How the session handles permission/approval requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionsMode {
+    /// Surface requests to the user and wait for a decision.
+    Ask,
+    /// Automatically approve requests.
+    AutoApprove,
+    /// Automatically deny requests.
+    Deny,
+    /// A mode not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+/// A change in the session's effective permissions mode.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PermissionsModeChanged {
+    pub mode: PermissionsMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CommandExecutionPermissionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FileChangePermissionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+pub enum PermissionRequest {
+    CommandExecution(CommandExecutionPermissionRequest),
+    FileChange(FileChangePermissionRequest),
+    /// Placeholder for future providers / request shapes.
+    Unknown {
+        unknown_kind: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        json_payload: Vec<u8>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionDecision {
+    Approve,
+    Deny,
+    /// A decision not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionDecisionBy {
+    User,
+    ModeAutoApprove,
+    ModeAutoDeny,
+    Timeout,
+    /// A value not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PermissionRequested {
+    /// A stable identifier for correlating request/decision events.
+    pub request_id: String,
+    /// A compact, user-facing summary of what is being approved.
+    pub summary: String,
+    pub request: PermissionRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PermissionDecided {
+    pub request_id: String,
+    pub decision: PermissionDecision,
+    pub decided_by: PermissionDecisionBy,
+}
+
 /// Tie an out-of-band artifact to a session and (optionally) a turn.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactEmitted {
@@ -211,6 +301,9 @@ pub enum SessionEventKind {
     ToolInvocation(ToolInvocation),
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
+    PermissionsModeChanged(PermissionsModeChanged),
+    PermissionRequested(PermissionRequested),
+    PermissionDecided(PermissionDecided),
     ArtifactEmitted(ArtifactEmitted),
     Unknown(UnknownSessionEvent),
 }

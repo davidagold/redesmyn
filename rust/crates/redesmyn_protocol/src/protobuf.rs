@@ -16,9 +16,11 @@ use crate::daemon::{
 use crate::pb::redesmyn::protocol::v1 as pbv1;
 use crate::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
-    ExternalSessionRef, InterfaceMode, SessionEvent, SessionEventKind, SessionScope, StatusUpdate,
-    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
-    UserMessage,
+    CommandExecutionPermissionRequest, ExternalSessionRef, FileChangePermissionRequest,
+    InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
+    PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEvent, SessionEventKind,
+    SessionScope, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState,
+    UnknownSessionEvent, UserMessage,
 };
 use crate::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -1374,6 +1376,201 @@ impl StatusUpdate {
     }
 }
 
+fn encode_permissions_mode(value: PermissionsMode) -> i32 {
+    match value {
+        PermissionsMode::Ask => pbv1::PermissionsMode::Ask as i32,
+        PermissionsMode::AutoApprove => pbv1::PermissionsMode::AutoApprove as i32,
+        PermissionsMode::Deny => pbv1::PermissionsMode::Deny as i32,
+        PermissionsMode::Unknown => pbv1::PermissionsMode::Unspecified as i32,
+    }
+}
+
+fn decode_permissions_mode(value: i32) -> PermissionsMode {
+    match pbv1::PermissionsMode::try_from(value) {
+        Ok(pbv1::PermissionsMode::Ask) => PermissionsMode::Ask,
+        Ok(pbv1::PermissionsMode::AutoApprove) => PermissionsMode::AutoApprove,
+        Ok(pbv1::PermissionsMode::Deny) => PermissionsMode::Deny,
+        Ok(pbv1::PermissionsMode::Unspecified) | Err(_) => PermissionsMode::Unknown,
+    }
+}
+
+fn encode_permission_decision(value: PermissionDecision) -> i32 {
+    match value {
+        PermissionDecision::Approve => pbv1::PermissionDecision::Approve as i32,
+        PermissionDecision::Deny => pbv1::PermissionDecision::Deny as i32,
+        PermissionDecision::Unknown => pbv1::PermissionDecision::Unspecified as i32,
+    }
+}
+
+fn decode_permission_decision(value: i32) -> PermissionDecision {
+    match pbv1::PermissionDecision::try_from(value) {
+        Ok(pbv1::PermissionDecision::Approve) => PermissionDecision::Approve,
+        Ok(pbv1::PermissionDecision::Deny) => PermissionDecision::Deny,
+        Ok(pbv1::PermissionDecision::Unspecified) | Err(_) => PermissionDecision::Unknown,
+    }
+}
+
+fn encode_permission_decision_by(value: PermissionDecisionBy) -> i32 {
+    match value {
+        PermissionDecisionBy::User => pbv1::PermissionDecisionBy::User as i32,
+        PermissionDecisionBy::ModeAutoApprove => pbv1::PermissionDecisionBy::ModeAutoApprove as i32,
+        PermissionDecisionBy::ModeAutoDeny => pbv1::PermissionDecisionBy::ModeAutoDeny as i32,
+        PermissionDecisionBy::Timeout => pbv1::PermissionDecisionBy::Timeout as i32,
+        PermissionDecisionBy::Unknown => pbv1::PermissionDecisionBy::Unspecified as i32,
+    }
+}
+
+fn decode_permission_decision_by(value: i32) -> PermissionDecisionBy {
+    match pbv1::PermissionDecisionBy::try_from(value) {
+        Ok(pbv1::PermissionDecisionBy::User) => PermissionDecisionBy::User,
+        Ok(pbv1::PermissionDecisionBy::ModeAutoApprove) => PermissionDecisionBy::ModeAutoApprove,
+        Ok(pbv1::PermissionDecisionBy::ModeAutoDeny) => PermissionDecisionBy::ModeAutoDeny,
+        Ok(pbv1::PermissionDecisionBy::Timeout) => PermissionDecisionBy::Timeout,
+        Ok(pbv1::PermissionDecisionBy::Unspecified) | Err(_) => PermissionDecisionBy::Unknown,
+    }
+}
+
+impl PermissionsModeChanged {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PermissionsModeChanged {
+        pbv1::PermissionsModeChanged {
+            mode: encode_permissions_mode(self.mode),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::PermissionsModeChanged) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            mode: decode_permissions_mode(proto.mode),
+        })
+    }
+}
+
+impl CommandExecutionPermissionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::CommandExecutionPermissionRequest {
+        pbv1::CommandExecutionPermissionRequest {
+            command: normalize_optional_string(self.command.clone()),
+            cwd: normalize_optional_string(self.cwd.clone()),
+            reason: normalize_optional_string(self.reason.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::CommandExecutionPermissionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: normalize_optional_string(proto.command),
+            cwd: normalize_optional_string(proto.cwd),
+            reason: normalize_optional_string(proto.reason),
+        })
+    }
+}
+
+impl FileChangePermissionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::FileChangePermissionRequest {
+        pbv1::FileChangePermissionRequest {
+            grant_root: normalize_optional_string(self.grant_root.clone()),
+            reason: normalize_optional_string(self.reason.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::FileChangePermissionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            grant_root: normalize_optional_string(proto.grant_root),
+            reason: normalize_optional_string(proto.reason),
+        })
+    }
+}
+
+impl PermissionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PermissionRequest {
+        pbv1::PermissionRequest {
+            kind: Some(match self {
+                PermissionRequest::CommandExecution(req) => {
+                    pbv1::permission_request::Kind::CommandExecution(req.to_protobuf())
+                }
+                PermissionRequest::FileChange(req) => {
+                    pbv1::permission_request::Kind::FileChange(req.to_protobuf())
+                }
+                PermissionRequest::Unknown {
+                    unknown_kind,
+                    json_payload,
+                } => pbv1::permission_request::Kind::Unknown(pbv1::UnknownPermissionRequest {
+                    kind: unknown_kind.clone(),
+                    json_payload: json_payload.clone(),
+                }),
+            }),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::PermissionRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(match proto.kind {
+            Some(pbv1::permission_request::Kind::CommandExecution(ev)) => {
+                PermissionRequest::CommandExecution(CommandExecutionPermissionRequest::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::permission_request::Kind::FileChange(ev)) => {
+                PermissionRequest::FileChange(FileChangePermissionRequest::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::permission_request::Kind::Unknown(ev)) => PermissionRequest::Unknown {
+                unknown_kind: if ev.kind.is_empty() {
+                    "<unknown>".to_owned()
+                } else {
+                    ev.kind
+                },
+                json_payload: ev.json_payload,
+            },
+            None => PermissionRequest::Unknown {
+                unknown_kind: "<unknown>".to_owned(),
+                json_payload: Vec::new(),
+            },
+        })
+    }
+}
+
+impl PermissionRequested {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PermissionRequested {
+        pbv1::PermissionRequested {
+            request_id: self.request_id.clone(),
+            summary: self.summary.clone(),
+            request: Some(self.request.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::PermissionRequested) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            request_id: proto.request_id,
+            summary: proto.summary,
+            request: PermissionRequest::try_from_protobuf(
+                proto.request.ok_or_else(|| missing_required("request"))?,
+            )?,
+        })
+    }
+}
+
+impl PermissionDecided {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::PermissionDecided {
+        pbv1::PermissionDecided {
+            request_id: self.request_id.clone(),
+            decision: encode_permission_decision(self.decision),
+            decided_by: encode_permission_decision_by(self.decided_by),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::PermissionDecided) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            request_id: proto.request_id,
+            decision: decode_permission_decision(proto.decision),
+            decided_by: decode_permission_decision_by(proto.decided_by),
+        })
+    }
+}
+
 impl ArtifactEmitted {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ArtifactEmitted {
@@ -1641,6 +1838,15 @@ impl SessionEvent {
                 SessionEventKind::StatusUpdate(ev) => {
                     pbv1::session_event::Kind::StatusUpdate(ev.to_protobuf())
                 }
+                SessionEventKind::PermissionsModeChanged(ev) => {
+                    pbv1::session_event::Kind::PermissionsModeChanged(ev.to_protobuf())
+                }
+                SessionEventKind::PermissionRequested(ev) => {
+                    pbv1::session_event::Kind::PermissionRequested(ev.to_protobuf())
+                }
+                SessionEventKind::PermissionDecided(ev) => {
+                    pbv1::session_event::Kind::PermissionDecided(ev.to_protobuf())
+                }
                 SessionEventKind::ArtifactEmitted(ev) => {
                     pbv1::session_event::Kind::ArtifactEmitted(ev.to_protobuf())
                 }
@@ -1682,6 +1888,17 @@ impl SessionEvent {
             }
             Some(pbv1::session_event::Kind::StatusUpdate(ev)) => {
                 SessionEventKind::StatusUpdate(StatusUpdate::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::PermissionsModeChanged(ev)) => {
+                SessionEventKind::PermissionsModeChanged(PermissionsModeChanged::try_from_protobuf(
+                    ev,
+                )?)
+            }
+            Some(pbv1::session_event::Kind::PermissionRequested(ev)) => {
+                SessionEventKind::PermissionRequested(PermissionRequested::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::PermissionDecided(ev)) => {
+                SessionEventKind::PermissionDecided(PermissionDecided::try_from_protobuf(ev)?)
             }
             Some(pbv1::session_event::Kind::ArtifactEmitted(ev)) => {
                 SessionEventKind::ArtifactEmitted(ArtifactEmitted::try_from_protobuf(ev)?)
@@ -1747,6 +1964,12 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::SendSessionMessage => {
             pbv1::ClientMethod::SendSessionMessage as i32
         }
+        crate::client::ClientMethod::SetSessionPermissionsMode => {
+            pbv1::ClientMethod::SetSessionPermissionsMode as i32
+        }
+        crate::client::ClientMethod::RespondPermissionRequest => {
+            pbv1::ClientMethod::RespondPermissionRequest as i32
+        }
         crate::client::ClientMethod::StartAgent => pbv1::ClientMethod::StartAgent as i32,
         crate::client::ClientMethod::StopAgent => pbv1::ClientMethod::StopAgent as i32,
         crate::client::ClientMethod::RestartAgent => pbv1::ClientMethod::RestartAgent as i32,
@@ -1799,6 +2022,12 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         }
         Ok(pbv1::ClientMethod::SendSessionMessage) => {
             Ok(crate::client::ClientMethod::SendSessionMessage)
+        }
+        Ok(pbv1::ClientMethod::SetSessionPermissionsMode) => {
+            Ok(crate::client::ClientMethod::SetSessionPermissionsMode)
+        }
+        Ok(pbv1::ClientMethod::RespondPermissionRequest) => {
+            Ok(crate::client::ClientMethod::RespondPermissionRequest)
         }
         Ok(pbv1::ClientMethod::StartAgent) => Ok(crate::client::ClientMethod::StartAgent),
         Ok(pbv1::ClientMethod::StopAgent) => Ok(crate::client::ClientMethod::StopAgent),
@@ -2213,6 +2442,12 @@ impl crate::client::Request {
                 crate::client::RequestPayload::SendSessionMessage(req) => {
                     pbv1::request::Payload::SendSessionMessage(req.to_protobuf())
                 }
+                crate::client::RequestPayload::SetSessionPermissionsMode(req) => {
+                    pbv1::request::Payload::SetSessionPermissionsMode(req.to_protobuf())
+                }
+                crate::client::RequestPayload::RespondPermissionRequest(req) => {
+                    pbv1::request::Payload::RespondPermissionRequest(req.to_protobuf())
+                }
                 crate::client::RequestPayload::StartAgent(req) => {
                     pbv1::request::Payload::StartAgent(req.to_protobuf())
                 }
@@ -2302,6 +2537,16 @@ impl crate::client::Request {
             pbv1::request::Payload::SendSessionMessage(req) => {
                 crate::client::RequestPayload::SendSessionMessage(
                     crate::client::SendSessionMessageRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::SetSessionPermissionsMode(req) => {
+                crate::client::RequestPayload::SetSessionPermissionsMode(
+                    crate::client::SetSessionPermissionsModeRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::RespondPermissionRequest(req) => {
+                crate::client::RequestPayload::RespondPermissionRequest(
+                    crate::client::RespondPermissionRequestRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::StartAgent(req) => crate::client::RequestPayload::StartAgent(
@@ -2500,6 +2745,15 @@ fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter
         crate::client::SessionEventKindFilter::ArtifactEmitted => {
             pbv1::SessionEventKindFilter::ArtifactEmitted as i32
         }
+        crate::client::SessionEventKindFilter::PermissionsModeChanged => {
+            pbv1::SessionEventKindFilter::PermissionsModeChanged as i32
+        }
+        crate::client::SessionEventKindFilter::PermissionRequested => {
+            pbv1::SessionEventKindFilter::PermissionRequested as i32
+        }
+        crate::client::SessionEventKindFilter::PermissionDecided => {
+            pbv1::SessionEventKindFilter::PermissionDecided as i32
+        }
         crate::client::SessionEventKindFilter::Unknown => {
             pbv1::SessionEventKindFilter::Unspecified as i32
         }
@@ -2540,6 +2794,15 @@ fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKi
         }
         Ok(pbv1::SessionEventKindFilter::ArtifactEmitted) => {
             crate::client::SessionEventKindFilter::ArtifactEmitted
+        }
+        Ok(pbv1::SessionEventKindFilter::PermissionsModeChanged) => {
+            crate::client::SessionEventKindFilter::PermissionsModeChanged
+        }
+        Ok(pbv1::SessionEventKindFilter::PermissionRequested) => {
+            crate::client::SessionEventKindFilter::PermissionRequested
+        }
+        Ok(pbv1::SessionEventKindFilter::PermissionDecided) => {
+            crate::client::SessionEventKindFilter::PermissionDecided
         }
         Ok(pbv1::SessionEventKindFilter::Unspecified) | Err(_) => {
             crate::client::SessionEventKindFilter::Unknown
@@ -2762,6 +3025,46 @@ impl crate::client::SendSessionMessageRequest {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
             message: proto.message,
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
+        })
+    }
+}
+
+impl crate::client::SetSessionPermissionsModeRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionPermissionsModeRequest {
+        pbv1::SetSessionPermissionsModeRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            mode: encode_permissions_mode(self.mode),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionPermissionsModeRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            mode: decode_permissions_mode(proto.mode),
+        })
+    }
+}
+
+impl crate::client::RespondPermissionRequestRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RespondPermissionRequestRequest {
+        pbv1::RespondPermissionRequestRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            request_id: self.request_id.clone(),
+            decision: encode_permission_decision(self.decision),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::RespondPermissionRequestRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            request_id: proto.request_id,
+            decision: decode_permission_decision(proto.decision),
         })
     }
 }
@@ -2994,6 +3297,12 @@ impl crate::client::Response {
                 crate::client::ResponseResult::SendSessionMessage(resp) => {
                     pbv1::response::Result::SendSessionMessage(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::SetSessionPermissionsMode(resp) => {
+                    pbv1::response::Result::SetSessionPermissionsMode(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::RespondPermissionRequest(resp) => {
+                    pbv1::response::Result::RespondPermissionRequest(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::StartAgent(resp) => {
                     pbv1::response::Result::StartAgent(resp.to_protobuf())
                 }
@@ -3086,6 +3395,16 @@ impl crate::client::Response {
             pbv1::response::Result::SendSessionMessage(resp) => {
                 crate::client::ResponseResult::SendSessionMessage(
                     crate::client::SendSessionMessageResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::SetSessionPermissionsMode(resp) => {
+                crate::client::ResponseResult::SetSessionPermissionsMode(
+                    crate::client::SetSessionPermissionsModeResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::RespondPermissionRequest(resp) => {
+                crate::client::ResponseResult::RespondPermissionRequest(
+                    crate::client::RespondPermissionRequestResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::StartAgent(resp) => crate::client::ResponseResult::StartAgent(
@@ -3674,6 +3993,52 @@ impl crate::client::SendSessionMessageResponse {
         Ok(Self {
             event,
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::SetSessionPermissionsModeResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionPermissionsModeResponse {
+        pbv1::SetSessionPermissionsModeResponse {
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionPermissionsModeResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::RespondPermissionRequestResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RespondPermissionRequestResponse {
+        pbv1::RespondPermissionRequestResponse {
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::RespondPermissionRequestResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             command: proto
                 .command
                 .map(crate::client::CommandSummary::try_from_protobuf)

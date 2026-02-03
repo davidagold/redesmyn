@@ -57,6 +57,8 @@ enum ClientMethod {
   CLIENT_METHOD_RESTART_AGENT = 22;
   CLIENT_METHOD_SEND_TASK_AGENT_MESSAGE = 23;
   CLIENT_METHOD_ATTACH_AGENT_SESSION = 24;
+  CLIENT_METHOD_SET_SESSION_PERMISSIONS_MODE = 25;
+  CLIENT_METHOD_RESPOND_PERMISSION_REQUEST = 26;
 }
 
 // Request for a control-plane method.
@@ -90,6 +92,8 @@ message Request {
     PinChatSessionToEpicRequest pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicRequest unpin_chat_session_from_epic = 35;
     SendSessionMessageRequest send_session_message = 36;
+    SetSessionPermissionsModeRequest set_session_permissions_mode = 37;
+    RespondPermissionRequestRequest respond_permission_request = 38;
   }
 }
 
@@ -130,6 +134,8 @@ message Response {
     PinChatSessionToEpicResponse pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicResponse unpin_chat_session_from_epic = 35;
     SendSessionMessageResponse send_session_message = 36;
+    SetSessionPermissionsModeResponse set_session_permissions_mode = 37;
+    RespondPermissionRequestResponse respond_permission_request = 38;
     ErrorEnvelope error = 100;
   }
 }
@@ -155,6 +161,29 @@ message SendSessionMessageResponse {
   bytes session_id = 2;
   // Optional command lifecycle for this send (T-41).
   CommandSummary command = 3;
+}
+
+message SetSessionPermissionsModeRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  PermissionsMode mode = 2;
+}
+
+message SetSessionPermissionsModeResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message RespondPermissionRequestRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  string request_id = 2;
+  PermissionDecision decision = 3;
+}
+
+message RespondPermissionRequestResponse {
+  // Optional command lifecycle for this decision.
+  CommandSummary command = 1;
 }
 
 message HealthRequest {}
@@ -328,6 +357,9 @@ enum SessionEventKindFilter {
   SESSION_EVENT_KIND_FILTER_STATUS_UPDATE = 9;
   SESSION_EVENT_KIND_FILTER_ARTIFACT_EMITTED = 10;
   SESSION_EVENT_KIND_FILTER_ASSISTANT_REASONING = 11;
+  SESSION_EVENT_KIND_FILTER_PERMISSIONS_MODE_CHANGED = 12;
+  SESSION_EVENT_KIND_FILTER_PERMISSION_REQUESTED = 13;
+  SESSION_EVENT_KIND_FILTER_PERMISSION_DECIDED = 14;
 }
 
 message GetSessionEventsRequest {

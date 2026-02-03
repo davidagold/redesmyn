@@ -137,6 +137,9 @@ message SessionEvent {
     StatusUpdate status_update = 18;
     ArtifactEmitted artifact_emitted = 19;
     AssistantReasoning assistant_reasoning = 20;
+    PermissionsModeChanged permissions_mode_changed = 21;
+    PermissionRequested permission_requested = 22;
+    PermissionDecided permission_decided = 23;
     UnknownSessionEvent unknown = 100;
   }
 }
@@ -276,6 +279,71 @@ message StatusUpdate {
   optional bool blocking = 2;
   optional uint32 progress_percent = 3;
   optional string message = 4;
+}
+
+// How the session handles permission/approval requests.
+enum PermissionsMode {
+  PERMISSIONS_MODE_UNSPECIFIED = 0;
+  PERMISSIONS_MODE_ASK = 1;
+  PERMISSIONS_MODE_AUTO_APPROVE = 2;
+  PERMISSIONS_MODE_DENY = 3;
+}
+
+// A change in the session's effective permissions mode.
+message PermissionsModeChanged {
+  PermissionsMode mode = 1;
+}
+
+message CommandExecutionPermissionRequest {
+  optional string command = 1;
+  optional string cwd = 2;
+  optional string reason = 3;
+}
+
+message FileChangePermissionRequest {
+  optional string grant_root = 1;
+  optional string reason = 2;
+}
+
+message PermissionRequest {
+  oneof kind {
+    CommandExecutionPermissionRequest command_execution = 1;
+    FileChangePermissionRequest file_change = 2;
+    UnknownPermissionRequest unknown = 100;
+  }
+}
+
+message UnknownPermissionRequest {
+  string kind = 1;
+  bytes json_payload = 2;
+}
+
+enum PermissionDecision {
+  PERMISSION_DECISION_UNSPECIFIED = 0;
+  PERMISSION_DECISION_APPROVE = 1;
+  PERMISSION_DECISION_DENY = 2;
+}
+
+enum PermissionDecisionBy {
+  PERMISSION_DECISION_BY_UNSPECIFIED = 0;
+  PERMISSION_DECISION_BY_USER = 1;
+  PERMISSION_DECISION_BY_MODE_AUTO_APPROVE = 2;
+  PERMISSION_DECISION_BY_MODE_AUTO_DENY = 3;
+  PERMISSION_DECISION_BY_TIMEOUT = 4;
+}
+
+message PermissionRequested {
+  // A stable identifier for correlating request/decision events.
+  string request_id = 1;
+  // A compact, user-facing summary of what is being approved.
+  string summary = 2;
+  PermissionRequest request = 3;
+}
+
+message PermissionDecided {
+  string request_id = 1;
+  PermissionDecision decision = 2;
+  PermissionDecisionBy decided_by = 3;
 }
 
 // Tie an out-of-band artifact to a session and (optionally) a turn.
