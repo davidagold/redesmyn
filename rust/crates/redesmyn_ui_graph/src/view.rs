@@ -61,6 +61,7 @@ fn graph_edge_id_to_ui(id: GraphEdgeId) -> UiDriverGraphEdgeId {
         to: graph_node_id_to_ui(id.to),
     }
 }
+const SELECTION_BAR_SLIDE_PX: f32 = 56.0;
 
 #[derive(Debug, Clone)]
 struct FpsOverlay {
@@ -407,6 +408,10 @@ impl GraphView {
 
         self.update_selection_bar_target(cx);
         cx.notify();
+    }
+
+    pub fn selection_bar_reserved_top_offset(&self) -> gpui::Pixels {
+        px(self.selection_bar_progress.clamp(0.0, 1.0) * SELECTION_BAR_SLIDE_PX)
     }
 
     pub fn replace_from_epic_graph(
@@ -3063,7 +3068,8 @@ impl Render for GraphView {
         let selected_count = self.scene.selection().selected_nodes.len();
         let bar_progress = self.selection_bar_progress.clamp(0.0, 1.0);
         let show_selection_bar = bar_progress > 0.001;
-        let selection_bar_top = theme.spacing.md - px((1.0 - bar_progress) * 56.0);
+        let selection_bar_top =
+            theme.spacing.md - px((1.0 - bar_progress) * SELECTION_BAR_SLIDE_PX);
 
         let selection_bar = if show_selection_bar {
             let disabled_reason = self.bulk_start_disabled_reason();

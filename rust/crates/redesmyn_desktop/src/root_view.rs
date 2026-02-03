@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
-    SharedString, Subscription, Task, WeakEntity, Window, div, point, prelude::*, px,
+    SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use tokio::sync::{mpsc, watch};
 
@@ -3904,9 +3904,9 @@ impl Render for WorkspacePaneHost {
                 .px(theme.spacing.xs)
                 .py(px(1.0))
                 .rounded(theme.radius.sm)
-                .bg(theme.colors.surface_elevated.opacity(0.75))
+                .bg(theme.colors.surface.opacity(0.92))
                 .border_1()
-                .border_color(theme.colors.border.opacity(0.5))
+                .border_color(theme.colors.border.opacity(0.35))
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
                 .child(label)
@@ -3954,7 +3954,7 @@ impl Render for WorkspacePaneHost {
             .flex()
             .flex_row()
             .items_center()
-            .gap(theme.spacing.xs)
+            .gap(px(2.0))
             .min_w_0();
         let mut has_chips = false;
 
@@ -4004,19 +4004,17 @@ impl Render for WorkspacePaneHost {
                     }
                 });
 
-            chips_row = chips_row.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.xs)
-                    .px(theme.spacing.sm)
-                    .py(theme.spacing.xs)
-                    .rounded(theme.radius.md)
-                    .bg(theme.colors.surface_elevated.opacity(0.7))
-                    .child(open_label)
-                    .child(clear_button),
-            );
+            let chip = overlay_surface(&theme, OverlaySurfaceKind::Menu, px(999.0))
+                .h(filter_tab_height)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.xs)
+                .px(theme.spacing.sm)
+                .child(open_label)
+                .child(clear_button);
+
+            chips_row = chips_row.child(chip);
         }
 
         let mut body = div().flex().flex_col().size_full();
@@ -4149,7 +4147,8 @@ impl Render for WorkspacePaneHost {
             );
 
             if show_filter_ui {
-                let tab_top = theme.spacing.md;
+                let tab_top =
+                    theme.spacing.md + self.graph_view.read(cx).selection_bar_reserved_top_offset();
                 let tab_left = theme.spacing.md;
 
                 let menu_opacity = self.task_filters_menu_opacity.opacity_for_render(
@@ -4164,33 +4163,20 @@ impl Render for WorkspacePaneHost {
                     window,
                 );
 
-                let filter_tab = overlay_surface(&theme, OverlaySurfaceKind::Menu, px(999.0))
-                    .h(filter_tab_height)
+                let filter_button_pill =
+                    overlay_surface(&theme, OverlaySurfaceKind::Menu, px(999.0))
+                        .h(filter_tab_height)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(filter_button);
+
+                let filter_tab = div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_center()
-                    .gap(theme.spacing.sm)
-                    .px(theme.spacing.sm)
-                    .py(px(2.0))
-                    .shadow_md()
-                    .when(menu_opacity > 1e-3, |this| {
-                        this.shadow(vec![
-                            gpui::BoxShadow {
-                                color: theme.colors.border.opacity(0.35),
-                                offset: point(px(0.0), px(2.0)),
-                                blur_radius: px(18.0),
-                                spread_radius: px(0.0),
-                            },
-                            gpui::BoxShadow {
-                                color: theme.colors.ring.opacity(0.20),
-                                offset: point(px(0.0), px(0.0)),
-                                blur_radius: px(16.0),
-                                spread_radius: px(0.0),
-                            },
-                        ])
-                    })
-                    .child(filter_button)
+                    .gap(px(2.0))
+                    .child(filter_button_pill)
                     .when(has_chips, |this| this.child(chips_row));
 
                 host = host.child(
@@ -4596,14 +4582,7 @@ impl Render for WorkspacePaneHost {
                             .px(theme.spacing.md)
                             .shadow_md()
                             .occlude()
-                            .child(
-                                div()
-                                    .pb(theme.spacing.xs)
-                                    .text_xs()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .child(category.title()),
-                            )
-                            .child(div().h(px(320.0)).child(values))
+                            .child(div().h(px(260.0)).child(values))
                     });
 
                     let menu_container = div()
