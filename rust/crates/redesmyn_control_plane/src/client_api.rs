@@ -1137,6 +1137,7 @@ async fn handle_request_result(
 
             let json_payload = match encode_agent_command_payload(&SetSessionPermissionsModeCommand {
                 session_id: req.session_id,
+                task_id: session.task_id,
                 mode: req.mode,
             }) {
                 Ok(payload) => payload,
@@ -1230,6 +1231,7 @@ async fn handle_request_result(
             let json_payload =
                 match encode_agent_command_payload(&SetSessionCodexApprovalPolicyCommand {
                     session_id: req.session_id,
+                    task_id: session.task_id,
                     approval_policy: req.approval_policy,
                 }) {
                     Ok(payload) => payload,
@@ -1332,6 +1334,7 @@ async fn handle_request_result(
 
             let json_payload = match encode_agent_command_payload(&SetSessionCodexSandboxPolicyCommand {
                 session_id: req.session_id,
+                task_id: session.task_id,
                 sandbox_policy: req.sandbox_policy,
             }) {
                 Ok(payload) => payload,

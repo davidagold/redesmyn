@@ -98,6 +98,8 @@ pub struct AttachTaskAgentSessionCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetSessionPermissionsModeCommand {
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
     pub mode: PermissionsMode,
 }
 
@@ -105,12 +107,16 @@ pub struct SetSessionPermissionsModeCommand {
 pub struct SetSessionCodexApprovalPolicyCommand {
     pub session_id: SessionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_policy: Option<CodexApprovalPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetSessionCodexSandboxPolicyCommand {
     pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<CodexSandboxPolicy>,
 }

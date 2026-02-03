@@ -437,6 +437,18 @@ async fn handle_session_agent_set_permissions_mode(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
+    if let Err(err) = ensure_app_server_session_started(
+        &router,
+        dispatch.scope,
+        cmd.session_id,
+        cmd.task_id,
+    )
+    .await
+    {
+        fail_command(frames_tx, dispatch, err).await;
+        return;
+    }
+
     match router
         .app_server
         .set_permissions_mode(cmd.session_id, cmd.mode)
@@ -492,6 +504,18 @@ async fn handle_session_agent_set_codex_approval_policy(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
+    if let Err(err) = ensure_app_server_session_started(
+        &router,
+        dispatch.scope,
+        cmd.session_id,
+        cmd.task_id,
+    )
+    .await
+    {
+        fail_command(frames_tx, dispatch, err).await;
+        return;
+    }
+
     match router
         .app_server
         .set_codex_approval_policy(cmd.session_id, cmd.approval_policy)
@@ -545,6 +569,18 @@ async fn handle_session_agent_set_codex_sandbox_policy(
     .await
     {
         tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    if let Err(err) = ensure_app_server_session_started(
+        &router,
+        dispatch.scope,
+        cmd.session_id,
+        cmd.task_id,
+    )
+    .await
+    {
+        fail_command(frames_tx, dispatch, err).await;
+        return;
     }
 
     match router
@@ -635,6 +671,31 @@ fn session_scope(task_id: Option<redesmyn_ids::TaskId>) -> SessionScope {
         Some(task_id) => SessionScope::Task { task_id },
         None => SessionScope::Chat,
     }
+}
+
+async fn ensure_app_server_session_started(
+    router: &CommandRouter,
+    repo_scope: RepoScope,
+    session_id: redesmyn_ids::SessionId,
+    task_id: Option<redesmyn_ids::TaskId>,
+) -> Result<(), ErrorEnvelope> {
+    let scope = session_scope(task_id);
+    let repo_root = resolve_repo_root(&router.repo_registry, repo_scope)?;
+    let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
+        repo_root,
+    )));
+    let spec = AppServerSessionSpec {
+        scope,
+        allow_concurrent_for_task: false,
+        process,
+    };
+
+    router
+        .app_server
+        .start_session(session_id, task_id, spec)
+        .await
+        .map(|_| ())
+        .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))
 }
 
 fn daemon_state_dir(daemon: &DaemonConfig) -> PathBuf {
