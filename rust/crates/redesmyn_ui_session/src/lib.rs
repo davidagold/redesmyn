@@ -23,12 +23,12 @@ use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
-    GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload, ResponseResult,
+    GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
+    RespondPermissionRequestRequest, RespondPermissionRequestResponse, ResponseResult,
+    SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
     SetSessionCodexApprovalPolicyRequest, SetSessionCodexApprovalPolicyResponse,
-    SetSessionCodexSandboxPolicyRequest, SetSessionCodexSandboxPolicyResponse,
-    RespondPermissionRequestRequest, RespondPermissionRequestResponse, SendSessionMessageRequest,
-    SendSessionMessageResponse, SessionEventCursor, StartAgentRequest, StartAgentResponse,
-    SubscriptionEvent,
+    SetSessionCodexSandboxPolicyRequest, SetSessionCodexSandboxPolicyResponse, StartAgentRequest,
+    StartAgentResponse, SubscriptionEvent,
 };
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionDecisionBy,
@@ -792,13 +792,16 @@ pub struct SessionView {
     pending_codex_approval_policy: Option<Option<CodexApprovalPolicy>>,
     codex_approval_policy_action: UserActionState,
     set_codex_approval_policy_task: Option<Task<()>>,
+    codex_approval_policy_timeout_task: Option<Task<()>>,
     codex_approval_policy_menu_open: bool,
     pending_codex_sandbox_policy: Option<Option<CodexSandboxPolicy>>,
     codex_sandbox_policy_action: UserActionState,
     set_codex_sandbox_policy_task: Option<Task<()>>,
+    codex_sandbox_policy_timeout_task: Option<Task<()>>,
     codex_sandbox_policy_menu_open: bool,
     permission_request_ids: Rc<HashSet<String>>,
     permission_decisions_by_request_id: Rc<HashMap<String, PermissionDecisionState>>,
+    expanded_permission_requests: HashSet<String>,
     permission_request_actions: HashMap<String, UserActionState>,
     respond_permission_request_tasks: HashMap<String, Task<()>>,
     task_binding_task_id: Option<TaskId>,
@@ -927,13 +930,16 @@ impl SessionView {
             pending_codex_approval_policy: None,
             codex_approval_policy_action: UserActionState::default(),
             set_codex_approval_policy_task: None,
+            codex_approval_policy_timeout_task: None,
             codex_approval_policy_menu_open: false,
             pending_codex_sandbox_policy: None,
             codex_sandbox_policy_action: UserActionState::default(),
             set_codex_sandbox_policy_task: None,
+            codex_sandbox_policy_timeout_task: None,
             codex_sandbox_policy_menu_open: false,
             permission_request_ids: Rc::new(HashSet::new()),
             permission_decisions_by_request_id: Rc::new(HashMap::new()),
+            expanded_permission_requests: HashSet::new(),
             permission_request_actions: HashMap::new(),
             respond_permission_request_tasks: HashMap::new(),
             task_binding_task_id: None,
@@ -1270,13 +1276,16 @@ impl SessionView {
             self.pending_codex_approval_policy = None;
             self.codex_approval_policy_action = UserActionState::default();
             self.set_codex_approval_policy_task = None;
+            self.codex_approval_policy_timeout_task = None;
             self.codex_approval_policy_menu_open = false;
             self.pending_codex_sandbox_policy = None;
             self.codex_sandbox_policy_action = UserActionState::default();
             self.set_codex_sandbox_policy_task = None;
+            self.codex_sandbox_policy_timeout_task = None;
             self.codex_sandbox_policy_menu_open = false;
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
+            self.expanded_permission_requests.clear();
             self.permission_request_actions = HashMap::new();
             self.respond_permission_request_tasks = HashMap::new();
             self.timeline_follow_bottom.set(false);
@@ -1375,13 +1384,16 @@ impl SessionView {
         self.pending_codex_approval_policy = None;
         self.codex_approval_policy_action = UserActionState::default();
         self.set_codex_approval_policy_task = None;
+        self.codex_approval_policy_timeout_task = None;
         self.codex_approval_policy_menu_open = false;
         self.pending_codex_sandbox_policy = None;
         self.codex_sandbox_policy_action = UserActionState::default();
         self.set_codex_sandbox_policy_task = None;
+        self.codex_sandbox_policy_timeout_task = None;
         self.codex_sandbox_policy_menu_open = false;
         self.permission_request_ids = Rc::new(HashSet::new());
         self.permission_decisions_by_request_id = Rc::new(HashMap::new());
+        self.expanded_permission_requests.clear();
         self.permission_request_actions = HashMap::new();
         self.respond_permission_request_tasks = HashMap::new();
         self.collapsed_reasoning.clear();
@@ -1494,12 +1506,14 @@ impl SessionView {
         self.codex_approval_policy_action.start();
         self.pending_codex_approval_policy = Some(approval_policy);
         self.codex_approval_policy_menu_open = false;
+        self.codex_approval_policy_timeout_task = None;
         cx.notify();
 
         let session_id = feed.session_id;
         let view = cx.entity();
-        self.set_codex_approval_policy_task = Some(cx.spawn(
-            move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+        let timeout_view = view.clone();
+        self.set_codex_approval_policy_task =
+            Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let cx = cx.clone();
                 async move {
                     let result =
@@ -1507,16 +1521,25 @@ impl SessionView {
                             .await;
                     let _ = cx.update(|cx| {
                         view.update(cx, |this, cx| {
-                            this.on_set_codex_approval_policy_completed(
-                                approval_policy,
-                                result,
-                                cx,
-                            )
+                            this.on_set_codex_approval_policy_completed(approval_policy, result, cx)
                         })
                     });
                 }
-            },
-        ));
+            }));
+
+        let expected_policy = approval_policy;
+        self.codex_approval_policy_timeout_task =
+            Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    tokio::time::sleep(Duration::from_secs(8)).await;
+                    let _ = cx.update(|cx| {
+                        timeout_view.update(cx, |this, cx| {
+                            this.on_codex_approval_policy_timeout(expected_policy, cx);
+                        })
+                    });
+                }
+            }));
     }
 
     fn on_set_codex_approval_policy_completed(
@@ -1529,21 +1552,39 @@ impl SessionView {
 
         match result {
             Ok(_resp) => {
-                self.codex_approval_policy_action.succeed();
-                self.codex_approval_policy_action.clear_error();
-                self.pending_codex_approval_policy = None;
-                self.codex_approval_policy_menu_open = false;
-                if let Some(feed) = self.feed.as_mut() {
-                    feed.codex_approval_policy = approval_policy;
-                }
+                // The control-plane request only acknowledges command issuance; wait until we see
+                // the durable `CodexApprovalPolicyChanged` session event to mark it applied.
+                let _ = approval_policy;
             }
             Err(err) => {
                 self.codex_approval_policy_action.fail(err.message);
                 self.pending_codex_approval_policy = None;
+                self.codex_approval_policy_timeout_task = None;
                 self.codex_approval_policy_menu_open = false;
             }
         }
 
+        cx.notify();
+    }
+
+    fn on_codex_approval_policy_timeout(
+        &mut self,
+        expected_policy: Option<CodexApprovalPolicy>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.codex_approval_policy_action.in_flight {
+            return;
+        }
+
+        if self.pending_codex_approval_policy != Some(expected_policy) {
+            return;
+        }
+
+        self.codex_approval_policy_action
+            .fail("Timed out waiting for approvals to apply.");
+        self.pending_codex_approval_policy = None;
+        self.codex_approval_policy_menu_open = false;
+        self.codex_approval_policy_timeout_task = None;
         cx.notify();
     }
 
@@ -1578,29 +1619,48 @@ impl SessionView {
         self.codex_sandbox_policy_action.start();
         self.pending_codex_sandbox_policy = Some(sandbox_policy.clone());
         self.codex_sandbox_policy_menu_open = false;
+        self.codex_sandbox_policy_timeout_task = None;
         cx.notify();
 
         let session_id = feed.session_id;
+        let expected_policy = sandbox_policy.clone();
+        let sandbox_policy_for_command = sandbox_policy.clone();
         let view = cx.entity();
-        self.set_codex_sandbox_policy_task = Some(cx.spawn(
-            move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+        let timeout_view = view.clone();
+        self.set_codex_sandbox_policy_task =
+            Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let cx = cx.clone();
                 async move {
-                    let result =
-                        set_session_codex_sandbox_policy(&client, session_id, sandbox_policy.clone())
-                            .await;
+                    let result = set_session_codex_sandbox_policy(
+                        &client,
+                        session_id,
+                        sandbox_policy_for_command.clone(),
+                    )
+                    .await;
                     let _ = cx.update(|cx| {
                         view.update(cx, |this, cx| {
                             this.on_set_codex_sandbox_policy_completed(
-                                sandbox_policy.clone(),
+                                sandbox_policy_for_command.clone(),
                                 result,
                                 cx,
                             )
                         })
                     });
                 }
-            },
-        ));
+            }));
+
+        self.codex_sandbox_policy_timeout_task =
+            Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    tokio::time::sleep(Duration::from_secs(8)).await;
+                    let _ = cx.update(|cx| {
+                        timeout_view.update(cx, |this, cx| {
+                            this.on_codex_sandbox_policy_timeout(expected_policy.clone(), cx);
+                        })
+                    });
+                }
+            }));
     }
 
     fn on_set_codex_sandbox_policy_completed(
@@ -1613,21 +1673,39 @@ impl SessionView {
 
         match result {
             Ok(_resp) => {
-                self.codex_sandbox_policy_action.succeed();
-                self.codex_sandbox_policy_action.clear_error();
-                self.pending_codex_sandbox_policy = None;
-                self.codex_sandbox_policy_menu_open = false;
-                if let Some(feed) = self.feed.as_mut() {
-                    feed.codex_sandbox_policy = sandbox_policy;
-                }
+                // The control-plane request only acknowledges command issuance; wait until we see
+                // the durable `CodexSandboxPolicyChanged` session event to mark it applied.
+                let _ = sandbox_policy;
             }
             Err(err) => {
                 self.codex_sandbox_policy_action.fail(err.message);
                 self.pending_codex_sandbox_policy = None;
+                self.codex_sandbox_policy_timeout_task = None;
                 self.codex_sandbox_policy_menu_open = false;
             }
         }
 
+        cx.notify();
+    }
+
+    fn on_codex_sandbox_policy_timeout(
+        &mut self,
+        expected_policy: Option<CodexSandboxPolicy>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.codex_sandbox_policy_action.in_flight {
+            return;
+        }
+
+        if self.pending_codex_sandbox_policy != Some(expected_policy.clone()) {
+            return;
+        }
+
+        self.codex_sandbox_policy_action
+            .fail("Timed out waiting for sandbox to apply.");
+        self.pending_codex_sandbox_policy = None;
+        self.codex_sandbox_policy_menu_open = false;
+        self.codex_sandbox_policy_timeout_task = None;
         cx.notify();
     }
 
@@ -1669,9 +1747,13 @@ impl SessionView {
             let cx = cx.clone();
             let request_id_for_request = request_id.clone();
             async move {
-                let result =
-                    respond_permission_request(&client, session_id, request_id_for_request, decision)
-                        .await;
+                let result = respond_permission_request(
+                    &client,
+                    session_id,
+                    request_id_for_request,
+                    decision,
+                )
+                .await;
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
                         this.on_respond_permission_request_completed(request_id, result, cx)
@@ -1881,6 +1963,31 @@ impl SessionView {
             SubscriptionEvent::SessionEvent(ev) => {
                 if ev.session_id != feed.session_id {
                     return;
+                }
+                if let SessionEventKind::CodexApprovalPolicyChanged(changed) = &ev.kind {
+                    if self.codex_approval_policy_action.in_flight
+                        && self.pending_codex_approval_policy == Some(changed.approval_policy)
+                    {
+                        self.codex_approval_policy_action.succeed();
+                        self.pending_codex_approval_policy = None;
+                        self.codex_approval_policy_menu_open = false;
+                        self.codex_approval_policy_timeout_task = None;
+                    }
+                    self.codex_approval_policy_action.clear_error();
+                }
+                if let SessionEventKind::CodexSandboxPolicyChanged(changed) = &ev.kind {
+                    if self.codex_sandbox_policy_action.in_flight
+                        && self
+                            .pending_codex_sandbox_policy
+                            .as_ref()
+                            .is_some_and(|pending| pending == &changed.sandbox_policy)
+                    {
+                        self.codex_sandbox_policy_action.succeed();
+                        self.pending_codex_sandbox_policy = None;
+                        self.codex_sandbox_policy_menu_open = false;
+                        self.codex_sandbox_policy_timeout_task = None;
+                    }
+                    self.codex_sandbox_policy_action.clear_error();
                 }
                 let reasoning_key = match &ev.kind {
                     SessionEventKind::AssistantReasoning(reasoning) => Some(
@@ -2246,6 +2353,17 @@ impl SessionView {
         cx.notify();
     }
 
+    fn toggle_permission_request(&mut self, request_id: &str, cx: &mut Context<Self>) {
+        if self.expanded_permission_requests.contains(request_id) {
+            self.expanded_permission_requests.remove(request_id);
+        } else {
+            self.expanded_permission_requests
+                .insert(request_id.to_owned());
+        }
+
+        cx.notify();
+    }
+
     fn toggle_tool_group(&mut self, group_id: SessionEventId, cx: &mut Context<Self>) {
         let was_expanded = self.expanded_tool_groups.contains(&group_id);
         if was_expanded {
@@ -2388,6 +2506,8 @@ impl SessionView {
 
         self.permission_request_ids = Rc::new(request_ids);
         self.permission_decisions_by_request_id = Rc::new(decisions);
+        self.expanded_permission_requests
+            .retain(|id| self.permission_request_ids.contains(id));
     }
 
     fn rebuild_tool_event_groups(&mut self) {
@@ -2982,7 +3102,8 @@ impl Render for SessionView {
         let tool_event_transitions = Rc::clone(&self.tool_event_transitions);
         let tool_group_transitions = Rc::clone(&self.tool_group_transitions);
         let permission_request_ids = Rc::clone(&self.permission_request_ids);
-        let permission_decisions_by_request_id = Rc::clone(&self.permission_decisions_by_request_id);
+        let permission_decisions_by_request_id =
+            Rc::clone(&self.permission_decisions_by_request_id);
         let reasoning_scroll_states = Rc::clone(&self.reasoning_scroll_states);
         let tool_event_scroll_handles = Rc::clone(&self.tool_event_scroll_handles);
         let follow_bottom = Rc::clone(&self.timeline_follow_bottom);
@@ -3910,56 +4031,205 @@ impl Render for SessionView {
                                 .cloned()
                                 .unwrap_or_default();
 
-                            let details = match &requested.request {
+                            let details_expanded = timeline_view
+                                .read(cx)
+                                .expanded_permission_requests
+                                .contains(&request_id);
+
+                            const PERMISSION_DETAILS_MAX_LINES: usize = 12;
+                            const PERMISSION_DETAILS_MAX_CHARS: usize = 800;
+
+                            let value_needs_truncate = |value: &str| -> bool {
+                                let mut chars = 0usize;
+                                let mut lines = 0usize;
+
+                                for ch in value.chars() {
+                                    if chars >= PERMISSION_DETAILS_MAX_CHARS {
+                                        return true;
+                                    }
+
+                                    if ch == '\n' {
+                                        lines = lines.saturating_add(1);
+                                        if lines >= PERMISSION_DETAILS_MAX_LINES {
+                                            return true;
+                                        }
+                                    }
+
+                                    chars = chars.saturating_add(1);
+                                }
+
+                                false
+                            };
+
+                            let truncate_value = |value: &str| -> String {
+                                let mut out = String::new();
+                                let mut chars = 0usize;
+                                let mut lines = 0usize;
+
+                                for ch in value.chars() {
+                                    if chars >= PERMISSION_DETAILS_MAX_CHARS {
+                                        break;
+                                    }
+
+                                    if ch == '\n' {
+                                        lines = lines.saturating_add(1);
+                                        if lines >= PERMISSION_DETAILS_MAX_LINES {
+                                            break;
+                                        }
+                                    }
+
+                                    out.push(ch);
+                                    chars = chars.saturating_add(1);
+                                }
+
+                                if out.len() < value.len() {
+                                    out = out.trim_end().to_owned();
+                                    out.push_str("\n…");
+                                }
+
+                                out
+                            };
+
+                            let detail_row = |label: &'static str, value: String| {
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap(theme.spacing.sm)
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(theme.colors.foreground_muted)
+                                            .child(format!("{label}:")),
+                                    )
+                                    .child(div().min_w_0().text_color(theme.colors.foreground).child(value))
+                            };
+
+                            let (details, details_collapsible) = match &requested.request {
                                 PermissionRequest::CommandExecution(req) => {
+                                    let command_collapsible = req
+                                        .command
+                                        .as_deref()
+                                        .is_some_and(value_needs_truncate);
+                                    let command = req
+                                        .command
+                                        .as_deref()
+                                        .map(|command| {
+                                            if details_expanded {
+                                                command.to_owned()
+                                            } else if command_collapsible {
+                                                truncate_value(command)
+                                            } else {
+                                                command.to_owned()
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "<unknown>".to_owned());
+
+                                    let reason_collapsible =
+                                        req.reason.as_deref().is_some_and(value_needs_truncate);
+                                    let reason = req
+                                        .reason
+                                        .as_deref()
+                                        .map(|reason| {
+                                            if details_expanded {
+                                                reason.to_owned()
+                                            } else if reason_collapsible {
+                                                truncate_value(reason)
+                                            } else {
+                                                reason.to_owned()
+                                            }
+                                        })
+                                        .unwrap_or_default();
+
                                     let mut body = div()
                                         .flex()
                                         .flex_col()
                                         .gap(theme.spacing.xs)
                                         .font(theme.typography.mono.font.clone())
                                         .text_size(theme.typography.caption.size)
-                                        .text_color(theme.colors.foreground);
+                                        .child(detail_row("command", command));
 
-                                    if let Some(command) = req.command.as_ref() {
-                                        body = body.child(format!("command: {command}"));
-                                    } else {
-                                        body = body.child("command: <unknown>");
+                                    if let Some(cwd) = req.cwd.as_deref() {
+                                        body = body.child(detail_row("cwd", cwd.to_owned()));
                                     }
-                                    if let Some(cwd) = req.cwd.as_ref() {
-                                        body = body.child(format!("cwd: {cwd}"));
-                                    }
-                                    if let Some(reason) = req.reason.as_ref() {
-                                        body = body.child(format!("reason: {reason}"));
+                                    if !reason.is_empty() {
+                                        body = body.child(detail_row("reason", reason));
                                     }
 
-                                    body.into_any_element()
+                                    (
+                                        div()
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.sm)
+                                            .rounded_sm()
+                                            .bg(theme.colors.surface.opacity(0.35))
+                                            .border_1()
+                                            .border_color(theme.colors.border.opacity(0.25))
+                                            .child(body)
+                                            .into_any_element(),
+                                        command_collapsible || reason_collapsible,
+                                    )
                                 }
                                 PermissionRequest::FileChange(req) => {
+                                    let root = req
+                                        .grant_root
+                                        .as_deref()
+                                        .unwrap_or("<unknown>")
+                                        .to_owned();
+                                    let reason_collapsible =
+                                        req.reason.as_deref().is_some_and(value_needs_truncate);
+                                    let reason = req
+                                        .reason
+                                        .as_deref()
+                                        .map(|reason| {
+                                            if details_expanded {
+                                                reason.to_owned()
+                                            } else if reason_collapsible {
+                                                truncate_value(reason)
+                                            } else {
+                                                reason.to_owned()
+                                            }
+                                        })
+                                        .unwrap_or_default();
+
                                     let mut body = div()
                                         .flex()
                                         .flex_col()
                                         .gap(theme.spacing.xs)
                                         .font(theme.typography.mono.font.clone())
                                         .text_size(theme.typography.caption.size)
-                                        .text_color(theme.colors.foreground);
+                                        .child(detail_row("root", root));
 
-                                    if let Some(root) = req.grant_root.as_ref() {
-                                        body = body.child(format!("root: {root}"));
-                                    } else {
-                                        body = body.child("root: <unknown>");
-                                    }
-                                    if let Some(reason) = req.reason.as_ref() {
-                                        body = body.child(format!("reason: {reason}"));
+                                    if !reason.is_empty() {
+                                        body = body.child(detail_row("reason", reason));
                                     }
 
-                                    body.into_any_element()
+                                    (
+                                        div()
+                                            .px(theme.spacing.sm)
+                                            .py(theme.spacing.sm)
+                                            .rounded_sm()
+                                            .bg(theme.colors.surface.opacity(0.35))
+                                            .border_1()
+                                            .border_color(theme.colors.border.opacity(0.25))
+                                            .child(body)
+                                            .into_any_element(),
+                                        reason_collapsible,
+                                    )
                                 }
-                                PermissionRequest::Unknown { unknown_kind, .. } => div()
-                                    .font(theme.typography.mono.font.clone())
-                                    .text_size(theme.typography.caption.size)
-                                    .text_color(theme.colors.foreground_muted)
-                                    .child(format!("provider request: {unknown_kind}"))
-                                    .into_any_element(),
+                                PermissionRequest::Unknown { unknown_kind, .. } => (
+                                    div()
+                                        .px(theme.spacing.sm)
+                                        .py(theme.spacing.sm)
+                                        .rounded_sm()
+                                        .bg(theme.colors.surface.opacity(0.35))
+                                        .border_1()
+                                        .border_color(theme.colors.border.opacity(0.25))
+                                        .font(theme.typography.mono.font.clone())
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground_muted)
+                                        .child(format!("provider request: {unknown_kind}"))
+                                        .into_any_element(),
+                                    false,
+                                ),
                             };
 
                             let (callout_kind, title) = match decision_state {
@@ -3976,6 +4246,36 @@ impl Render for SessionView {
                                 .flex_col()
                                 .gap(theme.spacing.sm)
                                 .child(details);
+
+                            if details_collapsible {
+                                let toggle_label = if details_expanded {
+                                    "Show less"
+                                } else {
+                                    "Show more"
+                                };
+
+                                let toggle_view = timeline_view.clone();
+                                let request_id_for_toggle = request_id.clone();
+                                action = action.child(
+                                    div().flex().justify_end().child(
+                                        TextButton::new(
+                                            ("permission_request_toggle", request_id_key),
+                                            toggle_label,
+                                        )
+                                        .kind(ButtonKind::Secondary)
+                                        .on_click(move |event, _window, cx| {
+                                            if event.standard_click() {
+                                                toggle_view.update(cx, |this, cx| {
+                                                    this.toggle_permission_request(
+                                                        request_id_for_toggle.as_str(),
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        }),
+                                    ),
+                                );
+                            }
 
                             if let Some(err) = action_state.error.clone() {
                                 action = action.child(
@@ -4948,6 +5248,10 @@ impl Render for SessionView {
         let composer_sending = self.feed.as_ref().is_some_and(|feed| feed.composer.sending);
         let (composer_can_send, disabled_reason) = if composer_sending {
             (false, "Sending…")
+        } else if self.codex_approval_policy_action.in_flight
+            || self.codex_sandbox_policy_action.in_flight
+        {
+            (false, "Updating…")
         } else if self.client.is_none() || self.feed.is_none() {
             (false, "Chat is unavailable")
         } else if composer_draft.trim().is_empty() {
@@ -4999,23 +5303,23 @@ impl Render for SessionView {
             Some(CodexSandboxPolicy::Unknown) => "Unknown",
         };
 
-        let (approvals_disabled, approvals_disabled_reason) = if self.codex_approval_policy_action.in_flight
-        {
-            (true, "Updating…")
-        } else if self.client.is_none() || self.feed.is_none() {
-            (true, "Chat is unavailable")
-        } else {
-            (false, "")
-        };
+        let (approvals_disabled, approvals_disabled_reason) =
+            if self.codex_approval_policy_action.in_flight {
+                (true, "Updating…")
+            } else if self.client.is_none() || self.feed.is_none() {
+                (true, "Chat is unavailable")
+            } else {
+                (false, "")
+            };
 
-        let (sandbox_disabled, sandbox_disabled_reason) = if self.codex_sandbox_policy_action.in_flight
-        {
-            (true, "Updating…")
-        } else if self.client.is_none() || self.feed.is_none() {
-            (true, "Chat is unavailable")
-        } else {
-            (false, "")
-        };
+        let (sandbox_disabled, sandbox_disabled_reason) =
+            if self.codex_sandbox_policy_action.in_flight {
+                (true, "Updating…")
+            } else if self.client.is_none() || self.feed.is_none() {
+                (true, "Chat is unavailable")
+            } else {
+                (false, "")
+            };
 
         let policies_status = if let Some(error) = self.codex_approval_policy_action.error.clone() {
             Some(
@@ -5035,7 +5339,8 @@ impl Render for SessionView {
                     .truncate()
                     .child(format!("Sandbox: {error}")),
             )
-        } else if self.codex_approval_policy_action.in_flight || self.codex_sandbox_policy_action.in_flight
+        } else if self.codex_approval_policy_action.in_flight
+            || self.codex_sandbox_policy_action.in_flight
         {
             Some(
                 div()
@@ -5153,8 +5458,12 @@ impl Render for SessionView {
                 }
             })
             .option(
-                SelectOption::new(("session_codex_sandbox_default", entity_id), "Default", None)
-                    .tooltip("Use the agent default sandbox policy"),
+                SelectOption::new(
+                    ("session_codex_sandbox_default", entity_id),
+                    "Default",
+                    None,
+                )
+                .tooltip("Use the agent default sandbox policy"),
             )
             .option(
                 SelectOption::new(
