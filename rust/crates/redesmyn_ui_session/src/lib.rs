@@ -24,13 +24,15 @@ use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
     GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload, ResponseResult,
+    SetSessionCodexApprovalPolicyRequest, SetSessionCodexApprovalPolicyResponse,
+    SetSessionCodexSandboxPolicyRequest, SetSessionCodexSandboxPolicyResponse,
     RespondPermissionRequestRequest, RespondPermissionRequestResponse, SendSessionMessageRequest,
-    SendSessionMessageResponse, SessionEventCursor, SetSessionPermissionsModeRequest,
-    SetSessionPermissionsModeResponse, StartAgentRequest, StartAgentResponse, SubscriptionEvent,
+    SendSessionMessageResponse, SessionEventCursor, StartAgentRequest, StartAgentResponse,
+    SubscriptionEvent,
 };
 use redesmyn_protocol::session::{
-    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionsMode, SessionEventKind,
-    ToolResult,
+    CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionDecisionBy,
+    PermissionRequest, SessionEventKind, ToolResult,
 };
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint};
@@ -446,19 +448,46 @@ async fn send_session_message(
     }
 }
 
-async fn set_session_permissions_mode(
+async fn set_session_codex_approval_policy(
     client: &Client,
     session_id: SessionId,
-    mode: PermissionsMode,
-) -> Result<SetSessionPermissionsModeResponse, ErrorEnvelope> {
+    approval_policy: Option<CodexApprovalPolicy>,
+) -> Result<SetSessionCodexApprovalPolicyResponse, ErrorEnvelope> {
     let response = client
-        .request(RequestPayload::SetSessionPermissionsMode(
-            SetSessionPermissionsModeRequest { session_id, mode },
+        .request(RequestPayload::SetSessionCodexApprovalPolicy(
+            SetSessionCodexApprovalPolicyRequest {
+                session_id,
+                approval_policy,
+            },
         ))
         .await?;
 
     match response {
-        ResponseResult::SetSessionPermissionsMode(resp) => Ok(resp),
+        ResponseResult::SetSessionCodexApprovalPolicy(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
+async fn set_session_codex_sandbox_policy(
+    client: &Client,
+    session_id: SessionId,
+    sandbox_policy: Option<CodexSandboxPolicy>,
+) -> Result<SetSessionCodexSandboxPolicyResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::SetSessionCodexSandboxPolicy(
+            SetSessionCodexSandboxPolicyRequest {
+                session_id,
+                sandbox_policy,
+            },
+        ))
+        .await?;
+
+    match response {
+        ResponseResult::SetSessionCodexSandboxPolicy(resp) => Ok(resp),
         ResponseResult::Error(err) => Err(err),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::Internal,
@@ -760,10 +789,14 @@ pub struct SessionView {
     load_task: Option<Task<()>>,
     load_older_task: Option<Task<()>>,
     send_task: Option<Task<()>>,
-    pending_permissions_mode: Option<PermissionsMode>,
-    permissions_mode_action: UserActionState,
-    set_permissions_mode_task: Option<Task<()>>,
-    permissions_mode_menu_open: bool,
+    pending_codex_approval_policy: Option<Option<CodexApprovalPolicy>>,
+    codex_approval_policy_action: UserActionState,
+    set_codex_approval_policy_task: Option<Task<()>>,
+    codex_approval_policy_menu_open: bool,
+    pending_codex_sandbox_policy: Option<Option<CodexSandboxPolicy>>,
+    codex_sandbox_policy_action: UserActionState,
+    set_codex_sandbox_policy_task: Option<Task<()>>,
+    codex_sandbox_policy_menu_open: bool,
     permission_request_ids: Rc<HashSet<String>>,
     permission_decisions_by_request_id: Rc<HashMap<String, PermissionDecisionState>>,
     permission_request_actions: HashMap<String, UserActionState>,
@@ -891,10 +924,14 @@ impl SessionView {
             load_task: None,
             load_older_task: None,
             send_task: None,
-            pending_permissions_mode: None,
-            permissions_mode_action: UserActionState::default(),
-            set_permissions_mode_task: None,
-            permissions_mode_menu_open: false,
+            pending_codex_approval_policy: None,
+            codex_approval_policy_action: UserActionState::default(),
+            set_codex_approval_policy_task: None,
+            codex_approval_policy_menu_open: false,
+            pending_codex_sandbox_policy: None,
+            codex_sandbox_policy_action: UserActionState::default(),
+            set_codex_sandbox_policy_task: None,
+            codex_sandbox_policy_menu_open: false,
             permission_request_ids: Rc::new(HashSet::new()),
             permission_decisions_by_request_id: Rc::new(HashMap::new()),
             permission_request_actions: HashMap::new(),
@@ -1230,10 +1267,14 @@ impl SessionView {
             self.load_older_task = None;
             self.error = None;
             self.feed = None;
-            self.pending_permissions_mode = None;
-            self.permissions_mode_action = UserActionState::default();
-            self.set_permissions_mode_task = None;
-            self.permissions_mode_menu_open = false;
+            self.pending_codex_approval_policy = None;
+            self.codex_approval_policy_action = UserActionState::default();
+            self.set_codex_approval_policy_task = None;
+            self.codex_approval_policy_menu_open = false;
+            self.pending_codex_sandbox_policy = None;
+            self.codex_sandbox_policy_action = UserActionState::default();
+            self.set_codex_sandbox_policy_task = None;
+            self.codex_sandbox_policy_menu_open = false;
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
             self.permission_request_actions = HashMap::new();
@@ -1331,10 +1372,14 @@ impl SessionView {
         self.load_task = None;
         self.load_older_task = None;
         self.send_task = None;
-        self.pending_permissions_mode = None;
-        self.permissions_mode_action = UserActionState::default();
-        self.set_permissions_mode_task = None;
-        self.permissions_mode_menu_open = false;
+        self.pending_codex_approval_policy = None;
+        self.codex_approval_policy_action = UserActionState::default();
+        self.set_codex_approval_policy_task = None;
+        self.codex_approval_policy_menu_open = false;
+        self.pending_codex_sandbox_policy = None;
+        self.codex_sandbox_policy_action = UserActionState::default();
+        self.set_codex_sandbox_policy_task = None;
+        self.codex_sandbox_policy_menu_open = false;
         self.permission_request_ids = Rc::new(HashSet::new());
         self.permission_decisions_by_request_id = Rc::new(HashMap::new());
         self.permission_request_actions = HashMap::new();
@@ -1419,9 +1464,13 @@ impl SessionView {
         }));
     }
 
-    fn set_permissions_mode(&mut self, mode: PermissionsMode, cx: &mut Context<Self>) {
+    fn set_codex_approval_policy(
+        &mut self,
+        approval_policy: Option<CodexApprovalPolicy>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(client) = self.client.clone() else {
-            self.permissions_mode_action
+            self.codex_approval_policy_action
                 .fail("Control plane client is unavailable.");
             cx.notify();
             return;
@@ -1431,57 +1480,151 @@ impl SessionView {
             return;
         };
 
-        if self.permissions_mode_action.in_flight {
+        if self.codex_approval_policy_action.in_flight {
             return;
         }
 
-        let displayed_mode = self
-            .pending_permissions_mode
-            .unwrap_or(feed.permissions_mode);
-        if displayed_mode == mode {
+        let displayed = self
+            .pending_codex_approval_policy
+            .unwrap_or(feed.codex_approval_policy);
+        if displayed == approval_policy {
             return;
         }
 
-        self.permissions_mode_action.start();
-        self.pending_permissions_mode = Some(mode);
-        self.permissions_mode_menu_open = false;
+        self.codex_approval_policy_action.start();
+        self.pending_codex_approval_policy = Some(approval_policy);
+        self.codex_approval_policy_menu_open = false;
         cx.notify();
 
         let session_id = feed.session_id;
         let view = cx.entity();
-        self.set_permissions_mode_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                let result = set_session_permissions_mode(&client, session_id, mode).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| this.on_set_permissions_mode_completed(mode, result, cx))
-                });
-            }
-        }));
+        self.set_codex_approval_policy_task = Some(cx.spawn(
+            move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let result =
+                        set_session_codex_approval_policy(&client, session_id, approval_policy)
+                            .await;
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_set_codex_approval_policy_completed(
+                                approval_policy,
+                                result,
+                                cx,
+                            )
+                        })
+                    });
+                }
+            },
+        ));
     }
 
-    fn on_set_permissions_mode_completed(
+    fn on_set_codex_approval_policy_completed(
         &mut self,
-        mode: PermissionsMode,
-        result: Result<SetSessionPermissionsModeResponse, ErrorEnvelope>,
+        approval_policy: Option<CodexApprovalPolicy>,
+        result: Result<SetSessionCodexApprovalPolicyResponse, ErrorEnvelope>,
         cx: &mut Context<Self>,
     ) {
-        self.set_permissions_mode_task = None;
+        self.set_codex_approval_policy_task = None;
 
         match result {
             Ok(_resp) => {
-                self.permissions_mode_action.succeed();
-                self.permissions_mode_action.clear_error();
-                self.pending_permissions_mode = None;
-                self.permissions_mode_menu_open = false;
+                self.codex_approval_policy_action.succeed();
+                self.codex_approval_policy_action.clear_error();
+                self.pending_codex_approval_policy = None;
+                self.codex_approval_policy_menu_open = false;
                 if let Some(feed) = self.feed.as_mut() {
-                    feed.permissions_mode = mode;
+                    feed.codex_approval_policy = approval_policy;
                 }
             }
             Err(err) => {
-                self.permissions_mode_action.fail(err.message);
-                self.pending_permissions_mode = None;
-                self.permissions_mode_menu_open = false;
+                self.codex_approval_policy_action.fail(err.message);
+                self.pending_codex_approval_policy = None;
+                self.codex_approval_policy_menu_open = false;
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn set_codex_sandbox_policy(
+        &mut self,
+        sandbox_policy: Option<CodexSandboxPolicy>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            self.codex_sandbox_policy_action
+                .fail("Control plane client is unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(feed) = self.feed.as_mut() else {
+            return;
+        };
+
+        if self.codex_sandbox_policy_action.in_flight {
+            return;
+        }
+
+        let displayed = self
+            .pending_codex_sandbox_policy
+            .clone()
+            .unwrap_or(feed.codex_sandbox_policy.clone());
+        if displayed == sandbox_policy {
+            return;
+        }
+
+        self.codex_sandbox_policy_action.start();
+        self.pending_codex_sandbox_policy = Some(sandbox_policy.clone());
+        self.codex_sandbox_policy_menu_open = false;
+        cx.notify();
+
+        let session_id = feed.session_id;
+        let view = cx.entity();
+        self.set_codex_sandbox_policy_task = Some(cx.spawn(
+            move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let result =
+                        set_session_codex_sandbox_policy(&client, session_id, sandbox_policy.clone())
+                            .await;
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_set_codex_sandbox_policy_completed(
+                                sandbox_policy.clone(),
+                                result,
+                                cx,
+                            )
+                        })
+                    });
+                }
+            },
+        ));
+    }
+
+    fn on_set_codex_sandbox_policy_completed(
+        &mut self,
+        sandbox_policy: Option<CodexSandboxPolicy>,
+        result: Result<SetSessionCodexSandboxPolicyResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_codex_sandbox_policy_task = None;
+
+        match result {
+            Ok(_resp) => {
+                self.codex_sandbox_policy_action.succeed();
+                self.codex_sandbox_policy_action.clear_error();
+                self.pending_codex_sandbox_policy = None;
+                self.codex_sandbox_policy_menu_open = false;
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.codex_sandbox_policy = sandbox_policy;
+                }
+            }
+            Err(err) => {
+                self.codex_sandbox_policy_action.fail(err.message);
+                self.pending_codex_sandbox_policy = None;
+                self.codex_sandbox_policy_menu_open = false;
             }
         }
 
@@ -3751,7 +3894,9 @@ impl Render for SessionView {
 
                             list.child(row.child(bubble))
                         }
-                        SessionEventItemContent::PermissionsModeChanged(_ev) => div(),
+                        SessionEventItemContent::PermissionsModeChanged(_)
+                        | SessionEventItemContent::CodexApprovalPolicyChanged(_)
+                        | SessionEventItemContent::CodexSandboxPolicyChanged(_) => div(),
                         SessionEventItemContent::PermissionRequested(requested) => {
                             let request_id = requested.request_id.clone();
                             let request_id_key = stable_str_key(request_id.as_str());
@@ -4825,33 +4970,73 @@ impl Render for SessionView {
                     }
                 });
 
-        let composer_permissions_mode = self
-            .feed
-            .as_ref()
-            .map(|feed| feed.permissions_mode)
-            .unwrap_or(PermissionsMode::Ask);
-        let displayed_permissions_mode = self
-            .pending_permissions_mode
-            .unwrap_or(composer_permissions_mode);
-        let (permissions_disabled, permissions_disabled_reason) =
-            if self.permissions_mode_action.in_flight {
-                (true, "Updating…")
-            } else if self.client.is_none() || self.feed.is_none() {
-                (true, "Chat is unavailable")
-            } else {
-                (false, "")
-            };
+        let displayed_codex_approval_policy = self.pending_codex_approval_policy.unwrap_or(
+            self.feed
+                .as_ref()
+                .and_then(|feed| feed.codex_approval_policy),
+        );
+        let displayed_codex_sandbox_policy = self.pending_codex_sandbox_policy.clone().unwrap_or(
+            self.feed
+                .as_ref()
+                .and_then(|feed| feed.codex_sandbox_policy.clone()),
+        );
 
-        let permissions_status = if let Some(error) = self.permissions_mode_action.error.clone() {
+        let approvals_label = match displayed_codex_approval_policy {
+            None => "Default",
+            Some(CodexApprovalPolicy::UnlessTrusted) => "Unless trusted",
+            Some(CodexApprovalPolicy::OnFailure) => "On failure",
+            Some(CodexApprovalPolicy::OnRequest) => "On request",
+            Some(CodexApprovalPolicy::Never) => "Never",
+            Some(CodexApprovalPolicy::Unknown) => "Unknown",
+        };
+
+        let sandbox_label = match displayed_codex_sandbox_policy.as_ref() {
+            None => "Default",
+            Some(CodexSandboxPolicy::ReadOnly) => "Read-only",
+            Some(CodexSandboxPolicy::WorkspaceWrite { .. }) => "Workspace write",
+            Some(CodexSandboxPolicy::ExternalSandbox { .. }) => "External sandbox",
+            Some(CodexSandboxPolicy::DangerFullAccess) => "Danger: full access",
+            Some(CodexSandboxPolicy::Unknown) => "Unknown",
+        };
+
+        let (approvals_disabled, approvals_disabled_reason) = if self.codex_approval_policy_action.in_flight
+        {
+            (true, "Updating…")
+        } else if self.client.is_none() || self.feed.is_none() {
+            (true, "Chat is unavailable")
+        } else {
+            (false, "")
+        };
+
+        let (sandbox_disabled, sandbox_disabled_reason) = if self.codex_sandbox_policy_action.in_flight
+        {
+            (true, "Updating…")
+        } else if self.client.is_none() || self.feed.is_none() {
+            (true, "Chat is unavailable")
+        } else {
+            (false, "")
+        };
+
+        let policies_status = if let Some(error) = self.codex_approval_policy_action.error.clone() {
             Some(
                 div()
                     .min_w_0()
                     .text_color(theme.colors.danger)
                     .text_size(theme.typography.caption.size)
                     .truncate()
-                    .child(error),
+                    .child(format!("Approvals: {error}")),
             )
-        } else if self.permissions_mode_action.in_flight {
+        } else if let Some(error) = self.codex_sandbox_policy_action.error.clone() {
+            Some(
+                div()
+                    .min_w_0()
+                    .text_color(theme.colors.danger)
+                    .text_size(theme.typography.caption.size)
+                    .truncate()
+                    .child(format!("Sandbox: {error}")),
+            )
+        } else if self.codex_approval_policy_action.in_flight || self.codex_sandbox_policy_action.in_flight
+        {
             Some(
                 div()
                     .text_color(theme.colors.foreground_muted)
@@ -4862,61 +5047,138 @@ impl Render for SessionView {
             None
         };
 
-        let permissions_menu_open = self.permissions_mode_menu_open && !permissions_disabled;
-        let permissions_mode_label = match displayed_permissions_mode {
-            PermissionsMode::Ask => "Ask",
-            PermissionsMode::AutoApprove => "Auto-approve",
-            PermissionsMode::Deny => "Deny",
-            PermissionsMode::Unknown => "Unknown",
-        };
+        let approvals_menu_open = self.codex_approval_policy_menu_open && !approvals_disabled;
+        let sandbox_menu_open = self.codex_sandbox_policy_menu_open && !sandbox_disabled;
 
-        let permissions_mode_dropdown = Select::new(("session_permissions_mode_dropdown", entity_id))
-            .open(permissions_menu_open)
-            .value(displayed_permissions_mode)
-            .placeholder(permissions_mode_label)
-            .disabled(permissions_disabled)
-            .disabled_reason(permissions_disabled_reason)
+        let approvals_dropdown = Select::new(("session_codex_approvals_dropdown", entity_id))
+            .open(approvals_menu_open)
+            .value(displayed_codex_approval_policy)
+            .placeholder(approvals_label)
+            .disabled(approvals_disabled)
+            .disabled_reason(approvals_disabled_reason)
             .menu_width(px(220.0))
             .on_open_change({
                 let view = view.clone();
                 move |open, _window, cx| {
                     view.update(cx, |this, cx| {
-                        this.permissions_mode_menu_open = open;
+                        this.codex_approval_policy_menu_open = open;
+                        if open {
+                            this.codex_sandbox_policy_menu_open = false;
+                        }
                         cx.notify();
                     });
                 }
             })
             .on_select({
                 let view = view.clone();
-                move |mode, _window, cx| {
+                move |approval_policy, _window, cx| {
                     view.update(cx, |this, cx| {
-                        this.set_permissions_mode(mode, cx);
+                        this.set_codex_approval_policy(approval_policy, cx);
                     });
                 }
             })
             .option(
                 SelectOption::new(
-                    ("session_permissions_mode_ask", entity_id),
-                    "Ask",
-                    PermissionsMode::Ask,
+                    ("session_codex_approvals_default", entity_id),
+                    "Default",
+                    None,
                 )
-                .tooltip("Ask before running commands or editing files"),
+                .tooltip("Use the agent default approval policy"),
             )
             .option(
                 SelectOption::new(
-                    ("session_permissions_mode_auto_approve", entity_id),
-                    "Auto-approve",
-                    PermissionsMode::AutoApprove,
+                    ("session_codex_approvals_untrusted", entity_id),
+                    "Unless trusted",
+                    Some(CodexApprovalPolicy::UnlessTrusted),
                 )
-                .tooltip("Automatically approve requests"),
+                .tooltip("Ask for approvals unless the environment is trusted"),
             )
             .option(
                 SelectOption::new(
-                    ("session_permissions_mode_deny", entity_id),
-                    "Deny",
-                    PermissionsMode::Deny,
+                    ("session_codex_approvals_on_request", entity_id),
+                    "On request",
+                    Some(CodexApprovalPolicy::OnRequest),
                 )
-                .tooltip("Automatically deny requests"),
+                .tooltip("Ask for approvals when requested by the agent"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_codex_approvals_on_failure", entity_id),
+                    "On failure",
+                    Some(CodexApprovalPolicy::OnFailure),
+                )
+                .tooltip("Only ask if a command fails (dangerous)"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_codex_approvals_never", entity_id),
+                    "Never",
+                    Some(CodexApprovalPolicy::Never),
+                )
+                .tooltip("Deny all approval requests (tools will not run)"),
+            );
+
+        let workspace_write_policy = CodexSandboxPolicy::WorkspaceWrite {
+            writable_roots: Vec::new(),
+            network_access: false,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+        };
+
+        let sandbox_dropdown = Select::new(("session_codex_sandbox_dropdown", entity_id))
+            .open(sandbox_menu_open)
+            .value(displayed_codex_sandbox_policy.clone())
+            .placeholder(sandbox_label)
+            .disabled(sandbox_disabled)
+            .disabled_reason(sandbox_disabled_reason)
+            .menu_width(px(240.0))
+            .on_open_change({
+                let view = view.clone();
+                move |open, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.codex_sandbox_policy_menu_open = open;
+                        if open {
+                            this.codex_approval_policy_menu_open = false;
+                        }
+                        cx.notify();
+                    });
+                }
+            })
+            .on_select({
+                let view = view.clone();
+                move |sandbox_policy, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.set_codex_sandbox_policy(sandbox_policy, cx);
+                    });
+                }
+            })
+            .option(
+                SelectOption::new(("session_codex_sandbox_default", entity_id), "Default", None)
+                    .tooltip("Use the agent default sandbox policy"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_codex_sandbox_read_only", entity_id),
+                    "Read-only",
+                    Some(CodexSandboxPolicy::ReadOnly),
+                )
+                .tooltip("Disallow writes; safest option"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_codex_sandbox_workspace_write", entity_id),
+                    "Workspace write",
+                    Some(workspace_write_policy),
+                )
+                .tooltip("Allow writes within the workspace (no network)"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_codex_sandbox_full_access", entity_id),
+                    "Danger: full access",
+                    Some(CodexSandboxPolicy::DangerFullAccess),
+                )
+                .tooltip("Allow full filesystem access (unsafe)"),
             );
 
         let composer_action_bar = div()
@@ -4934,13 +5196,35 @@ impl Render for SessionView {
                     .min_w_0()
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .text_color(theme.colors.foreground_muted)
-                            .text_size(theme.typography.caption.size)
-                            .child("Permissions"),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.xs)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .text_size(theme.typography.caption.size)
+                                    .child("Approvals"),
+                            )
+                            .child(approvals_dropdown),
                     )
-                    .child(permissions_mode_dropdown)
-                    .when_some(permissions_status, |this, status| this.child(status)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.xs)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .text_size(theme.typography.caption.size)
+                                    .child("Sandbox"),
+                            )
+                            .child(sandbox_dropdown),
+                    )
+                    .when_some(policies_status, |this, status| this.child(status)),
             )
             .child(send_button);
 
@@ -4971,40 +5255,13 @@ impl Render for SessionView {
         timeline = timeline.child(composer);
         content = content.child(timeline);
 
-        let mut root = div()
+        let root = div()
             .flex()
             .flex_col()
             .gap(theme.spacing.sm)
             .size_full()
             .child(content)
             .track_focus(&self.focus_handle(cx));
-
-        if permissions_menu_open {
-            root = root
-                .on_mouse_down(gpui::MouseButton::Left, {
-                    let view = view.clone();
-                    move |_, _, cx| {
-                        view.update(cx, |this, cx| {
-                            this.permissions_mode_menu_open = false;
-                            cx.notify();
-                        });
-                    }
-                })
-                .capture_key_down({
-                    let view = view.clone();
-                    move |event, _, cx| {
-                        if event.keystroke.key != "escape" {
-                            return;
-                        }
-
-                        view.update(cx, |this, cx| {
-                            this.permissions_mode_menu_open = false;
-                            cx.notify();
-                        });
-                        cx.stop_propagation();
-                    }
-                });
-        }
 
         root
     }
