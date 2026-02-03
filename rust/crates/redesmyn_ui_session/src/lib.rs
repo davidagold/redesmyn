@@ -39,7 +39,8 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade,
-    ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput, TextInputEvent,
+    ScrollbarStyle, Select, SelectOption, StyledScrollbar, TextArea, TextButton, TextInput,
+    TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -4868,122 +4869,55 @@ impl Render for SessionView {
             PermissionsMode::Deny => "Deny",
             PermissionsMode::Unknown => "Unknown",
         };
-        let permissions_menu_chevron = if permissions_menu_open { "▴" } else { "▾" };
 
-        let permissions_mode_dropdown = {
-            let toggle_view = view.clone();
-            let mut select_button = div()
-                .id(("session_permissions_mode_dropdown", entity_id))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(theme.spacing.xs)
-                .px(theme.spacing.sm)
-                .py(theme.spacing.xs)
-                .rounded(theme.radius.md)
-                .bg(theme.colors.accent)
-                .text_size(theme.typography.caption.size)
-                .text_color(theme.colors.foreground)
-                .cursor_pointer()
-                .focusable()
-                .child(permissions_mode_label)
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_color(theme.colors.foreground_muted)
-                        .child(permissions_menu_chevron),
-                );
-
-            if permissions_disabled {
-                select_button = select_button.opacity(0.55).cursor_not_allowed();
-            } else {
-                select_button = select_button.on_click(move |event, _window, cx| {
-                    if event.standard_click() {
-                        toggle_view.update(cx, |this, cx| {
-                            this.permissions_mode_menu_open = !this.permissions_mode_menu_open;
-                            cx.notify();
-                        });
-                    }
-                });
-            }
-
-            let menu = {
+        let permissions_mode_dropdown = Select::new(("session_permissions_mode_dropdown", entity_id))
+            .open(permissions_menu_open)
+            .value(displayed_permissions_mode)
+            .placeholder(permissions_mode_label)
+            .disabled(permissions_disabled)
+            .disabled_reason(permissions_disabled_reason)
+            .menu_width(px(220.0))
+            .on_open_change({
                 let view = view.clone();
-                let make_item = move |id: &'static str,
-                                      label: &'static str,
-                                      mode: PermissionsMode,
-                                      tooltip: &'static str| {
-                    let view = view.clone();
-                    let selected = displayed_permissions_mode == mode;
-                    let kind = if selected {
-                        ButtonKind::Secondary
-                    } else {
-                        ButtonKind::Ghost
-                    };
-
-                    TextButton::new((id, entity_id), label)
-                        .menu_item()
-                        .kind(kind)
-                        .disabled(permissions_disabled)
-                        .disabled_reason(permissions_disabled_reason)
-                        .tooltip(tooltip)
-                        .on_click(move |event, _window, cx| {
-                            if event.standard_click() {
-                                view.update(cx, |this, cx| {
-                                    this.permissions_mode_menu_open = false;
-                                    this.set_permissions_mode(mode, cx);
-                                });
-                            }
-                        })
-                };
-
-                div()
-                    .id(("session_permissions_mode_dropdown_menu", entity_id))
-                    .absolute()
-                    .left(px(0.0))
-                    .bottom(px(34.0))
-                    .w(px(220.0))
-                    .rounded(theme.radius.md)
-                    .shadow_md()
-                    .occlude()
-                    .child(
-                        div()
-                            .w_full()
-                            .p(theme.spacing.xs)
-                            .rounded(theme.radius.md)
-                            .bg(theme.colors.surface)
-                            .border_1()
-                            .border_color(theme.colors.border.opacity(0.5))
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .gap(theme.spacing.xs)
-                            .child(make_item(
-                                "session_permissions_mode_ask",
-                                "Ask",
-                                PermissionsMode::Ask,
-                                "Ask before running commands or editing files",
-                            ))
-                            .child(make_item(
-                                "session_permissions_mode_auto_approve",
-                                "Auto-approve",
-                                PermissionsMode::AutoApprove,
-                                "Automatically approve requests",
-                            ))
-                            .child(make_item(
-                                "session_permissions_mode_deny",
-                                "Deny",
-                                PermissionsMode::Deny,
-                                "Automatically deny requests",
-                            )),
-                    )
-            };
-
-            div()
-                .relative()
-                .child(select_button)
-                .when(permissions_menu_open, |this| this.child(menu))
-        };
+                move |open, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.permissions_mode_menu_open = open;
+                        cx.notify();
+                    });
+                }
+            })
+            .on_select({
+                let view = view.clone();
+                move |mode, _window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.set_permissions_mode(mode, cx);
+                    });
+                }
+            })
+            .option(
+                SelectOption::new(
+                    ("session_permissions_mode_ask", entity_id),
+                    "Ask",
+                    PermissionsMode::Ask,
+                )
+                .tooltip("Ask before running commands or editing files"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_permissions_mode_auto_approve", entity_id),
+                    "Auto-approve",
+                    PermissionsMode::AutoApprove,
+                )
+                .tooltip("Automatically approve requests"),
+            )
+            .option(
+                SelectOption::new(
+                    ("session_permissions_mode_deny", entity_id),
+                    "Deny",
+                    PermissionsMode::Deny,
+                )
+                .tooltip("Automatically deny requests"),
+            );
 
         let composer_action_bar = div()
             .flex()
@@ -5037,12 +4971,41 @@ impl Render for SessionView {
         timeline = timeline.child(composer);
         content = content.child(timeline);
 
-        div()
+        let mut root = div()
             .flex()
             .flex_col()
             .gap(theme.spacing.sm)
             .size_full()
             .child(content)
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle(cx));
+
+        if permissions_menu_open {
+            root = root
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.permissions_mode_menu_open = false;
+                            cx.notify();
+                        });
+                    }
+                })
+                .capture_key_down({
+                    let view = view.clone();
+                    move |event, _, cx| {
+                        if event.keystroke.key != "escape" {
+                            return;
+                        }
+
+                        view.update(cx, |this, cx| {
+                            this.permissions_mode_menu_open = false;
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    }
+                });
+        }
+
+        root
     }
 }
