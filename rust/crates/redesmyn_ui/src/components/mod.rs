@@ -1,5 +1,6 @@
 //! Reusable UI components.
 
+mod badge;
 mod button;
 mod callout;
 mod expandable;
@@ -11,6 +12,7 @@ mod split_pane;
 mod text_input;
 mod tooltip;
 
+pub use badge::{Badge, BadgeKind, BadgeSize, BadgeStyle};
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
 pub use expandable::Expandable;

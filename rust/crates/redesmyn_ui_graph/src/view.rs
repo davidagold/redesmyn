@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AsyncApp, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent,
-    Subscription, Task, TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
+    App, AsyncApp, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable, FontWeight,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle,
+    ScrollWheelEvent, Subscription, Task, TextRun, Window, canvas, div, fill, prelude::*, px, quad,
+    rems,
 };
 
 use redesmyn_ids::CommandId;
@@ -14,20 +15,20 @@ use redesmyn_ids::TaskId;
 use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, MarkdownInlineSingleLineContent,
-    ProgressPill, ProgressPillKind, ScrollArea, TextButton, Tooltip,
+    Badge, BadgeKind, ButtonKind, Callout, CalloutKind, IconButton,
+    MarkdownInlineSingleLineContent, ProgressPill, ProgressPillKind, ScrollArea, TextButton,
+    Tooltip,
 };
 use redesmyn_ui::utils::{
     BoundedCache, TransitionMap, UiActivityGuard, UserActionState, theme_for_window,
-    ui_idle_tracker,
-    ui_test_mode_animation_duration,
+    ui_idle_tracker, ui_test_mode_animation_duration,
 };
 
-use crate::culling::{DEFAULT_NODE_CULLING_OVERSCAN_PX, viewport_bounds_with_overscan};
 use crate::camera::{GraphCamera, GraphCameraLimits};
 use crate::constants::{
     TRUNK_LABEL_LOD_ZOOM, TRUNK_MARKER_WIDTH, TRUNK_THICKNESS, TRUNK_TITLE_WIDTH,
 };
+use crate::culling::{DEFAULT_NODE_CULLING_OVERSCAN_PX, viewport_bounds_with_overscan};
 use crate::geometry::{
     DEFAULT_EDGE_STROKE_PX, EdgeLodBand, EdgeRoute, edge_lod_band,
     edge_route_between_points_in_window, edge_route_in_window,
@@ -2163,10 +2164,8 @@ impl Render for GraphView {
             let quick_actions_fade_duration = ui_test_mode_animation_duration(theme.animation.fast);
             let task_session_state = self.task_session_view.read(cx).task_binding_state();
             // Overscan avoids popping nodes in/out right at the viewport edge while panning.
-            let viewport_bounds = viewport_bounds_with_overscan(
-                canvas_bounds,
-                px(DEFAULT_NODE_CULLING_OVERSCAN_PX),
-            );
+            let viewport_bounds =
+                viewport_bounds_with_overscan(canvas_bounds, px(DEFAULT_NODE_CULLING_OVERSCAN_PX));
 
             let mut layer = div().absolute().inset_0();
 
@@ -2286,13 +2285,11 @@ impl Render for GraphView {
                     // rendering so we don't flicker between neighboring wrap/truncation states
                     // while zooming.
                     const COLLAPSED_TEXT_WIDTH_SLACK_PX: f32 = 10.0;
-                    let collapsed_text_width = px(
-                        (f32::from(bounds_in_window.size.width)
-                            - 2.0 * f32::from(padding_x)
-                            - COLLAPSED_TEXT_WIDTH_SLACK_PX)
-                            .max(0.0)
-                            .floor(),
-                    );
+                    let collapsed_text_width = px((f32::from(bounds_in_window.size.width)
+                        - 2.0 * f32::from(padding_x)
+                        - COLLAPSED_TEXT_WIDTH_SLACK_PX)
+                        .max(0.0)
+                        .floor());
                     let title_text_size = quantized_zoom_text_size(rem_size, 0.78, zoom);
                     let (title_line1, title_line2) = collapsed_title_lines(
                         &mut self.collapsed_title_cache,
@@ -2318,10 +2315,7 @@ impl Render for GraphView {
                             return Some(content.clone());
                         }
 
-                        let doc = parse_markdown(
-                            preview.as_str(),
-                            MarkdownParseOptions::default(),
-                        );
+                        let doc = parse_markdown(preview.as_str(), MarkdownParseOptions::default());
                         let content = MarkdownInlineSingleLineContent::from_doc(&doc);
                         self.collapsed_markdown_cache
                             .insert(session.session_event_id, content.clone());
@@ -2376,20 +2370,27 @@ impl Render for GraphView {
                                                         .flex_row()
                                                         .items_center()
                                                         .justify_end()
-                                                        .when(should_render_quick_actions, |this| {
-                                                            this.child(self.task_quick_actions_row(
-                                                                node_key.clone(),
-                                                                task_id,
-                                                                node.agent_status,
-                                                                latest_session.as_ref().is_some(),
-                                                                quick_actions_opacity,
-                                                                show_quick_actions,
-                                                                &theme,
-                                                                zoom,
-                                                                rem_size,
-                                                                cx,
-                                                            ))
-                                                        }),
+                                                        .when(
+                                                            should_render_quick_actions,
+                                                            |this| {
+                                                                this.child(
+                                                                    self.task_quick_actions_row(
+                                                                        node_key.clone(),
+                                                                        task_id,
+                                                                        node.agent_status,
+                                                                        latest_session
+                                                                            .as_ref()
+                                                                            .is_some(),
+                                                                        quick_actions_opacity,
+                                                                        show_quick_actions,
+                                                                        &theme,
+                                                                        zoom,
+                                                                        rem_size,
+                                                                        cx,
+                                                                    ),
+                                                                )
+                                                            },
+                                                        ),
                                                 ),
                                         )
                                         .child(agent_status_dot(
@@ -2449,6 +2450,7 @@ impl Render for GraphView {
                 if expanded_opacity > 0.01 {
                     let title = node.title.clone();
                     let task_slug = node.task_slug.clone();
+                    let show_task_slug = !title.as_ref().contains(task_slug.as_ref());
                     let state = node.state;
                     let merge_readiness = node.merge_readiness;
                     let agent_status = node.agent_status;
@@ -2499,8 +2501,8 @@ impl Render for GraphView {
                             .opacity(expanded_opacity)
                             .child(
                                 div()
-                                    .h(px(44.0))
                                     .px(theme.spacing.md)
+                                    .py(theme.spacing.sm)
                                     .flex()
                                     .flex_row()
                                     .items_center()
@@ -2508,38 +2510,47 @@ impl Render for GraphView {
                                     .bg(theme.colors.surface)
                                     .border_b_1()
                                     .border_color(theme.colors.border.opacity(0.5))
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .min_w_0()
+                                            .gap(px(2.0))
                                             .child(
                                                 div()
-                                                    .flex()
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .gap(theme.spacing.sm)
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .text_color(theme.colors.foreground)
-                                                            .truncate()
-                                                            .child(title),
-                                                    )
-                                                    .child(task_status_chips(
-                                                        state,
-                                                        merge_readiness,
-                                                        agent_status,
-                                                        &theme,
-                                                    ))
-                                                    .child(
-                                                        div()
-                                                            .min_w_0()
-                                                            .text_sm()
-                                                            .text_color(theme.colors.foreground_muted)
-                                                            .truncate()
-                                                            .child(task_slug),
-                                                    ),
+                                                    .text_sm()
+                                                    .text_color(theme.colors.foreground)
+                                                    .truncate()
+                                                    .child(title),
                                             )
+                                            .when(show_task_slug, |this| {
+                                                this.child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(theme.colors.foreground_muted)
+                                                        .truncate()
+                                                        .child(task_slug),
+                                                )
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.sm)
+                                            .child(task_status_chips(
+                                                state,
+                                                merge_readiness,
+                                                agent_status,
+                                                task_session_state.session_id.is_some(),
+                                                &theme,
+                                            ))
                                             .child(
                                                 IconButton::new(close_button_id, div().child("×"))
-                                            .tooltip("Collapse")
-                                            .on_click(collapse),
+                                                    .tooltip("Collapse")
+                                                    .on_click(collapse),
+                                            ),
                                     ),
                             )
                             .child(
@@ -2736,56 +2747,151 @@ impl Render for GraphView {
                                                     }),
                                             ),
                                     )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .w(px(360.0))
-                                            .min_w_0()
-                                            .child(
-                                                div()
-                                                    .h(px(34.0))
-                                                    .px(theme.spacing.md)
-                                                    .flex()
-                                                    .items_center()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.foreground)
-                                                    .child("Details"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_h(px(0.0))
+	                                    .child(
+	                                        div()
+	                                            .flex()
+	                                            .flex_col()
+	                                            .w(px(360.0))
+	                                            .min_w_0()
+	                                            .child(
+														div()
+															.h(px(34.0))
+															.px(theme.spacing.md)
+															.flex()
+															.flex_row()
+															.items_center()
+															.gap(theme.spacing.sm)
+															.text_sm()
+															.text_color(theme.colors.foreground)
+															.child("Details")
+															.child({
+																let active_section =
+																	right_scroll.top_item().min(4);
+																div()
+																	.flex_1()
+																	.min_w_0()
+																	.flex()
+																	.flex_row()
+																	.items_center()
+																	.justify_end()
+																	.gap(theme.spacing.xs)
+																	.child(details_nav_link(
+																		(
+																			gpui::ElementId::from((
+																				"task_details_nav_overview",
+																				entity_id,
+																			)),
+																			node_key.clone(),
+																		),
+																		"Overview",
+																		0,
+																		active_section == 0,
+																		right_scroll.clone(),
+																		&theme,
+																	))
+																	.child(details_nav_separator(&theme))
+																	.child(details_nav_link(
+																		(
+																			gpui::ElementId::from((
+																				"task_details_nav_agent",
+																				entity_id,
+																			)),
+																			node_key.clone(),
+																		),
+																		"Agent",
+																		1,
+																		active_section == 1,
+																		right_scroll.clone(),
+																		&theme,
+																	))
+																	.child(details_nav_separator(&theme))
+																	.child(details_nav_link(
+																		(
+																			gpui::ElementId::from((
+																				"task_details_nav_merge",
+																				entity_id,
+																			)),
+																			node_key.clone(),
+																		),
+																		"Merge",
+																		2,
+																		active_section == 2,
+																		right_scroll.clone(),
+																		&theme,
+																	))
+																	.child(details_nav_separator(&theme))
+																	.child(details_nav_link(
+																		(
+																			gpui::ElementId::from((
+																				"task_details_nav_ids",
+																				entity_id,
+																			)),
+																			node_key.clone(),
+																		),
+																		"IDs",
+																		3,
+																		active_section == 3,
+																		right_scroll.clone(),
+																		&theme,
+																	))
+																	.child(details_nav_separator(&theme))
+																	.child(details_nav_link(
+																		(
+																			gpui::ElementId::from((
+																				"task_details_nav_artifacts",
+																				entity_id,
+																			)),
+																			node_key.clone(),
+																		),
+																		"Artifacts",
+																		4,
+																		active_section == 4,
+																		right_scroll.clone(),
+																		&theme,
+																	))
+															}),
+													)
+	                                            .child(
+	                                                div()
+	                                                    .flex_1()
+	                                                    .min_h(px(0.0))
                                                     .px(theme.spacing.md)
                                                     .pb(theme.spacing.md)
-                                                    .child(
-                                                        ScrollArea::new(
-                                                            (
-                                                                gpui::ElementId::from((
-                                                                    "task_card_details_scroll",
-                                                                    entity_id,
-                                                                )),
-                                                                node_key.clone(),
-                                                            ),
-                                                            right_scroll,
-                                                        )
-                                                        .child(task_details(
-                                                            entity_id,
-                                                            node_id,
-                                                            node_key.clone(),
-                                                            state,
-                                                            merge_readiness,
-                                                            agent_status,
-                                                            branch_name,
-                                                            action_button_id,
-                                                            demo_action,
-                                                            start_action,
-                                                            &theme,
-                                                        )),
-                                                    ),
-                                            ),
-                                    ),
-                            ),
+													.child(
+														ScrollArea::new(
+															(
+																gpui::ElementId::from((
+																	"task_card_details_scroll",
+																	entity_id,
+																)),
+																node_key.clone(),
+															),
+															right_scroll,
+														)
+															.child(task_details_overview_section(
+																branch_name.clone(),
+																&theme,
+															))
+														.child(task_details_agent_section(
+															action_button_id,
+															demo_action,
+															start_action,
+															&theme,
+														))
+														.child(task_details_merge_section(&theme))
+														.child(task_details_identifiers_section(
+															node_id, &theme,
+														))
+														.child(task_details_artifacts_section(
+															entity_id,
+															node_key.clone(),
+															&theme,
+														))
+															.child(div().h(theme.spacing.md)),
+													),
+											),
+									),
+							),
                     );
                 }
 
@@ -3160,20 +3266,8 @@ fn agent_status_dot(
         .bg(bg)
 }
 
-fn status_chip(
-    label: impl Into<gpui::SharedString>,
-    bg: gpui::Hsla,
-    fg: gpui::Hsla,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    div()
-        .px(theme.spacing.sm)
-        .py(theme.spacing.xs)
-        .rounded(theme.radius.md)
-        .bg(bg)
-        .text_sm()
-        .text_color(fg)
-        .child(label.into())
+fn status_badge(label: impl Into<gpui::SharedString>, kind: BadgeKind) -> impl IntoElement {
+    Badge::new(label).kind(kind).leading_dot(true)
 }
 
 fn collapsed_title_lines(
@@ -3199,14 +3293,8 @@ fn collapsed_title_lines(
 
     let sanitized = title.as_ref().replace(['\r', '\n'], " ").trim().to_string();
 
-    let (line1, line2) = wrap_two_lines_wordwise(
-        &sanitized,
-        wrap_width,
-        &font,
-        font_size,
-        color,
-        window,
-    );
+    let (line1, line2) =
+        wrap_two_lines_wordwise(&sanitized, wrap_width, &font, font_size, color, window);
 
     let line1 = gpui::SharedString::new(line1);
     let line2 = line2.map(gpui::SharedString::new);
@@ -3372,19 +3460,17 @@ fn task_state_label(state: TaskState) -> &'static str {
     }
 }
 
-fn task_state_chip(state: TaskState, theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
-    let (bg, fg) = match state {
-        TaskState::InProgress => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
-        TaskState::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
-        TaskState::Done => (
-            theme.colors.accent.opacity(0.75),
-            theme.colors.foreground_muted,
-        ),
-        TaskState::Todo | TaskState::Unknown => {
-            (theme.colors.surface_elevated, theme.colors.foreground_muted)
-        }
-    };
-    status_chip(task_state_label(state), bg, fg, theme)
+fn task_state_badge_kind(state: TaskState) -> BadgeKind {
+    match state {
+        TaskState::InProgress => BadgeKind::Info,
+        TaskState::Blocked => BadgeKind::Warning,
+        TaskState::Done => BadgeKind::Completed,
+        TaskState::Todo | TaskState::Unknown => BadgeKind::Neutral,
+    }
+}
+
+fn task_state_badge(state: TaskState) -> impl IntoElement {
+    status_badge(task_state_label(state), task_state_badge_kind(state))
 }
 
 fn merge_readiness_label(readiness: MergeReadiness) -> &'static str {
@@ -3395,47 +3481,36 @@ fn merge_readiness_label(readiness: MergeReadiness) -> &'static str {
     }
 }
 
-fn merge_readiness_chip(
-    readiness: MergeReadiness,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    let (bg, fg) = match readiness {
-        MergeReadiness::Ready => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
-        MergeReadiness::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
-        MergeReadiness::Unknown => (theme.colors.surface_elevated, theme.colors.foreground_muted),
-    };
-    status_chip(merge_readiness_label(readiness), bg, fg, theme)
-}
-
-fn agent_status_label(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Running => "Agent running",
-        AgentStatus::Blocked => "Agent blocked",
-        AgentStatus::Stopped => "Agent stopped",
-        AgentStatus::Error => "Agent error",
-        AgentStatus::Unknown => "Agent ?",
+fn merge_readiness_badge_kind(readiness: MergeReadiness) -> BadgeKind {
+    match readiness {
+        MergeReadiness::Ready => BadgeKind::Success,
+        MergeReadiness::Blocked => BadgeKind::Warning,
+        MergeReadiness::Unknown => BadgeKind::Neutral,
     }
 }
 
-fn agent_status_chip(
-    status: AgentStatus,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    let (bg, fg) = match status {
-        AgentStatus::Running => (theme.colors.ring.opacity(0.18), theme.colors.foreground),
-        AgentStatus::Blocked => (theme.colors.warning.opacity(0.18), theme.colors.foreground),
-        AgentStatus::Error => (theme.colors.danger.opacity(0.18), theme.colors.foreground),
-        AgentStatus::Stopped | AgentStatus::Unknown => {
-            (theme.colors.surface_elevated, theme.colors.foreground_muted)
-        }
-    };
-    status_chip(agent_status_label(status), bg, fg, theme)
+fn merge_readiness_badge(readiness: MergeReadiness) -> impl IntoElement {
+    status_badge(
+        merge_readiness_label(readiness),
+        merge_readiness_badge_kind(readiness),
+    )
+}
+
+fn agent_status_value_label(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Running => "Running",
+        AgentStatus::Blocked => "Blocked",
+        AgentStatus::Stopped => "Stopped",
+        AgentStatus::Error => "Error",
+        AgentStatus::Unknown => "Unknown",
+    }
 }
 
 fn task_status_chips(
     state: TaskState,
     merge_readiness: MergeReadiness,
     agent_status: AgentStatus,
+    agent_continuable: bool,
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
     div()
@@ -3443,9 +3518,28 @@ fn task_status_chips(
         .flex_row()
         .gap(theme.spacing.xs)
         .items_center()
-        .child(task_state_chip(state, theme))
-        .child(merge_readiness_chip(merge_readiness, theme))
-        .child(agent_status_chip(agent_status, theme))
+        .child(task_state_badge(state))
+        .child(merge_readiness_badge(merge_readiness))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.xs)
+                .child(agent_status_dot(
+                    state,
+                    agent_status,
+                    agent_continuable,
+                    theme,
+                    1.0,
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(agent_status_value_label(agent_status)),
+                ),
+        )
 }
 
 fn details_kv_row(
@@ -3460,8 +3554,8 @@ fn details_kv_row(
         .gap(theme.spacing.sm)
         .child(
             div()
-                .w(px(110.0))
-                .text_sm()
+                .w(px(96.0))
+                .text_xs()
                 .text_color(theme.colors.foreground_muted)
                 .child(label),
         )
@@ -3481,178 +3575,149 @@ fn details_section(
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
     div()
-        .pt(theme.spacing.md)
+        .pt(theme.spacing.sm)
         .child(
             div()
-                .pb(theme.spacing.sm)
-                .text_sm()
-                .text_color(theme.colors.foreground)
+                .pb(theme.spacing.xs)
+                .text_xs()
+                .text_color(theme.colors.foreground_muted)
                 .child(title),
         )
         .child(body)
         .child(
             div()
-                .pt(theme.spacing.md)
+                .pt(theme.spacing.sm)
                 .border_b_1()
-                .border_color(theme.colors.border.opacity(0.5)),
+                .border_color(theme.colors.border.opacity(0.35)),
         )
 }
 
-fn task_details(
-    entity_id: gpui::EntityId,
-    node_id: GraphNodeId,
-    node_key: gpui::SharedString,
-    state: TaskState,
-    merge_readiness: MergeReadiness,
-    agent_status: AgentStatus,
+fn details_nav_separator(theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(theme.colors.foreground_muted.opacity(0.6))
+        .child("·")
+}
+
+fn details_nav_link(
+    id: impl Into<gpui::ElementId>,
+    label: &'static str,
+    target_item_ix: usize,
+    active: bool,
+    scroll: ScrollHandle,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    let hover_bg = theme.colors.accent.opacity(0.6);
+    let active_bg = theme.colors.accent.opacity(0.75);
+    let fg = if active {
+        theme.colors.foreground
+    } else {
+        theme.colors.foreground_muted
+    };
+
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .px(theme.spacing.xs)
+        .py(px(2.0))
+        .rounded(px(999.0))
+        .text_xs()
+        .text_color(fg)
+        .when(active, |this| {
+            this.bg(active_bg).font_weight(FontWeight::SEMIBOLD)
+        })
+        .cursor_pointer()
+        .hover(move |this| this.bg(hover_bg))
+        .on_click(move |event, _window, cx| {
+            if event.standard_click() {
+                scroll.scroll_to_top_of_item(target_item_ix);
+            }
+            cx.stop_propagation();
+        })
+        .child(label)
+}
+
+fn task_details_overview_section(
     branch_name: Option<gpui::SharedString>,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    details_section(
+        "Overview",
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.xs)
+            .when_some(branch_name, |this, name| {
+                this.child(details_kv_row("Branch", div().child(name), theme))
+            })
+            .child(details_kv_row("Updated", div().child("—"), theme)),
+        theme,
+    )
+}
+
+fn task_details_agent_section(
     action_button_id: impl Into<gpui::ElementId>,
     demo_action: UserActionState,
     start_demo_action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
-    let mut root = div()
-        .flex()
-        .flex_col()
-        .gap(theme.spacing.md)
-        .pb(theme.spacing.md)
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap(theme.spacing.sm)
-                .items_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Jump"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("·"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Overview"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Agent"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Merge"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("IDs"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("Artifacts"),
-                ),
-        );
-
+    let mut body = div().flex().flex_col().gap(theme.spacing.sm);
     if let Some(error) = demo_action.error.clone() {
-        root = root.child(
+        body = body.child(
             Callout::new(error)
                 .kind(CalloutKind::Danger)
                 .title("Action failed"),
         );
     }
 
-    root.child(details_section(
-        "Overview",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(details_kv_row(
-                "Task",
-                div().child(format!("{node_id}")),
-                theme,
-            ))
-            .when_some(branch_name.clone(), |this, name| {
-                this.child(details_kv_row("Branch", div().child(name), theme))
-            })
-            .child(details_kv_row(
-                "State",
-                task_state_chip(state, theme),
-                theme,
-            ))
-            .child(details_kv_row(
-                "Merge",
-                merge_readiness_chip(merge_readiness, theme),
-                theme,
-            ))
-            .child(details_kv_row("Updated", div().child("—"), theme)),
-        theme,
-    ))
-    .child(details_section(
-        "Agent",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.sm)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme.spacing.xs)
-                    .child(details_kv_row(
-                        "Status",
-                        agent_status_chip(agent_status, theme),
-                        theme,
-                    ))
-                    .child(details_kv_row("Session", div().child("unbound"), theme)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        TextButton::new(action_button_id, "Run demo action")
-                            .kind(ButtonKind::Secondary)
-                            .disabled(demo_action.in_flight)
-                            .disabled_reason("Running…")
-                            .on_click(start_demo_action),
-                    )
-                    .when(demo_action.in_flight, |this| {
-                        this.child(ProgressPill::new("Running"))
-                    }),
-            ),
-        theme,
-    ))
-    .child(details_section(
+    body = body
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme.spacing.xs)
+                .child(details_kv_row("Session", div().child("unbound"), theme)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.sm)
+                .child(
+                    TextButton::new(action_button_id, "Run demo")
+                        .kind(ButtonKind::Secondary)
+                        .small()
+                        .disabled(demo_action.in_flight)
+                        .disabled_reason("Running…")
+                        .on_click(start_demo_action),
+                )
+                .when(demo_action.in_flight, |this| {
+                    this.child(ProgressPill::new("Running"))
+                }),
+        );
+
+    details_section("Agent", body, theme)
+}
+
+fn task_details_merge_section(theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
+    details_section(
         "Merge / restack",
         div()
             .flex()
             .flex_col()
             .gap(theme.spacing.xs)
-            .child(details_kv_row(
-                "Ready",
-                merge_readiness_chip(merge_readiness, theme),
-                theme,
-            ))
             .child(details_kv_row("Next", div().child("—"), theme)),
         theme,
-    ))
-    .child(details_section(
+    )
+}
+
+fn task_details_identifiers_section(
+    node_id: GraphNodeId,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    details_section(
         "Identifiers",
         div()
             .flex()
@@ -3666,8 +3731,15 @@ fn task_details(
             .child(details_kv_row("Run id", div().child("—"), theme))
             .child(details_kv_row("Session id", div().child("—"), theme)),
         theme,
-    ))
-    .child(details_section(
+    )
+}
+
+fn task_details_artifacts_section(
+    entity_id: gpui::EntityId,
+    node_key: gpui::SharedString,
+    theme: &redesmyn_ui::styles::UiTheme,
+) -> impl IntoElement {
+    details_section(
         "Artifacts / logs",
         div()
             .flex()
@@ -3682,6 +3754,7 @@ fn task_details(
                     "Open logs",
                 )
                 .kind(ButtonKind::Ghost)
+                .small()
                 .disabled(true)
                 .disabled_reason("Coming soon"),
             )
@@ -3694,6 +3767,7 @@ fn task_details(
                     "View diffs",
                 )
                 .kind(ButtonKind::Ghost)
+                .small()
                 .disabled(true)
                 .disabled_reason("Coming soon"),
             )
@@ -3706,11 +3780,12 @@ fn task_details(
                     "Merge / restack",
                 )
                 .kind(ButtonKind::Ghost)
+                .small()
                 .disabled(true)
                 .disabled_reason("Coming soon"),
             ),
         theme,
-    ))
+    )
 }
 
 #[cfg(test)]

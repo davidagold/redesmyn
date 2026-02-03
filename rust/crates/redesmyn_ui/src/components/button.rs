@@ -31,12 +31,25 @@ impl Default for TextButtonLayout {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextButtonSize {
+    Regular,
+    Small,
+}
+
+impl Default for TextButtonSize {
+    fn default() -> Self {
+        Self::Regular
+    }
+}
+
 #[derive(IntoElement)]
 pub struct TextButton {
     id: ElementId,
     label: SharedString,
     kind: ButtonKind,
     layout: TextButtonLayout,
+    size: TextButtonSize,
     disabled: bool,
     disabled_reason: Option<SharedString>,
     tooltip: Option<SharedString>,
@@ -51,6 +64,7 @@ impl TextButton {
             label: label.into(),
             kind: ButtonKind::default(),
             layout: TextButtonLayout::default(),
+            size: TextButtonSize::default(),
             disabled: false,
             disabled_reason: None,
             tooltip: None,
@@ -96,6 +110,11 @@ impl TextButton {
         self.layout = TextButtonLayout::MenuItem;
         self
     }
+
+    pub fn small(mut self) -> Self {
+        self.size = TextButtonSize::Small;
+        self
+    }
 }
 
 impl RenderOnce for TextButton {
@@ -121,16 +140,30 @@ impl RenderOnce for TextButton {
             ),
         };
 
+        let (padding_x, padding_y, radius, gap) = match self.size {
+            TextButtonSize::Regular => (
+                theme.spacing.md,
+                theme.spacing.sm,
+                theme.radius.md,
+                theme.spacing.sm,
+            ),
+            TextButtonSize::Small => (
+                theme.spacing.sm,
+                theme.spacing.xs,
+                theme.radius.sm,
+                theme.spacing.xs,
+            ),
+        };
+
         let mut button = div()
             .id(self.id)
             .flex()
             .flex_row()
-            .gap(theme.spacing.sm)
+            .gap(gap)
             .items_center()
-            .px(theme.spacing.md)
-            .py(theme.spacing.sm)
-            .rounded(theme.radius.md)
-            .text_sm()
+            .px(padding_x)
+            .py(padding_y)
+            .rounded(radius)
             .text_color(fg)
             .when_some(bg, |this, bg| this.bg(bg))
             .when_some(border, |this, border| this.border_1().border_color(border))
@@ -152,6 +185,11 @@ impl RenderOnce for TextButton {
                 }
             }
         }
+
+        button = match self.size {
+            TextButtonSize::Regular => button.text_sm(),
+            TextButtonSize::Small => button.text_xs(),
+        };
 
         if let Some(tooltip) = tooltip_text(self.disabled, &self.disabled_reason, &self.tooltip) {
             button = button.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
