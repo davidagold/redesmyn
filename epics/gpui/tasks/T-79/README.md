@@ -1,9 +1,9 @@
 ---
+epic: gpui
+branch:
+  suggested: rn/gpui/T-79-linear-filters
 rn:
-  id: T-79
-  title: "UI: Linear-style task filters (shared, prune graph)"
-  domain: 6
-  parent: gpui
+  parent: T-71
 ---
 
 # T-79 UI: Linear-style task filters (shared, prune graph)
