@@ -141,6 +141,7 @@ pub struct RootView {
     settings_dialog: SettingsDialog,
     chrome: ChromeState,
     ui_updates: UiUpdateCounter,
+    did_first_render: bool,
     ui_driver_action: UserActionState,
     ui_driver_action_label: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -229,6 +230,7 @@ impl RootView {
             settings_dialog,
             chrome: ChromeState::new(),
             ui_updates,
+            did_first_render: false,
             ui_driver_action: UserActionState::default(),
             ui_driver_action_label: None,
             _subscriptions: subscriptions,
@@ -923,19 +925,20 @@ async fn wait_for_idle(
     tokio::pin!(timeout_timer);
 
     loop {
-        let snapshot = cx
+        let (snapshot, did_first_render) = cx
             .update(|cx| {
                 let Some(root) = root.upgrade() else {
                     return Err(());
                 };
-                Ok::<_, ()>(root.read(cx).ui_snapshot(cx))
+                let root = root.read(cx);
+                Ok::<_, ()>((root.ui_snapshot(cx), root.did_first_render))
             })
             .ok()
             .and_then(Result::ok)
             .ok_or_else(|| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))?;
 
         let active_transitions = *idle_rx.borrow();
-        let is_idle = snapshot.in_flight.is_empty() && active_transitions == 0;
+        let is_idle = did_first_render && snapshot.in_flight.is_empty() && active_transitions == 0;
 
         if is_idle {
             let quiescence_timer = gpui::Timer::after(quiescence);
@@ -2012,6 +2015,12 @@ impl Focusable for RootView {
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::vsync::ensure_vsync(window);
+
+        if !self.did_first_render {
+            self.did_first_render = true;
+            self.ui_updates.bump();
+        }
+
         let theme = theme_for_window(window, cx);
 
         if !self.chrome.did_startup_refresh {
