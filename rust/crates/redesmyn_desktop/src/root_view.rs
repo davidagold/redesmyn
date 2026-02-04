@@ -2094,7 +2094,7 @@ impl Render for RootView {
             ("chrome_settings", cx.entity_id()),
             div().text_sm().child("⚙"),
         )
-        .tooltip("Settings")
+        .tooltip("Settings (⌘,)")
         .on_click({
             let root = root.clone();
             move |_, _, cx| {

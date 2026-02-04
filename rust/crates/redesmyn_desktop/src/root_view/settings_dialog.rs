@@ -203,6 +203,7 @@ impl SettingsDialog {
                     .absolute()
                     .inset_0()
                     .bg(overlay_bg)
+                    .occlude()
                     .on_mouse_down(MouseButton::Left, close_on_background),
             )
             .child(self.dialog_card(root, window, cx));
@@ -330,6 +331,7 @@ impl SettingsDialog {
                     .border_1()
                     .border_color(theme.colors.border.opacity(0.7))
                     .shadow_lg()
+                    .occlude()
                     .overflow_hidden()
                     .child(header)
                     .child(body),
