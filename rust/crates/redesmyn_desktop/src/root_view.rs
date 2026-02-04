@@ -4504,8 +4504,10 @@ impl Render for WorkspacePaneHost {
                     let submenu_overlap = theme.spacing.xs;
                     let menu_item_height = px(34.0);
                     let menu_search_height = menu_item_height;
-                    let row_selected_bg = theme.colors.accent.opacity(0.95);
-                    let row_hover_bg_alpha = 0.75_f32;
+                    // `accent` is too close to `surface_elevated` in our dark theme to make
+                    // hover/selection pop. Use a subtle foreground tint instead.
+                    let row_selected_bg = theme.colors.foreground.opacity(0.16);
+                    let row_hover_bg_alpha = 0.08_f32;
                     let row_hover_duration = ui_test_mode_animation_duration(
                         theme
                             .animation
@@ -4591,7 +4593,7 @@ impl Render for WorkspacePaneHost {
                                 .when(hover_opacity > 1e-3, |this| {
                                     this.bg(theme
                                         .colors
-                                        .accent
+                                        .foreground
                                         .opacity(row_hover_bg_alpha * hover_opacity))
                                 })
                                 .cursor_pointer()
@@ -4816,7 +4818,7 @@ impl Render for WorkspacePaneHost {
                                             .when(hover_opacity > 1e-3, |this| {
                                                 this.bg(theme
                                                     .colors
-                                                    .accent
+                                                    .foreground
                                                     .opacity(row_hover_bg_alpha * hover_opacity))
                                             })
                                             .cursor_pointer()
@@ -4929,7 +4931,7 @@ impl Render for WorkspacePaneHost {
                                             .when(hover_opacity > 1e-3, |this| {
                                                 this.bg(theme
                                                     .colors
-                                                    .accent
+                                                    .foreground
                                                     .opacity(row_hover_bg_alpha * hover_opacity))
                                             })
                                             .cursor_pointer()
@@ -5044,7 +5046,7 @@ impl Render for WorkspacePaneHost {
                                             .when(hover_opacity > 1e-3, |this| {
                                                 this.bg(theme
                                                     .colors
-                                                    .accent
+                                                    .foreground
                                                     .opacity(row_hover_bg_alpha * hover_opacity))
                                             })
                                             .cursor_pointer()
