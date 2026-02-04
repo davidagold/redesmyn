@@ -24,7 +24,7 @@ impl OverlaySurfaceStyle {
         };
 
         Self {
-            background: theme.colors.surface.opacity(background_alpha),
+            background: theme.colors.surface_elevated.opacity(background_alpha),
             border: theme.colors.border.opacity(border_alpha),
         }
     }

@@ -1,7 +1,8 @@
 //! Small UI helpers.
 
-mod external_url;
+mod action_availability;
 mod bounded_cache;
+mod external_url;
 mod idle;
 mod test_mode;
 pub(crate) mod text_editing;
@@ -9,6 +10,7 @@ mod theme;
 mod transition;
 mod user_action;
 
+pub use action_availability::ActionAvailabilityProbe;
 pub use bounded_cache::BoundedCache;
 pub use external_url::{OpenExternalUrl, is_http_https_url};
 pub use idle::{UiActivityGuard, UiIdleTracker, ui_idle_tracker};
