@@ -70,7 +70,7 @@ pub struct SettingsDialog {
     repo_config_path: Option<PathBuf>,
     baseline: OrchestrationDefaults,
     draft: OrchestrationDefaults,
-    show_default_prelude: bool,
+    default_prelude_open: bool,
     prelude_input: Entity<TextArea>,
     save: UserActionState,
     notice: Option<SharedString>,
@@ -81,7 +81,7 @@ impl SettingsDialog {
         let prelude_input = cx.new(|cx| {
             TextArea::new(cx)
                 .placeholder("Optional. Leave blank to use the built-in prelude.")
-                .min_rows(12)
+                .min_rows(4)
                 .max_rows(12)
         });
 
@@ -95,7 +95,7 @@ impl SettingsDialog {
             repo_config_path: None,
             baseline: OrchestrationDefaults::default(),
             draft: OrchestrationDefaults::default(),
-            show_default_prelude: false,
+            default_prelude_open: false,
             prelude_input,
             save: UserActionState::default(),
             notice: None,
@@ -213,7 +213,7 @@ impl SettingsDialog {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<RootView>) {
-        self.show_default_prelude = false;
+        self.default_prelude_open = false;
         self.save = UserActionState::default();
         self.notice = None;
         self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
@@ -310,6 +310,29 @@ impl SettingsDialog {
             .child(self.section_nav(root, window, cx))
             .child(self.section_body(root, window, cx));
 
+        let mut card = div()
+            .key_context("SettingsDialog")
+            .flex()
+            .flex_col()
+            .relative()
+            .w_full()
+            .max_w(px(960.0))
+            .h_full()
+            .max_h(px(680.0))
+            .rounded(theme.radius.xl)
+            .bg(theme.colors.surface)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.7))
+            .shadow_lg()
+            .occlude()
+            .overflow_hidden()
+            .child(header)
+            .child(body);
+
+        if self.default_prelude_open {
+            card = card.child(self.default_prelude_overlay(root, window, cx));
+        }
+
         div()
             .absolute()
             .inset_0()
@@ -317,25 +340,140 @@ impl SettingsDialog {
             .flex()
             .items_center()
             .justify_center()
+            .child(card)
+            .into_any_element()
+    }
+
+    fn default_prelude_overlay(
+        &mut self,
+        root: &Entity<RootView>,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        let theme = theme_for_window(window, cx);
+
+        let close_on_background = {
+            let root = root.clone();
+            move |_: &gpui::MouseDownEvent, _: &mut Window, cx: &mut gpui::App| {
+                root.update(cx, |this, cx| {
+                    this.settings_dialog.default_prelude_open = false;
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            }
+        };
+
+        let close_on_click = {
+            let root = root.clone();
+            move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut gpui::App| {
+                root.update(cx, |this, cx| {
+                    this.settings_dialog.default_prelude_open = false;
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            }
+        };
+
+        let fill_button = TextButton::new(
+            ("settings_fill_default_prelude", cx.entity_id()),
+            "Fill as starting point",
+        )
+        .kind(ButtonKind::Secondary)
+        .small()
+        .on_click({
+            let root = root.clone();
+            move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut gpui::App| {
+                root.update(cx, |this, cx| {
+                    this.settings_dialog.prelude_input.update(cx, |input, cx| {
+                        input.set_text(BUILT_IN_PRELUDE_TEMPLATE, cx);
+                    });
+                    this.settings_dialog.draft.harness.prelude =
+                        Some(BUILT_IN_PRELUDE_TEMPLATE.to_string());
+                    this.settings_dialog.default_prelude_open = false;
+                    this.settings_dialog.notice = None;
+                    this.settings_dialog.save.clear_error();
+                    cx.notify();
+                });
+                cx.stop_propagation();
+            }
+        });
+
+        let close_button =
+            IconButton::new(("settings_close_default_prelude", cx.entity_id()), div().child("×"))
+                .tooltip("Close")
+                .on_click(close_on_click);
+
+        let header = div()
+            .px(theme.spacing.lg)
+            .py(theme.spacing.md)
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(theme.colors.border.opacity(0.6))
             .child(
                 div()
-                    .key_context("SettingsDialog")
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .max_w(px(960.0))
-                    .h_full()
-                    .max_h(px(680.0))
-                    .rounded(theme.radius.xl)
-                    .bg(theme.colors.surface)
-                    .border_1()
-                    .border_color(theme.colors.border.opacity(0.7))
-                    .shadow_lg()
-                    .occlude()
-                    .overflow_hidden()
-                    .child(header)
-                    .child(body),
+                    .text_sm()
+                    .text_color(theme.colors.foreground)
+                    .child("Default prelude"),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.sm)
+                    .child(fill_button)
+                    .child(close_button),
+            );
+
+        let body_scroll = ScrollArea::new(
+            ("settings_default_prelude_scroll", cx.entity_id()),
+            ScrollHandle::new(),
+        )
+        .bg(theme.colors.background.opacity(0.25))
+        .child(
+            div()
+                .p(theme.spacing.lg)
+                .font(theme.typography.mono.font.clone())
+                .text_size(theme.typography.mono.size)
+                .text_color(theme.colors.foreground_muted)
+                .child(BUILT_IN_PRELUDE_TEMPLATE),
+        );
+
+        let panel = div()
+            .w_full()
+            .max_w(px(780.0))
+            .h_full()
+            .max_h(px(560.0))
+            .bg(theme.colors.surface_elevated)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.8))
+            .rounded(theme.radius.lg)
+            .shadow_lg()
+            .overflow_hidden()
+            .occlude()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(div().flex_1().min_h(px(0.0)).child(body_scroll));
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(theme.colors.background.opacity(0.55))
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, close_on_background),
+            )
+            .child(panel)
             .into_any_element()
     }
 
@@ -696,7 +834,11 @@ impl SettingsDialog {
 
         let show_default_button = TextButton::new(
             ("settings_show_default_prelude", cx.entity_id()),
-            "Show default",
+            if self.default_prelude_open {
+                "Hide default"
+            } else {
+                "View default"
+            },
         )
         .kind(ButtonKind::Ghost)
         .small()
@@ -704,76 +846,12 @@ impl SettingsDialog {
             let root = root.clone();
             move |_, _, cx| {
                 root.update(cx, |this, cx| {
-                    this.settings_dialog.show_default_prelude =
-                        !this.settings_dialog.show_default_prelude;
+                    this.settings_dialog.default_prelude_open =
+                        !this.settings_dialog.default_prelude_open;
                     cx.notify();
                 });
             }
         });
-
-        let mut default_block = div().into_any_element();
-        if self.show_default_prelude {
-            let fill_button = TextButton::new(
-                ("settings_fill_default_prelude", cx.entity_id()),
-                "Fill as starting point",
-            )
-            .kind(ButtonKind::Secondary)
-            .small()
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        this.settings_dialog.prelude_input.update(cx, |input, cx| {
-                            input.set_text(BUILT_IN_PRELUDE_TEMPLATE, cx);
-                        });
-                        this.settings_dialog.draft.harness.prelude =
-                            Some(BUILT_IN_PRELUDE_TEMPLATE.to_string());
-                        this.settings_dialog.notice = None;
-                        this.settings_dialog.save.clear_error();
-                        cx.notify();
-                    });
-                }
-            });
-
-            default_block = div()
-                .mt(theme.spacing.sm)
-                .p(theme.spacing.md)
-                .rounded(theme.radius.md)
-                .bg(theme.colors.surface_elevated.opacity(0.35))
-                .border_1()
-                .border_color(theme.colors.border.opacity(0.6))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.colors.foreground)
-                                .child("Default prelude"),
-                        )
-                        .child(fill_button),
-                )
-                .child(
-                    div()
-                        .mt(theme.spacing.sm)
-                        .p(theme.spacing.sm)
-                        .rounded(theme.radius.sm)
-                        .bg(theme.colors.background.opacity(0.25))
-                        .border_1()
-                        .border_color(theme.colors.border.opacity(0.55))
-                        .child(
-                            div()
-                                .font(theme.typography.mono.font.clone())
-                                .text_size(theme.typography.mono.size)
-                                .text_color(theme.colors.foreground_muted)
-                                .child(BUILT_IN_PRELUDE_TEMPLATE),
-                        ),
-                )
-                .into_any_element();
-        }
 
         div()
             .flex()
@@ -806,7 +884,6 @@ impl SettingsDialog {
                     .text_color(theme.colors.foreground_muted)
                     .child("Sent to the agent right after the harness starts. Use it to point the agent at relevant docs and guidance."),
             )
-            .child(default_block)
             .child(self.prelude_delivery_settings(root, window, cx))
             .child(self.placeholder_reference(window, cx))
             .into_any_element()
@@ -1122,7 +1199,7 @@ impl SettingsDialog {
         }
 
         self.draft = self.baseline.clone();
-        self.show_default_prelude = false;
+        self.default_prelude_open = false;
         self.notice = None;
         self.save.clear_error();
 
