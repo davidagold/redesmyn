@@ -213,10 +213,10 @@ impl SettingsDialog {
     }
 
     fn open(&mut self, window: &mut Window, cx: &mut Context<RootView>) {
-        self.section = SettingsSection::Appearance;
         self.show_default_prelude = false;
         self.save = UserActionState::default();
         self.notice = None;
+        self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
 
         match self.load_defaults() {
             Ok((repo_root, repo_config_path, defaults)) => {
