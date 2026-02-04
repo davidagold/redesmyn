@@ -65,7 +65,8 @@ const SELECTION_BAR_SLIDE_PX: f32 = 56.0;
 
 #[derive(Debug, Clone)]
 pub enum GraphViewEvent {
-    TaskCardSelected(TaskId),
+    /// The user interacted with a task card (selection or multi-select toggle).
+    TaskCardActivated(TaskId),
 }
 
 #[derive(Debug, Clone)]
@@ -563,14 +564,14 @@ impl GraphView {
     fn select_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.select_node(node_id), cx);
         if let GraphNodeId::Task(task_id) = node_id {
-            cx.emit(GraphViewEvent::TaskCardSelected(task_id));
+            cx.emit(GraphViewEvent::TaskCardActivated(task_id));
         }
     }
 
     fn toggle_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.toggle_node(node_id), cx);
         if let GraphNodeId::Task(task_id) = node_id {
-            cx.emit(GraphViewEvent::TaskCardSelected(task_id));
+            cx.emit(GraphViewEvent::TaskCardActivated(task_id));
         }
     }
 

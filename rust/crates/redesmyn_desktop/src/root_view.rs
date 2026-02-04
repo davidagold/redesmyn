@@ -3510,7 +3510,7 @@ impl WorkspacePaneHost {
         subscriptions.push(cx.subscribe(
             &graph_view,
             |this, _, event: &GraphViewEvent, cx| match event {
-                GraphViewEvent::TaskCardSelected(_) => {
+                GraphViewEvent::TaskCardActivated(_) => {
                     if !this.task_filters_open {
                         return;
                     }
@@ -3617,6 +3617,8 @@ impl WorkspacePaneHost {
         input_source: TaskFiltersInputSource,
         cx: &mut Context<Self>,
     ) -> FocusHandle {
+        // When the filter menu is open, preserve its keyboard focus while still allowing trackpad
+        // pan/zoom interactions on the graph.
         self.task_filters_open = open;
         self.task_filters_active_category = active_category;
         self.task_filters_hovered_category = hovered_category;
