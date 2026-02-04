@@ -106,6 +106,15 @@ impl SettingsDialog {
         self.prelude_input.clone()
     }
 
+    pub fn dismiss_default_prelude_overlay(&mut self) -> bool {
+        if !self.default_prelude_open {
+            return false;
+        }
+
+        self.default_prelude_open = false;
+        true
+    }
+
     pub fn set_section_for_ui_driver(
         &mut self,
         section: redesmyn_protocol::ui_driver::SettingsDialogSection,
@@ -995,7 +1004,7 @@ impl SettingsDialog {
                 "Absolute path to the task worktree.",
             ));
 
-        div()
+        let card = div()
             .p(theme.spacing.md)
             .rounded(theme.radius.md)
             .bg(theme.colors.surface_elevated.opacity(0.25))
@@ -1008,6 +1017,12 @@ impl SettingsDialog {
                     .child("Available placeholders"),
             )
             .child(placeholders)
+            .into_any_element();
+
+        div()
+            .flex()
+            .flex_row()
+            .child(card)
             .into_any_element()
     }
 

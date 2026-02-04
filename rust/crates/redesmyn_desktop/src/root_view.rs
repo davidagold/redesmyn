@@ -314,6 +314,11 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         if matches!(self.chrome.panel, Some(ChromePanel::Settings)) {
+            if self.settings_dialog.dismiss_default_prelude_overlay() {
+                self.notify_ui_updated(cx);
+                return;
+            }
+
             self.close_panel(cx);
             self.ui_updates.bump();
         }
