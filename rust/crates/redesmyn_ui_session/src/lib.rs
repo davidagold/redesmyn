@@ -34,8 +34,8 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade, TextArea,
-    TextButton, TextInput, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade,
+    StyledScrollbar, TextArea, TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -2570,7 +2570,8 @@ impl Render for SessionView {
         let entity_id = cx.entity_id();
         let timeline_view = view.clone();
 
-        let feed_list = list(self.timeline_list_state.clone(), move |ix, window, cx| {
+        let timeline_list_state = self.timeline_list_state.clone();
+        let feed_list = list(timeline_list_state.clone(), move |ix, window, cx| {
             let theme = theme_for_window(window, cx);
             let list = div().w_full().min_w_0();
 
@@ -2717,72 +2718,75 @@ impl Render for SessionView {
                             summary_scroll_handle.scroll_to_bottom();
                         }
 
-                        container = container.child(
-                            ScrollFade::new(
-                                summary_scroll_handle.clone(),
-                                div()
-                                    .id(("session_item_ephemeral_reasoning_summary", ix))
-                                    .max_h(px(160.0))
-                                    .overflow_y_scroll()
-                                    .track_scroll(&summary_scroll_handle)
-                                    .occlude()
-                                    .on_scroll_wheel({
-                                        let handle = summary_scroll_handle.clone();
-                                        let timeline_view = timeline_view.clone();
-                                        move |event, window, cx| {
-                                            chain_scroll_wheel_to_timeline_list_if_needed(
-                                                event,
-                                                window,
-                                                cx,
-                                                &handle,
-                                                timeline_view.clone(),
-                                            );
-                                        }
-                                    })
-                                    .child(if let Some(summary_text) = summary_text {
-                                        div()
-                                            .text_size(theme.typography.caption.size)
-                                            .text_color(theme.colors.foreground)
-                                            .child(summary_text)
-                                            .into_any_element()
-                                    } else {
-                                        let bar_color = theme.colors.foreground_muted.opacity(
-                                            (0.12 + 0.12 * reasoning_shimmer_alpha)
-                                                .clamp(0.0, 1.0),
+                        let summary_scrollable = ScrollFade::new(
+                            summary_scroll_handle.clone(),
+                            div()
+                                .id(("session_item_ephemeral_reasoning_summary", ix))
+                                .max_h(px(160.0))
+                                .overflow_y_scroll()
+                                .track_scroll(&summary_scroll_handle)
+                                .occlude()
+                                .on_scroll_wheel({
+                                    let handle = summary_scroll_handle.clone();
+                                    let timeline_view = timeline_view.clone();
+                                    move |event, window, cx| {
+                                        chain_scroll_wheel_to_timeline_list_if_needed(
+                                            event,
+                                            window,
+                                            cx,
+                                            &handle,
+                                            timeline_view.clone(),
                                         );
-                                        let line_height = px(10.0);
+                                    }
+                                })
+                                .child(if let Some(summary_text) = summary_text {
+                                    div()
+                                        .text_size(theme.typography.caption.size)
+                                        .text_color(theme.colors.foreground)
+                                        .child(summary_text)
+                                        .into_any_element()
+                                } else {
+                                    let bar_color = theme.colors.foreground_muted.opacity(
+                                        (0.12 + 0.12 * reasoning_shimmer_alpha).clamp(0.0, 1.0),
+                                    );
+                                    let line_height = px(10.0);
 
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap(theme.spacing.xs)
-                                            .child(
-                                                div()
-                                                    .h(line_height)
-                                                    .w(relative(0.92))
-                                                    .rounded_sm()
-                                                    .bg(bar_color),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(line_height)
-                                                    .w(relative(0.78))
-                                                    .rounded_sm()
-                                                    .bg(bar_color),
-                                            )
-                                            .child(
-                                                div()
-                                                    .h(line_height)
-                                                    .w(relative(0.64))
-                                                    .rounded_sm()
-                                                    .bg(bar_color),
-                                            )
-                                            .into_any_element()
-                                    }),
-                            )
-                            .fade_height(theme.spacing.lg)
-                            .bg(theme.colors.surface),
-                        );
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(theme.spacing.xs)
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.92))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.78))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(line_height)
+                                                .w(relative(0.64))
+                                                .rounded_sm()
+                                                .bg(bar_color),
+                                        )
+                                        .into_any_element()
+                                }),
+                        )
+                        .fade_height(theme.spacing.lg)
+                        .bg(theme.colors.surface);
+
+                        container = container.child(StyledScrollbar::for_scroll_handle(
+                            ("session_item_ephemeral_reasoning_summary_scrollbar", ix),
+                            summary_scroll_handle.clone(),
+                            summary_scrollable,
+                        ));
 
 	                        if let Some(raw_text) = raw_text {
 	                            let (raw_scroll_handle, follow_raw_bottom) = {
@@ -2817,39 +2821,41 @@ impl Render for SessionView {
                                     .h(px(1.0))
                                     .bg(theme.colors.border.opacity(0.2)),
                             );
-                            container = container.child(
-                                ScrollFade::new(
-                                    raw_scroll_handle.clone(),
-                                    div()
-                                        .id((
-                                            "session_item_ephemeral_reasoning_raw",
-                                            stable_str_key(key.as_str()),
-                                        ))
-                                        .max_h(px(200.0))
-                                        .overflow_y_scroll()
-                                        .track_scroll(&raw_scroll_handle)
-                                        .occlude()
-                                        .on_scroll_wheel({
-                                            let handle = raw_scroll_handle.clone();
-                                            let timeline_view = timeline_view.clone();
-                                            move |event, window, cx| {
-                                                chain_scroll_wheel_to_timeline_list_if_needed(
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                    &handle,
-                                                    timeline_view.clone(),
-                                                );
-                                            }
-                                        })
-                                        .font(theme.typography.mono.font.clone())
-                                        .text_size(theme.typography.caption.size)
-                                        .text_color(theme.colors.foreground)
-                                        .child(raw_text),
-                                )
-                                .fade_height(theme.spacing.lg)
-                                .bg(theme.colors.surface),
-                            );
+                            let raw_id_key = stable_str_key(key.as_str());
+                            let raw_scrollable = ScrollFade::new(
+                                raw_scroll_handle.clone(),
+                                div()
+                                    .id(("session_item_ephemeral_reasoning_raw", raw_id_key))
+                                    .max_h(px(200.0))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&raw_scroll_handle)
+                                    .occlude()
+                                    .on_scroll_wheel({
+                                        let handle = raw_scroll_handle.clone();
+                                        let timeline_view = timeline_view.clone();
+                                        move |event, window, cx| {
+                                            chain_scroll_wheel_to_timeline_list_if_needed(
+                                                event,
+                                                window,
+                                                cx,
+                                                &handle,
+                                                timeline_view.clone(),
+                                            );
+                                        }
+                                    })
+                                    .font(theme.typography.mono.font.clone())
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground)
+                                    .child(raw_text),
+                            )
+                            .fade_height(theme.spacing.lg)
+                            .bg(theme.colors.surface);
+
+                            container = container.child(StyledScrollbar::for_scroll_handle(
+                                ("session_item_ephemeral_reasoning_raw_scrollbar", raw_id_key),
+                                raw_scroll_handle.clone(),
+                                raw_scrollable,
+                            ));
                         }
                     }
 
@@ -3052,41 +3058,45 @@ impl Render for SessionView {
                                     summary_scroll_handle.scroll_to_bottom();
                                 }
 
-                                body = body.child(
-                                    ScrollFade::new(
-                                        summary_scroll_handle.clone(),
-                                        div()
-                                            .id((bubble_id.clone(), "reasoning_summary_scroll"))
-                                            .max_h(px(180.0))
-                                            .overflow_y_scroll()
-                                            .track_scroll(&summary_scroll_handle)
-                                            .occlude()
-                                            .on_scroll_wheel({
-                                                let handle = summary_scroll_handle.clone();
-                                                let timeline_view = timeline_view.clone();
-                                                move |event, window, cx| {
-                                                    chain_scroll_wheel_to_timeline_list_if_needed(
-                                                        event,
-                                                        window,
-                                                        cx,
-                                                        &handle,
-                                                        timeline_view.clone(),
-                                                    );
-                                                }
-                                            })
-                                            .child(
-                                                MarkdownView::new(
-                                                    (bubble_id.clone(), "reasoning_summary"),
-                                                    summary_doc,
-                                                )
-                                                .show_truncation_notice(show_truncation_notice)
-                                                .text_size(theme.typography.caption.size)
-                                                .into_any_element(),
-                                            ),
-                                    )
-                                    .fade_height(theme.spacing.lg)
-                                    .bg(theme.colors.surface),
-                                );
+                                let summary_scrollable = ScrollFade::new(
+                                    summary_scroll_handle.clone(),
+                                    div()
+                                        .id((bubble_id.clone(), "reasoning_summary_scroll"))
+                                        .max_h(px(180.0))
+                                        .overflow_y_scroll()
+                                        .track_scroll(&summary_scroll_handle)
+                                        .occlude()
+                                        .on_scroll_wheel({
+                                            let handle = summary_scroll_handle.clone();
+                                            let timeline_view = timeline_view.clone();
+                                            move |event, window, cx| {
+                                                chain_scroll_wheel_to_timeline_list_if_needed(
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                    &handle,
+                                                    timeline_view.clone(),
+                                                );
+                                            }
+                                        })
+                                        .child(
+                                            MarkdownView::new(
+                                                (bubble_id.clone(), "reasoning_summary"),
+                                                summary_doc,
+                                            )
+                                            .show_truncation_notice(show_truncation_notice)
+                                            .text_size(theme.typography.caption.size)
+                                            .into_any_element(),
+                                        ),
+                                )
+                                .fade_height(theme.spacing.lg)
+                                .bg(theme.colors.surface);
+
+                                body = body.child(StyledScrollbar::for_scroll_handle(
+                                    (bubble_id.clone(), "reasoning_summary_scrollbar"),
+                                    summary_scroll_handle.clone(),
+                                    summary_scrollable,
+                                ));
 
 	                                if let Some(raw) = reasoning.raw {
 	                                    let (raw_scroll_handle, follow_raw_bottom) = {
@@ -3126,36 +3136,40 @@ impl Render for SessionView {
                                             .bg(theme.colors.border.opacity(0.2)),
                                     );
 
-                                    body = body.child(
-                                        ScrollFade::new(
-                                            raw_scroll_handle.clone(),
-                                            div()
-                                                .id((bubble_id.clone(), "reasoning_raw_scroll"))
-                                                .max_h(px(240.0))
-                                                .overflow_y_scroll()
-                                                .track_scroll(&raw_scroll_handle)
-                                                .occlude()
-                                                .on_scroll_wheel({
-                                                    let handle = raw_scroll_handle.clone();
-                                                    let timeline_view = timeline_view.clone();
-                                                    move |event, window, cx| {
-                                                        chain_scroll_wheel_to_timeline_list_if_needed(
-                                                            event,
-                                                            window,
-                                                            cx,
-                                                            &handle,
-                                                            timeline_view.clone(),
-                                                        );
-                                                    }
-                                                })
-                                                .font(theme.typography.mono.font.clone())
-                                                .text_size(theme.typography.caption.size)
-                                                .text_color(theme.colors.foreground)
-                                                .child(raw.text),
-                                        )
-                                        .fade_height(theme.spacing.lg)
-                                        .bg(theme.colors.surface),
-                                    );
+                                    let raw_scrollable = ScrollFade::new(
+                                        raw_scroll_handle.clone(),
+                                        div()
+                                            .id((bubble_id.clone(), "reasoning_raw_scroll"))
+                                            .max_h(px(240.0))
+                                            .overflow_y_scroll()
+                                            .track_scroll(&raw_scroll_handle)
+                                            .occlude()
+                                            .on_scroll_wheel({
+                                                let handle = raw_scroll_handle.clone();
+                                                let timeline_view = timeline_view.clone();
+                                                move |event, window, cx| {
+                                                    chain_scroll_wheel_to_timeline_list_if_needed(
+                                                        event,
+                                                        window,
+                                                        cx,
+                                                        &handle,
+                                                        timeline_view.clone(),
+                                                    );
+                                                }
+                                            })
+                                            .font(theme.typography.mono.font.clone())
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground)
+                                            .child(raw.text),
+                                    )
+                                    .fade_height(theme.spacing.lg)
+                                    .bg(theme.colors.surface);
+
+                                    body = body.child(StyledScrollbar::for_scroll_handle(
+                                        (bubble_id.clone(), "reasoning_raw_scrollbar"),
+                                        raw_scroll_handle.clone(),
+                                        raw_scrollable,
+                                    ));
                                 }
 
                                 let max_h = px(520.0) * progress;
@@ -3685,7 +3699,7 @@ impl Render for SessionView {
 	                                                    })
 	                                            };
 
-                                            let details = ScrollFade::new(
+                                            let details_fade = ScrollFade::new(
                                                 details_scroll_handle.clone(),
                                                 div()
                                                     .id((bubble_id.clone(), "details"))
@@ -3712,6 +3726,11 @@ impl Render for SessionView {
                                             )
                                             .fade_height(theme.spacing.lg)
                                             .bg(theme.colors.surface);
+                                            let details = StyledScrollbar::for_scroll_handle(
+                                                (bubble_id.clone(), "details_scrollbar"),
+                                                details_scroll_handle.clone(),
+                                                details_fade,
+                                            );
 
                                             let mut details =
                                                 Expandable::new(details).opacity(progress);
@@ -3958,7 +3977,7 @@ impl Render for SessionView {
 	                                                        })
 	                                                };
 
-                                                let details = ScrollFade::new(
+                                                let details_fade = ScrollFade::new(
                                                     details_scroll_handle.clone(),
                                                     div()
                                                         .id((bubble_id.clone(), "details"))
@@ -3985,6 +4004,11 @@ impl Render for SessionView {
                                                 )
                                                 .fade_height(theme.spacing.lg)
                                                 .bg(theme.colors.surface);
+                                                let details = StyledScrollbar::for_scroll_handle(
+                                                    (bubble_id.clone(), "details_scrollbar"),
+                                                    details_scroll_handle.clone(),
+                                                    details_fade,
+                                                );
 
                                                 let mut details =
                                                     Expandable::new(details).opacity(progress);
@@ -4101,6 +4125,11 @@ impl Render for SessionView {
         .w_full()
         .min_w_0()
         .bg(theme.colors.surface);
+        let feed_list = StyledScrollbar::for_list_state(
+            ("session_timeline_scrollbar", entity_id),
+            timeline_list_state,
+            feed_list,
+        );
 
         let mut composer_callout = None;
         if let Some(feed) = self.feed.as_ref() {

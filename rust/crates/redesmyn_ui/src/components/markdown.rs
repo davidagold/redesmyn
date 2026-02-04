@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{
     AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle, FontWeight,
-    Hsla, RenderOnce, TextRun, UnderlineStyle, Window, div, px,
+    Hsla, RenderOnce, ScrollHandle, TextRun, UnderlineStyle, Window, div, px,
 };
 
 use gpui::prelude::*;
@@ -11,7 +11,10 @@ use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
 use crate::utils::{OpenExternalUrl as _, theme_for_window};
 
-use super::{ButtonKind, RoundedBackgroundStyle, RoundedStyledText, TextButton};
+use super::{
+    ButtonKind, RoundedBackgroundStyle, RoundedStyledText, ScrollbarAxis, StyledScrollbar,
+    TextButton,
+};
 
 #[derive(IntoElement)]
 pub struct MarkdownView {
@@ -1053,17 +1056,24 @@ impl CodeBlockView {
             )
             .child(copy_button);
 
-        let body = div()
-            .id((id.clone(), "body"))
-            .overflow_x_scroll()
-            .scrollbar_width(px(10.0))
-            .px(theme.spacing.md)
-            .py(theme.spacing.md)
-            .font(theme.typography.mono.font.clone())
-            .text_size(theme.typography.mono.size)
-            .text_color(theme.colors.foreground)
-            .whitespace_nowrap()
-            .child(self.code);
+        let body_scroll_handle = ScrollHandle::new();
+        let body = StyledScrollbar::for_scroll_handle(
+            (id.clone(), "body_scrollbar"),
+            body_scroll_handle.clone(),
+            div()
+                .id((id.clone(), "body"))
+                .overflow_x_scroll()
+                .track_scroll(&body_scroll_handle)
+                .scrollbar_width(px(10.0))
+                .px(theme.spacing.md)
+                .py(theme.spacing.md)
+                .font(theme.typography.mono.font.clone())
+                .text_size(theme.typography.mono.size)
+                .text_color(theme.colors.foreground)
+                .whitespace_nowrap()
+                .child(self.code),
+        )
+        .axis(ScrollbarAxis::Horizontal);
 
         div()
             .id(id)
