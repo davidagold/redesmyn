@@ -1,4 +1,84 @@
-use gpui::{AnyElement, Pixels, RenderOnce, Window, div, prelude::*, px};
+use gpui::{Action, AnyElement, Div, Pixels, RenderOnce, Window, div, prelude::*, px};
+
+use crate::styles::UiTheme;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CascadingMenuId {
+    TaskFilters,
+    SessionSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Action)]
+#[action(namespace = redesmyn_ui_cascading_menu, no_json)]
+pub struct CloseCascadingMenus {
+    pub keep_menu: CascadingMenuId,
+}
+
+/// Visual styling defaults shared across cascading menus.
+#[derive(Debug, Clone, Copy)]
+pub struct CascadingMenuRowStyle {
+    pub height: Pixels,
+    pub padding_x: Pixels,
+    pub gap: Pixels,
+    pub radius: Pixels,
+    /// Background alpha used for hover/selection highlights.
+    pub hover_bg_alpha: f32,
+}
+
+impl CascadingMenuRowStyle {
+    #[must_use]
+    pub fn compact(theme: &UiTheme) -> Self {
+        Self {
+            height: px(34.0),
+            padding_x: theme.spacing.sm,
+            gap: theme.spacing.xs,
+            radius: theme.radius.sm,
+            hover_bg_alpha: 0.08,
+        }
+    }
+}
+
+/// Returns a standardized menu row container that matches the filter menu's hover/selection
+/// treatment (higher-contrast than `accent` on dark themes).
+#[must_use]
+pub fn cascading_menu_row(
+    theme: &UiTheme,
+    style: CascadingMenuRowStyle,
+    keyboard_selected: bool,
+    hover_opacity: f32,
+) -> Div {
+    let hover_opacity = hover_opacity.clamp(0.0, 1.0);
+    let selected_bg = theme.colors.foreground.opacity(style.hover_bg_alpha);
+
+    div()
+        .flex()
+        .flex_row()
+        .w_full()
+        .items_center()
+        .gap(style.gap)
+        .px(style.padding_x)
+        .h(style.height)
+        .rounded(style.radius)
+        .text_xs()
+        .when(keyboard_selected, move |this| this.bg(selected_bg))
+        .when(hover_opacity > 1e-3, move |this| {
+            this.bg(theme
+                .colors
+                .foreground
+                .opacity(style.hover_bg_alpha * hover_opacity))
+        })
+}
+
+/// Standardized truncating value label for primary menu rows.
+#[must_use]
+pub fn cascading_menu_row_value(theme: &UiTheme, value: impl IntoElement) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .text_color(theme.colors.foreground_muted)
+        .truncate()
+        .child(value)
+}
 
 /// Layout metrics for a two-level cascading menu (primary + optional secondary menu).
 #[derive(Debug, Clone, Copy)]

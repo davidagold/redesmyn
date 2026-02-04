@@ -4991,6 +4991,9 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::SessionSettingsMenuSendKey => {
             pbv1::UiDriverMethod::SessionSettingsMenuSendKey as i32
         }
+        crate::ui_driver::UiDriverMethod::TaskFiltersMenuSetOpen => {
+            pbv1::UiDriverMethod::TaskFiltersMenuSetOpen as i32
+        }
     }
 }
 
@@ -5059,6 +5062,9 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         ),
         Ok(pbv1::UiDriverMethod::SessionSettingsMenuSendKey) => {
             Ok(crate::ui_driver::UiDriverMethod::SessionSettingsMenuSendKey)
+        }
+        Ok(pbv1::UiDriverMethod::TaskFiltersMenuSetOpen) => {
+            Ok(crate::ui_driver::UiDriverMethod::TaskFiltersMenuSetOpen)
         }
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
@@ -5283,6 +5289,9 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::SessionSettingsMenuSendKey(req) => {
                     pbv1::ui_driver_request::Payload::SessionSettingsMenuSendKey(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::TaskFiltersMenuSetOpen(req) => {
+                    pbv1::ui_driver_request::Payload::TaskFiltersMenuSetOpen(req.to_protobuf())
+                }
             }),
         }
     }
@@ -5412,6 +5421,11 @@ impl crate::ui_driver::UiDriverRequest {
                     crate::ui_driver::SessionSettingsMenuSendKeyRequest::from_protobuf(req),
                 )
             }
+            pbv1::ui_driver_request::Payload::TaskFiltersMenuSetOpen(req) => {
+                crate::ui_driver::UiDriverRequestPayload::TaskFiltersMenuSetOpen(
+                    crate::ui_driver::TaskFiltersMenuSetOpenRequest::from_protobuf(req),
+                )
+            }
         };
 
         let derived_method = payload.method();
@@ -5507,6 +5521,9 @@ impl crate::ui_driver::UiDriverResponse {
                 }
                 crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSendKey(resp) => {
                     pbv1::ui_driver_response::Result::SessionSettingsMenuSendKey(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::TaskFiltersMenuSetOpen(resp) => {
+                    pbv1::ui_driver_response::Result::TaskFiltersMenuSetOpen(resp.to_protobuf())
                 }
                 crate::ui_driver::UiDriverResponseResult::Error(err) => {
                     pbv1::ui_driver_response::Result::Error(err.to_protobuf())
@@ -5638,6 +5655,11 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::SessionSettingsMenuSendKey(resp) => {
                 crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSendKey(
                     crate::ui_driver::SessionSettingsMenuSendKeyResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::TaskFiltersMenuSetOpen(resp) => {
+                crate::ui_driver::UiDriverResponseResult::TaskFiltersMenuSetOpen(
+                    crate::ui_driver::TaskFiltersMenuSetOpenResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::Error(err) => {
@@ -5876,6 +5898,30 @@ impl crate::ui_driver::SessionSettingsMenuSendKeyResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::SessionSettingsMenuSendKeyResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::TaskFiltersMenuSetOpenRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TaskFiltersMenuSetOpenRequest {
+        pbv1::TaskFiltersMenuSetOpenRequest { open: self.open }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::TaskFiltersMenuSetOpenRequest) -> Self {
+        Self { open: proto.open }
+    }
+}
+
+impl crate::ui_driver::TaskFiltersMenuSetOpenResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TaskFiltersMenuSetOpenResponse {
+        pbv1::TaskFiltersMenuSetOpenResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::TaskFiltersMenuSetOpenResponse) -> Self {
         Self {}
     }
 }

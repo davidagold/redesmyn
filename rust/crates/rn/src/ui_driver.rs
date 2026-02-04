@@ -16,9 +16,10 @@ use redesmyn_protocol::ui_driver::{
     CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest,
     SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
     SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest, SettingsDialogSection,
-    UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult,
-    UiPrimaryView, UiScreenshotWindow, UiSnapshotPredicate, WaitForUiIdleRequest,
-    WaitForUiSnapshotRequest,
+    TaskFiltersMenuSetOpenRequest,
+    UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverRequestPayload,
+    UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow, UiSnapshotPredicate,
+    WaitForUiIdleRequest, WaitForUiSnapshotRequest,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope};
 use serde::Serialize;
@@ -48,6 +49,8 @@ pub(crate) enum UiDriverCommands {
     GraphSmoke(UiDriverGraphSmokeArgs),
     /// Opens the session Settings menu and exercises basic keyboard navigation.
     SettingsMenuSmoke(UiDriverSettingsMenuSmokeArgs),
+    /// Opens the workspace task filters menu and captures artifacts.
+    TaskFiltersMenuSmoke(UiDriverTaskFiltersMenuSmokeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -262,6 +265,47 @@ impl UiDriverSettingsSection {
     }
 }
 
+#[derive(Debug, Args)]
+pub(crate) struct UiDriverTaskFiltersMenuSmokeArgs {
+    /// Unix domain socket path for the desktop UI driver.
+    ///
+    /// If omitted, uses `REDESMYN_UI_DRIVER_SOCKET_PATH` when present.
+    #[arg(long)]
+    uds: Option<PathBuf>,
+
+    /// Epic slug to select (required).
+    #[arg(long)]
+    epic: String,
+
+    /// Artifact label for `CaptureScreenshot`.
+    #[arg(long, default_value = "task_filters_menu_smoke")]
+    label: String,
+
+    /// Timeout for wait operations (milliseconds).
+    #[arg(long, default_value_t = 20_000)]
+    timeout_ms: u64,
+
+    /// Quiescence window for `WaitForIdle` (milliseconds).
+    #[arg(long, default_value_t = 50)]
+    quiescence_ms: u64,
+
+    /// Launch the desktop app automatically (builds `redesmyn_desktop` if needed).
+    #[arg(long, default_value_t = false)]
+    launch: bool,
+
+    /// Artifacts directory for `--launch` mode (defaults to a temp dir).
+    #[arg(long)]
+    artifacts_dir: Option<PathBuf>,
+
+    /// Timeout waiting for the UI driver socket to appear (milliseconds, `--launch` mode).
+    #[arg(long, default_value_t = 10_000)]
+    startup_timeout_ms: u64,
+
+    /// Keep the desktop app running after the smoke flow completes (`--launch` mode).
+    #[arg(long, default_value_t = false)]
+    keep_open: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct SmokeReport {
     epic_slug: String,
@@ -300,12 +344,24 @@ struct SettingsMenuSmokeReport {
     artifacts_dir: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct TaskFiltersMenuSmokeReport {
+    epic_slug: String,
+    socket_path: String,
+    screenshot_path: Option<String>,
+    ui_snapshot_path: Option<String>,
+    artifacts_dir: Option<String>,
+}
+
 pub(crate) fn ui_driver(cmd: UiDriverCommands, output: &Output) -> CommandOutcome {
     match cmd {
         UiDriverCommands::Smoke(args) => ui_driver_smoke(args, output),
         UiDriverCommands::Settings(args) => ui_driver_settings(args, output),
         UiDriverCommands::GraphSmoke(args) => ui_driver_graph_smoke(args, output),
         UiDriverCommands::SettingsMenuSmoke(args) => ui_driver_settings_menu_smoke(args, output),
+        UiDriverCommands::TaskFiltersMenuSmoke(args) => {
+            ui_driver_task_filters_menu_smoke(args, output)
+        }
     }
 }
 
@@ -943,6 +999,20 @@ fn ui_driver_settings_menu_smoke(
         if let Err(err) = require_ok_response(
             send_ui_driver_request(
                 &mut conn,
+                UiDriverRequestPayload::TaskFiltersMenuSetOpen(TaskFiltersMenuSetOpenRequest {
+                    open: true,
+                }),
+                wait_timeout,
+            ),
+            "task_filters_menu_set_open",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
                 UiDriverRequestPayload::SessionSettingsMenuSetOpen(SessionSettingsMenuSetOpenRequest {
                     open: true,
                 }),
@@ -1017,6 +1087,212 @@ fn ui_driver_settings_menu_smoke(
                 println!("epic_slug: {}", report.epic_slug);
                 println!("socket_path: {}", report.socket_path);
                 println!("chat_session_id: {}", report.chat_session_id);
+                if let Some(path) = report.screenshot_path.as_deref() {
+                    println!("screenshot_path: {path}");
+                }
+                if let Some(path) = report.ui_snapshot_path.as_deref() {
+                    println!("ui_snapshot_path: {path}");
+                }
+                if let Some(dir) = report.artifacts_dir.as_deref() {
+                    println!("artifacts_dir: {dir}");
+                }
+                CommandOutcome::Success
+            }
+            OutputFormat::Json => match output.print_json_stdout(&report) {
+                Ok(()) => CommandOutcome::Success,
+                Err(err) => CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                )),
+            },
+        }
+    }
+}
+
+fn ui_driver_task_filters_menu_smoke(
+    args: UiDriverTaskFiltersMenuSmokeArgs,
+    output: &Output,
+) -> CommandOutcome {
+    #[cfg(not(unix))]
+    {
+        let _ = output;
+        let _ = args;
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "UI driver task filters menu smoke is only supported on unix platforms.",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let mut desktop_child: Option<Child> = None;
+
+        let socket_path = match args.uds.clone() {
+            Some(path) => path,
+            None if args.launch => default_smoke_socket_path(),
+            None => match env::var_os("REDESMYN_UI_DRIVER_SOCKET_PATH") {
+                Some(path) => PathBuf::from(path),
+                None => {
+                    return CommandOutcome::Failure(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Missing --uds (or set REDESMYN_UI_DRIVER_SOCKET_PATH).",
+                    ));
+                }
+            },
+        };
+
+        let artifacts_dir = if args.launch {
+            Some(
+                args.artifacts_dir
+                    .clone()
+                    .unwrap_or_else(default_smoke_artifacts_dir),
+            )
+        } else {
+            None
+        };
+
+        if args.launch {
+            let workspace_root = match find_rust_workspace_root() {
+                Ok(root) => root,
+                Err(err) => return CommandOutcome::Failure(err),
+            };
+
+            if let Err(err) = build_desktop_app(&workspace_root) {
+                return CommandOutcome::Failure(err);
+            }
+
+            let Some(artifacts_dir) = artifacts_dir.as_ref() else {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "Expected artifacts_dir to be set in --launch mode.",
+                ));
+            };
+
+            if let Err(err) = std::fs::create_dir_all(artifacts_dir) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!(
+                        "Failed to create artifacts directory {}: {err}",
+                        artifacts_dir.display()
+                    ),
+                ));
+            }
+
+            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+                Ok(child) => desktop_child = Some(child),
+                Err(err) => return CommandOutcome::Failure(err),
+            }
+
+            if let Err(err) =
+                wait_for_path(&socket_path, Duration::from_millis(args.startup_timeout_ms))
+            {
+                if let Some(mut child) = desktop_child.take() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return CommandOutcome::Failure(err);
+            }
+        }
+
+        let wait_timeout = Duration::from_millis(args.timeout_ms);
+
+        let mut conn = match UnixStream::connect(&socket_path) {
+            Ok(conn) => conn,
+            Err(err) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!("Failed to connect to UI driver socket: {err}"),
+                ));
+            }
+        };
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::OpenEpic(OpenEpicRequest { epic_slug: args.epic.clone() }),
+                wait_timeout,
+            ),
+            "open_epic",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::WaitForIdle(WaitForUiIdleRequest {
+                    timeout_ms: args.timeout_ms,
+                    quiescence_ms: args.quiescence_ms,
+                }),
+                wait_timeout,
+            ),
+            "wait_for_idle",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = require_ok_response(
+            send_ui_driver_request(
+                &mut conn,
+                UiDriverRequestPayload::TaskFiltersMenuSetOpen(TaskFiltersMenuSetOpenRequest {
+                    open: true,
+                }),
+                wait_timeout,
+            ),
+            "task_filters_menu_set_open",
+        ) {
+            shutdown_desktop(&mut desktop_child, args.keep_open);
+            return CommandOutcome::Failure(err);
+        }
+
+        let screenshot = match send_ui_driver_request(
+            &mut conn,
+            UiDriverRequestPayload::CaptureScreenshot(CaptureScreenshotRequest {
+                name_hint: args.label.clone(),
+                window: Some(UiScreenshotWindow::Primary),
+                include_decorations: Some(false),
+            }),
+            wait_timeout,
+        ) {
+            Ok(UiDriverResponseResult::CaptureScreenshot(resp)) => resp,
+            Ok(UiDriverResponseResult::Error(err)) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+            Ok(other) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    format!("Unexpected capture_screenshot response: {other:?}"),
+                ));
+            }
+            Err(err) => {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
+        };
+
+        let (screenshot_path, ui_snapshot_path) =
+            infer_artifact_paths(&args.label, &screenshot).unwrap_or((None, None));
+
+        shutdown_desktop(&mut desktop_child, args.keep_open);
+
+        let report = TaskFiltersMenuSmokeReport {
+            epic_slug: args.epic,
+            socket_path: socket_path.to_string_lossy().to_string(),
+            screenshot_path,
+            ui_snapshot_path,
+            artifacts_dir: artifacts_dir.map(|dir| dir.to_string_lossy().to_string()),
+        };
+
+        match output.format {
+            OutputFormat::Human => {
+                println!("ok: true");
+                println!("epic_slug: {}", report.epic_slug);
+                println!("socket_path: {}", report.socket_path);
                 if let Some(path) = report.screenshot_path.as_deref() {
                     println!("screenshot_path: {path}");
                 }
@@ -1508,7 +1784,8 @@ fn require_ok_response(
         | UiDriverResponseResult::GraphMultiSelectAddNode(_)
         | UiDriverResponseResult::GraphMultiSelectRemoveNode(_)
         | UiDriverResponseResult::SessionSettingsMenuSetOpen(_)
-        | UiDriverResponseResult::SessionSettingsMenuSendKey(_) => Ok(()),
+        | UiDriverResponseResult::SessionSettingsMenuSendKey(_)
+        | UiDriverResponseResult::TaskFiltersMenuSetOpen(_) => Ok(()),
         other => Err(ErrorEnvelope::new(
             ErrorCategory::InvalidRequest,
             format!("Unexpected {op} response: {other:?}"),

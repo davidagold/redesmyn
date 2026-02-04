@@ -49,6 +49,7 @@ pub enum UiDriverMethod {
     GraphMultiSelectRemoveNode,
     SessionSettingsMenuSetOpen,
     SessionSettingsMenuSendKey,
+    TaskFiltersMenuSetOpen,
 }
 
 /// A request issued to the UI driver.
@@ -92,6 +93,7 @@ pub enum UiDriverRequestPayload {
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeRequest),
     SessionSettingsMenuSetOpen(SessionSettingsMenuSetOpenRequest),
     SessionSettingsMenuSendKey(SessionSettingsMenuSendKeyRequest),
+    TaskFiltersMenuSetOpen(TaskFiltersMenuSetOpenRequest),
 }
 
 impl UiDriverRequestPayload {
@@ -122,6 +124,7 @@ impl UiDriverRequestPayload {
             Self::GraphMultiSelectRemoveNode(_) => UiDriverMethod::GraphMultiSelectRemoveNode,
             Self::SessionSettingsMenuSetOpen(_) => UiDriverMethod::SessionSettingsMenuSetOpen,
             Self::SessionSettingsMenuSendKey(_) => UiDriverMethod::SessionSettingsMenuSendKey,
+            Self::TaskFiltersMenuSetOpen(_) => UiDriverMethod::TaskFiltersMenuSetOpen,
         }
     }
 }
@@ -177,6 +180,7 @@ pub enum UiDriverResponseResult {
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeResponse),
     SessionSettingsMenuSetOpen(SessionSettingsMenuSetOpenResponse),
     SessionSettingsMenuSendKey(SessionSettingsMenuSendKeyResponse),
+    TaskFiltersMenuSetOpen(TaskFiltersMenuSetOpenResponse),
     Error(ErrorEnvelope),
 }
 
@@ -243,6 +247,14 @@ pub struct SessionSettingsMenuSendKeyRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionSettingsMenuSendKeyResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TaskFiltersMenuSetOpenRequest {
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TaskFiltersMenuSetOpenResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetLeftPaneCollapsedRequest {

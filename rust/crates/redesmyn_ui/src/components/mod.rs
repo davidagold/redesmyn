@@ -20,7 +20,10 @@ mod tooltip;
 pub use badge::{Badge, BadgeKind, BadgeSize, BadgeStyle};
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
-pub use cascading_menu::{CascadingMenu, CascadingMenuMetrics, CascadingMenuSecondarySide};
+pub use cascading_menu::{
+    CascadingMenu, CascadingMenuId, CascadingMenuMetrics, CascadingMenuRowStyle,
+    CascadingMenuSecondarySide, CloseCascadingMenus, cascading_menu_row, cascading_menu_row_value,
+};
 pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
 pub use overlay_surface::{OverlaySurfaceKind, overlay_surface};

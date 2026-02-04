@@ -40,9 +40,10 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, Expandable, IconButton,
-    MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
-    TextButton, TextInput, TextInputEvent, overlay_surface,
+    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
+    CascadingMenuRowStyle, CloseCascadingMenus, Expandable, IconButton, MarkdownView,
+    OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton,
+    TextInput, TextInputEvent, cascading_menu_row, cascading_menu_row_value, overlay_surface,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -1054,7 +1055,8 @@ impl SessionView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let timeline_list_state = ListState::new(1, gpui::ListAlignment::Top, px(400.0)).measure_all();
+        let timeline_list_state =
+            ListState::new(1, gpui::ListAlignment::Top, px(400.0)).measure_all();
         let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
@@ -2009,6 +2011,10 @@ impl SessionView {
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
         cx.notify();
+    }
+
+    pub fn close_settings_menu(&mut self, cx: &mut Context<Self>) {
+        self.close_session_settings_menu(cx);
     }
 
     fn session_settings_active_category(&self) -> SessionSettingsCategory {
@@ -5981,8 +5987,9 @@ impl Render for SessionView {
         if !settings_disabled {
             settings_button = settings_button.on_mouse_down(gpui::MouseButton::Left, {
                 let view = view.clone();
-                move |_, _, cx| {
-                    view.update(cx, |this, cx| {
+                move |_, _, app| {
+                    let mut did_open = false;
+                    view.update(app, |this, cx| {
                         if this.session_settings_open {
                             this.session_settings_open = false;
                             this.session_settings_hovered = None;
@@ -5993,19 +6000,34 @@ impl Render for SessionView {
                             this.session_settings_hovered = None;
                             this.session_settings_focus = SessionSettingsMenuFocus::Primary;
                             this.session_settings_submenu_index = 0;
+                            did_open = true;
                         }
                         cx.notify();
                     });
+
+                    if did_open {
+                        let action = CloseCascadingMenus {
+                            keep_menu: CascadingMenuId::SessionSettings,
+                        };
+                        app.dispatch_action(&action);
+                    }
                 }
             });
         }
 
         let settings_menu = if self.session_settings_open && !settings_disabled {
+            let row_style = CascadingMenuRowStyle::compact(&theme);
+            let primary_row_style = CascadingMenuRowStyle {
+                gap: theme.spacing.sm,
+                ..row_style
+            };
+
             let primary_width = px(220.0);
             let secondary_width = px(240.0);
             let overlap = px(6.0);
-            let padding_y = theme.spacing.sm;
-            let row_height = px(32.0);
+            let padding_y = theme.spacing.xs;
+            let padding_x = theme.spacing.xs;
+            let row_height = row_style.height;
             let row_gap = theme.spacing.xs;
 
             let mut primary_list = div().flex().flex_col().gap(row_gap);
@@ -6016,68 +6038,50 @@ impl Render for SessionView {
                     SessionSettingsCategory::Permissions => approvals_label,
                     SessionSettingsCategory::Sandbox => sandbox_label,
                 };
-
-                let active_bg = if self.session_settings_focus == SessionSettingsMenuFocus::Primary
-                {
-                    theme.colors.accent.opacity(0.55)
+                let keyboard_selected =
+                    hovered && self.session_settings_focus == SessionSettingsMenuFocus::Primary;
+                let hover_opacity = if hovered && !keyboard_selected {
+                    1.0
                 } else {
-                    theme.colors.accent.opacity(0.25)
+                    0.0
                 };
 
-                let row = div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.sm)
-                    .h(row_height)
-                    .px(theme.spacing.sm)
-                    .rounded(theme.radius.md)
-                    .cursor_pointer()
-                    .when(hovered, move |this| this.bg(active_bg))
-                    .when(!hovered, |this| {
-                        this.hover(|this| this.bg(theme.colors.accent))
-                    })
-                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                        if this.session_settings_hovered != Some(category)
-                            || this.session_settings_focus != SessionSettingsMenuFocus::Primary
-                        {
-                            this.session_settings_hovered = Some(category);
-                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
-                            this.session_settings_submenu_index = 0;
-                            cx.notify();
-                        }
-                    }))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(theme.colors.foreground)
-                            .text_size(theme.typography.caption.size)
-                            .child(category.label()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_end()
-                            .flex_1()
-                            .gap(theme.spacing.xs)
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .text_size(theme.typography.caption.size)
-                                    .truncate()
-                                    .child(current_label),
-                            )
-                            .child(
-                                div()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .text_size(theme.typography.caption.size)
-                                    .child("›"),
-                            ),
-                    );
+                let row =
+                    cascading_menu_row(&theme, primary_row_style, keyboard_selected, hover_opacity)
+                        .cursor_pointer()
+                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if this.session_settings_hovered != Some(category)
+                                || this.session_settings_focus != SessionSettingsMenuFocus::Primary
+                            {
+                                this.session_settings_hovered = Some(category);
+                                this.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                                this.session_settings_submenu_index = 0;
+                                cx.notify();
+                            }
+                        }))
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_color(theme.colors.foreground)
+                                .child(category.label()),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_end()
+                                .flex_1()
+                                .gap(theme.spacing.xs)
+                                .min_w_0()
+                                .child(cascading_menu_row_value(&theme, current_label))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(theme.colors.foreground_muted)
+                                        .child("›"),
+                                ),
+                        );
 
                 primary_list = primary_list.child(row);
             }
@@ -6086,7 +6090,7 @@ impl Render for SessionView {
                 .w(primary_width)
                 .pt(padding_y)
                 .pb(padding_y)
-                .px(theme.spacing.sm)
+                .px(padding_x)
                 .shadow_md()
                 .occlude()
                 .child(primary_list);
@@ -6137,22 +6141,13 @@ impl Render for SessionView {
                                 this.bg(theme.colors.ring).border_color(theme.colors.ring)
                             });
 
-                        let mut row = div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(theme.spacing.sm)
-                            .h(row_height)
-                            .px(theme.spacing.sm)
-                            .rounded(theme.radius.md)
-                            .when(active, |this| this.bg(theme.colors.accent.opacity(0.55)))
+                        let mut row = cascading_menu_row(&theme, primary_row_style, active, 0.0)
                             .child(indicator)
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .text_color(theme.colors.foreground)
-                                    .text_size(theme.typography.caption.size)
                                     .truncate()
                                     .child(option.label),
                             );
@@ -6174,9 +6169,6 @@ impl Render for SessionView {
                                         cx.notify();
                                     }
                                 }))
-                                .when(!active, |this| {
-                                    this.hover(|this| this.bg(theme.colors.accent))
-                                })
                                 .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                                     view.update(cx, |this, cx| {
                                         this.set_codex_approval_policy(value, cx);
@@ -6192,7 +6184,7 @@ impl Render for SessionView {
                             .w(secondary_width)
                             .pt(padding_y)
                             .pb(padding_y)
-                            .px(theme.spacing.sm)
+                            .px(padding_x)
                             .shadow_md()
                             .occlude()
                             .child(list)
@@ -6228,22 +6220,13 @@ impl Render for SessionView {
                             _ => theme.colors.foreground,
                         };
 
-                        let mut row = div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(theme.spacing.sm)
-                            .h(row_height)
-                            .px(theme.spacing.sm)
-                            .rounded(theme.radius.md)
-                            .when(active, |this| this.bg(theme.colors.accent.opacity(0.55)))
+                        let mut row = cascading_menu_row(&theme, primary_row_style, active, 0.0)
                             .child(indicator)
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .text_color(label_color)
-                                    .text_size(theme.typography.caption.size)
                                     .truncate()
                                     .child(option.label()),
                             );
@@ -6265,9 +6248,6 @@ impl Render for SessionView {
                                         cx.notify();
                                     }
                                 }))
-                                .when(!active, |this| {
-                                    this.hover(|this| this.bg(theme.colors.accent))
-                                })
                                 .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                                     view.update(cx, |this, cx| {
                                         this.set_codex_sandbox_policy(option.policy(), cx);
@@ -6283,7 +6263,7 @@ impl Render for SessionView {
                             .w(secondary_width)
                             .pt(padding_y)
                             .pb(padding_y)
-                            .px(theme.spacing.sm)
+                            .px(padding_x)
                             .shadow_md()
                             .occlude()
                             .child(list)

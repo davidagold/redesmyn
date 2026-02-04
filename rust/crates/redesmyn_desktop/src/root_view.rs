@@ -25,10 +25,11 @@ use redesmyn_ui_session::SessionView;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics,
-    CascadingMenuSecondarySide, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea,
-    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton,
-    TextInput, TextInputEvent, overlay_surface,
+    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
+    CascadingMenuRowStyle, CascadingMenuSecondarySide, CloseCascadingMenus, IconButton,
+    OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
+    SplitPaneResizeMode, SplitPaneState, TextButton, TextInput, TextInputEvent, Tooltip,
+    cascading_menu_row, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -397,6 +398,61 @@ impl RootView {
             self.chrome.connections_menu_active = None;
             self.notify_ui_updated(cx);
         }
+    }
+
+    fn close_all_cascading_menus(&mut self, cx: &mut Context<Self>) {
+        self.workspace_pane.update(cx, |pane, cx| {
+            if !pane.task_filters_open {
+                return;
+            }
+
+            pane.set_task_filters_open(
+                false,
+                pane.task_filters_active_category,
+                None,
+                TaskFiltersInputSource::Mouse,
+                cx,
+            );
+        });
+
+        self.session_pane.update(cx, |pane, cx| {
+            pane.session_view
+                .update(cx, |view, cx| view.close_settings_menu(cx));
+        });
+
+        self.notify_ui_updated(cx);
+    }
+
+    fn close_cascading_menus(
+        &mut self,
+        action: &CloseCascadingMenus,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.keep_menu != CascadingMenuId::TaskFilters {
+            self.workspace_pane.update(cx, |pane, cx| {
+                if !pane.task_filters_open {
+                    return;
+                }
+
+                pane.set_task_filters_open(
+                    false,
+                    pane.task_filters_active_category,
+                    None,
+                    TaskFiltersInputSource::Mouse,
+                    cx,
+                );
+            });
+        }
+
+        if action.keep_menu != CascadingMenuId::SessionSettings {
+            self.session_pane.update(cx, |pane, cx| {
+                pane.session_view
+                    .update(cx, |view, cx| view.close_settings_menu(cx));
+            });
+        }
+
+        self.notify_ui_updated(cx);
     }
 
     fn select_epic(&mut self, slug: String, cx: &mut Context<Self>) {
@@ -1545,6 +1601,27 @@ async fn handle_ui_driver_request(
                     ));
                 };
 
+                if open {
+                    let workspace_pane = {
+                        let root_ref = root.read(cx);
+                        root_ref.workspace_pane.clone()
+                    };
+
+                    workspace_pane.update(cx, |pane, cx| {
+                        if !pane.task_filters_open {
+                            return;
+                        }
+
+                        pane.set_task_filters_open(
+                            false,
+                            pane.task_filters_active_category,
+                            None,
+                            TaskFiltersInputSource::Mouse,
+                            cx,
+                        );
+                    });
+                }
+
                 let session_view = {
                     let root_ref = root.read(cx);
                     root_ref.session_pane.read(cx).session_view.clone()
@@ -1616,6 +1693,65 @@ async fn handle_ui_driver_request(
             match result {
                 Ok(()) => UiDriverResponseResult::SessionSettingsMenuSendKey(
                     redesmyn_protocol::ui_driver::SessionSettingsMenuSendKeyResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::TaskFiltersMenuSetOpen(req) => {
+            let open = req.open;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.task_filters_menu_set_open",
+                open
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                if open {
+                    let session_view = {
+                        let root_ref = root.read(cx);
+                        root_ref.session_pane.read(cx).session_view.clone()
+                    };
+                    session_view.update(cx, |view, cx| view.close_settings_menu(cx));
+                }
+
+                let workspace_pane = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.clone()
+                };
+
+                workspace_pane.update(cx, |pane, cx| {
+                    pane.set_task_filters_open(
+                        open,
+                        pane.task_filters_active_category,
+                        None,
+                        TaskFiltersInputSource::Keyboard,
+                        cx,
+                    );
+                });
+
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::TaskFiltersMenuSetOpen(
+                    redesmyn_protocol::ui_driver::TaskFiltersMenuSetOpenResponse {},
                 ),
                 Err(err) => UiDriverResponseResult::Error(err),
             }
@@ -2718,12 +2854,19 @@ impl Render for RootView {
             .relative()
             .key_context("Desktop")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::close_cascading_menus))
             .on_action(cx.listener(Self::toggle_command_palette))
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::select_previous_command))
             .on_action(cx.listener(Self::select_next_command))
             .on_action(cx.listener(Self::toggle_settings_dialog))
             .on_action(cx.listener(Self::close_settings_dialog))
+            .on_mouse_down(gpui::MouseButton::Left, {
+                let root = root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| this.close_all_cascading_menus(cx));
+                }
+            })
             .flex()
             .flex_col()
             .size_full()
@@ -4136,6 +4279,11 @@ impl WorkspacePaneHost {
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.open");
         let _guard = span.enter();
 
+        let action = CloseCascadingMenus {
+            keep_menu: CascadingMenuId::TaskFilters,
+        };
+        cx.dispatch_action(&action);
+
         let focus = self.set_task_filters_open(
             true,
             self.task_filters_active_category,
@@ -4741,8 +4889,10 @@ impl Render for WorkspacePaneHost {
             .on_click({
                 let workspace = workspace.clone();
                 move |_, window, cx| {
+                    let mut did_open = false;
                     let focus = workspace.update(cx, |this, cx| {
                         let open = !this.task_filters_open;
+                        did_open = open;
                         Some(this.set_task_filters_open(
                             open,
                             this.task_filters_active_category,
@@ -4751,6 +4901,13 @@ impl Render for WorkspacePaneHost {
                             cx,
                         ))
                     });
+
+                    if did_open {
+                        let action = CloseCascadingMenus {
+                            keep_menu: CascadingMenuId::TaskFilters,
+                        };
+                        cx.dispatch_action(&action);
+                    }
 
                     if let Some(focus) = focus {
                         window.focus(&focus);
@@ -5010,15 +5167,17 @@ impl Render for WorkspacePaneHost {
                 );
 
                 if menu_opacity > 1e-3 {
+                    let row_style = CascadingMenuRowStyle::compact(&theme);
+                    let value_row_style = CascadingMenuRowStyle {
+                        gap: theme.spacing.sm,
+                        ..row_style
+                    };
+
                     let primary_menu_width = px(260.0);
                     let submenu_width = px(240.0);
                     let submenu_overlap = theme.spacing.xs;
-                    let menu_item_height = px(34.0);
+                    let menu_item_height = row_style.height;
                     let menu_search_height = menu_item_height;
-                    // `accent` is too close to `surface_elevated` in our dark theme to make
-                    // hover/selection pop. Use a subtle foreground tint instead.
-                    let row_hover_bg_alpha = 0.08_f32;
-                    let row_selected_bg = theme.colors.foreground.opacity(row_hover_bg_alpha);
                     let row_hover_duration = ui_test_mode_animation_duration(
                         theme
                             .animation
@@ -5078,35 +5237,21 @@ impl Render for WorkspacePaneHost {
                             };
 
                             let arrow = div()
-                                .text_xs()
                                 .text_color(theme.colors.foreground_muted)
                                 .child("›");
 
-                            let row = div()
-                                .id((
-                                    gpui::ElementId::from(("task_filters_category", entity_id)),
-                                    category.title(),
-                                ))
-                                .flex()
-                                .flex_row()
-                                .w_full()
-                                .items_center()
-                                .gap(theme.spacing.xs)
-                                .px(theme.spacing.sm)
-                                .h(menu_item_height)
-                                .rounded(theme.radius.sm)
-                                .when(
-                                    highlighted
-                                        && self.task_filters_input_source
-                                            == TaskFiltersInputSource::Keyboard,
-                                    |this| this.bg(row_selected_bg),
-                                )
-                                .when(hover_opacity > 1e-3, |this| {
-                                    this.bg(theme
-                                        .colors
-                                        .foreground
-                                        .opacity(row_hover_bg_alpha * hover_opacity))
-                                })
+                            let row = cascading_menu_row(
+                                &theme,
+                                row_style,
+                                highlighted
+                                    && self.task_filters_input_source
+                                        == TaskFiltersInputSource::Keyboard,
+                                hover_opacity,
+                            )
+                            .id((
+                                gpui::ElementId::from(("task_filters_category", entity_id)),
+                                category.title(),
+                            ))
                                 .cursor_pointer()
                                 .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                     let mut did_change = false;
@@ -5159,7 +5304,6 @@ impl Render for WorkspacePaneHost {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_xs()
                                         .text_color(theme.colors.foreground)
                                         .truncate()
                                         .child(category.title()),
@@ -5316,28 +5460,15 @@ impl Render for WorkspacePaneHost {
                                             format!("task_state:{label}"),
                                         );
 
-                                        let row = div()
+                                        let row = cascading_menu_row(
+                                            &theme,
+                                            value_row_style,
+                                            highlighted
+                                                && self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Keyboard,
+                                            hover_opacity,
+                                        )
                                             .id(row_id)
-                                            .flex()
-                                            .flex_row()
-                                            .w_full()
-                                            .items_center()
-                                            .gap(theme.spacing.sm)
-                                            .px(theme.spacing.sm)
-                                            .h(menu_item_height)
-                                            .rounded(theme.radius.sm)
-                                            .when(
-                                                highlighted
-                                                    && self.task_filters_input_source
-                                                        == TaskFiltersInputSource::Keyboard,
-                                                |this| this.bg(row_selected_bg),
-                                            )
-                                            .when(hover_opacity > 1e-3, |this| {
-                                                this.bg(theme
-                                                    .colors
-                                                    .foreground
-                                                    .opacity(row_hover_bg_alpha * hover_opacity))
-                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
@@ -5383,7 +5514,6 @@ impl Render for WorkspacePaneHost {
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .text_xs()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
@@ -5429,28 +5559,15 @@ impl Render for WorkspacePaneHost {
                                             format!("merge_readiness:{label}"),
                                         );
 
-                                        let row = div()
+                                        let row = cascading_menu_row(
+                                            &theme,
+                                            value_row_style,
+                                            highlighted
+                                                && self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Keyboard,
+                                            hover_opacity,
+                                        )
                                             .id(row_id)
-                                            .flex()
-                                            .flex_row()
-                                            .w_full()
-                                            .items_center()
-                                            .gap(theme.spacing.sm)
-                                            .px(theme.spacing.sm)
-                                            .h(menu_item_height)
-                                            .rounded(theme.radius.sm)
-                                            .when(
-                                                highlighted
-                                                    && self.task_filters_input_source
-                                                        == TaskFiltersInputSource::Keyboard,
-                                                |this| this.bg(row_selected_bg),
-                                            )
-                                            .when(hover_opacity > 1e-3, |this| {
-                                                this.bg(theme
-                                                    .colors
-                                                    .foreground
-                                                    .opacity(row_hover_bg_alpha * hover_opacity))
-                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
@@ -5498,7 +5615,6 @@ impl Render for WorkspacePaneHost {
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .text_xs()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
@@ -5544,28 +5660,15 @@ impl Render for WorkspacePaneHost {
                                             format!("agent_status:{label}"),
                                         );
 
-                                        let row = div()
+                                        let row = cascading_menu_row(
+                                            &theme,
+                                            value_row_style,
+                                            highlighted
+                                                && self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Keyboard,
+                                            hover_opacity,
+                                        )
                                             .id(row_id)
-                                            .flex()
-                                            .flex_row()
-                                            .w_full()
-                                            .items_center()
-                                            .gap(theme.spacing.sm)
-                                            .px(theme.spacing.sm)
-                                            .h(menu_item_height)
-                                            .rounded(theme.radius.sm)
-                                            .when(
-                                                highlighted
-                                                    && self.task_filters_input_source
-                                                        == TaskFiltersInputSource::Keyboard,
-                                                |this| this.bg(row_selected_bg),
-                                            )
-                                            .when(hover_opacity > 1e-3, |this| {
-                                                this.bg(theme
-                                                    .colors
-                                                    .foreground
-                                                    .opacity(row_hover_bg_alpha * hover_opacity))
-                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
@@ -5611,7 +5714,6 @@ impl Render for WorkspacePaneHost {
                                                 div()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .text_xs()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
