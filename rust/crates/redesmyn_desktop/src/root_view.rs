@@ -4506,8 +4506,8 @@ impl Render for WorkspacePaneHost {
                     let menu_search_height = menu_item_height;
                     // `accent` is too close to `surface_elevated` in our dark theme to make
                     // hover/selection pop. Use a subtle foreground tint instead.
-                    let row_selected_bg = theme.colors.foreground.opacity(0.16);
                     let row_hover_bg_alpha = 0.08_f32;
+                    let row_selected_bg = theme.colors.foreground.opacity(row_hover_bg_alpha);
                     let row_hover_duration = ui_test_mode_animation_duration(
                         theme
                             .animation
@@ -4735,7 +4735,13 @@ impl Render for WorkspacePaneHost {
                     let submenu = submenu_state.map(|(category, _row_index)| {
                         let visible_values = self.visible_task_filter_value_indices(category);
                         let mut value_list = div().flex().flex_col().gap(px(0.0));
-                        let checkbox = |selected: bool| {
+                        let checkbox = |selected: bool, highlighted: bool| {
+                            let border = if highlighted && !selected {
+                                theme.colors.foreground_muted.opacity(0.65)
+                            } else {
+                                theme.colors.border.opacity(0.45)
+                            };
+
                             div()
                                 .size(px(16.0))
                                 .flex()
@@ -4743,7 +4749,7 @@ impl Render for WorkspacePaneHost {
                                 .justify_center()
                                 .rounded(theme.radius.sm)
                                 .border_1()
-                                .border_color(theme.colors.border.opacity(0.45))
+                                .border_color(border)
                                 .when(selected, |this| {
                                     this.border_color(theme.colors.ring.opacity(0.7))
                                         .text_color(theme.colors.ring)
@@ -4861,7 +4867,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected))
+                                            .child(checkbox(selected, highlighted))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -4976,7 +4982,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected))
+                                            .child(checkbox(selected, highlighted))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -5089,7 +5095,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected))
+                                            .child(checkbox(selected, highlighted))
                                             .child(
                                                 div()
                                                     .flex_1()
