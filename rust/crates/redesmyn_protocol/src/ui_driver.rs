@@ -33,6 +33,7 @@ pub enum UiDriverMethod {
     OpenDiffView,
     CaptureScreenshot,
     SetLeftPaneCollapsed,
+    SetSettingsDialogOpen,
     CreateChatSession,
     CloseChatSession,
     PinChatSession,
@@ -74,6 +75,7 @@ pub enum UiDriverRequestPayload {
     OpenDiffView(OpenDiffViewRequest),
     CaptureScreenshot(CaptureScreenshotRequest),
     SetLeftPaneCollapsed(SetLeftPaneCollapsedRequest),
+    SetSettingsDialogOpen(SetSettingsDialogOpenRequest),
     CreateChatSession(CreateChatSessionRequest),
     CloseChatSession(CloseChatSessionRequest),
     PinChatSession(PinChatSessionRequest),
@@ -102,6 +104,7 @@ impl UiDriverRequestPayload {
             Self::OpenDiffView(_) => UiDriverMethod::OpenDiffView,
             Self::CaptureScreenshot(_) => UiDriverMethod::CaptureScreenshot,
             Self::SetLeftPaneCollapsed(_) => UiDriverMethod::SetLeftPaneCollapsed,
+            Self::SetSettingsDialogOpen(_) => UiDriverMethod::SetSettingsDialogOpen,
             Self::CreateChatSession(_) => UiDriverMethod::CreateChatSession,
             Self::CloseChatSession(_) => UiDriverMethod::CloseChatSession,
             Self::PinChatSession(_) => UiDriverMethod::PinChatSession,
@@ -155,6 +158,7 @@ pub enum UiDriverResponseResult {
     OpenDiffView(OpenDiffViewResponse),
     CaptureScreenshot(CaptureScreenshotResponse),
     SetLeftPaneCollapsed(SetLeftPaneCollapsedResponse),
+    SetSettingsDialogOpen(SetSettingsDialogOpenResponse),
     CreateChatSession(CreateChatSessionResponse),
     CloseChatSession(CloseChatSessionResponse),
     PinChatSession(PinChatSessionResponse),
@@ -243,6 +247,14 @@ pub struct SetLeftPaneCollapsedRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetLeftPaneCollapsedResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSettingsDialogOpenRequest {
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSettingsDialogOpenResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CreateChatSessionRequest {

@@ -4945,6 +4945,9 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::SetLeftPaneCollapsed => {
             pbv1::UiDriverMethod::SetLeftPaneCollapsed as i32
         }
+        crate::ui_driver::UiDriverMethod::SetSettingsDialogOpen => {
+            pbv1::UiDriverMethod::SetSettingsDialogOpen as i32
+        }
         crate::ui_driver::UiDriverMethod::CreateChatSession => {
             pbv1::UiDriverMethod::CreateChatSession as i32
         }
@@ -5007,6 +5010,9 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         }
         Ok(pbv1::UiDriverMethod::SetLeftPaneCollapsed) => {
             Ok(crate::ui_driver::UiDriverMethod::SetLeftPaneCollapsed)
+        }
+        Ok(pbv1::UiDriverMethod::SetSettingsDialogOpen) => {
+            Ok(crate::ui_driver::UiDriverMethod::SetSettingsDialogOpen)
         }
         Ok(pbv1::UiDriverMethod::CreateChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::CreateChatSession)
@@ -5199,6 +5205,9 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::SetLeftPaneCollapsed(req) => {
                     pbv1::ui_driver_request::Payload::SetLeftPaneCollapsed(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogOpen(req) => {
+                    pbv1::ui_driver_request::Payload::SetSettingsDialogOpen(req.to_protobuf())
+                }
                 crate::ui_driver::UiDriverRequestPayload::CreateChatSession(req) => {
                     pbv1::ui_driver_request::Payload::CreateChatSession(req.to_protobuf())
                 }
@@ -5288,6 +5297,11 @@ impl crate::ui_driver::UiDriverRequest {
             pbv1::ui_driver_request::Payload::SetLeftPaneCollapsed(req) => {
                 crate::ui_driver::UiDriverRequestPayload::SetLeftPaneCollapsed(
                     crate::ui_driver::SetLeftPaneCollapsedRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::SetSettingsDialogOpen(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogOpen(
+                    crate::ui_driver::SetSettingsDialogOpenRequest::from_protobuf(req),
                 )
             }
             pbv1::ui_driver_request::Payload::CreateChatSession(req) => {
@@ -5408,6 +5422,9 @@ impl crate::ui_driver::UiDriverResponse {
                 crate::ui_driver::UiDriverResponseResult::SetLeftPaneCollapsed(resp) => {
                     pbv1::ui_driver_response::Result::SetLeftPaneCollapsed(resp.to_protobuf())
                 }
+                crate::ui_driver::UiDriverResponseResult::SetSettingsDialogOpen(resp) => {
+                    pbv1::ui_driver_response::Result::SetSettingsDialogOpen(resp.to_protobuf())
+                }
                 crate::ui_driver::UiDriverResponseResult::CreateChatSession(resp) => {
                     pbv1::ui_driver_response::Result::CreateChatSession(resp.to_protobuf())
                 }
@@ -5500,6 +5517,11 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::SetLeftPaneCollapsed(resp) => {
                 crate::ui_driver::UiDriverResponseResult::SetLeftPaneCollapsed(
                     crate::ui_driver::SetLeftPaneCollapsedResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SetSettingsDialogOpen(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SetSettingsDialogOpen(
+                    crate::ui_driver::SetSettingsDialogOpenResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::CreateChatSession(resp) => {
@@ -5836,6 +5858,30 @@ impl crate::ui_driver::SetLeftPaneCollapsedResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::SetLeftPaneCollapsedResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SetSettingsDialogOpenRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSettingsDialogOpenRequest {
+        pbv1::SetSettingsDialogOpenRequest { open: self.open }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SetSettingsDialogOpenRequest) -> Self {
+        Self { open: proto.open }
+    }
+}
+
+impl crate::ui_driver::SetSettingsDialogOpenResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSettingsDialogOpenResponse {
+        pbv1::SetSettingsDialogOpenResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SetSettingsDialogOpenResponse) -> Self {
         Self {}
     }
 }

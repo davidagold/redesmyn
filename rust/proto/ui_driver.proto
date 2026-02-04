@@ -37,6 +37,7 @@ enum UiDriverMethod {
   UI_DRIVER_METHOD_CAPTURE_SCREENSHOT = 7;
   // Desktop layout actions (Domain 5).
   UI_DRIVER_METHOD_SET_LEFT_PANE_COLLAPSED = 8;
+  UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_OPEN = 22;
   // User-managed chats (Domain 5).
   UI_DRIVER_METHOD_CREATE_CHAT_SESSION = 9;
   UI_DRIVER_METHOD_CLOSE_CHAT_SESSION = 10;
@@ -74,6 +75,7 @@ message UiDriverRequest {
     OpenDiffViewRequest open_diff_view = 15;
     CaptureScreenshotRequest capture_screenshot = 16;
     SetLeftPaneCollapsedRequest set_left_pane_collapsed = 17;
+    SetSettingsDialogOpenRequest set_settings_dialog_open = 31;
     UiDriverCreateChatSessionRequest create_chat_session = 18;
     UiDriverCloseChatSessionRequest close_chat_session = 19;
     PinChatSessionRequest pin_chat_session = 20;
@@ -113,6 +115,7 @@ message UiDriverResponse {
     OpenDiffViewResponse open_diff_view = 15;
     CaptureScreenshotResponse capture_screenshot = 16;
     SetLeftPaneCollapsedResponse set_left_pane_collapsed = 17;
+    SetSettingsDialogOpenResponse set_settings_dialog_open = 31;
     UiDriverCreateChatSessionResponse create_chat_session = 18;
     UiDriverCloseChatSessionResponse close_chat_session = 19;
     PinChatSessionResponse pin_chat_session = 20;
@@ -189,6 +192,12 @@ message SetLeftPaneCollapsedRequest {
 }
 
 message SetLeftPaneCollapsedResponse {}
+
+message SetSettingsDialogOpenRequest {
+  bool open = 1;
+}
+
+message SetSettingsDialogOpenResponse {}
 
 message UiDriverCreateChatSessionRequest {
   // Best-effort label used for UI + artifacts.
