@@ -26,6 +26,7 @@ use redesmyn_protocol::client::{
     GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
     RespondPermissionRequestRequest, RespondPermissionRequestResponse, ResponseResult,
     SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
+    SessionEventKindFilter,
     SetSessionCodexApprovalPolicyRequest, SetSessionCodexApprovalPolicyResponse,
     SetSessionCodexSandboxPolicyRequest, SetSessionCodexSandboxPolicyResponse, StartAgentRequest,
     StartAgentResponse, SubscriptionEvent,
@@ -419,12 +420,22 @@ async fn get_session_events(
     before: Option<SessionEventCursor>,
     limit: u32,
 ) -> Result<GetSessionEventsResponse, ErrorEnvelope> {
+    get_session_events_filtered(client, session_id, before, limit, Vec::new()).await
+}
+
+async fn get_session_events_filtered(
+    client: &Client,
+    session_id: SessionId,
+    before: Option<SessionEventCursor>,
+    limit: u32,
+    kinds: Vec<SessionEventKindFilter>,
+) -> Result<GetSessionEventsResponse, ErrorEnvelope> {
     let response = client
         .request(RequestPayload::GetSessionEvents(GetSessionEventsRequest {
             session_id,
             before,
             limit,
-            kinds: Vec::new(),
+            kinds,
         }))
         .await?;
 
@@ -436,6 +447,49 @@ async fn get_session_events(
             format!("Unexpected response: {other:?}"),
         )),
     }
+}
+
+async fn fetch_latest_policy_events(
+    client: &Client,
+    session_id: SessionId,
+) -> Result<Vec<SessionEvent>, ErrorEnvelope> {
+    let approval = get_session_events_filtered(
+        client,
+        session_id,
+        None,
+        1,
+        vec![SessionEventKindFilter::CodexApprovalPolicyChanged],
+    )
+    .await?;
+    let sandbox = get_session_events_filtered(
+        client,
+        session_id,
+        None,
+        1,
+        vec![SessionEventKindFilter::CodexSandboxPolicyChanged],
+    )
+    .await?;
+    let permissions_mode = get_session_events_filtered(
+        client,
+        session_id,
+        None,
+        1,
+        vec![SessionEventKindFilter::PermissionsModeChanged],
+    )
+    .await?;
+
+    let mut events = Vec::new();
+    if let Some(event) = approval.events.into_iter().next() {
+        events.push(event);
+    }
+    if let Some(event) = sandbox.events.into_iter().next() {
+        events.push(event);
+    }
+    if let Some(event) = permissions_mode.events.into_iter().next() {
+        events.push(event);
+    }
+
+    Ok(events)
 }
 
 async fn get_latest_task_session(
@@ -835,6 +889,10 @@ pub struct SessionView {
     set_codex_sandbox_policy_task: Option<Task<()>>,
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
     codex_sandbox_policy_menu_open: bool,
+    policies_fetch_generation: u64,
+    policies_fetch_in_flight: bool,
+    policies_fetch_error: Option<SharedString>,
+    policies_fetch_task: Option<Task<()>>,
     permission_request_ids: Rc<HashSet<String>>,
     permission_decisions_by_request_id: Rc<HashMap<String, PermissionDecisionState>>,
     expanded_permission_requests: HashSet<String>,
@@ -973,6 +1031,10 @@ impl SessionView {
             set_codex_sandbox_policy_task: None,
             codex_sandbox_policy_timeout_task: None,
             codex_sandbox_policy_menu_open: false,
+            policies_fetch_generation: 0,
+            policies_fetch_in_flight: false,
+            policies_fetch_error: None,
+            policies_fetch_task: None,
             permission_request_ids: Rc::new(HashSet::new()),
             permission_decisions_by_request_id: Rc::new(HashMap::new()),
             expanded_permission_requests: HashSet::new(),
@@ -1427,6 +1489,10 @@ impl SessionView {
         self.set_codex_sandbox_policy_task = None;
         self.codex_sandbox_policy_timeout_task = None;
         self.codex_sandbox_policy_menu_open = false;
+        self.policies_fetch_generation = self.policies_fetch_generation.wrapping_add(1);
+        self.policies_fetch_in_flight = true;
+        self.policies_fetch_error = None;
+        self.policies_fetch_task = None;
         self.permission_request_ids = Rc::new(HashSet::new());
         self.permission_decisions_by_request_id = Rc::new(HashMap::new());
         self.expanded_permission_requests.clear();
@@ -1457,11 +1523,26 @@ impl SessionView {
         cx.notify();
 
         let view = cx.entity();
-        self.load_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let client = client.clone();
+        let policies_view = view.clone();
+        let policies_generation = self.policies_fetch_generation;
+        let policy_client = client.clone();
+        self.policies_fetch_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let response = get_session_events(&client, session_id, None, 50).await;
+                let result = fetch_latest_policy_events(&policy_client, session_id).await;
+                let _ = cx.update(|cx| {
+                    policies_view.update(cx, |this, cx| {
+                        this.on_policies_fetched(policies_generation, session_id, result, cx);
+                    })
+                });
+            }
+        }));
+
+        let history_client = client.clone();
+        self.load_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let response = get_session_events(&history_client, session_id, None, 50).await;
                 let _ = cx
                     .update(|cx| view.update(cx, |this, cx| this.on_history_loaded(response, cx)));
             }
@@ -1933,6 +2014,40 @@ impl SessionView {
             }
             Err(err) => {
                 self.error = Some(err.message.into());
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn on_policies_fetched(
+        &mut self,
+        generation: u64,
+        session_id: SessionId,
+        result: Result<Vec<SessionEvent>, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.policies_fetch_generation {
+            return;
+        }
+
+        self.policies_fetch_task = None;
+        self.policies_fetch_in_flight = false;
+
+        match result {
+            Ok(events) => {
+                self.policies_fetch_error = None;
+                if let Some(feed) = self.feed.as_mut()
+                    && feed.session_id == session_id
+                {
+                    for event in events {
+                        feed.apply_live_event(event);
+                    }
+                    self.refresh_timeline_items();
+                }
+            }
+            Err(err) => {
+                self.policies_fetch_error = Some(err.message.into());
             }
         }
 
@@ -5348,6 +5463,14 @@ impl Render for SessionView {
         );
 
         let approvals_label = match displayed_codex_approval_policy {
+            None if self.pending_codex_approval_policy.is_none() && self.policies_fetch_in_flight => {
+                "Loading…"
+            }
+            None if self.pending_codex_approval_policy.is_none()
+                && self.policies_fetch_error.is_some() =>
+            {
+                "Unknown"
+            }
             None => "Default",
             Some(CodexApprovalPolicy::UnlessTrusted) => "Unless trusted",
             Some(CodexApprovalPolicy::OnFailure) => "On failure",
@@ -5357,6 +5480,14 @@ impl Render for SessionView {
         };
 
         let sandbox_label = match displayed_codex_sandbox_policy.as_ref() {
+            None if self.pending_codex_sandbox_policy.is_none() && self.policies_fetch_in_flight => {
+                "Loading…"
+            }
+            None if self.pending_codex_sandbox_policy.is_none()
+                && self.policies_fetch_error.is_some() =>
+            {
+                "Unknown"
+            }
             None => "Default",
             Some(CodexSandboxPolicy::ReadOnly) => "Read-only",
             Some(CodexSandboxPolicy::WorkspaceWrite { .. }) => "Workspace write",
@@ -5383,7 +5514,16 @@ impl Render for SessionView {
                 (false, "")
             };
 
-        let policies_status = if let Some(error) = self.codex_approval_policy_action.error.clone() {
+        let policies_status = if let Some(error) = self.policies_fetch_error.clone() {
+            Some(
+                div()
+                    .min_w_0()
+                    .text_color(theme.colors.danger)
+                    .text_size(theme.typography.caption.size)
+                    .truncate()
+                    .child(format!("Policies: {error}")),
+            )
+        } else if let Some(error) = self.codex_approval_policy_action.error.clone() {
             Some(
                 div()
                     .min_w_0()

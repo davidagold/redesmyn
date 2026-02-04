@@ -31,6 +31,11 @@
 - Prevent accidental duplicate requests: disable the triggering control while in flight unless concurrent actions are explicitly safe.
 - Keep progress indicators accessible (visible in light/dark, keyboard-safe, no focus traps); on error, keep messages actionable and preserve user input when possible (e.g. don’t drop drafts).
 
+## Projections vs. Live State
+
+- If a value materially affects user expectations (e.g. approvals/sandbox), don’t display a default as if it were authoritative unless it has been confirmed via durable events or a live backend query.
+- Use projections for fast initial UI, but reconcile against live state as soon as it’s reachable; if neither is available, show “Loading…” / “Unknown” rather than misleading defaults.
+
 ## Performance
 
 - Treat per-frame render/layout work as a budget: avoid allocations and avoid building large element subtrees in hot paths (zoom, pan, animations).
