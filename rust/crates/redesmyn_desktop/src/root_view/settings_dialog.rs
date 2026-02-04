@@ -576,39 +576,6 @@ impl SettingsDialog {
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
 
-        let agent_kind_buttons = div()
-            .flex()
-            .flex_row()
-            .gap(theme.spacing.xs)
-            .child(self.agent_kind_button(
-                root,
-                cx,
-                "agent_kind_auto",
-                "Auto",
-                AgentKindSelection::Auto,
-            ))
-            .child(self.agent_kind_button(
-                root,
-                cx,
-                "agent_kind_generic",
-                "Generic",
-                AgentKindSelection::Generic,
-            ))
-            .child(self.agent_kind_button(
-                root,
-                cx,
-                "agent_kind_codex",
-                "Codex",
-                AgentKindSelection::Codex,
-            ))
-            .child(self.agent_kind_button(
-                root,
-                cx,
-                "agent_kind_claude_code",
-                "Claude Code",
-                AgentKindSelection::ClaudeCode,
-            ));
-
         div()
             .flex()
             .flex_col()
@@ -619,25 +586,22 @@ impl SettingsDialog {
                     .text_color(theme.colors.foreground)
                     .child("Agent"),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme.spacing.xs)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground_muted)
-                            .child("Agent kind"),
-                    )
-                    .child(agent_kind_buttons)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground_muted)
-                            .child("Auto infers the agent from your command; switch if wrong."),
-                    ),
-            )
+            .child(self.segmented_choice_setting(
+                root,
+                "agent_kind",
+                "Agent kind",
+                &[
+                    ("auto", "Auto", AgentKindSelection::Auto),
+                    ("generic", "Generic", AgentKindSelection::Generic),
+                    ("codex", "Codex", AgentKindSelection::Codex),
+                    ("claude_code", "Claude Code", AgentKindSelection::ClaudeCode),
+                ],
+                self.draft.harness.agent_kind,
+                |draft, next| draft.harness.agent_kind = next,
+                "Auto chooses the agent implementation; switch if wrong.",
+                window,
+                cx,
+            ))
             .child(self.segmented_bool_setting(
                 root,
                 "Run mode",
@@ -661,32 +625,31 @@ impl SettingsDialog {
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
 
-        let sandbox_type_buttons = div()
-            .flex()
-            .flex_row()
-            .gap(theme.spacing.xs)
-            .child(self.sandbox_type_button(root, cx, "sandbox_none", "Off", SandboxType::None))
-            .child(self.sandbox_type_button(
-                root,
-                cx,
-                "sandbox_worktree",
-                "Worktree",
-                SandboxType::Worktree,
-            ));
-
         let deny_network_disabled = self.draft.sandbox_type != SandboxType::Worktree;
 
         div()
             .flex()
             .flex_col()
-            .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child("Sandbox"),
-            )
-            .child(sandbox_type_buttons)
+            .gap(theme.spacing.md)
+            .child(self.segmented_choice_setting(
+                root,
+                "sandbox_type",
+                "Sandbox",
+                &[
+                    ("off", "Off", SandboxType::None),
+                    ("worktree", "Worktree", SandboxType::Worktree),
+                ],
+                self.draft.sandbox_type,
+                |draft, next| {
+                    draft.sandbox_type = next;
+                    if next != SandboxType::Worktree {
+                        draft.sandbox_network = SandboxNetworkMode::Allow;
+                    }
+                },
+                "Restricts agent writes to the task worktree and Redesmyn state.",
+                window,
+                cx,
+            ))
             .child(self.boolean_row(
                 root,
                 "deny_network",
@@ -707,7 +670,7 @@ impl SettingsDialog {
                 div()
                     .text_sm()
                     .text_color(theme.colors.foreground_muted)
-                    .child("Restricts agent writes to the task worktree and Redesmyn state. Enable “Deny network” to force offline operation."),
+                    .child("Enable “Deny network” to force offline operation."),
             )
             .into_any_element()
     }
@@ -825,14 +788,7 @@ impl SettingsDialog {
                     )
                     .child(show_default_button),
             )
-            .child(
-                div()
-                    .border_1()
-                    .border_color(theme.colors.border.opacity(0.6))
-                    .rounded(theme.radius.md)
-                    .overflow_hidden()
-                    .child(self.prelude_input.clone()),
-            )
+            .child(self.prelude_input.clone())
             .child(
                 div()
                     .text_sm()
@@ -964,6 +920,98 @@ impl SettingsDialog {
                     .child("Available placeholders"),
             )
             .child(placeholders)
+            .into_any_element()
+    }
+
+    fn segmented_choice_setting<T: Copy + PartialEq + 'static>(
+        &mut self,
+        root: &Entity<RootView>,
+        id: &'static str,
+        label: &'static str,
+        choices: &[(&'static str, &'static str, T)],
+        current: T,
+        apply: impl Fn(&mut OrchestrationDefaults, T) + Copy + 'static,
+        help: &'static str,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        let theme = theme_for_window(window, cx);
+
+        let mut group = div()
+            .flex()
+            .flex_row()
+            .rounded(theme.radius.md)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.6))
+            .overflow_hidden();
+
+        for (idx, (suffix, segment_label, value)) in choices.iter().enumerate() {
+            let selected = current == *value;
+            let mut cell = div()
+                .id((gpui::ElementId::from((id, cx.entity_id())), *suffix))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.xs)
+                .text_xs()
+                .text_color(theme.colors.foreground)
+                .when(selected, |this| this.bg(theme.colors.accent))
+                .when(!selected, |this| {
+                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
+                })
+                .cursor_pointer()
+                .child(*segment_label);
+
+            cell = cell.on_click({
+                let root = root.clone();
+                let value = *value;
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| {
+                        apply(&mut this.settings_dialog.draft, value);
+                        if !this.settings_dialog.draft.harness.send_prelude {
+                            this.settings_dialog.draft.harness.submit_prelude = false;
+                        }
+                        this.settings_dialog.notice = None;
+                        this.settings_dialog.save.clear_error();
+                        cx.notify();
+                    });
+                }
+            });
+
+            if idx > 0 {
+                group = group.child(
+                    div()
+                        .border_l_1()
+                        .border_color(theme.colors.border.opacity(0.6)),
+                );
+            }
+
+            group = group.child(cell);
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.xs)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(theme.spacing.md)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.colors.foreground_muted)
+                            .child(label),
+                    )
+                    .child(group),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.colors.foreground_muted)
+                    .child(help),
+            )
             .into_any_element()
     }
 
@@ -1145,69 +1193,6 @@ impl SettingsDialog {
                     .child(label),
             )
             .child(group)
-            .into_any_element()
-    }
-
-    fn agent_kind_button(
-        &mut self,
-        root: &Entity<RootView>,
-        cx: &mut Context<RootView>,
-        id: &'static str,
-        label: &'static str,
-        kind: AgentKindSelection,
-    ) -> AnyElement {
-        let selected = self.draft.harness.agent_kind == kind;
-        TextButton::new((id, cx.entity_id()), label)
-            .kind(if selected {
-                ButtonKind::Secondary
-            } else {
-                ButtonKind::Ghost
-            })
-            .small()
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        this.settings_dialog.draft.harness.agent_kind = kind;
-                        this.settings_dialog.notice = None;
-                        this.settings_dialog.save.clear_error();
-                        cx.notify();
-                    });
-                }
-            })
-            .into_any_element()
-    }
-
-    fn sandbox_type_button(
-        &mut self,
-        root: &Entity<RootView>,
-        cx: &mut Context<RootView>,
-        id: &'static str,
-        label: &'static str,
-        kind: SandboxType,
-    ) -> AnyElement {
-        let selected = self.draft.sandbox_type == kind;
-        TextButton::new((id, cx.entity_id()), label)
-            .kind(if selected {
-                ButtonKind::Secondary
-            } else {
-                ButtonKind::Ghost
-            })
-            .small()
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        this.settings_dialog.draft.sandbox_type = kind;
-                        if kind != SandboxType::Worktree {
-                            this.settings_dialog.draft.sandbox_network = SandboxNetworkMode::Allow;
-                        }
-                        this.settings_dialog.notice = None;
-                        this.settings_dialog.save.clear_error();
-                        cx.notify();
-                    });
-                }
-            })
             .into_any_element()
     }
 
