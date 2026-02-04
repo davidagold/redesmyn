@@ -729,7 +729,7 @@ impl SessionView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let timeline_list_state = ListState::new(1, gpui::ListAlignment::Top, px(400.0));
+        let timeline_list_state = ListState::new(1, gpui::ListAlignment::Top, px(400.0)).measure_all();
         let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
             .ok()
             .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true"));
@@ -1428,6 +1428,9 @@ impl SessionView {
                 feed.clear_scroll_intents();
                 self.refresh_timeline_items();
                 self.collapse_unseen_reasoning_in_timeline();
+                // Ensure the scrollbar stays stable while scrolling through history by eagerly
+                // measuring all loaded items once per page-load.
+                self.timeline_list_state.clone().measure_all();
                 self.timeline_follow_bottom.set(true);
                 self.start_subscription(after, cx);
             }
@@ -1695,6 +1698,10 @@ impl SessionView {
                 feed.apply_history_page(resp.events, resp.next_cursor);
                 self.refresh_timeline_items();
                 self.collapse_unseen_reasoning_in_timeline();
+                // GPUI list scrollbars are based on measured row heights. When we append a history
+                // page, eagerly measure all loaded items so the thumb doesn't "flicker" while the
+                // user scrolls through newly loaded history.
+                self.timeline_list_state.clone().measure_all();
             }
             Err(err) => {
                 feed.apply_history_error(err.message);
