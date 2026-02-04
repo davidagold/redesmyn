@@ -26,10 +26,9 @@ use redesmyn_protocol::client::{
     GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
     RespondPermissionRequestRequest, RespondPermissionRequestResponse, ResponseResult,
     SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
-    SessionEventKindFilter,
-    SetSessionCodexApprovalPolicyRequest, SetSessionCodexApprovalPolicyResponse,
-    SetSessionCodexSandboxPolicyRequest, SetSessionCodexSandboxPolicyResponse, StartAgentRequest,
-    StartAgentResponse, SubscriptionEvent,
+    SessionEventKindFilter, SetSessionCodexApprovalPolicyRequest,
+    SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
+    SetSessionCodexSandboxPolicyResponse, StartAgentRequest, StartAgentResponse, SubscriptionEvent,
 };
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionDecisionBy,
@@ -41,9 +40,9 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade,
-    ScrollbarStyle, Select, SelectOption, StyledScrollbar, TextArea, TextButton, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, Expandable, IconButton,
+    MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
+    TextButton, TextInput, TextInputEvent, overlay_surface,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -66,6 +65,30 @@ fn stable_str_key(input: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSettingsCategory {
+    Permissions,
+    Sandbox,
+}
+
+impl SessionSettingsCategory {
+    const ALL: [Self; 2] = [Self::Permissions, Self::Sandbox];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Permissions => "Permissions",
+            Self::Sandbox => "Sandbox",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Permissions => 0,
+            Self::Sandbox => 1,
+        }
+    }
 }
 
 fn ease_out_cubic(t: f32) -> f32 {
@@ -883,12 +906,12 @@ pub struct SessionView {
     codex_approval_policy_action: UserActionState,
     set_codex_approval_policy_task: Option<Task<()>>,
     codex_approval_policy_timeout_task: Option<Task<()>>,
-    codex_approval_policy_menu_open: bool,
     pending_codex_sandbox_policy: Option<Option<CodexSandboxPolicy>>,
     codex_sandbox_policy_action: UserActionState,
     set_codex_sandbox_policy_task: Option<Task<()>>,
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
-    codex_sandbox_policy_menu_open: bool,
+    session_settings_open: bool,
+    session_settings_hovered: Option<SessionSettingsCategory>,
     policies_fetch_generation: u64,
     policies_fetch_in_flight: bool,
     policies_fetch_error: Option<SharedString>,
@@ -1025,12 +1048,12 @@ impl SessionView {
             codex_approval_policy_action: UserActionState::default(),
             set_codex_approval_policy_task: None,
             codex_approval_policy_timeout_task: None,
-            codex_approval_policy_menu_open: false,
             pending_codex_sandbox_policy: None,
             codex_sandbox_policy_action: UserActionState::default(),
             set_codex_sandbox_policy_task: None,
             codex_sandbox_policy_timeout_task: None,
-            codex_sandbox_policy_menu_open: false,
+            session_settings_open: false,
+            session_settings_hovered: None,
             policies_fetch_generation: 0,
             policies_fetch_in_flight: false,
             policies_fetch_error: None,
@@ -1375,12 +1398,12 @@ impl SessionView {
             self.codex_approval_policy_action = UserActionState::default();
             self.set_codex_approval_policy_task = None;
             self.codex_approval_policy_timeout_task = None;
-            self.codex_approval_policy_menu_open = false;
             self.pending_codex_sandbox_policy = None;
             self.codex_sandbox_policy_action = UserActionState::default();
             self.set_codex_sandbox_policy_task = None;
             self.codex_sandbox_policy_timeout_task = None;
-            self.codex_sandbox_policy_menu_open = false;
+            self.session_settings_open = false;
+            self.session_settings_hovered = None;
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
             self.expanded_permission_requests.clear();
@@ -1483,12 +1506,12 @@ impl SessionView {
         self.codex_approval_policy_action = UserActionState::default();
         self.set_codex_approval_policy_task = None;
         self.codex_approval_policy_timeout_task = None;
-        self.codex_approval_policy_menu_open = false;
         self.pending_codex_sandbox_policy = None;
         self.codex_sandbox_policy_action = UserActionState::default();
         self.set_codex_sandbox_policy_task = None;
         self.codex_sandbox_policy_timeout_task = None;
-        self.codex_sandbox_policy_menu_open = false;
+        self.session_settings_open = false;
+        self.session_settings_hovered = None;
         self.policies_fetch_generation = self.policies_fetch_generation.wrapping_add(1);
         self.policies_fetch_in_flight = true;
         self.policies_fetch_error = None;
@@ -1613,16 +1636,22 @@ impl SessionView {
             return;
         }
 
+        let closed_menu = self.session_settings_open;
+        self.session_settings_open = false;
+        self.session_settings_hovered = None;
+
         let displayed = self
             .pending_codex_approval_policy
             .unwrap_or(feed.codex_approval_policy);
         if displayed == approval_policy {
+            if closed_menu {
+                cx.notify();
+            }
             return;
         }
 
         self.codex_approval_policy_action.start();
         self.pending_codex_approval_policy = Some(approval_policy);
-        self.codex_approval_policy_menu_open = false;
         self.codex_approval_policy_timeout_task = None;
         cx.notify();
 
@@ -1677,7 +1706,6 @@ impl SessionView {
                 self.codex_approval_policy_action.fail(err.message);
                 self.pending_codex_approval_policy = None;
                 self.codex_approval_policy_timeout_task = None;
-                self.codex_approval_policy_menu_open = false;
             }
         }
 
@@ -1700,7 +1728,6 @@ impl SessionView {
         self.codex_approval_policy_action
             .fail("Timed out waiting for approvals to apply.");
         self.pending_codex_approval_policy = None;
-        self.codex_approval_policy_menu_open = false;
         self.codex_approval_policy_timeout_task = None;
         cx.notify();
     }
@@ -1725,17 +1752,23 @@ impl SessionView {
             return;
         }
 
+        let closed_menu = self.session_settings_open;
+        self.session_settings_open = false;
+        self.session_settings_hovered = None;
+
         let displayed = self
             .pending_codex_sandbox_policy
             .clone()
             .unwrap_or(feed.codex_sandbox_policy.clone());
         if displayed == sandbox_policy {
+            if closed_menu {
+                cx.notify();
+            }
             return;
         }
 
         self.codex_sandbox_policy_action.start();
         self.pending_codex_sandbox_policy = Some(sandbox_policy.clone());
-        self.codex_sandbox_policy_menu_open = false;
         self.codex_sandbox_policy_timeout_task = None;
         cx.notify();
 
@@ -1798,7 +1831,6 @@ impl SessionView {
                 self.codex_sandbox_policy_action.fail(err.message);
                 self.pending_codex_sandbox_policy = None;
                 self.codex_sandbox_policy_timeout_task = None;
-                self.codex_sandbox_policy_menu_open = false;
             }
         }
 
@@ -1821,7 +1853,6 @@ impl SessionView {
         self.codex_sandbox_policy_action
             .fail("Timed out waiting for sandbox to apply.");
         self.pending_codex_sandbox_policy = None;
-        self.codex_sandbox_policy_menu_open = false;
         self.codex_sandbox_policy_timeout_task = None;
         cx.notify();
     }
@@ -2121,7 +2152,6 @@ impl SessionView {
                     {
                         self.codex_approval_policy_action.succeed();
                         self.pending_codex_approval_policy = None;
-                        self.codex_approval_policy_menu_open = false;
                         self.codex_approval_policy_timeout_task = None;
                     }
                     self.codex_approval_policy_action.clear_error();
@@ -2135,7 +2165,6 @@ impl SessionView {
                     {
                         self.codex_sandbox_policy_action.succeed();
                         self.pending_codex_sandbox_policy = None;
-                        self.codex_sandbox_policy_menu_open = false;
                         self.codex_sandbox_policy_timeout_task = None;
                     }
                     self.codex_sandbox_policy_action.clear_error();
@@ -5463,7 +5492,9 @@ impl Render for SessionView {
         );
 
         let approvals_label = match displayed_codex_approval_policy {
-            None if self.pending_codex_approval_policy.is_none() && self.policies_fetch_in_flight => {
+            None if self.pending_codex_approval_policy.is_none()
+                && self.policies_fetch_in_flight =>
+            {
                 "Loading…"
             }
             None if self.pending_codex_approval_policy.is_none()
@@ -5480,7 +5511,9 @@ impl Render for SessionView {
         };
 
         let sandbox_label = match displayed_codex_sandbox_policy.as_ref() {
-            None if self.pending_codex_sandbox_policy.is_none() && self.policies_fetch_in_flight => {
+            None if self.pending_codex_sandbox_policy.is_none()
+                && self.policies_fetch_in_flight =>
+            {
                 "Loading…"
             }
             None if self.pending_codex_sandbox_policy.is_none()
@@ -5496,23 +5529,13 @@ impl Render for SessionView {
             Some(CodexSandboxPolicy::Unknown) => "Unknown",
         };
 
-        let (approvals_disabled, approvals_disabled_reason) =
-            if self.codex_approval_policy_action.in_flight {
-                (true, "Updating…")
-            } else if self.client.is_none() || self.feed.is_none() {
-                (true, "Chat is unavailable")
-            } else {
-                (false, "")
-            };
+        let approvals_disabled = self.codex_approval_policy_action.in_flight
+            || self.client.is_none()
+            || self.feed.is_none();
 
-        let (sandbox_disabled, sandbox_disabled_reason) =
-            if self.codex_sandbox_policy_action.in_flight {
-                (true, "Updating…")
-            } else if self.client.is_none() || self.feed.is_none() {
-                (true, "Chat is unavailable")
-            } else {
-                (false, "")
-            };
+        let sandbox_disabled = self.codex_sandbox_policy_action.in_flight
+            || self.client.is_none()
+            || self.feed.is_none();
 
         let policies_status = if let Some(error) = self.policies_fetch_error.clone() {
             Some(
@@ -5554,77 +5577,6 @@ impl Render for SessionView {
             None
         };
 
-        let approvals_menu_open = self.codex_approval_policy_menu_open && !approvals_disabled;
-        let sandbox_menu_open = self.codex_sandbox_policy_menu_open && !sandbox_disabled;
-
-        let approvals_dropdown = Select::new(("session_codex_approvals_dropdown", entity_id))
-            .open(approvals_menu_open)
-            .value(displayed_codex_approval_policy)
-            .placeholder(approvals_label)
-            .disabled(approvals_disabled)
-            .disabled_reason(approvals_disabled_reason)
-            .menu_width(px(220.0))
-            .on_open_change({
-                let view = view.clone();
-                move |open, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.codex_approval_policy_menu_open = open;
-                        if open {
-                            this.codex_sandbox_policy_menu_open = false;
-                        }
-                        cx.notify();
-                    });
-                }
-            })
-            .on_select({
-                let view = view.clone();
-                move |approval_policy, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.set_codex_approval_policy(approval_policy, cx);
-                    });
-                }
-            })
-            .option(
-                SelectOption::new(
-                    ("session_codex_approvals_default", entity_id),
-                    "Default",
-                    None,
-                )
-                .tooltip("Use the agent default approval policy"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_approvals_untrusted", entity_id),
-                    "Unless trusted",
-                    Some(CodexApprovalPolicy::UnlessTrusted),
-                )
-                .tooltip("Ask for approvals unless the environment is trusted"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_approvals_on_request", entity_id),
-                    "On request",
-                    Some(CodexApprovalPolicy::OnRequest),
-                )
-                .tooltip("Ask for approvals when requested by the agent"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_approvals_on_failure", entity_id),
-                    "On failure",
-                    Some(CodexApprovalPolicy::OnFailure),
-                )
-                .tooltip("Only ask if a command fails (dangerous)"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_approvals_never", entity_id),
-                    "Never",
-                    Some(CodexApprovalPolicy::Never),
-                )
-                .tooltip("Deny all approval requests (tools will not run)"),
-            );
-
         let workspace_write_policy = CodexSandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
             network_access: false,
@@ -5632,65 +5584,321 @@ impl Render for SessionView {
             exclude_slash_tmp: false,
         };
 
-        let sandbox_dropdown = Select::new(("session_codex_sandbox_dropdown", entity_id))
-            .open(sandbox_menu_open)
-            .value(displayed_codex_sandbox_policy.clone())
-            .placeholder(sandbox_label)
-            .disabled(sandbox_disabled)
-            .disabled_reason(sandbox_disabled_reason)
-            .menu_width(px(240.0))
-            .on_open_change({
+        let settings_disabled = self.client.is_none() || self.feed.is_none();
+        let mut settings_button =
+            TextButton::new(("session_settings_button", entity_id), "Settings")
+                .kind(ButtonKind::Secondary)
+                .compact()
+                .disabled(settings_disabled);
+        if settings_disabled {
+            settings_button = settings_button.disabled_reason("Chat is unavailable");
+        }
+
+        let settings_button = settings_button
+            .trailing(
+                div()
+                    .text_color(theme.colors.foreground_muted)
+                    .text_size(theme.typography.caption.size)
+                    .child("▾"),
+            )
+            .on_click({
                 let view = view.clone();
-                move |open, _window, cx| {
+                move |_, _, cx| {
                     view.update(cx, |this, cx| {
-                        this.codex_sandbox_policy_menu_open = open;
-                        if open {
-                            this.codex_approval_policy_menu_open = false;
+                        this.session_settings_open = !this.session_settings_open;
+                        if !this.session_settings_open {
+                            this.session_settings_hovered = None;
                         }
                         cx.notify();
                     });
                 }
-            })
-            .on_select({
-                let view = view.clone();
-                move |sandbox_policy, _window, cx| {
-                    view.update(cx, |this, cx| {
-                        this.set_codex_sandbox_policy(sandbox_policy, cx);
-                    });
+            });
+
+        let settings_menu = if self.session_settings_open && !settings_disabled {
+            let primary_width = px(220.0);
+            let secondary_width = px(240.0);
+            let overlap = px(6.0);
+            let padding_y = theme.spacing.sm;
+            let row_height = px(32.0);
+            let row_gap = theme.spacing.xs;
+
+            let mut primary_list = div().flex().flex_col().gap(row_gap);
+
+            for category in SessionSettingsCategory::ALL {
+                let hovered = self.session_settings_hovered == Some(category);
+                let current_label = match category {
+                    SessionSettingsCategory::Permissions => approvals_label,
+                    SessionSettingsCategory::Sandbox => sandbox_label,
+                };
+
+                let row = div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .h(row_height)
+                    .px(theme.spacing.sm)
+                    .rounded(theme.radius.md)
+                    .cursor_pointer()
+                    .when(hovered, |this| this.bg(theme.colors.accent.opacity(0.55)))
+                    .when(!hovered, |this| {
+                        this.hover(|this| this.bg(theme.colors.accent))
+                    })
+                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                        if this.session_settings_hovered != Some(category) {
+                            this.session_settings_hovered = Some(category);
+                            cx.notify();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .text_color(theme.colors.foreground)
+                            .text_size(theme.typography.caption.size)
+                            .child(category.label()),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.xs)
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .text_size(theme.typography.caption.size)
+                                    .truncate()
+                                    .child(current_label),
+                            )
+                            .child(
+                                div()
+                                    .text_color(theme.colors.foreground_muted)
+                                    .text_size(theme.typography.caption.size)
+                                    .child("›"),
+                            ),
+                    );
+
+                primary_list = primary_list.child(row);
+            }
+
+            let primary_menu = overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                .w(primary_width)
+                .pt(padding_y)
+                .pb(padding_y)
+                .px(theme.spacing.sm)
+                .shadow_md()
+                .occlude()
+                .child(primary_list);
+
+            let submenu_top = self
+                .session_settings_hovered
+                .map(|category| padding_y + (row_height + row_gap) * category.index() as f32);
+
+            let submenu: Option<AnyElement> = match self.session_settings_hovered {
+                Some(SessionSettingsCategory::Permissions) => {
+                    let mut list = div().flex().flex_col().gap(row_gap);
+
+                    let approval_options: &[(Option<CodexApprovalPolicy>, &str, &str)] = &[
+                        (None, "Default", "Use the agent default approvals"),
+                        (
+                            Some(CodexApprovalPolicy::UnlessTrusted),
+                            "Unless trusted",
+                            "Ask unless the environment is trusted",
+                        ),
+                        (
+                            Some(CodexApprovalPolicy::OnRequest),
+                            "On request",
+                            "Ask when the agent requests permission",
+                        ),
+                        (
+                            Some(CodexApprovalPolicy::OnFailure),
+                            "On failure",
+                            "Only ask if a command fails (dangerous)",
+                        ),
+                        (
+                            Some(CodexApprovalPolicy::Never),
+                            "Never",
+                            "Deny all requests",
+                        ),
+                    ];
+
+                    for (value, label, _tooltip) in approval_options {
+                        let selected = displayed_codex_approval_policy == *value;
+
+                        let indicator = div()
+                            .flex_shrink_0()
+                            .size(px(12.0))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(theme.colors.border)
+                            .when(selected, |this| {
+                                this.bg(theme.colors.ring).border_color(theme.colors.ring)
+                            });
+
+                        let mut row = div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.sm)
+                            .h(row_height)
+                            .px(theme.spacing.sm)
+                            .rounded(theme.radius.md)
+                            .child(indicator)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_color(theme.colors.foreground)
+                                    .text_size(theme.typography.caption.size)
+                                    .truncate()
+                                    .child(*label),
+                            );
+
+                        if approvals_disabled {
+                            row = row.opacity(0.55);
+                        } else {
+                            let view = view.clone();
+                            row = row
+                                .cursor_pointer()
+                                .hover(|this| this.bg(theme.colors.accent))
+                                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.set_codex_approval_policy(*value, cx);
+                                    });
+                                });
+                        }
+
+                        list = list.child(row);
+                    }
+
+                    Some(
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                            .w(secondary_width)
+                            .pt(padding_y)
+                            .pb(padding_y)
+                            .px(theme.spacing.sm)
+                            .shadow_md()
+                            .occlude()
+                            .child(list)
+                            .into_any_element(),
+                    )
                 }
-            })
-            .option(
-                SelectOption::new(
-                    ("session_codex_sandbox_default", entity_id),
-                    "Default",
-                    None,
-                )
-                .tooltip("Use the agent default sandbox policy"),
+                Some(SessionSettingsCategory::Sandbox) => {
+                    let mut list = div().flex().flex_col().gap(row_gap);
+
+                    let sandbox_options: &[(Option<&CodexSandboxPolicy>, &str)] = &[
+                        (None, "Default"),
+                        (Some(&CodexSandboxPolicy::ReadOnly), "Read-only"),
+                        (Some(&workspace_write_policy), "Workspace write"),
+                        (
+                            Some(&CodexSandboxPolicy::DangerFullAccess),
+                            "Danger: full access",
+                        ),
+                    ];
+
+                    for (value, label) in sandbox_options {
+                        let selected = match value {
+                            None => displayed_codex_sandbox_policy.is_none(),
+                            Some(value) => displayed_codex_sandbox_policy.as_ref() == Some(*value),
+                        };
+
+                        let indicator = div()
+                            .flex_shrink_0()
+                            .size(px(12.0))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(theme.colors.border)
+                            .when(selected, |this| {
+                                this.bg(theme.colors.ring).border_color(theme.colors.ring)
+                            });
+
+                        let label_color = match value {
+                            Some(CodexSandboxPolicy::DangerFullAccess) => theme.colors.danger,
+                            _ => theme.colors.foreground,
+                        };
+
+                        let mut row = div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(theme.spacing.sm)
+                            .h(row_height)
+                            .px(theme.spacing.sm)
+                            .rounded(theme.radius.md)
+                            .child(indicator)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_color(label_color)
+                                    .text_size(theme.typography.caption.size)
+                                    .truncate()
+                                    .child(*label),
+                            );
+
+                        if sandbox_disabled {
+                            row = row.opacity(0.55);
+                        } else {
+                            let policy = value.cloned();
+                            let view = view.clone();
+                            row = row
+                                .cursor_pointer()
+                                .hover(|this| this.bg(theme.colors.accent))
+                                .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.set_codex_sandbox_policy(policy.clone(), cx);
+                                    });
+                                });
+                        }
+
+                        list = list.child(row);
+                    }
+
+                    Some(
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                            .w(secondary_width)
+                            .pt(padding_y)
+                            .pb(padding_y)
+                            .px(theme.spacing.sm)
+                            .shadow_md()
+                            .occlude()
+                            .child(list)
+                            .into_any_element(),
+                    )
+                }
+                None => None,
+            };
+
+            let menu_metrics = CascadingMenuMetrics {
+                primary_width,
+                secondary_width,
+                overlap,
+            };
+
+            Some(
+                div()
+                    .absolute()
+                    .bottom(px(36.0))
+                    .left(px(0.0))
+                    .key_context("SessionSettingsMenu")
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        CascadingMenu::new(primary_menu)
+                            .metrics(menu_metrics)
+                            .maybe_secondary(submenu_top, submenu),
+                    )
+                    .into_any_element(),
             )
-            .option(
-                SelectOption::new(
-                    ("session_codex_sandbox_read_only", entity_id),
-                    "Read-only",
-                    Some(CodexSandboxPolicy::ReadOnly),
-                )
-                .tooltip("Disallow writes; safest option"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_sandbox_workspace_write", entity_id),
-                    "Workspace write",
-                    Some(workspace_write_policy),
-                )
-                .tooltip("Allow writes within the workspace (no network)"),
-            )
-            .option(
-                SelectOption::new(
-                    ("session_codex_sandbox_full_access", entity_id),
-                    "Danger: full access",
-                    Some(CodexSandboxPolicy::DangerFullAccess),
-                )
-                .tooltip("Allow full filesystem access (unsafe)"),
-            );
+        } else {
+            None
+        };
+
+        let settings_anchor = div()
+            .relative()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(settings_button)
+            .when_some(settings_menu, |this, menu| this.child(menu));
 
         let composer_action_bar = div()
             .flex()
@@ -5705,36 +5913,7 @@ impl Render for SessionView {
                     .items_center()
                     .gap(theme.spacing.sm)
                     .min_w_0()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(theme.spacing.xs)
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .text_size(theme.typography.caption.size)
-                                    .child("Approvals"),
-                            )
-                            .child(approvals_dropdown),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(theme.spacing.xs)
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .text_size(theme.typography.caption.size)
-                                    .child("Sandbox"),
-                            )
-                            .child(sandbox_dropdown),
-                    )
+                    .child(settings_anchor)
                     .when_some(policies_status, |this, status| this.child(status)),
             )
             .child(send_button);
@@ -5766,13 +5945,48 @@ impl Render for SessionView {
         timeline = timeline.child(composer);
         content = content.child(timeline);
 
-        let root = div()
+        let mut root = div()
             .flex()
             .flex_col()
             .gap(theme.spacing.sm)
             .size_full()
             .child(content)
             .track_focus(&self.focus_handle(cx));
+
+        if self.session_settings_open {
+            let view = cx.entity();
+            root = root.on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                view.update(cx, |this, cx| {
+                    if !this.session_settings_open {
+                        return;
+                    }
+                    this.session_settings_open = false;
+                    this.session_settings_hovered = None;
+                    cx.notify();
+                });
+            });
+
+            let view = cx.entity();
+            root = root.capture_key_down(move |event, _window, cx| {
+                if event.keystroke.key != "escape" {
+                    return;
+                }
+
+                let did_close = view.update(cx, |this, cx| {
+                    if !this.session_settings_open {
+                        return false;
+                    }
+                    this.session_settings_open = false;
+                    this.session_settings_hovered = None;
+                    cx.notify();
+                    true
+                });
+
+                if did_close {
+                    cx.stop_propagation();
+                }
+            });
+        }
 
         root
     }
