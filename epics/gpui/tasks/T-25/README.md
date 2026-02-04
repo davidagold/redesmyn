@@ -40,12 +40,17 @@ Define a lease model that includes:
 - `repo_scope`
 - `primary_host_id`
 - `lease_expires_at`
+- `lease_fencing_token` (monotonic; required to fence stale primaries)
 
 Daemon must track:
 
 - whether it is primary for each attached repo scope,
 - when it must renew,
 - and when it must stop executing mutating operations.
+
+Note: `lease_expires_at` alone is not sufficient to prevent “two writers” (clock skew + renew races). A
+control-plane-issued fencing token (monotonic generation) allows deterministic rejection of stale primaries and
+stale queued commands even when leases overlap in time.
 
 ### 2) Acquisition/renewal protocol
 
@@ -60,6 +65,10 @@ Preference:
 
 - control plane is authoritative; daemon requests renewal and control plane grants/denies.
 
+Lease grant/renewal messages must include the current `lease_fencing_token`. The daemon must treat it as part
+of its “am I primary?” state, and it must be plumbed through mutating command routing so callers can be fenced
+if their view of the lease is stale.
+
 ### 3) Enforcement
 
 For repo-mutating commands (merge/restack/worktree writes/etc):
@@ -68,6 +77,11 @@ For repo-mutating commands (merge/restack/worktree writes/etc):
   - category: conflict or unavailable
   - message: “Not primary executor for repo; primary is <host_id>”
   - include enough detail for UI to render a helpful next step.
+
+Additionally, for any mutating command that includes a `lease_fencing_token` in its request metadata:
+
+- if the token does not match the daemon’s current lease token, the daemon must reject with a clear “lost
+  lease / stale lease” error (include expected vs received tokens).
 
 ### 4) Graceful lease loss
 
