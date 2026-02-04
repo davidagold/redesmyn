@@ -3361,6 +3361,7 @@ struct WorkspacePaneHost {
     task_filters_active_category: TaskFilterCategory,
     task_filters_hovered_category: Option<TaskFilterCategory>,
     task_filters_focus: TaskFiltersFocus,
+    task_filters_input_source: TaskFiltersInputSource,
     task_filters_active_chip_index: usize,
     task_filters_active_value_index: usize,
     task_filters_search: SharedString,
@@ -3386,6 +3387,12 @@ enum TaskFiltersFocus {
     Categories,
     Values,
     Chips,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskFiltersInputSource {
+    Mouse,
+    Keyboard,
 }
 
 impl Focusable for WorkspacePaneHost {
@@ -3494,6 +3501,7 @@ impl WorkspacePaneHost {
             task_filters_active_category: TaskFilterCategory::TaskState,
             task_filters_hovered_category: None,
             task_filters_focus: TaskFiltersFocus::Categories,
+            task_filters_input_source: TaskFiltersInputSource::Mouse,
             task_filters_active_chip_index: 0,
             task_filters_active_value_index: 0,
             task_filters_search: "".into(),
@@ -3576,6 +3584,7 @@ impl WorkspacePaneHost {
         self.task_filters_open = true;
         self.task_filters_hovered_category = None;
         self.task_filters_focus = TaskFiltersFocus::Categories;
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.task_filters_active_chip_index = 0;
         self.task_filters_active_value_index = 0;
         self.task_filters_search = "".into();
@@ -3605,6 +3614,7 @@ impl WorkspacePaneHost {
         self.task_filters_open = false;
         self.task_filters_hovered_category = None;
         self.task_filters_focus = TaskFiltersFocus::Categories;
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.task_filters_active_chip_index = 0;
         self.task_filters_active_value_index = 0;
         self.task_filters_search = "".into();
@@ -3648,6 +3658,7 @@ impl WorkspacePaneHost {
             }
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3690,6 +3701,7 @@ impl WorkspacePaneHost {
             }
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3720,6 +3732,7 @@ impl WorkspacePaneHost {
             self.task_filters_active_chip_index = active_chips.len().saturating_sub(1);
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3888,6 +3901,7 @@ impl WorkspacePaneHost {
             TaskFiltersFocus::Chips => {}
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3908,6 +3922,7 @@ impl WorkspacePaneHost {
             TaskFiltersFocus::Chips => {}
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3939,6 +3954,7 @@ impl WorkspacePaneHost {
             }
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -3973,6 +3989,7 @@ impl WorkspacePaneHost {
             }
         }
 
+        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
         self.ui_updates.bump();
         cx.notify();
     }
@@ -4179,6 +4196,7 @@ impl Render for WorkspacePaneHost {
                         this.task_filters_open = !this.task_filters_open;
                         this.task_filters_hovered_category = None;
                         this.task_filters_focus = TaskFiltersFocus::Categories;
+                        this.task_filters_input_source = TaskFiltersInputSource::Mouse;
                         this.task_filters_active_value_index = 0;
                         this.task_filters_search = "".into();
                         this.task_filters_search_input
@@ -4448,13 +4466,16 @@ impl Render for WorkspacePaneHost {
                         .flex()
                         .flex_row()
                         .items_center()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .child(filter_tab),
                 );
 
                 if menu_opacity > 1e-3 {
                     let primary_menu_width = px(260.0);
                     let submenu_width = px(240.0);
-                    let submenu_overlap = px(12.0);
+                    let submenu_overlap = theme.spacing.xs;
                     let menu_item_height = px(34.0);
                     let menu_search_height = menu_item_height;
 
@@ -4512,16 +4533,31 @@ impl Render for WorkspacePaneHost {
                                 ))
                                 .flex()
                                 .flex_row()
+                                .w_full()
                                 .items_center()
                                 .gap(theme.spacing.xs)
                                 .px(theme.spacing.sm)
                                 .h(menu_item_height)
                                 .rounded(theme.radius.sm)
                                 .when(highlighted, |this| this.bg(theme.colors.accent))
-                                .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
+                                .when(
+                                    self.task_filters_input_source == TaskFiltersInputSource::Mouse,
+                                    |this| {
+                                        this.hover(|this| {
+                                            this.bg(theme.colors.accent.opacity(0.75))
+                                        })
+                                    },
+                                )
                                 .cursor_pointer()
                                 .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                     let mut did_change = false;
+                                    if this.task_filters_input_source
+                                        != TaskFiltersInputSource::Mouse
+                                    {
+                                        this.task_filters_input_source =
+                                            TaskFiltersInputSource::Mouse;
+                                        did_change = true;
+                                    }
                                     if this.task_filters_active_category != category {
                                         this.task_filters_active_category = category;
                                         did_change = true;
@@ -4624,7 +4660,12 @@ impl Render for WorkspacePaneHost {
                                     .flex()
                                     .items_center()
                                     .w_full()
-                                    .child(self.task_filters_search_input.clone()),
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(self.task_filters_search_input.clone()),
+                                    ),
                             )
                             .child(div().pt(theme.spacing.sm).child(category_list))
                             .child(actions_row);
@@ -4703,18 +4744,32 @@ impl Render for WorkspacePaneHost {
                                             .id(row_id)
                                             .flex()
                                             .flex_row()
+                                            .w_full()
                                             .items_center()
-                                            .gap(theme.spacing.xs)
+                                            .gap(theme.spacing.sm)
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
-                                            .hover(|this| {
-                                                this.bg(theme.colors.accent.opacity(0.75))
-                                            })
+                                            .when(
+                                                self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Mouse,
+                                                |this| {
+                                                    this.hover(|this| {
+                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                    })
+                                                },
+                                            )
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
+                                                if this.task_filters_input_source
+                                                    != TaskFiltersInputSource::Mouse
+                                                {
+                                                    this.task_filters_input_source =
+                                                        TaskFiltersInputSource::Mouse;
+                                                    did_change = true;
+                                                }
                                                 if this.task_filters_active_value_index
                                                     != display_index
                                                 {
@@ -4788,18 +4843,32 @@ impl Render for WorkspacePaneHost {
                                             .id(row_id)
                                             .flex()
                                             .flex_row()
+                                            .w_full()
                                             .items_center()
-                                            .gap(theme.spacing.xs)
+                                            .gap(theme.spacing.sm)
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
-                                            .hover(|this| {
-                                                this.bg(theme.colors.accent.opacity(0.75))
-                                            })
+                                            .when(
+                                                self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Mouse,
+                                                |this| {
+                                                    this.hover(|this| {
+                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                    })
+                                                },
+                                            )
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
+                                                if this.task_filters_input_source
+                                                    != TaskFiltersInputSource::Mouse
+                                                {
+                                                    this.task_filters_input_source =
+                                                        TaskFiltersInputSource::Mouse;
+                                                    did_change = true;
+                                                }
                                                 if this.task_filters_active_value_index
                                                     != display_index
                                                 {
@@ -4875,18 +4944,32 @@ impl Render for WorkspacePaneHost {
                                             .id(row_id)
                                             .flex()
                                             .flex_row()
+                                            .w_full()
                                             .items_center()
-                                            .gap(theme.spacing.xs)
+                                            .gap(theme.spacing.sm)
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
-                                            .hover(|this| {
-                                                this.bg(theme.colors.accent.opacity(0.75))
-                                            })
+                                            .when(
+                                                self.task_filters_input_source
+                                                    == TaskFiltersInputSource::Mouse,
+                                                |this| {
+                                                    this.hover(|this| {
+                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                    })
+                                                },
+                                            )
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
+                                                if this.task_filters_input_source
+                                                    != TaskFiltersInputSource::Mouse
+                                                {
+                                                    this.task_filters_input_source =
+                                                        TaskFiltersInputSource::Mouse;
+                                                    did_change = true;
+                                                }
                                                 if this.task_filters_active_value_index
                                                     != display_index
                                                 {
@@ -4949,6 +5032,7 @@ impl Render for WorkspacePaneHost {
                     let menu_container = div()
                         .key_context("TaskFilters")
                         .track_focus(&self.task_filters_focus_handle)
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(primary_menu)
                         .relative()
                         .when_some(submenu, move |this, submenu| {
@@ -4962,24 +5046,22 @@ impl Render for WorkspacePaneHost {
                             )
                         });
 
-                    let overlay = div()
-                        .absolute()
-                        .inset_0()
-                        .child(div().absolute().inset_0().occlude().on_mouse_down(
-                            gpui::MouseButton::Left,
-                            {
-                                let workspace = workspace.clone();
-                                move |_, _, cx| {
-                                    workspace.update(cx, |this, cx| {
-                                        this.task_filters_open = false;
-                                        this.task_filters_hovered_category = None;
-                                        this.ui_updates.bump();
-                                        cx.notify();
-                                    });
-                                    cx.stop_propagation();
-                                }
-                            },
-                        ))
+                    host = host
+                        .on_mouse_down(gpui::MouseButton::Left, {
+                            let workspace = workspace.clone();
+                            move |_, _, cx| {
+                                workspace.update(cx, |this, cx| {
+                                    if !this.task_filters_open {
+                                        return;
+                                    }
+
+                                    this.task_filters_open = false;
+                                    this.task_filters_hovered_category = None;
+                                    this.ui_updates.bump();
+                                    cx.notify();
+                                });
+                            }
+                        })
                         .child(
                             div()
                                 .absolute()
@@ -4988,8 +5070,6 @@ impl Render for WorkspacePaneHost {
                                 .opacity(menu_opacity)
                                 .child(menu_container),
                         );
-
-                    host = host.child(overlay);
                 }
             }
 
