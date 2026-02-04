@@ -81,6 +81,12 @@ pub(crate) struct UiDriverSmokeArgs {
     #[arg(long, default_value_t = false)]
     launch: bool,
 
+    /// Override `rust.control_plane.db.path` in `--launch` mode.
+    ///
+    /// Equivalent to setting `REDESMYN_RUST__CONTROL_PLANE__DB__PATH`.
+    #[arg(long, alias = "dev-db")]
+    rust_db_path: Option<PathBuf>,
+
     /// Artifacts directory for `--launch` mode (defaults to a temp dir).
     #[arg(long)]
     artifacts_dir: Option<PathBuf>,
@@ -129,6 +135,12 @@ pub(crate) struct UiDriverGraphSmokeArgs {
     #[arg(long, default_value_t = false)]
     launch: bool,
 
+    /// Override `rust.control_plane.db.path` in `--launch` mode.
+    ///
+    /// Equivalent to setting `REDESMYN_RUST__CONTROL_PLANE__DB__PATH`.
+    #[arg(long, alias = "dev-db")]
+    rust_db_path: Option<PathBuf>,
+
     /// Artifacts directory for `--launch` mode (defaults to a temp dir).
     #[arg(long)]
     artifacts_dir: Option<PathBuf>,
@@ -164,6 +176,12 @@ pub(crate) struct UiDriverSettingsArgs {
     /// Launch the desktop app automatically (builds `redesmyn_desktop` if needed).
     #[arg(long, default_value_t = false)]
     launch: bool,
+
+    /// Override `rust.control_plane.db.path` in `--launch` mode.
+    ///
+    /// Equivalent to setting `REDESMYN_RUST__CONTROL_PLANE__DB__PATH`.
+    #[arg(long, alias = "dev-db")]
+    rust_db_path: Option<PathBuf>,
 
     /// Artifacts directory for `--launch` mode (defaults to a temp dir).
     #[arg(long)]
@@ -309,6 +327,13 @@ fn ui_driver_settings(args: UiDriverSettingsArgs, output: &Output) -> CommandOut
             None
         };
 
+        if args.rust_db_path.is_some() && !args.launch {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "--rust-db-path requires --launch.",
+            ));
+        }
+
         if args.launch {
             let workspace_root = match find_rust_workspace_root() {
                 Ok(root) => root,
@@ -336,7 +361,12 @@ fn ui_driver_settings(args: UiDriverSettingsArgs, output: &Output) -> CommandOut
                 ));
             }
 
-            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+            match spawn_desktop_app(
+                &workspace_root,
+                &socket_path,
+                artifacts_dir,
+                args.rust_db_path.as_deref(),
+            ) {
                 Ok(child) => desktop_child = Some(child),
                 Err(err) => return CommandOutcome::Failure(err),
             }
@@ -496,6 +526,13 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
             None
         };
 
+        if args.rust_db_path.is_some() && !args.launch {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "--rust-db-path requires --launch.",
+            ));
+        }
+
         if args.launch {
             let workspace_root = match find_rust_workspace_root() {
                 Ok(root) => root,
@@ -523,7 +560,12 @@ fn ui_driver_smoke(args: UiDriverSmokeArgs, output: &Output) -> CommandOutcome {
                 ));
             }
 
-            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+            match spawn_desktop_app(
+                &workspace_root,
+                &socket_path,
+                artifacts_dir,
+                args.rust_db_path.as_deref(),
+            ) {
                 Ok(child) => desktop_child = Some(child),
                 Err(err) => return CommandOutcome::Failure(err),
             }
@@ -777,7 +819,7 @@ fn ui_driver_settings_menu_smoke(
                 ));
             }
 
-            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir, None) {
                 Ok(child) => desktop_child = Some(child),
                 Err(err) => return CommandOutcome::Failure(err),
             }
@@ -1006,6 +1048,13 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             None
         };
 
+        if args.rust_db_path.is_some() && !args.launch {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "--rust-db-path requires --launch.",
+            ));
+        }
+
         if args.launch {
             let workspace_root = match find_rust_workspace_root() {
                 Ok(root) => root,
@@ -1033,7 +1082,12 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
                 ));
             }
 
-            match spawn_desktop_app(&workspace_root, &socket_path, artifacts_dir) {
+            match spawn_desktop_app(
+                &workspace_root,
+                &socket_path,
+                artifacts_dir,
+                args.rust_db_path.as_deref(),
+            ) {
                 Ok(child) => desktop_child = Some(child),
                 Err(err) => return CommandOutcome::Failure(err),
             }
@@ -1323,6 +1377,7 @@ fn spawn_desktop_app(
     workspace_root: &Path,
     socket_path: &Path,
     artifacts_dir: &Path,
+    rust_db_path: Option<&Path>,
 ) -> Result<Child, ErrorEnvelope> {
     let bin_path = workspace_root
         .join("target")
@@ -1348,23 +1403,27 @@ fn spawn_desktop_app(
         )
     })?;
 
-    Command::new(bin_path)
-        // The desktop app discovers epics relative to the repository root (e.g. `epics/`).
-        // `workspace_root` is the `rust/` directory, so use its parent.
-        .current_dir(repo_root)
+    let mut cmd = Command::new(bin_path);
+    // The desktop app discovers epics relative to the repository root (e.g. `epics/`).
+    // `workspace_root` is the `rust/` directory, so use its parent.
+    cmd.current_dir(repo_root)
         .env("REDESMYN_UI_DRIVER_SOCKET_PATH", socket_path)
         .env("REDESMYN_TEST_ARTIFACTS_DIR", artifacts_dir)
         .env("REDESMYN_UI_TEST_MODE", "1")
         .env("REDESMYN_UI_TEST_THEME", "dark")
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|err| {
-            ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                format!("Failed to start desktop app: {err}"),
-            )
-        })
+        .stderr(Stdio::inherit());
+
+    if let Some(rust_db_path) = rust_db_path {
+        cmd.env("REDESMYN_RUST__CONTROL_PLANE__DB__PATH", rust_db_path);
+    }
+
+    cmd.spawn().map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            format!("Failed to start desktop app: {err}"),
+        )
+    })
 }
 
 #[cfg(unix)]
